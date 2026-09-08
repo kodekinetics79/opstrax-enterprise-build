@@ -70,16 +70,16 @@ const configs = {
     sections: [] as [string,string,string[]][],
   },
   contracts: {
-    queryKey: "contracts", eyebrow: "Contracts / Rates", title: "Contract management and rate structures", icon: <Landmark />,
-    description: "Customer and carrier contracts, rate structures, margin risk governance, fuel surcharge configuration and renewal workflows.",
+    queryKey: "contracts", eyebrow: "Contracts / Rates", title: "Recorded contract terms and rate structures", icon: <Landmark />,
+    description: "Persisted customer and carrier contract terms, rate structures, currencies, fuel surcharge configuration and date-based renewal workflows. Generated demo agreements are excluded.",
     useRows: useContracts, useSummary: useContractsSummary, useDetail: useContractDetail,
     api: { create: contractsApi.create, update: (id: string | number, p: AnyRecord) => contractsApi.update(id, p) },
     createLabel: "Create Contract",
-    kpis: [["Active","activeContracts"],["Expiring Soon","expiringSoon"],["Expired","expiredContracts"],["Margin Risk","marginRiskContracts"],["Underpriced","underpricedContracts"],["Renewal Queue","renewalQueue"],["Fuel Surcharge","fuelSurchargeActive"],["Total","total"]],
-    columns: ["contractNumber","contractType","rateType","status","customerName","carrierName","baseRate","marginRisk","effectiveDate","expirationDate","recommendedAction"],
-    fields: [["contractNumber","Contract #"],["customerId","Customer ID"],["carrierId","Carrier ID"],["contractType","Contract Type"],["rateType","Rate Type"],["baseRate","Base Rate"],["currency","Currency"],["effectiveDate","Effective Date"],["expirationDate","Expiry Date"],["fuelSurchargeEnabled","Fuel Surcharge?"],["fuelSurchargePercent","Surcharge %"],["marginRisk","Margin Risk"],["slaTerms","SLA Terms"],["notes","Notes"]],
+    kpis: [["Active","activeContracts"],["Expiring Soon","expiringSoon"],["Expired","expiredContracts"],["Customers Covered","customersCovered"],["Carrier Agreements","carrierAgreements"],["Renewal Queue","renewalQueue"],["Legacy Origin Unverified","legacyOriginUnverified"],["Total","total"]],
+    columns: ["contractNumber","recordOrigin","contractType","rateType","status","customerName","carrierName","baseRate","currency","effectiveDate","expiryDate","recommendedAction"],
+    fields: [["contractNumber","Contract #"],["title","Title"],["customerId","Customer ID"],["carrierId","Carrier ID"],["contractType","Contract Type"],["rateType","Rate Type"],["baseRate","Base Rate"],["currency","Currency"],["effectiveDate","Effective Date"],["expiryDate","Expiry Date"],["fuelSurchargeEnabled","Fuel Surcharge?"],["fuelSurchargePercent","Surcharge %"],["slaTerms","SLA Terms"],["notes","Notes"]],
     actions: ["activate","expire"],
-    sections: [["Contract Rates","rates",["rateCode","rateType","baseRate","effectiveDate","status"]]] as [string,string,string[]][],
+    sections: [["Recorded Contract Rates","rates",["rateCode","recordOrigin","rateType","baseRate","currency","effectiveDate","status"]]] as [string,string,string[]][],
   },
   carriers: {
     queryKey: "carriers", eyebrow: "Carrier Management", title: "Partner carrier registry and performance", icon: <Truck />,
@@ -556,6 +556,7 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
   const isFuel = config.queryKey === "fuel";
   const isCostMargin = config.queryKey === "cost-margin";
   const isCostLeakage = config.queryKey === "cost-leakage";
+  const isContract = config.queryKey === "contracts";
   const isFuelTransaction = isFuel && Boolean(record.transactionNumber);
   const isFuelAnomaly = isFuel && Boolean(record.anomalyType);
   const fuelAnomalyReviewable = ["open", "under review"].includes(String(record.status ?? "").toLowerCase());
@@ -578,8 +579,8 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           {/* Status badges + actions */}
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={record.status ?? record.approvalStatus ?? record.complianceStatus} />
-            {!isExpense && !isCostMargin && <RiskBadge risk={record.severity ?? record.marginRisk ?? record.riskScore ?? record.anomalyStatus} />}
-            <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : isCostMargin ? "Recorded financial evidence" : isCostLeakage ? String(record.recordOrigin ?? "Runtime detector") : isFuel ? String(record.recordOrigin ?? "Origin unavailable") : "OpsTrax Finance Intelligence"}</span>
+            {!isExpense && !isCostMargin && !isContract && <RiskBadge risk={record.severity ?? record.riskScore ?? record.anomalyStatus} />}
+            <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : isCostMargin ? "Recorded financial evidence" : isCostLeakage ? String(record.recordOrigin ?? "Runtime detector") : isFuel || isContract ? String(record.recordOrigin ?? "Origin unavailable") : "OpsTrax Finance Intelligence"}</span>
           </div>
 
           <div className="flex flex-wrap gap-3">
@@ -760,7 +761,7 @@ function defaultForm(kind: Kind): AnyRecord {
   const today = new Date().toISOString().split("T")[0];
   if (kind === "fuel")       return { fuelType: "Diesel", quantity: "", unit: "Gallons", unitPrice: "", currency: "USD", paymentMethod: "Fleet Card", fuelDate: today };
   if (kind === "expenses")   return { categoryName: "", amount: "", currency: "", receiptStatus: "Missing", expenseDate: today };
-  if (kind === "contracts")  return { contractType: "Customer", rateType: "Per Mile", baseRate: 2.85, currency: "USD", status: "Active", marginRisk: "Low", effectiveDate: today };
+  if (kind === "contracts")  return { contractType: "Customer", rateType: "Per Mile", baseRate: "", currency: "USD", status: "Draft", effectiveDate: today };
   if (kind === "carriers")   return { status: "Active", complianceStatus: "Compliant", contractStatus: "Active", onTimePercent: 90, safetyScore: 88, performanceScore: 86, riskScore: 20 };
   return {};
 }

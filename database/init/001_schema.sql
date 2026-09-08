@@ -161,6 +161,9 @@ CREATE TABLE IF NOT EXISTS contracts (
   status VARCHAR(50) NOT NULL DEFAULT 'Active',
   effective_date DATE NULL,
   expiration_date DATE NULL,
+  data_origin VARCHAR(80) NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NULL,
   CONSTRAINT fk_contracts_company FOREIGN KEY (company_id) REFERENCES companies(id),
   CONSTRAINT fk_contracts_customer FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
@@ -1194,6 +1197,7 @@ CREATE TABLE IF NOT EXISTS contract_rates (
   origin_zone VARCHAR(120) NULL,
   destination_zone VARCHAR(120) NULL,
   vehicle_type VARCHAR(80) NULL,
+  currency VARCHAR(10) NOT NULL DEFAULT 'USD',
   base_rate DECIMAL(12,4) NOT NULL DEFAULT 0,
   minimum_charge DECIMAL(12,2) NULL,
   fuel_surcharge_percent DECIMAL(6,2) NULL,
@@ -1201,7 +1205,9 @@ CREATE TABLE IF NOT EXISTS contract_rates (
   effective_date DATE NULL,
   expiry_date DATE NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'Active',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  data_origin VARCHAR(80) NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NULL
 );
 
 CREATE TABLE IF NOT EXISTS carrier_documents (

@@ -15526,9 +15526,26 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     // BATCH 5 HANDLERS — CONTRACTS / RATES
     // =====================================================================
 
+    private static async Task<string?> ValidateContractPartyAsync(Database db, long companyId, long id, string table, string label, CancellationToken ct)
+    {
+        var deletedPredicate = table is "customers" or "carriers" ? " AND deleted_at IS NULL" : string.Empty;
+        var count = await db.ScalarLongAsync(
+            $"SELECT COUNT(*) FROM {table} WHERE id=@id AND company_id=@companyId{deletedPredicate}",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        return count == 0 ? $"{label} is not available in this tenant" : null;
+    }
+
+    private static bool TryContractAmount(object? raw, out decimal value)
+    {
+        value = 0;
+        return raw is not null and not DBNull
+            && decimal.TryParse(Convert.ToString(raw, CultureInfo.InvariantCulture), NumberStyles.Number, CultureInfo.InvariantCulture, out value);
+    }
+
     private static async Task<IResult> ContractsSummary(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "contract.view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
         var row = await db.QuerySingleAsync(
             @"SELECT
                 SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_contracts,
@@ -15536,35 +15553,55 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                 SUM(CASE WHEN status='Expired' OR expiry_date < CURRENT_DATE THEN 1 ELSE 0 END) expired_contracts,
                 COUNT(DISTINCT customer_id) customers_covered,
                 COUNT(DISTINCT carrier_id) carrier_agreements,
-                CONCAT('$', TO_CHAR((COALESCE(AVG(base_rate),0))::numeric, 'FM9,999,999,990.0000')) average_base_rate,
                 SUM(CASE WHEN fuel_surcharge_enabled=TRUE THEN 1 ELSE 0 END) fuel_surcharge_active,
-                SUM(CASE WHEN margin_risk='High' THEN 1 ELSE 0 END) margin_risk_contracts,
-                SUM(CASE WHEN base_rate < 2.20 AND status='Active' THEN 1 ELSE 0 END) underpriced_contracts,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(base_rate * 1200),0))::numeric, 'FM9,999,999,999')) contract_revenue_estimate,
                 SUM(CASE WHEN status='Active' AND (expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 60 * INTERVAL '1 day') THEN 1 ELSE 0 END) renewal_queue,
+                SUM(CASE WHEN data_origin='legacy_unverified' THEN 1 ELSE 0 END) legacy_origin_unverified,
                 COUNT(*) total
-              FROM contracts WHERE company_id=@cid AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
+              FROM contracts
+             WHERE company_id=@cid AND deleted_at IS NULL
+               AND COALESCE(data_origin,'legacy_unverified') <> 'demo_seed'",
+            p => p.Parameters.AddWithValue("@cid", companyId), ct: ct);
+        row ??= new Dictionary<string, object?>();
+        row["recordedRatesByCurrencyAndType"] = await db.QueryAsync(
+            @"SELECT UPPER(BTRIM(cr.currency)) currency, cr.rate_type,
+                     COUNT(*) rate_count, ROUND(AVG(cr.base_rate),4) average_base_rate
+                FROM contract_rates cr
+                JOIN contracts con ON con.id=cr.contract_id AND con.company_id=cr.company_id
+               WHERE cr.company_id=@cid AND con.deleted_at IS NULL
+                 AND COALESCE(con.data_origin,'legacy_unverified') <> 'demo_seed'
+                 AND COALESCE(cr.data_origin,'legacy_unverified') <> 'demo_seed'
+               GROUP BY UPPER(BTRIM(cr.currency)), cr.rate_type
+               ORDER BY UPPER(BTRIM(cr.currency)), cr.rate_type",
+            p => p.Parameters.AddWithValue("@cid", companyId), ct);
+        return Results.Ok(ApiResponse<object>.Ok(row));
     }
 
     private static Task<IResult> Contracts(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "contract.view") is { } denied) return Task.FromResult(denied);
         return OkRows(db,
-            @"SELECT con.*, c.name customer_name, car.name carrier_name,
-                     CASE WHEN con.margin_risk='High' THEN 'High' WHEN con.margin_risk='Medium' THEN 'Medium' ELSE 'Low' END risk_heat_score,
+            @"SELECT con.id, con.company_id, con.customer_id, con.carrier_id,
+                     con.contract_code, con.contract_number, con.title, con.contract_type,
+                     con.rate_type, con.status, con.effective_date, con.expiration_date, con.expiry_date,
+                     con.currency, con.base_rate, con.fuel_surcharge_enabled, con.fuel_surcharge_percent,
+                     con.sla_terms, con.notes, con.data_origin, con.source_channel,
+                     con.created_at, con.updated_at,
+                     c.name customer_name, car.name carrier_name,
+                     CASE WHEN con.data_origin='manual_entry' THEN 'Manual entry'
+                          WHEN con.data_origin='provider_import' THEN 'Provider import'
+                          ELSE 'Legacy origin unverified' END record_origin,
                      CASE WHEN con.status='Expired' OR con.expiry_date < CURRENT_DATE THEN 'Renew contract immediately'
                           WHEN con.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30 * INTERVAL '1 day' THEN 'Initiate renewal workflow'
-                          WHEN con.margin_risk='High' THEN 'Renegotiate underpriced rate'
-                          ELSE 'Monitor contract health' END recommended_action,
+                          ELSE NULL END recommended_action,
                      CASE WHEN con.expiry_date < CURRENT_DATE THEN 'Expired'
                           WHEN con.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30 * INTERVAL '1 day' THEN 'Expiring Soon'
                           ELSE con.status END display_status
               FROM contracts con
-              LEFT JOIN customers c ON c.id=con.customer_id
-              LEFT JOIN carriers car ON car.id=con.carrier_id
+              LEFT JOIN customers c ON c.id=con.customer_id AND c.company_id=con.company_id
+              LEFT JOIN carriers car ON car.id=con.carrier_id AND car.company_id=con.company_id
               WHERE con.company_id=@cid AND con.deleted_at IS NULL
-              ORDER BY ARRAY_POSITION(ARRAY['High','Medium','Low'], con.margin_risk), con.expiry_date", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+                AND COALESCE(con.data_origin,'legacy_unverified') <> 'demo_seed'
+              ORDER BY con.expiry_date NULLS LAST, con.id DESC", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
 
     private static async Task<IResult> ContractDetail(HttpContext http, long id, Database db, CommercialFoundationService commercial, CancellationToken ct)
@@ -15572,20 +15609,30 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         var denied = RequirePermission(http, "contract.view");
         if (denied is not null) return denied;
         var record = await db.QuerySingleAsync(
-            @"SELECT con.*, c.name customer_name, car.name carrier_name
+            @"SELECT con.id, con.company_id, con.customer_id, con.carrier_id,
+                     con.contract_code, con.contract_number, con.title, con.contract_type,
+                     con.rate_type, con.status, con.effective_date, con.expiration_date, con.expiry_date,
+                     con.currency, con.base_rate, con.fuel_surcharge_enabled, con.fuel_surcharge_percent,
+                     con.sla_terms, con.notes, con.data_origin, con.source_channel,
+                     con.created_at, con.updated_at,
+                     c.name customer_name, car.name carrier_name,
+                     CASE WHEN con.data_origin='manual_entry' THEN 'Manual entry'
+                          WHEN con.data_origin='provider_import' THEN 'Provider import'
+                          ELSE 'Legacy origin unverified' END record_origin
               FROM contracts con
-              LEFT JOIN customers c ON c.id=con.customer_id
-              LEFT JOIN carriers car ON car.id=con.carrier_id
-              WHERE con.id=@id AND con.company_id=@cid AND con.deleted_at IS NULL",
+              LEFT JOIN customers c ON c.id=con.customer_id AND c.company_id=con.company_id
+              LEFT JOIN carriers car ON car.id=con.carrier_id AND car.company_id=con.company_id
+              WHERE con.id=@id AND con.company_id=@cid AND con.deleted_at IS NULL
+                AND COALESCE(con.data_origin,'legacy_unverified') <> 'demo_seed'",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Contract not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
             rates = await db.QueryAsync(@"
-                SELECT 'rate_cards' AS source_table, rc.*
+                SELECT 'rate_cards' AS source_table, rc.*, 'Persisted rate card' AS record_origin
                 FROM rate_cards rc
-                WHERE rc.contract_id=@id
+                WHERE rc.contract_id=@id AND rc.company_id=@cid
                 UNION ALL
                 SELECT 'contract_rates' AS source_table,
                        cr.id,
@@ -15599,7 +15646,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                        cr.origin_zone,
                        cr.destination_zone,
                        cr.vehicle_type,
-                       'USD'::text AS currency,
+                       UPPER(BTRIM(cr.currency)) AS currency,
                        cr.base_rate,
                        cr.minimum_charge,
                        cr.fuel_surcharge_percent,
@@ -15611,9 +15658,13 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                        NULL::VARCHAR(120) AS causation_id,
                        NULL::TEXT AS notes,
                        cr.created_at,
-                       NULL::TIMESTAMPTZ AS updated_at
+                       cr.updated_at,
+                       CASE WHEN cr.data_origin='manual_entry' THEN 'Manual entry'
+                            WHEN cr.data_origin='provider_import' THEN 'Provider import'
+                            ELSE 'Legacy origin unverified' END AS record_origin
                 FROM contract_rates cr
-                WHERE cr.contract_id=@id
+                WHERE cr.contract_id=@id AND cr.company_id=@cid
+                  AND COALESCE(cr.data_origin,'legacy_unverified') <> 'demo_seed'
                   AND NOT EXISTS (
                     SELECT 1
                     FROM rate_cards rc
@@ -15622,8 +15673,27 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                       AND rc.rate_card_code = cr.rate_code
                   )
                 ORDER BY effective_date DESC, id DESC",
-                c => c.Parameters.AddWithValue("@id", id), ct),
-            versions = await commercial.ListContractVersionsAsync(GetCompanyId(http), id, ct),
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
+            versions = (await commercial.ListContractVersionsAsync(GetCompanyId(http), id, ct)).Select(version => new
+            {
+                version.Id,
+                version.VersionNo,
+                version.VersionLabel,
+                version.Status,
+                version.IsCurrent,
+                version.EffectiveDate,
+                version.ExpiryDate,
+                version.Currency,
+                version.BaseRate,
+                version.RateType,
+                version.FuelSurchargeEnabled,
+                version.FuelSurchargePercent,
+                version.SlaTerms,
+                version.Notes,
+                version.SourceChannel,
+                version.CreatedAt,
+                version.UpdatedAt
+            }),
             recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "contracts-rates", ct),
             auditTrail = await TenantAuditRows(db, GetCompanyId(http), "Contract", id, ct)
         }));
@@ -15633,37 +15703,75 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         var denied = RequirePermission(http, "contract.create");
         if (denied is not null) return denied;
-        var effective = Get(body, "effectiveDate")?.ToString();
-        var expiry = Get(body, "expiryDate")?.ToString();
-        if (!IsBlank(effective) && !IsBlank(expiry) && DateTime.TryParse(effective, out var eff) && DateTime.TryParse(expiry, out var exp) && exp <= eff)
-            return Results.BadRequest(ApiResponse<object>.Fail("Contract expiry date must be after effective date"));
         var companyId = GetCompanyId(http);
+        var number = (!IsBlank(Get(body, "contractNumber")) ? Get(body, "contractNumber") : Get(body, "contractCode"))?.ToString()?.Trim();
+        if (IsBlank(number)) return Results.BadRequest(ApiResponse<object>.Fail("Contract number is required"));
+        var customer = OptionalPositiveId(Get(body, "customerId"));
+        var carrier = OptionalPositiveId(Get(body, "carrierId"));
+        if (!customer.valid || customer.id is null) return Results.BadRequest(ApiResponse<object>.Fail("A valid customer is required"));
+        if (!carrier.valid) return Results.BadRequest(ApiResponse<object>.Fail("Carrier id is not valid"));
+        if (await ValidateContractPartyAsync(db, companyId, customer.id.Value, "customers", "Customer", ct) is { } customerError)
+            return Results.BadRequest(ApiResponse<object>.Fail(customerError));
+        if (carrier.id.HasValue && await ValidateContractPartyAsync(db, companyId, carrier.id.Value, "carriers", "Carrier", ct) is { } carrierError)
+            return Results.BadRequest(ApiResponse<object>.Fail(carrierError));
+        var effective = TryDateN(body, "effectiveDate");
+        var expiry = TryDateN(body, "expiryDate");
+        if (!IsBlank(Get(body, "effectiveDate")) && effective is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Contract effective date is not valid"));
+        if (!IsBlank(Get(body, "expiryDate")) && expiry is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Contract expiry date is not valid"));
+        if (effective.HasValue && expiry.HasValue && expiry.Value <= effective.Value)
+            return Results.BadRequest(ApiResponse<object>.Fail("Contract expiry date must be after effective date"));
+        var rawRate = Get(body, "baseRate");
+        var baseRate = IsBlank(rawRate) ? 0m : TryContractAmount(rawRate, out var parsedRate) ? parsedRate : -1m;
+        if (baseRate < 0) return Results.BadRequest(ApiResponse<object>.Fail("Base rate must be a non-negative number"));
+        var currency = (!IsBlank(Get(body, "currency")) ? Get(body, "currency")!.ToString()! : "USD").Trim().ToUpperInvariant();
+        if (currency.Length != 3 || !currency.All(char.IsLetter))
+            return Results.BadRequest(ApiResponse<object>.Fail("Currency must be a three-letter code"));
+        var status = !IsBlank(Get(body, "status")) ? Get(body, "status")!.ToString()!.Trim() : "Draft";
+        if (status is not ("Draft" or "Active" or "Under Renewal" or "Expired"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Contract status is not valid"));
+        var contractType = !IsBlank(Get(body, "contractType")) ? Get(body, "contractType")!.ToString()!.Trim() : "Customer";
+        if (contractType is not ("Customer" or "Carrier" or "Internal"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Contract type is not valid"));
+        decimal? fuelPercent = null;
+        if (!IsBlank(Get(body, "fuelSurchargePercent")))
+        {
+            if (!TryContractAmount(Get(body, "fuelSurchargePercent"), out var percent) || percent is < 0 or > 100)
+                return Results.BadRequest(ApiResponse<object>.Fail("Fuel surcharge percent must be between 0 and 100"));
+            fuelPercent = percent;
+        }
+        var duplicate = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM contracts WHERE company_id=@companyId AND LOWER(contract_number)=LOWER(@number) AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@number", number!); }, ct);
+        if (duplicate > 0) return Results.Conflict(ApiResponse<object>.Fail("Contract number already exists"));
+        var title = !IsBlank(Get(body, "title")) ? Get(body, "title")!.ToString()!.Trim() : number!;
         var id = await db.InsertAsync(
-            @"INSERT INTO contracts (company_id, contract_number, customer_id, carrier_id, contract_type,
+            @"INSERT INTO contracts (company_id, contract_code, title, contract_number, customer_id, carrier_id, contract_type,
                 effective_date, expiry_date, status, currency, base_rate, rate_type,
-                fuel_surcharge_enabled, fuel_surcharge_percent, sla_terms, margin_risk, notes)
-              VALUES (@companyId, @number, @customer, @carrier, COALESCE(@type,'Customer'),
-                @effective, @expiry, COALESCE(@status,'Active'), COALESCE(@currency,'USD'),
-                COALESCE(@rate,0), COALESCE(@rateType,'Per Mile'),
+                fuel_surcharge_enabled, fuel_surcharge_percent, sla_terms, margin_risk, notes, data_origin)
+              VALUES (@companyId, @number, @title, @number, @customer, @carrier, COALESCE(@type,'Customer'),
+                @effective, @expiry, COALESCE(@status,'Draft'), @currency,
+                @rate, COALESCE(@rateType,'Per Mile'),
                 COALESCE(@fuelEnabled, FALSE), @fuelPct, @sla,
-                COALESCE(@marginRisk,'Low'), @notes)",
+                'Unassessed', @notes, 'manual_entry')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
-                c.Parameters.AddWithValue("@number", !IsBlank(Get(body, "contractNumber")) ? Get(body, "contractNumber") : $"CON-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
-                c.Parameters.AddWithValue("@customer", Get(body, "customerId"));
-                c.Parameters.AddWithValue("@carrier", Get(body, "carrierId"));
-                c.Parameters.AddWithValue("@type", Get(body, "contractType"));
-                c.Parameters.AddWithValue("@effective", effective);
-                c.Parameters.AddWithValue("@expiry", expiry);
-                c.Parameters.AddWithValue("@status", Get(body, "status"));
-                c.Parameters.AddWithValue("@currency", Get(body, "currency"));
-                c.Parameters.AddWithValue("@rate", Get(body, "baseRate"));
+                c.Parameters.AddWithValue("@number", number!);
+                c.Parameters.AddWithValue("@title", title);
+                c.Parameters.AddWithValue("@customer", customer.id.Value);
+                c.Parameters.AddWithValue("@carrier", (object?)carrier.id ?? DBNull.Value);
+                c.Parameters.AddWithValue("@type", contractType);
+                c.Parameters.AddWithValue("@effective", (object?)effective ?? DBNull.Value);
+                c.Parameters.AddWithValue("@expiry", (object?)expiry ?? DBNull.Value);
+                c.Parameters.AddWithValue("@status", status);
+                c.Parameters.AddWithValue("@currency", currency);
+                c.Parameters.AddWithValue("@rate", baseRate);
                 c.Parameters.AddWithValue("@rateType", Get(body, "rateType"));
                 c.Parameters.AddWithValue("@fuelEnabled", Get(body, "fuelSurchargeEnabled"));
-                c.Parameters.AddWithValue("@fuelPct", Get(body, "fuelSurchargePercent"));
+                c.Parameters.AddWithValue("@fuelPct", (object?)fuelPercent ?? DBNull.Value);
                 c.Parameters.AddWithValue("@sla", Get(body, "slaTerms"));
-                c.Parameters.AddWithValue("@marginRisk", Get(body, "marginRisk"));
                 c.Parameters.AddWithValue("@notes", Get(body, "notes"));
             }, ct);
         await audit.LogAsync(http, "contract.created", "Contract", id, ct: ct);
@@ -15672,10 +15780,10 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             "contract.created",
             "contract",
             id.ToString(CultureInfo.InvariantCulture),
-            JsonSerializer.Serialize(new { contractId = id, companyId, customerId = Get(body, "customerId"), status = Get(body, "status") ?? "Active" }),
+            JsonSerializer.Serialize(new { contractId = id, companyId, customerId = customer.id.Value, status }),
             Get(body, "correlationId")?.ToString(),
             Get(body, "causationId")?.ToString(),
-            Get(body, "contractNumber")?.ToString() ?? Get(body, "number")?.ToString());
+            number);
 
         var contractRow = await db.QuerySingleAsync(
             "SELECT * FROM contracts WHERE id=@id AND company_id=@companyId LIMIT 1",
@@ -15706,40 +15814,94 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         var denied = RequirePermission(http, "contract.update");
         if (denied is not null) return denied;
-        await db.ExecuteAsync(
+        var companyId = GetCompanyId(http);
+        var current = await db.QuerySingleAsync(
+            @"SELECT * FROM contracts WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL
+                AND COALESCE(data_origin,'legacy_unverified') <> 'demo_seed'",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        if (current is null) return Results.NotFound(ApiResponse<object>.Fail("Contract not found"));
+        var customer = OptionalPositiveId(Get(body, "customerId"));
+        var carrier = OptionalPositiveId(Get(body, "carrierId"));
+        if (!customer.valid || !carrier.valid) return Results.BadRequest(ApiResponse<object>.Fail("Customer or carrier id is not valid"));
+        if (customer.id.HasValue && await ValidateContractPartyAsync(db, companyId, customer.id.Value, "customers", "Customer", ct) is { } customerError)
+            return Results.BadRequest(ApiResponse<object>.Fail(customerError));
+        if (carrier.id.HasValue && await ValidateContractPartyAsync(db, companyId, carrier.id.Value, "carriers", "Carrier", ct) is { } carrierError)
+            return Results.BadRequest(ApiResponse<object>.Fail(carrierError));
+        var effective = TryDateN(body, "effectiveDate");
+        var expiry = TryDateN(body, "expiryDate");
+        if (!IsBlank(Get(body, "effectiveDate")) && effective is null || !IsBlank(Get(body, "expiryDate")) && expiry is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Contract date is not valid"));
+        var resultingEffective = effective ?? (current["effectiveDate"] is null or DBNull ? null : DateOnly.FromDateTime(Convert.ToDateTime(current["effectiveDate"], CultureInfo.InvariantCulture)));
+        var resultingExpiry = expiry ?? (current["expiryDate"] is null or DBNull ? null : DateOnly.FromDateTime(Convert.ToDateTime(current["expiryDate"], CultureInfo.InvariantCulture)));
+        if (resultingEffective.HasValue && resultingExpiry.HasValue && resultingExpiry.Value <= resultingEffective.Value)
+            return Results.BadRequest(ApiResponse<object>.Fail("Contract expiry date must be after effective date"));
+        var rawRate = Get(body, "baseRate");
+        decimal? baseRate = null;
+        if (!IsBlank(rawRate))
+        {
+            if (!TryContractAmount(rawRate, out var parsedRate) || parsedRate < 0)
+                return Results.BadRequest(ApiResponse<object>.Fail("Base rate must be a non-negative number"));
+            baseRate = parsedRate;
+        }
+        string? currency = null;
+        if (!IsBlank(Get(body, "currency")))
+        {
+            currency = Get(body, "currency")!.ToString()!.Trim().ToUpperInvariant();
+            if (currency.Length != 3 || !currency.All(char.IsLetter))
+                return Results.BadRequest(ApiResponse<object>.Fail("Currency must be a three-letter code"));
+        }
+        string? status = null;
+        if (!IsBlank(Get(body, "status")))
+        {
+            status = Get(body, "status")!.ToString()!.Trim();
+            if (status is not ("Draft" or "Active" or "Under Renewal" or "Expired"))
+                return Results.BadRequest(ApiResponse<object>.Fail("Contract status is not valid"));
+        }
+        decimal? fuelPercent = null;
+        if (!IsBlank(Get(body, "fuelSurchargePercent")))
+        {
+            if (!TryContractAmount(Get(body, "fuelSurchargePercent"), out var percent) || percent is < 0 or > 100)
+                return Results.BadRequest(ApiResponse<object>.Fail("Fuel surcharge percent must be between 0 and 100"));
+            fuelPercent = percent;
+        }
+        var affected = await db.ExecuteAsync(
             @"UPDATE contracts SET customer_id=COALESCE(@customer,customer_id), carrier_id=COALESCE(@carrier,carrier_id),
                 contract_type=COALESCE(@type,contract_type), effective_date=COALESCE(@effective,effective_date),
                 expiry_date=COALESCE(@expiry,expiry_date), status=COALESCE(@status,status),
+                title=COALESCE(@title,title), currency=COALESCE(@currency,currency),
                 base_rate=COALESCE(@rate,base_rate), rate_type=COALESCE(@rateType,rate_type),
                 fuel_surcharge_enabled=COALESCE(@fuelEnabled,fuel_surcharge_enabled),
                 fuel_surcharge_percent=COALESCE(@fuelPct,fuel_surcharge_percent),
-                sla_terms=COALESCE(@sla,sla_terms), margin_risk=COALESCE(@marginRisk,margin_risk), notes=COALESCE(@notes,notes)
+                sla_terms=COALESCE(@sla,sla_terms), notes=COALESCE(@notes,notes),
+                data_origin='manual_entry', updated_at=NOW()
               WHERE id=@id AND company_id=@companyId",
             c =>
             {
                 c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
-                c.Parameters.AddWithValue("@customer", Get(body, "customerId"));
-                c.Parameters.AddWithValue("@carrier", Get(body, "carrierId"));
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@customer", (object?)customer.id ?? DBNull.Value);
+                c.Parameters.AddWithValue("@carrier", (object?)carrier.id ?? DBNull.Value);
                 c.Parameters.AddWithValue("@type", Get(body, "contractType"));
-                c.Parameters.AddWithValue("@effective", Get(body, "effectiveDate"));
-                c.Parameters.AddWithValue("@expiry", Get(body, "expiryDate"));
-                c.Parameters.AddWithValue("@status", Get(body, "status"));
-                c.Parameters.AddWithValue("@rate", Get(body, "baseRate"));
+                c.Parameters.AddWithValue("@effective", (object?)effective ?? DBNull.Value);
+                c.Parameters.AddWithValue("@expiry", (object?)expiry ?? DBNull.Value);
+                c.Parameters.AddWithValue("@status", (object?)status ?? DBNull.Value);
+                c.Parameters.AddWithValue("@title", Get(body, "title"));
+                c.Parameters.AddWithValue("@currency", (object?)currency ?? DBNull.Value);
+                c.Parameters.AddWithValue("@rate", (object?)baseRate ?? DBNull.Value);
                 c.Parameters.AddWithValue("@rateType", Get(body, "rateType"));
                 c.Parameters.AddWithValue("@fuelEnabled", Get(body, "fuelSurchargeEnabled"));
-                c.Parameters.AddWithValue("@fuelPct", Get(body, "fuelSurchargePercent"));
+                c.Parameters.AddWithValue("@fuelPct", (object?)fuelPercent ?? DBNull.Value);
                 c.Parameters.AddWithValue("@sla", Get(body, "slaTerms"));
-                c.Parameters.AddWithValue("@marginRisk", Get(body, "marginRisk"));
                 c.Parameters.AddWithValue("@notes", Get(body, "notes"));
             }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Contract not found"));
         await audit.LogAsync(http, "contract.updated", "Contract", id, ct: ct);
         _ = events.Publish(
-            GetCompanyId(http).ToString(CultureInfo.InvariantCulture),
+            companyId.ToString(CultureInfo.InvariantCulture),
             "contract.updated",
             "contract",
             id.ToString(CultureInfo.InvariantCulture),
-            JsonSerializer.Serialize(new { contractId = id, companyId = GetCompanyId(http), status = Get(body, "status") }),
+            JsonSerializer.Serialize(new { contractId = id, companyId, status }),
             Get(body, "correlationId")?.ToString(),
             Get(body, "causationId")?.ToString(),
             Get(body, "contractNumber")?.ToString() ?? Get(body, "number")?.ToString());
@@ -15754,7 +15916,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         if (updatedRow is not null)
         {
             await commercial.CaptureContractVersionAsync(
-                GetCompanyId(http),
+                companyId,
                 id,
                 updatedRow,
                 Get(body, "sourceChannel")?.ToString(),
@@ -15773,17 +15935,55 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         var denied = RequirePermission(http, "rate_card.create");
         if (denied is not null) return denied;
-        var rate = Convert.ToDouble(Get(body, "baseRate") ?? 0);
-        if (rate < 0) return Results.BadRequest(ApiResponse<object>.Fail("Rate base rate must be non-negative"));
         var companyId = GetCompanyId(http);
+        var contract = await db.QuerySingleAsync(
+            @"SELECT customer_id, currency FROM contracts
+               WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL
+                 AND COALESCE(data_origin,'legacy_unverified') <> 'demo_seed'",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        if (contract is null) return Results.NotFound(ApiResponse<object>.Fail("Contract not found"));
+        if (!TryContractAmount(Get(body, "baseRate"), out var rate) || rate <= 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Rate base rate must be a positive number"));
+        decimal? minimumCharge = null;
+        if (!IsBlank(Get(body, "minimumCharge")))
+        {
+            if (!TryContractAmount(Get(body, "minimumCharge"), out var minimum) || minimum < 0)
+                return Results.BadRequest(ApiResponse<object>.Fail("Minimum charge must be a non-negative number"));
+            minimumCharge = minimum;
+        }
+        decimal? fuelPercent = null;
+        if (!IsBlank(Get(body, "fuelSurchargePercent")))
+        {
+            if (!TryContractAmount(Get(body, "fuelSurchargePercent"), out var percent) || percent is < 0 or > 100)
+                return Results.BadRequest(ApiResponse<object>.Fail("Fuel surcharge percent must be between 0 and 100"));
+            fuelPercent = percent;
+        }
+        var currency = (!IsBlank(Get(body, "currency")) ? Get(body, "currency") : contract["currency"])?.ToString()?.Trim().ToUpperInvariant() ?? "USD";
+        if (currency.Length != 3 || !currency.All(char.IsLetter))
+            return Results.BadRequest(ApiResponse<object>.Fail("Currency must be a three-letter code"));
+        var effective = TryDateN(body, "effectiveDate") ?? DateOnly.FromDateTime(DateTime.UtcNow.Date);
+        var expiry = TryDateN(body, "expiryDate");
+        if (!IsBlank(Get(body, "expiryDate")) && expiry is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Rate expiry date is not valid"));
+        if (expiry.HasValue && expiry.Value <= effective)
+            return Results.BadRequest(ApiResponse<object>.Fail("Rate expiry date must be after effective date"));
         var rateCode = !IsBlank(Get(body, "rateCode")) ? Get(body, "rateCode")!.ToString()! : $"RATE-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        var rateStatus = !IsBlank(Get(body, "status")) ? Get(body, "status")!.ToString()!.Trim() : "Active";
+        if (rateStatus is not ("Active" or "Inactive"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Rate status is not valid"));
+        var duplicate = await db.ScalarLongAsync(
+            @"SELECT
+                (SELECT COUNT(*) FROM contract_rates WHERE company_id=@companyId AND LOWER(rate_code)=LOWER(@code)) +
+                (SELECT COUNT(*) FROM rate_cards WHERE company_id=@companyId AND LOWER(rate_card_code)=LOWER(@code))",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@code", rateCode); }, ct);
+        if (duplicate > 0) return Results.Conflict(ApiResponse<object>.Fail("Rate code already exists"));
         var rateId = await db.InsertAsync(
             @"INSERT INTO contract_rates (company_id, contract_id, rate_code, rate_type, origin_zone, destination_zone,
-                vehicle_type, base_rate, minimum_charge, fuel_surcharge_percent, accessorial_type,
-                effective_date, expiry_date, status)
+                vehicle_type, currency, base_rate, minimum_charge, fuel_surcharge_percent, accessorial_type,
+                effective_date, expiry_date, status, data_origin)
               VALUES (@companyId, @contractId, @code, COALESCE(@type,'Per Mile'), @origin, @dest, @vehicleType,
-                @rate, @min, @fuelPct, @accessorial,
-                COALESCE(@effective, CURRENT_DATE), @expiry, COALESCE(@status,'Active'))",
+                @currency, @rate, @min, @fuelPct, @accessorial,
+                @effective, @expiry, COALESCE(@status,'Active'), 'manual_entry')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -15793,34 +15993,35 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                 c.Parameters.AddWithValue("@origin", Get(body, "originZone"));
                 c.Parameters.AddWithValue("@dest", Get(body, "destinationZone"));
                 c.Parameters.AddWithValue("@vehicleType", Get(body, "vehicleType"));
+                c.Parameters.AddWithValue("@currency", currency);
                 c.Parameters.AddWithValue("@rate", rate);
-                c.Parameters.AddWithValue("@min", Get(body, "minimumCharge"));
-                c.Parameters.AddWithValue("@fuelPct", Get(body, "fuelSurchargePercent"));
+                c.Parameters.AddWithValue("@min", (object?)minimumCharge ?? DBNull.Value);
+                c.Parameters.AddWithValue("@fuelPct", (object?)fuelPercent ?? DBNull.Value);
                 c.Parameters.AddWithValue("@accessorial", Get(body, "accessorialType"));
-                c.Parameters.AddWithValue("@effective", Get(body, "effectiveDate"));
-                c.Parameters.AddWithValue("@expiry", Get(body, "expiryDate"));
-                c.Parameters.AddWithValue("@status", Get(body, "status"));
+                c.Parameters.AddWithValue("@effective", effective);
+                c.Parameters.AddWithValue("@expiry", (object?)expiry ?? DBNull.Value);
+                c.Parameters.AddWithValue("@status", rateStatus);
             }, ct);
         await audit.LogAsync(http, "contract.rate.created", "Contract", id, ct: ct);
-        _ = spine.UpsertRateCardMirrorAsync(
+        await spine.UpsertRateCardMirrorAsync(
             companyId,
             rateCode,
             rateCode,
-            Get(body, "customerId") is null ? null : Convert.ToInt64(Get(body, "customerId")),
+            contract["customerId"] is null or DBNull ? null : Convert.ToInt64(contract["customerId"], CultureInfo.InvariantCulture),
             id,
             Get(body, "rateType")?.ToString(),
             Get(body, "accessorialType")?.ToString(),
             Get(body, "originZone")?.ToString(),
             Get(body, "destinationZone")?.ToString(),
             Get(body, "vehicleType")?.ToString(),
-            Get(body, "currency")?.ToString(),
-            (decimal)rate,
-            Get(body, "minimumCharge") is null ? null : Convert.ToDecimal(Get(body, "minimumCharge")),
-            Get(body, "fuelSurchargePercent") is null ? null : Convert.ToDecimal(Get(body, "fuelSurchargePercent")),
+            currency,
+            rate,
+            minimumCharge,
+            fuelPercent,
             Get(body, "accessorialType")?.ToString(),
-            TryDateN(body, "effectiveDate") ?? DateOnly.FromDateTime(DateTime.UtcNow),
-            TryDateN(body, "expiryDate"),
-            Get(body, "status")?.ToString(),
+            effective,
+            expiry,
+            rateStatus,
             Get(body, "correlationId")?.ToString(),
             Get(body, "causationId")?.ToString(),
             Get(body, "notes")?.ToString(),
@@ -15842,41 +16043,101 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         var denied = RequirePermission(http, "rate_card.update");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
-        var rateCode = !IsBlank(Get(body, "rateCode")) ? Get(body, "rateCode")!.ToString()! : $"RATE-{rateId}";
-        await db.ExecuteAsync(
-            @"UPDATE contract_rates SET rate_type=COALESCE(@type,rate_type), base_rate=COALESCE(@rate,base_rate),
-                minimum_charge=COALESCE(@min,minimum_charge), status=COALESCE(@status,status)
+        var current = await db.QuerySingleAsync(
+            @"SELECT cr.*, con.customer_id contract_customer_id
+                FROM contract_rates cr
+                JOIN contracts con ON con.id=cr.contract_id AND con.company_id=cr.company_id
+               WHERE cr.id=@rateId AND cr.contract_id=@contractId AND cr.company_id=@companyId
+                 AND COALESCE(cr.data_origin,'legacy_unverified') <> 'demo_seed'
+                 AND COALESCE(con.data_origin,'legacy_unverified') <> 'demo_seed'",
+            c => { c.Parameters.AddWithValue("@rateId", rateId); c.Parameters.AddWithValue("@contractId", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        if (current is null) return Results.NotFound(ApiResponse<object>.Fail("Contract rate not found"));
+        var rateCode = !IsBlank(Get(body, "rateCode")) ? Get(body, "rateCode")!.ToString()!.Trim() : current["rateCode"]!.ToString()!;
+        var rate = Convert.ToDecimal(current["baseRate"], CultureInfo.InvariantCulture);
+        if (!IsBlank(Get(body, "baseRate")) && (!TryContractAmount(Get(body, "baseRate"), out rate) || rate <= 0))
+            return Results.BadRequest(ApiResponse<object>.Fail("Rate base rate must be a positive number"));
+        var minimumCharge = current["minimumCharge"] is null or DBNull ? (decimal?)null : Convert.ToDecimal(current["minimumCharge"], CultureInfo.InvariantCulture);
+        if (!IsBlank(Get(body, "minimumCharge")))
+        {
+            if (!TryContractAmount(Get(body, "minimumCharge"), out var minimum) || minimum < 0)
+                return Results.BadRequest(ApiResponse<object>.Fail("Minimum charge must be a non-negative number"));
+            minimumCharge = minimum;
+        }
+        var fuelPercent = current["fuelSurchargePercent"] is null or DBNull ? (decimal?)null : Convert.ToDecimal(current["fuelSurchargePercent"], CultureInfo.InvariantCulture);
+        if (!IsBlank(Get(body, "fuelSurchargePercent")))
+        {
+            if (!TryContractAmount(Get(body, "fuelSurchargePercent"), out var percent) || percent is < 0 or > 100)
+                return Results.BadRequest(ApiResponse<object>.Fail("Fuel surcharge percent must be between 0 and 100"));
+            fuelPercent = percent;
+        }
+        var currency = (!IsBlank(Get(body, "currency")) ? Get(body, "currency") : current["currency"])!.ToString()!.Trim().ToUpperInvariant();
+        if (currency.Length != 3 || !currency.All(char.IsLetter))
+            return Results.BadRequest(ApiResponse<object>.Fail("Currency must be a three-letter code"));
+        var effective = !IsBlank(Get(body, "effectiveDate"))
+            ? TryDateN(body, "effectiveDate")
+            : current["effectiveDate"] is null or DBNull
+                ? DateOnly.FromDateTime(DateTime.UtcNow.Date)
+                : DateOnly.FromDateTime(Convert.ToDateTime(current["effectiveDate"], CultureInfo.InvariantCulture));
+        var expiry = !IsBlank(Get(body, "expiryDate")) ? TryDateN(body, "expiryDate") : current["expiryDate"] is null or DBNull ? null : DateOnly.FromDateTime(Convert.ToDateTime(current["expiryDate"], CultureInfo.InvariantCulture));
+        if (effective is null || !IsBlank(Get(body, "expiryDate")) && expiry is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Rate date is not valid"));
+        if (expiry.HasValue && expiry.Value <= effective.Value)
+            return Results.BadRequest(ApiResponse<object>.Fail("Rate expiry date must be after effective date"));
+        string? rateStatus = null;
+        if (!IsBlank(Get(body, "status")))
+        {
+            rateStatus = Get(body, "status")!.ToString()!.Trim();
+            if (rateStatus is not ("Active" or "Inactive"))
+                return Results.BadRequest(ApiResponse<object>.Fail("Rate status is not valid"));
+        }
+        var affected = await db.ExecuteAsync(
+            @"UPDATE contract_rates SET rate_code=@code, rate_type=COALESCE(@type,rate_type),
+                origin_zone=COALESCE(@origin,origin_zone), destination_zone=COALESCE(@destination,destination_zone),
+                vehicle_type=COALESCE(@vehicleType,vehicle_type), currency=@currency, base_rate=@rate,
+                minimum_charge=@min, fuel_surcharge_percent=@fuelPct,
+                accessorial_type=COALESCE(@accessorial,accessorial_type), effective_date=@effective,
+                expiry_date=@expiry, status=COALESCE(@status,status), data_origin='manual_entry', updated_at=NOW()
               WHERE id=@rateId AND contract_id=@contractId AND company_id=@companyId",
             c =>
             {
                 c.Parameters.AddWithValue("@rateId", rateId);
                 c.Parameters.AddWithValue("@contractId", id);
                 c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@code", rateCode);
                 c.Parameters.AddWithValue("@type", Get(body, "rateType"));
-                c.Parameters.AddWithValue("@rate", Get(body, "baseRate"));
-                c.Parameters.AddWithValue("@min", Get(body, "minimumCharge"));
-                c.Parameters.AddWithValue("@status", Get(body, "status"));
+                c.Parameters.AddWithValue("@origin", Get(body, "originZone"));
+                c.Parameters.AddWithValue("@destination", Get(body, "destinationZone"));
+                c.Parameters.AddWithValue("@vehicleType", Get(body, "vehicleType"));
+                c.Parameters.AddWithValue("@currency", currency);
+                c.Parameters.AddWithValue("@rate", rate);
+                c.Parameters.AddWithValue("@min", (object?)minimumCharge ?? DBNull.Value);
+                c.Parameters.AddWithValue("@fuelPct", (object?)fuelPercent ?? DBNull.Value);
+                c.Parameters.AddWithValue("@accessorial", Get(body, "accessorialType"));
+                c.Parameters.AddWithValue("@effective", effective.Value);
+                c.Parameters.AddWithValue("@expiry", (object?)expiry ?? DBNull.Value);
+                c.Parameters.AddWithValue("@status", (object?)rateStatus ?? DBNull.Value);
             }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Contract rate not found"));
         await audit.LogAsync(http, "contract.rate.updated", "Contract", id, ct: ct);
-        _ = spine.UpsertRateCardMirrorAsync(
+        await spine.UpsertRateCardMirrorAsync(
             companyId,
             rateCode,
             rateCode,
-            Get(body, "customerId") is null ? null : Convert.ToInt64(Get(body, "customerId")),
+            current["contractCustomerId"] is null or DBNull ? null : Convert.ToInt64(current["contractCustomerId"], CultureInfo.InvariantCulture),
             id,
-            Get(body, "rateType")?.ToString(),
-            Get(body, "accessorialType")?.ToString(),
-            Get(body, "originZone")?.ToString(),
-            Get(body, "destinationZone")?.ToString(),
-            Get(body, "vehicleType")?.ToString(),
-            Get(body, "currency")?.ToString(),
-            Get(body, "baseRate") is null ? 0m : Convert.ToDecimal(Get(body, "baseRate")),
-            Get(body, "minimumCharge") is null ? null : Convert.ToDecimal(Get(body, "minimumCharge")),
-            Get(body, "fuelSurchargePercent") is null ? null : Convert.ToDecimal(Get(body, "fuelSurchargePercent")),
-            Get(body, "accessorialType")?.ToString(),
-            TryDateN(body, "effectiveDate") ?? DateOnly.FromDateTime(DateTime.UtcNow),
-            TryDateN(body, "expiryDate"),
-            Get(body, "status")?.ToString(),
+            !IsBlank(Get(body, "rateType")) ? Get(body, "rateType")!.ToString() : current["rateType"]?.ToString(),
+            !IsBlank(Get(body, "accessorialType")) ? Get(body, "accessorialType")!.ToString() : current["accessorialType"]?.ToString(),
+            !IsBlank(Get(body, "originZone")) ? Get(body, "originZone")!.ToString() : current["originZone"]?.ToString(),
+            !IsBlank(Get(body, "destinationZone")) ? Get(body, "destinationZone")!.ToString() : current["destinationZone"]?.ToString(),
+            !IsBlank(Get(body, "vehicleType")) ? Get(body, "vehicleType")!.ToString() : current["vehicleType"]?.ToString(),
+            currency,
+            rate,
+            minimumCharge,
+            fuelPercent,
+            !IsBlank(Get(body, "accessorialType")) ? Get(body, "accessorialType")!.ToString() : current["accessorialType"]?.ToString(),
+            effective.Value,
+            expiry,
+            rateStatus ?? current["status"]?.ToString(),
             Get(body, "correlationId")?.ToString(),
             Get(body, "causationId")?.ToString(),
             Get(body, "notes")?.ToString(),
@@ -15897,8 +16158,13 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         var denied = RequirePermission(http, "rate_card.update");
         if (denied is not null) return denied;
-        await db.ExecuteAsync("UPDATE contract_rates SET status='Inactive' WHERE id=@rateId AND contract_id=@contractId AND company_id=@companyId",
+        var affected = await db.ExecuteAsync(@"UPDATE contract_rates SET status='Inactive', updated_at=NOW()
+              WHERE id=@rateId AND contract_id=@contractId AND company_id=@companyId
+                AND COALESCE(data_origin,'legacy_unverified') <> 'demo_seed'
+                AND EXISTS (SELECT 1 FROM contracts con WHERE con.id=@contractId AND con.company_id=@companyId
+                    AND con.deleted_at IS NULL AND COALESCE(con.data_origin,'legacy_unverified') <> 'demo_seed')",
             c => { c.Parameters.AddWithValue("@rateId", rateId); c.Parameters.AddWithValue("@contractId", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Contract rate not found"));
         await audit.LogAsync(http, "contract.rate.deleted", "Contract", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id = rateId }, "Contract rate deactivated"));
     }
@@ -15907,8 +16173,11 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         var denied = RequirePermission(http, "finance:manage");
         if (denied is not null) return denied;
-        await db.ExecuteAsync("UPDATE contracts SET status='Active' WHERE id=@id AND company_id=@companyId",
+        var affected = await db.ExecuteAsync(@"UPDATE contracts SET status='Active', data_origin='manual_entry', updated_at=NOW()
+              WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL
+                AND COALESCE(data_origin,'legacy_unverified') <> 'demo_seed'",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Contract not found"));
         await audit.LogAsync(http, "contract.activated", "Contract", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Contract activated"));
     }
@@ -15917,8 +16186,12 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         var denied = RequirePermission(http, "finance:manage");
         if (denied is not null) return denied;
-        await db.ExecuteAsync("UPDATE contracts SET status='Expired', expiry_date=CURRENT_DATE WHERE id=@id AND company_id=@companyId",
+        var affected = await db.ExecuteAsync(@"UPDATE contracts SET status='Expired', expiry_date=CURRENT_DATE,
+                    data_origin='manual_entry', updated_at=NOW()
+              WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL
+                AND COALESCE(data_origin,'legacy_unverified') <> 'demo_seed'",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Contract not found"));
         await audit.LogAsync(http, "contract.expired", "Contract", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Contract marked expired"));
     }
