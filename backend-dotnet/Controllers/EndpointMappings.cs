@@ -1544,23 +1544,26 @@ public static partial class EndpointMappings
         app.MapGet("/api/fuel/vehicle/{vehicleId:long}/summary", (HttpContext http, long vehicleId, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "fuel:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM fuel_transactions WHERE vehicle_id=@id AND company_id=@cid AND deleted_at IS NULL ORDER BY fuel_date DESC LIMIT 24", c => { c.Parameters.AddWithValue("@id", vehicleId); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct);
+            return OkRows(db, "SELECT * FROM fuel_transactions WHERE vehicle_id=@id AND company_id=@cid AND deleted_at IS NULL AND COALESCE(data_origin,'legacy_unverified') <> 'demo_seed' ORDER BY fuel_date DESC LIMIT 24", c => { c.Parameters.AddWithValue("@id", vehicleId); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct);
         });
         app.MapGet("/api/fuel/driver/{driverId:long}/summary", (HttpContext http, long driverId, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "fuel:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM fuel_transactions WHERE driver_id=@id AND company_id=@cid AND deleted_at IS NULL ORDER BY fuel_date DESC LIMIT 24", c => { c.Parameters.AddWithValue("@id", driverId); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct);
+            return OkRows(db, "SELECT * FROM fuel_transactions WHERE driver_id=@id AND company_id=@cid AND deleted_at IS NULL AND COALESCE(data_origin,'legacy_unverified') <> 'demo_seed' ORDER BY fuel_date DESC LIMIT 24", c => { c.Parameters.AddWithValue("@id", driverId); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct);
         });
         app.MapGet("/api/fuel/vehicle-summary", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "fuel:view") is { } denied) return Task.FromResult(denied);
             return OkRows(db,
-                @"SELECT ft.vehicle_id, v.vehicle_code, v.type vehicle_type,
+                @"SELECT ft.vehicle_id, v.vehicle_code, v.type vehicle_type, UPPER(ft.currency) currency, ft.unit,
                          COUNT(*) transactions, ROUND(SUM(ft.quantity),2) total_quantity,
                          ROUND(SUM(ft.total_cost),2) total_cost, ROUND(AVG(ft.unit_price),4) avg_unit_price,
-                         SUM(CASE WHEN ft.anomaly_status='Anomaly Detected' THEN 1 ELSE 0 END) anomaly_count
-                  FROM fuel_transactions ft LEFT JOIN vehicles v ON v.id=ft.vehicle_id
-                  WHERE ft.company_id=@cid AND ft.deleted_at IS NULL GROUP BY ft.vehicle_id, v.vehicle_code, v.type
+                         (SELECT COUNT(*) FROM fuel_anomalies fa
+                           WHERE fa.company_id=@cid AND fa.vehicle_id=ft.vehicle_id
+                             AND fa.data_origin='runtime_detector') anomaly_count
+                  FROM fuel_transactions ft LEFT JOIN vehicles v ON v.id=ft.vehicle_id AND v.company_id=ft.company_id
+                  WHERE ft.company_id=@cid AND ft.deleted_at IS NULL AND ft.data_origin IN ('manual_entry','provider_import')
+                  GROUP BY ft.vehicle_id, v.vehicle_code, v.type, UPPER(ft.currency), ft.unit
                   ORDER BY total_cost DESC LIMIT 20",
                 c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
@@ -1568,12 +1571,15 @@ public static partial class EndpointMappings
         {
             if (RequirePermission(http, "fuel:view") is { } denied) return Task.FromResult(denied);
             return OkRows(db,
-                @"SELECT ft.driver_id, d.full_name driver_name,
+                @"SELECT ft.driver_id, d.full_name driver_name, UPPER(ft.currency) currency, ft.unit,
                          COUNT(*) transactions, ROUND(SUM(ft.quantity),2) total_quantity,
                          ROUND(SUM(ft.total_cost),2) total_cost, ROUND(AVG(ft.unit_price),4) avg_unit_price,
-                         SUM(CASE WHEN ft.anomaly_status='Anomaly Detected' THEN 1 ELSE 0 END) anomaly_count
-                  FROM fuel_transactions ft LEFT JOIN drivers d ON d.id=ft.driver_id
-                  WHERE ft.company_id=@cid AND ft.deleted_at IS NULL GROUP BY ft.driver_id, d.full_name
+                         (SELECT COUNT(*) FROM fuel_anomalies fa
+                           WHERE fa.company_id=@cid AND fa.driver_id=ft.driver_id
+                             AND fa.data_origin='runtime_detector') anomaly_count
+                  FROM fuel_transactions ft LEFT JOIN drivers d ON d.id=ft.driver_id AND d.company_id=ft.company_id
+                  WHERE ft.company_id=@cid AND ft.deleted_at IS NULL AND ft.data_origin IN ('manual_entry','provider_import')
+                  GROUP BY ft.driver_id, d.full_name, UPPER(ft.currency), ft.unit
                   ORDER BY total_cost DESC LIMIT 20",
                 c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
@@ -14794,23 +14800,60 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         if (RequirePermission(http, "fuel:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
-        var row = await db.QuerySingleAsync(
+        var counts = await db.QuerySingleAsync(
             @"SELECT
-                CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN fuel_date::date=CURRENT_DATE THEN total_cost ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) fuel_spend_today,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN fuel_date >= DATE_TRUNC('month', CURRENT_DATE) THEN total_cost ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) fuel_spend_this_month,
-                CONCAT('$', TO_CHAR((COALESCE((SELECT SUM(estimated_cost) FROM idling_events WHERE company_id=@cid AND started_at::date=CURRENT_DATE),0))::numeric, 'FM9,999,999,990.00')) idle_cost_today,
-                COALESCE((SELECT ROUND(SUM(duration_minutes),0) FROM idling_events WHERE company_id=@cid AND started_at::date=CURRENT_DATE),0) idle_hours_today,
-                ROUND(AVG(quantity / NULLIF(total_cost,0) * unit_price),2) average_mpg_placeholder,
-                COUNT(*) fuel_transactions,
-                (SELECT COUNT(*) FROM fuel_anomalies WHERE company_id=@cid AND status='Open') fuel_anomalies,
-                (SELECT COUNT(DISTINCT vehicle_id) FROM idling_events WHERE company_id=@cid AND threshold_status='Excessive') high_idle_vehicles,
-                (SELECT COUNT(DISTINCT driver_id) FROM fuel_transactions WHERE company_id=@cid AND anomaly_status='Anomaly Detected') high_fuel_drivers,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(total_cost) / NULLIF(SUM(quantity),0),0))::numeric, 'FM9,999,999,990.0000')) cost_per_gallon,
-                'Integration Ready' fuel_card_import_status,
-                CONCAT('$', TO_CHAR((COALESCE((SELECT SUM(estimated_loss) FROM fuel_anomalies WHERE company_id=@cid AND status='Open'),0))::numeric, 'FM9,999,999,990.00')) estimated_savings_opportunity
-              FROM fuel_transactions WHERE company_id=@cid AND deleted_at IS NULL",
+                (SELECT COUNT(*) FROM fuel_transactions
+                  WHERE company_id=@cid AND deleted_at IS NULL
+                    AND data_origin IN ('manual_entry','provider_import')) fuel_transactions,
+                (SELECT COUNT(*) FROM fuel_transactions
+                  WHERE company_id=@cid AND deleted_at IS NULL AND data_origin='legacy_unverified') legacy_unverified_transactions,
+                (SELECT COUNT(*) FROM fuel_anomalies
+                  WHERE company_id=@cid AND LOWER(status) IN ('open','under review')
+                    AND data_origin='runtime_detector') open_anomalies,
+                (SELECT COUNT(DISTINCT vehicle_id) FROM idling_events
+                  WHERE company_id=@cid AND deleted_at IS NULL AND LOWER(threshold_status)='excessive'
+                    AND data_origin IN ('manual_entry','telematics_event')) high_idle_vehicles,
+                (SELECT COUNT(*) FROM idling_events
+                  WHERE company_id=@cid AND deleted_at IS NULL AND started_at::date=CURRENT_DATE
+                    AND data_origin IN ('manual_entry','telematics_event')) idling_events_today",
             c => c.Parameters.AddWithValue("@cid", companyId), ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
+        var fuelByCurrencyAndUnit = await db.QueryAsync(
+            @"SELECT UPPER(currency) currency, unit,
+                     ROUND(SUM(CASE WHEN fuel_date::date=CURRENT_DATE THEN total_cost ELSE 0 END),2) spend_today,
+                     ROUND(SUM(CASE WHEN fuel_date >= DATE_TRUNC('month',CURRENT_DATE) THEN total_cost ELSE 0 END),2) spend_this_month,
+                     ROUND(SUM(CASE WHEN fuel_date >= DATE_TRUNC('month',CURRENT_DATE) THEN quantity ELSE 0 END),3) quantity_this_month,
+                     ROUND(SUM(CASE WHEN fuel_date >= DATE_TRUNC('month',CURRENT_DATE) THEN total_cost ELSE 0 END)
+                         / NULLIF(SUM(CASE WHEN fuel_date >= DATE_TRUNC('month',CURRENT_DATE) THEN quantity ELSE 0 END),0),4) average_unit_price
+               FROM fuel_transactions
+               WHERE company_id=@cid AND deleted_at IS NULL
+                 AND data_origin IN ('manual_entry','provider_import')
+               GROUP BY UPPER(currency), unit
+               ORDER BY UPPER(currency), unit",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        var idlingByCurrency = await db.QueryAsync(
+            @"SELECT UPPER(currency) currency,
+                     ROUND(SUM(duration_minutes),1) duration_minutes,
+                     ROUND(SUM(estimated_cost),2) recorded_estimated_cost,
+                     COUNT(*) event_count,
+                     SUM(CASE WHEN cost_evidence_status='Unavailable' THEN 1 ELSE 0 END) cost_unavailable_count
+               FROM idling_events
+               WHERE company_id=@cid AND deleted_at IS NULL AND started_at::date=CURRENT_DATE
+                 AND data_origin IN ('manual_entry','telematics_event')
+               GROUP BY UPPER(currency)
+               ORDER BY UPPER(currency)",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            fuelTransactions = counts?.GetValueOrDefault("fuelTransactions") ?? 0,
+            legacyUnverifiedTransactions = counts?.GetValueOrDefault("legacyUnverifiedTransactions") ?? 0,
+            openAnomalies = counts?.GetValueOrDefault("openAnomalies") ?? 0,
+            highIdleVehicles = counts?.GetValueOrDefault("highIdleVehicles") ?? 0,
+            idlingEventsToday = counts?.GetValueOrDefault("idlingEventsToday") ?? 0,
+            fuelByCurrencyAndUnit,
+            idlingByCurrency,
+            fuelCardImportStatus = "Not configured",
+            calculationPolicy = "Recorded fuel spend is separated by currency and unit. Idling cost is explicitly labeled as a recorded estimate."
+        }));
     }
 
     private static Task<IResult> FuelTransactions(HttpContext http, Database db, CancellationToken ct)
@@ -14818,13 +14861,15 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         if (RequirePermission(http, "fuel:view") is { } denied) return Task.FromResult(denied);
         return OkRows(db,
             @"SELECT ft.*, v.vehicle_code, d.full_name driver_name, j.job_code,
-                     CASE WHEN ft.anomaly_status='Anomaly Detected' THEN 'High' WHEN ft.anomaly_status='Under Review' THEN 'Medium' ELSE 'Low' END risk_heat_score,
-                     COALESCE(ft.recommended_action, CASE WHEN ft.anomaly_status='Anomaly Detected' THEN 'Investigate fuel quantity vs odometer' ELSE 'Normal transaction' END) recommended_action
+                     CASE WHEN ft.data_origin='manual_entry' THEN 'Manual entry'
+                          WHEN ft.data_origin='provider_import' THEN 'Provider import'
+                          ELSE 'Legacy origin unverified' END record_origin
               FROM fuel_transactions ft
-              LEFT JOIN vehicles v ON v.id=ft.vehicle_id
-              LEFT JOIN drivers d ON d.id=ft.driver_id
-              LEFT JOIN jobs j ON j.id=ft.job_id
+              LEFT JOIN vehicles v ON v.id=ft.vehicle_id AND v.company_id=ft.company_id
+              LEFT JOIN drivers d ON d.id=ft.driver_id AND d.company_id=ft.company_id
+              LEFT JOIN jobs j ON j.id=ft.job_id AND j.company_id=ft.company_id
               WHERE ft.company_id=@cid AND ft.deleted_at IS NULL
+                AND COALESCE(ft.data_origin,'legacy_unverified') <> 'demo_seed'
               ORDER BY ft.fuel_date DESC, ft.id DESC",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
@@ -14834,107 +14879,199 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         if (RequirePermission(http, "fuel:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         var record = await db.QuerySingleAsync(
-            @"SELECT ft.*, v.vehicle_code, d.full_name driver_name, j.job_code
+            @"SELECT ft.*, v.vehicle_code, d.full_name driver_name, j.job_code,
+                     CASE WHEN ft.data_origin='manual_entry' THEN 'Manual entry'
+                          WHEN ft.data_origin='provider_import' THEN 'Provider import'
+                          ELSE 'Legacy origin unverified' END record_origin
               FROM fuel_transactions ft
-              LEFT JOIN vehicles v ON v.id=ft.vehicle_id
-              LEFT JOIN drivers d ON d.id=ft.driver_id
-              LEFT JOIN jobs j ON j.id=ft.job_id
-              WHERE ft.id=@id AND ft.company_id=@cid AND ft.deleted_at IS NULL",
+              LEFT JOIN vehicles v ON v.id=ft.vehicle_id AND v.company_id=ft.company_id
+              LEFT JOIN drivers d ON d.id=ft.driver_id AND d.company_id=ft.company_id
+              LEFT JOIN jobs j ON j.id=ft.job_id AND j.company_id=ft.company_id
+              WHERE ft.id=@id AND ft.company_id=@cid AND ft.deleted_at IS NULL
+                AND COALESCE(ft.data_origin,'legacy_unverified') <> 'demo_seed'",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Fuel transaction not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
-            anomalies = await db.QueryAsync("SELECT * FROM fuel_anomalies WHERE fuel_transaction_id=@id ORDER BY created_at DESC", c => c.Parameters.AddWithValue("@id", id), ct),
+            anomalies = await db.QueryAsync(
+                @"SELECT * FROM fuel_anomalies
+                   WHERE fuel_transaction_id=@id AND company_id=@cid
+                     AND data_origin='runtime_detector'
+                   ORDER BY created_at DESC",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
             recommendations = await TenantModuleRecommendations(db, companyId, "fuel-idling", ct),
             auditTrail = await TenantAuditRows(db, companyId, "FuelTransaction", id, ct)
         }));
     }
 
+    private sealed record FuelTransactionInput(
+        string Number, long VehicleId, long? DriverId, long? JobId, long? RouteId,
+        DateOnly FuelDate, string FuelType, decimal Quantity, string Unit, decimal UnitPrice,
+        decimal TotalCost, string Currency, decimal? Odometer, string? Station,
+        string PaymentMethod, string? CardNumber, string? Region, string? Notes);
+
+    private static async Task<(FuelTransactionInput? input, string[] errors)> ValidateFuelTransaction(
+        long companyId, Dictionary<string, object?> body, Database db, CancellationToken ct,
+        Dictionary<string, object?>? current = null, long? currentId = null)
+    {
+        object? Value(string key) => body.ContainsKey(key) ? Get(body, key) : current?.GetValueOrDefault(key);
+        static string? TextValue(object? value) => value is null or DBNull ? null : value.ToString()?.Trim();
+        var errors = new List<string>();
+
+        var number = TextValue(Value("transactionNumber"));
+        if (string.IsNullOrWhiteSpace(number)) number = $"FT-{Guid.NewGuid():N}"[..23].ToUpperInvariant();
+        if (number.Length > 80) errors.Add("Transaction number cannot exceed 80 characters.");
+        else if (await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM fuel_transactions WHERE company_id=@companyId AND transaction_number=@number AND (@id::BIGINT IS NULL OR id<>@id)",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@number", number); c.Parameters.AddWithValue("@id", (object?)currentId ?? DBNull.Value); }, ct) > 0)
+            errors.Add("Transaction number already exists in this company.");
+
+        var vehicle = OptionalPositiveId(Value("vehicleId"));
+        if (!vehicle.valid || !vehicle.id.HasValue) errors.Add("Vehicle is required and must be a positive ID.");
+        var driver = OptionalPositiveId(Value("driverId"));
+        var job = OptionalPositiveId(Value("jobId"));
+        var route = OptionalPositiveId(Value("routeId"));
+        foreach (var (label, parsed, table) in new[]
+        {
+            ("Vehicle", vehicle, "vehicles"), ("Driver", driver, "drivers"),
+            ("Job", job, "jobs"), ("Route", route, "routes")
+        })
+        {
+            if (!parsed.valid) errors.Add($"{label} ID must be a positive integer.");
+            else if (parsed.id.HasValue && await db.ScalarLongAsync(
+                $"SELECT COUNT(*) FROM {table} WHERE id=@id AND company_id=@companyId",
+                c => { c.Parameters.AddWithValue("@id", parsed.id.Value); c.Parameters.AddWithValue("@companyId", companyId); }, ct) == 0)
+                errors.Add($"{label} must reference a record in this company.");
+        }
+
+        DateOnly fuelDate;
+        var rawDate = Value("fuelDate");
+        if (rawDate is DateOnly dateOnly) fuelDate = dateOnly;
+        else if (rawDate is DateTime dateTime) fuelDate = DateOnly.FromDateTime(dateTime);
+        else if (!DateOnly.TryParse(TextValue(rawDate), CultureInfo.InvariantCulture, DateTimeStyles.None, out fuelDate))
+        {
+            fuelDate = default;
+            errors.Add("Fuel date is required and must be a valid date.");
+        }
+        if (fuelDate > DateOnly.FromDateTime(DateTime.UtcNow.Date)) errors.Add("Fuel date cannot be in the future.");
+
+        if (!decimal.TryParse(TextValue(Value("quantity")), NumberStyles.Number, CultureInfo.InvariantCulture, out var quantity) || quantity <= 0)
+            errors.Add("Quantity must be greater than zero.");
+        if (!decimal.TryParse(TextValue(Value("unitPrice")), NumberStyles.Number, CultureInfo.InvariantCulture, out var unitPrice) || unitPrice < 0)
+            errors.Add("Unit price must be zero or greater.");
+        var totalCost = decimal.Round(quantity * unitPrice, 2, MidpointRounding.AwayFromZero);
+
+        var currency = (TextValue(Value("currency")) ?? string.Empty).ToUpperInvariant();
+        if (currency.Length != 3 || currency.Any(ch => ch is < 'A' or > 'Z')) errors.Add("Currency must be a three-letter ISO code.");
+        var unit = TextValue(Value("unit")) ?? "Gallons";
+        if (unit is not ("Gallons" or "Liters")) errors.Add("Unit must be Gallons or Liters.");
+        var fuelType = TextValue(Value("fuelType"));
+        if (string.IsNullOrWhiteSpace(fuelType) || fuelType.Length > 80) errors.Add("Fuel type is required and cannot exceed 80 characters.");
+
+        decimal? odometer = null;
+        var odometerText = TextValue(Value("odometer"));
+        if (!string.IsNullOrWhiteSpace(odometerText))
+        {
+            if (!decimal.TryParse(odometerText, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedOdometer) || parsedOdometer < 0)
+                errors.Add("Odometer must be zero or greater.");
+            else odometer = parsedOdometer;
+        }
+        var station = TextValue(Value("fuelStation"));
+        var payment = TextValue(Value("paymentMethod")) ?? "Unspecified";
+        var card = TextValue(Value("fuelCardNumber"));
+        var region = TextValue(Value("region"));
+        var notes = TextValue(Value("notes"));
+        if (station?.Length > 180) errors.Add("Fuel station cannot exceed 180 characters.");
+        if (payment.Length > 80) errors.Add("Payment method cannot exceed 80 characters.");
+        if (card?.Length > 80) errors.Add("Fuel card number cannot exceed 80 characters.");
+        if (region?.Length > 120) errors.Add("Region cannot exceed 120 characters.");
+        if (notes?.Length > 4000) errors.Add("Notes cannot exceed 4,000 characters.");
+
+        if (errors.Count > 0 || !vehicle.id.HasValue) return (null, errors.ToArray());
+        return (new FuelTransactionInput(number, vehicle.id.Value, driver.id, job.id, route.id, fuelDate,
+            fuelType!, quantity, unit, unitPrice, totalCost, currency, odometer, station,
+            payment, card, region, notes), []);
+    }
+
+    private static void BindFuelTransaction(NpgsqlCommand c, long companyId, FuelTransactionInput input)
+    {
+        c.Parameters.AddWithValue("@companyId", companyId);
+        c.Parameters.AddWithValue("@number", input.Number);
+        c.Parameters.AddWithValue("@vehicle", input.VehicleId);
+        c.Parameters.AddWithValue("@driver", (object?)input.DriverId ?? DBNull.Value);
+        c.Parameters.AddWithValue("@job", (object?)input.JobId ?? DBNull.Value);
+        c.Parameters.AddWithValue("@route", (object?)input.RouteId ?? DBNull.Value);
+        c.Parameters.AddWithValue("@date", input.FuelDate);
+        c.Parameters.AddWithValue("@fuelType", input.FuelType);
+        c.Parameters.AddWithValue("@qty", input.Quantity);
+        c.Parameters.AddWithValue("@unit", input.Unit);
+        c.Parameters.AddWithValue("@price", input.UnitPrice);
+        c.Parameters.AddWithValue("@total", input.TotalCost);
+        c.Parameters.AddWithValue("@currency", input.Currency);
+        c.Parameters.AddWithValue("@odometer", (object?)input.Odometer ?? DBNull.Value);
+        c.Parameters.AddWithValue("@station", (object?)input.Station ?? DBNull.Value);
+        c.Parameters.AddWithValue("@payment", input.PaymentMethod);
+        c.Parameters.AddWithValue("@card", (object?)input.CardNumber ?? DBNull.Value);
+        c.Parameters.AddWithValue("@region", (object?)input.Region ?? DBNull.Value);
+        c.Parameters.AddWithValue("@notes", (object?)input.Notes ?? DBNull.Value);
+    }
+
     private static async Task<IResult> CreateFuelTransaction(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        var qty = Convert.ToDouble(Get(body, "quantity") ?? 0);
-        var price = Convert.ToDouble(Get(body, "unitPrice") ?? 0);
-        var total = qty > 0 && price > 0 ? qty * price : Convert.ToDouble(Get(body, "totalCost") ?? qty * price);
         var companyId = GetCompanyId(http);
+        var (input, errors) = await ValidateFuelTransaction(companyId, body, db, ct);
+        if (input is null) return Results.BadRequest(ApiResponse<object>.Fail("Invalid fuel transaction", errors));
         var id = await db.InsertAsync(
-            @"INSERT INTO fuel_transactions (company_id, transaction_number, vehicle_id, driver_id, job_id, route_id,
-                fuel_date, fuel_type, gallons, quantity, unit, unit_price, total_cost, currency,
-                odometer, fuel_station, payment_method, fuel_card_number, region, anomaly_status, notes)
-              VALUES (@companyId, @number, @vehicle, @driver, @job, @route,
-                COALESCE(@date, CURRENT_DATE), COALESCE(@fuelType,'Diesel'), @qty, @qty, COALESCE(@unit,'Gallons'), @price, @total,
-                COALESCE(@currency,'USD'), @odometer, @station, COALESCE(@payment,'Fleet Card'), @card, @region,
-                COALESCE(@anomaly,'Normal'), @notes)",
-            c =>
-            {
-                c.Parameters.AddWithValue("@companyId", companyId);
-                c.Parameters.AddWithValue("@number", !IsBlank(Get(body, "transactionNumber")) ? Get(body, "transactionNumber") : $"FT-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
-                c.Parameters.AddWithValue("@vehicle", Get(body, "vehicleId"));
-                c.Parameters.AddWithValue("@driver", Get(body, "driverId"));
-                c.Parameters.AddWithValue("@job", Get(body, "jobId"));
-                c.Parameters.AddWithValue("@route", Get(body, "routeId"));
-                c.Parameters.AddWithValue("@date", Get(body, "fuelDate"));
-                c.Parameters.AddWithValue("@fuelType", Get(body, "fuelType"));
-                c.Parameters.AddWithValue("@qty", qty);
-                c.Parameters.AddWithValue("@unit", Get(body, "unit"));
-                c.Parameters.AddWithValue("@price", price);
-                c.Parameters.AddWithValue("@total", total);
-                c.Parameters.AddWithValue("@currency", Get(body, "currency"));
-                c.Parameters.AddWithValue("@odometer", Get(body, "odometer"));
-                c.Parameters.AddWithValue("@station", Get(body, "fuelStation"));
-                c.Parameters.AddWithValue("@payment", Get(body, "paymentMethod"));
-                c.Parameters.AddWithValue("@card", Get(body, "fuelCardNumber"));
-                c.Parameters.AddWithValue("@region", Get(body, "region"));
-                c.Parameters.AddWithValue("@anomaly", Get(body, "anomalyStatus"));
-                c.Parameters.AddWithValue("@notes", Get(body, "notes"));
-            }, ct);
-        await audit.LogAsync(http, "fuel.transaction.created", "FuelTransaction", id, ct: ct);
-        return Results.Created($"/api/fuel/transactions/{id}", ApiResponse<object>.Ok(new { id }, "Fuel transaction created"));
+            @"INSERT INTO fuel_transactions
+                (company_id,transaction_number,vehicle_id,driver_id,job_id,route_id,fuel_date,fuel_type,
+                 gallons,quantity,unit,unit_price,total_cost,currency,odometer,fuel_station,payment_method,
+                 fuel_card_number,region,anomaly_status,notes,data_origin)
+              VALUES (@companyId,@number,@vehicle,@driver,@job,@route,@date,@fuelType,
+                 @qty,@qty,@unit,@price,@total,@currency,@odometer,@station,@payment,@card,@region,
+                 'Not Evaluated',@notes,'manual_entry')",
+            c => BindFuelTransaction(c, companyId, input), ct);
+        await audit.LogAsync(http, "fuel.transaction.created", "FuelTransaction", id, "origin:manual_entry", ct);
+        return Results.Created($"/api/fuel/transactions/{id}", ApiResponse<object>.Ok(new { id, totalCost = input.TotalCost, dataOrigin = "manual_entry" }, "Fuel transaction recorded"));
     }
 
     private static async Task<IResult> UpdateFuelTransaction(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        var companyId = GetCompanyId(http);
+        var current = await db.QuerySingleAsync(
+            @"SELECT * FROM fuel_transactions
+               WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL
+                 AND COALESCE(data_origin,'legacy_unverified') <> 'demo_seed'",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        if (current is null) return Results.NotFound(ApiResponse<object>.Fail("Fuel transaction not found"));
+        var (input, errors) = await ValidateFuelTransaction(companyId, body, db, ct, current, id);
+        if (input is null) return Results.BadRequest(ApiResponse<object>.Fail("Invalid fuel transaction", errors));
         await db.ExecuteAsync(
-            @"UPDATE fuel_transactions SET vehicle_id=COALESCE(@vehicle,vehicle_id), driver_id=COALESCE(@driver,driver_id),
-                fuel_date=COALESCE(@date,fuel_date), fuel_type=COALESCE(@fuelType,fuel_type),
-                quantity=COALESCE(@qty,quantity), unit=COALESCE(@unit,unit), unit_price=COALESCE(@price,unit_price),
-                total_cost=COALESCE(@total,total_cost), odometer=COALESCE(@odometer,odometer),
-                fuel_station=COALESCE(@station,fuel_station), payment_method=COALESCE(@payment,payment_method),
-                region=COALESCE(@region,region), anomaly_status=COALESCE(@anomaly,anomaly_status), notes=COALESCE(@notes,notes)
-              WHERE id=@id AND company_id=@companyId",
-            c =>
-            {
-                c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
-                c.Parameters.AddWithValue("@vehicle", Get(body, "vehicleId"));
-                c.Parameters.AddWithValue("@driver", Get(body, "driverId"));
-                c.Parameters.AddWithValue("@date", Get(body, "fuelDate"));
-                c.Parameters.AddWithValue("@fuelType", Get(body, "fuelType"));
-                c.Parameters.AddWithValue("@qty", Get(body, "quantity"));
-                c.Parameters.AddWithValue("@unit", Get(body, "unit"));
-                c.Parameters.AddWithValue("@price", Get(body, "unitPrice"));
-                c.Parameters.AddWithValue("@total", Get(body, "totalCost"));
-                c.Parameters.AddWithValue("@odometer", Get(body, "odometer"));
-                c.Parameters.AddWithValue("@station", Get(body, "fuelStation"));
-                c.Parameters.AddWithValue("@payment", Get(body, "paymentMethod"));
-                c.Parameters.AddWithValue("@region", Get(body, "region"));
-                c.Parameters.AddWithValue("@anomaly", Get(body, "anomalyStatus"));
-                c.Parameters.AddWithValue("@notes", Get(body, "notes"));
-            }, ct);
-        await audit.LogAsync(http, "fuel.transaction.updated", "FuelTransaction", id, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Fuel transaction updated"));
+            @"UPDATE fuel_transactions
+                 SET transaction_number=@number,vehicle_id=@vehicle,driver_id=@driver,job_id=@job,route_id=@route,
+                     fuel_date=@date,fuel_type=@fuelType,gallons=@qty,quantity=@qty,unit=@unit,unit_price=@price,
+                     total_cost=@total,currency=@currency,odometer=@odometer,fuel_station=@station,
+                     payment_method=@payment,fuel_card_number=@card,region=@region,notes=@notes,updated_at=NOW()
+               WHERE id=@id AND company_id=@companyId",
+            c => { BindFuelTransaction(c, companyId, input); c.Parameters.AddWithValue("@id", id); }, ct);
+        await audit.LogAsync(http, "fuel.transaction.updated", "FuelTransaction", id, "recorded amounts recalculated", ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, totalCost = input.TotalCost }, "Fuel transaction updated"));
     }
 
     private static Task<IResult> IdlingEvents(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "fuel:view") is { } denied) return Task.FromResult(denied);
         return OkRows(db,
-            @"SELECT ie.*, v.vehicle_code, d.full_name driver_name, j.job_code
+            @"SELECT ie.*, v.vehicle_code, d.full_name driver_name, j.job_code,
+                     CASE WHEN ie.data_origin='manual_entry' THEN 'Manual entry'
+                          WHEN ie.data_origin='telematics_event' THEN 'Telematics event'
+                          ELSE 'Legacy origin unverified' END record_origin
               FROM idling_events ie
-              LEFT JOIN vehicles v ON v.id=ie.vehicle_id
-              LEFT JOIN drivers d ON d.id=ie.driver_id
-              LEFT JOIN jobs j ON j.id=ie.job_id
-              WHERE ie.company_id=@cid
+              LEFT JOIN vehicles v ON v.id=ie.vehicle_id AND v.company_id=ie.company_id
+              LEFT JOIN drivers d ON d.id=ie.driver_id AND d.company_id=ie.company_id
+              LEFT JOIN jobs j ON j.id=ie.job_id AND j.company_id=ie.company_id
+              WHERE ie.company_id=@cid AND ie.deleted_at IS NULL
+                AND COALESCE(ie.data_origin,'legacy_unverified') <> 'demo_seed'
               ORDER BY ie.started_at DESC",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
@@ -14944,11 +15081,15 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         if (RequirePermission(http, "fuel:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         var record = await db.QuerySingleAsync(
-            @"SELECT ie.*, v.vehicle_code, d.full_name driver_name
+            @"SELECT ie.*, v.vehicle_code, d.full_name driver_name,
+                     CASE WHEN ie.data_origin='manual_entry' THEN 'Manual entry'
+                          WHEN ie.data_origin='telematics_event' THEN 'Telematics event'
+                          ELSE 'Legacy origin unverified' END record_origin
               FROM idling_events ie
-              LEFT JOIN vehicles v ON v.id=ie.vehicle_id
-              LEFT JOIN drivers d ON d.id=ie.driver_id
-              WHERE ie.id=@id AND ie.company_id=@cid",
+              LEFT JOIN vehicles v ON v.id=ie.vehicle_id AND v.company_id=ie.company_id
+              LEFT JOIN drivers d ON d.id=ie.driver_id AND d.company_id=ie.company_id
+              WHERE ie.id=@id AND ie.company_id=@cid AND ie.deleted_at IS NULL
+                AND COALESCE(ie.data_origin,'legacy_unverified') <> 'demo_seed'",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Idling event not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -14961,50 +15102,125 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     private static async Task<IResult> CreateIdlingEvent(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         var companyId = GetCompanyId(http);
+        var vehicle = OptionalPositiveId(Get(body, "vehicleId"));
+        if (!vehicle.valid || !vehicle.id.HasValue || await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM vehicles WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL",
+                c => { c.Parameters.AddWithValue("@id", vehicle.id ?? 0); c.Parameters.AddWithValue("@companyId", companyId); }, ct) == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Vehicle must reference a record in this company."));
+        var driver = OptionalPositiveId(Get(body, "driverId"));
+        var job = OptionalPositiveId(Get(body, "jobId"));
+        var route = OptionalPositiveId(Get(body, "routeId"));
+        foreach (var (label, parsed, table) in new[] { ("Driver", driver, "drivers"), ("Job", job, "jobs"), ("Route", route, "routes") })
+        {
+            if (!parsed.valid)
+                return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", $"{label} ID must be a positive integer."));
+            if (parsed.id.HasValue && await db.ScalarLongAsync(
+                    $"SELECT COUNT(*) FROM {table} WHERE id=@id AND company_id=@companyId",
+                    c => { c.Parameters.AddWithValue("@id", parsed.id.Value); c.Parameters.AddWithValue("@companyId", companyId); }, ct) == 0)
+                return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", $"{label} must reference a record in this company."));
+        }
+        var durationText = Convert.ToString(Get(body, "durationMinutes"), CultureInfo.InvariantCulture);
+        if (!decimal.TryParse(durationText, NumberStyles.Number, CultureInfo.InvariantCulture, out var duration) || duration <= 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Duration must be greater than zero minutes."));
+        var fuelText = Convert.ToString(Get(body, "estimatedFuelBurn"), CultureInfo.InvariantCulture);
+        var fuel = string.IsNullOrWhiteSpace(fuelText) ? 0m : decimal.TryParse(fuelText, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedFuel) ? parsedFuel : -1m;
+        var costText = Convert.ToString(Get(body, "estimatedCost"), CultureInfo.InvariantCulture);
+        var cost = string.IsNullOrWhiteSpace(costText) ? 0m : decimal.TryParse(costText, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedCost) ? parsedCost : -1m;
+        if (fuel < 0 || cost < 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Estimated fuel and cost must be zero or greater."));
+        var currency = (Get(body, "currency")?.ToString()?.Trim() ?? string.Empty).ToUpperInvariant();
+        if (currency.Length != 3 || currency.Any(ch => ch is < 'A' or > 'Z'))
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Currency must be a three-letter ISO code."));
+        var rawThresholdStatus = Get(body, "thresholdStatus");
+        var threshold = rawThresholdStatus is null or DBNull ? "Normal" : rawThresholdStatus.ToString()?.Trim() ?? "Normal";
+        if (threshold is not ("Normal" or "Warning" or "Excessive"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Threshold status must be Normal, Warning, or Excessive."));
+        var riskText = Convert.ToString(Get(body, "riskScore"), CultureInfo.InvariantCulture);
+        var risk = string.IsNullOrWhiteSpace(riskText) ? 20m : decimal.TryParse(riskText, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedRisk) ? parsedRisk : -1m;
+        if (risk is < 0 or > 100)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Risk score must be between 0 and 100."));
+        var action = Get(body, "recommendedAction") is { } rawAction and not DBNull ? rawAction.ToString()?.Trim() : null;
+        if (action?.Length > 260)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Recommended action cannot exceed 260 characters."));
+        var location = Get(body, "locationDescription") is { } rawLocation and not DBNull ? rawLocation.ToString()?.Trim() : null;
+        if (location?.Length > 220)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Location cannot exceed 220 characters."));
+        var startedAt = DateTimeOffset.UtcNow;
+        var startText = Get(body, "startedAt") is { } rawStart and not DBNull ? rawStart.ToString() : null;
+        if (!string.IsNullOrWhiteSpace(startText) && !DateTimeOffset.TryParse(startText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out startedAt))
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Start time must be a valid timestamp."));
+        DateTimeOffset? endedAt = null;
+        var endText = Get(body, "endedAt") is { } rawEnd and not DBNull ? rawEnd.ToString() : null;
+        if (!string.IsNullOrWhiteSpace(endText))
+        {
+            if (!DateTimeOffset.TryParse(endText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsedEnd))
+                return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "End time must be a valid timestamp."));
+            endedAt = parsedEnd;
+        }
+        if (endedAt.HasValue && endedAt.Value < startedAt)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "End time cannot precede start time."));
         var id = await db.InsertAsync(
             @"INSERT INTO idling_events (company_id, event_number, vehicle_id, driver_id, job_id, route_id,
                 location_description, started_at, ended_at, duration_minutes, estimated_fuel_burn, estimated_cost,
-                currency, threshold_status, risk_score, recommended_action)
+                currency, threshold_status, risk_score, recommended_action, data_origin, cost_evidence_status)
               VALUES (@companyId, @number, @vehicle, @driver, @job, @route, @location,
-                COALESCE(@start, NOW()), @end, COALESCE(@duration,0), COALESCE(@fuel,0), COALESCE(@cost,0),
-                COALESCE(@currency,'USD'), COALESCE(@threshold,'Normal'), COALESCE(@risk,20), @action)",
+                COALESCE(@start, NOW()), @end, @duration, @fuel, @cost,
+                @currency, @threshold, COALESCE(@risk,20), @action, 'manual_entry', @costEvidence)",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@number", $"IDLE-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
-                c.Parameters.AddWithValue("@vehicle", Get(body, "vehicleId"));
-                c.Parameters.AddWithValue("@driver", Get(body, "driverId"));
-                c.Parameters.AddWithValue("@job", Get(body, "jobId"));
-                c.Parameters.AddWithValue("@route", Get(body, "routeId"));
-                c.Parameters.AddWithValue("@location", Get(body, "locationDescription"));
-                c.Parameters.AddWithValue("@start", Get(body, "startedAt"));
-                c.Parameters.AddWithValue("@end", Get(body, "endedAt"));
-                c.Parameters.AddWithValue("@duration", Get(body, "durationMinutes"));
-                c.Parameters.AddWithValue("@fuel", Get(body, "estimatedFuelBurn"));
-                c.Parameters.AddWithValue("@cost", Get(body, "estimatedCost"));
-                c.Parameters.AddWithValue("@currency", Get(body, "currency"));
-                c.Parameters.AddWithValue("@threshold", Get(body, "thresholdStatus"));
-                c.Parameters.AddWithValue("@risk", Get(body, "riskScore"));
-                c.Parameters.AddWithValue("@action", Get(body, "recommendedAction"));
+                c.Parameters.AddWithValue("@vehicle", vehicle.id.Value);
+                c.Parameters.AddWithValue("@driver", (object?)driver.id ?? DBNull.Value);
+                c.Parameters.AddWithValue("@job", (object?)job.id ?? DBNull.Value);
+                c.Parameters.AddWithValue("@route", (object?)route.id ?? DBNull.Value);
+                c.Parameters.AddWithValue("@location", (object?)location ?? DBNull.Value);
+                c.Parameters.AddWithValue("@start", startedAt);
+                c.Parameters.AddWithValue("@end", (object?)endedAt ?? DBNull.Value);
+                c.Parameters.AddWithValue("@duration", duration);
+                c.Parameters.AddWithValue("@fuel", fuel);
+                c.Parameters.AddWithValue("@cost", cost);
+                c.Parameters.AddWithValue("@currency", currency);
+                c.Parameters.AddWithValue("@threshold", threshold);
+                c.Parameters.AddWithValue("@risk", risk);
+                c.Parameters.AddWithValue("@action", (object?)action ?? DBNull.Value);
+                c.Parameters.AddWithValue("@costEvidence", cost > 0 ? "Recorded estimate" : "Unavailable");
             }, ct);
-        await audit.LogAsync(http, "idling.event.created", "IdlingEvent", id, ct: ct);
-        return Results.Created($"/api/fuel/idling-events/{id}", ApiResponse<object>.Ok(new { id }, "Idling event created"));
+        await audit.LogAsync(http, "idling.event.created", "IdlingEvent", id, "origin:manual_entry", ct);
+        return Results.Created($"/api/fuel/idling-events/{id}", ApiResponse<object>.Ok(new { id, dataOrigin = "manual_entry" }, "Idling event recorded"));
     }
 
     private static async Task<IResult> UpdateIdlingEvent(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        await db.ExecuteAsync(
+        var rawThreshold = Get(body, "thresholdStatus");
+        var threshold = rawThreshold is null or DBNull ? null : rawThreshold.ToString()?.Trim();
+        if (!string.IsNullOrWhiteSpace(threshold) && threshold is not ("Normal" or "Warning" or "Excessive"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Threshold status must be Normal, Warning, or Excessive."));
+        decimal? risk = null;
+        var rawRisk = Get(body, "riskScore");
+        if (rawRisk is not null and not DBNull)
+        {
+            if (!decimal.TryParse(rawRisk.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedRisk) || parsedRisk is < 0 or > 100)
+                return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Risk score must be between 0 and 100."));
+            risk = parsedRisk;
+        }
+        var action = Get(body, "recommendedAction") is { } rawAction and not DBNull ? rawAction.ToString()?.Trim() : null;
+        if (action?.Length > 260)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid idling event", "Recommended action cannot exceed 260 characters."));
+        var affected = await db.ExecuteAsync(
             @"UPDATE idling_events SET threshold_status=COALESCE(@threshold,threshold_status),
                 risk_score=COALESCE(@risk,risk_score), recommended_action=COALESCE(@action,recommended_action)
-              WHERE id=@id AND company_id=@companyId",
+              WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL
+                AND COALESCE(data_origin,'legacy_unverified') <> 'demo_seed'",
             c =>
             {
                 c.Parameters.AddWithValue("@id", id);
                 c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
-                c.Parameters.AddWithValue("@threshold", Get(body, "thresholdStatus"));
-                c.Parameters.AddWithValue("@risk", Get(body, "riskScore"));
-                c.Parameters.AddWithValue("@action", Get(body, "recommendedAction"));
+                c.Parameters.AddWithValue("@threshold", (object?)threshold ?? DBNull.Value);
+                c.Parameters.AddWithValue("@risk", (object?)risk ?? DBNull.Value);
+                c.Parameters.AddWithValue("@action", (object?)action ?? DBNull.Value);
             }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Idling event not found"));
         await audit.LogAsync(http, "idling.event.updated", "IdlingEvent", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Idling event updated"));
     }
@@ -15013,35 +15229,38 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         if (RequirePermission(http, "fuel:view") is { } denied) return Task.FromResult(denied);
         return OkRows(db,
-            @"SELECT fa.*, v.vehicle_code, d.full_name driver_name, ft.transaction_number
+            @"SELECT fa.*, v.vehicle_code, d.full_name driver_name, ft.transaction_number,
+                     CASE WHEN fa.data_origin='runtime_detector' THEN 'Runtime detector'
+                          ELSE 'Legacy origin unverified' END record_origin
               FROM fuel_anomalies fa
-              LEFT JOIN vehicles v ON v.id=fa.vehicle_id
-              LEFT JOIN drivers d ON d.id=fa.driver_id
-              LEFT JOIN fuel_transactions ft ON ft.id=fa.fuel_transaction_id
-              WHERE fa.company_id=@cid
+              LEFT JOIN vehicles v ON v.id=fa.vehicle_id AND v.company_id=fa.company_id
+              LEFT JOIN drivers d ON d.id=fa.driver_id AND d.company_id=fa.company_id
+              LEFT JOIN fuel_transactions ft ON ft.id=fa.fuel_transaction_id AND ft.company_id=fa.company_id
+              WHERE fa.company_id=@cid AND fa.data_origin='runtime_detector'
               ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], fa.severity), fa.created_at DESC",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
 
     private static async Task<IResult> FuelAnomalyReview(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        await db.ExecuteAsync("UPDATE fuel_anomalies SET status=COALESCE(@status,'Reviewed'), reviewed_at=NOW() WHERE id=@id AND company_id=@companyId",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@status", Get(body, "status")); }, ct);
+        var companyId = GetCompanyId(http);
+        var affected = await db.ExecuteAsync(
+            @"UPDATE fuel_anomalies SET status='Reviewed', reviewed_at=NOW()
+               WHERE id=@id AND company_id=@companyId
+                 AND LOWER(status) IN ('open','under review')
+                 AND data_origin='runtime_detector'",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        if (affected == 0) return Results.Conflict(ApiResponse<object>.Fail("Anomaly cannot be reviewed", "The record was not found in the active evidence queue."));
         await audit.LogAsync(http, "fuel.anomaly.reviewed", "FuelAnomaly", id, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Fuel anomaly reviewed"));
+        return Results.Ok(ApiResponse<object>.Ok(new { id, status = "Reviewed" }, "Fuel anomaly reviewed"));
     }
 
     private static Task<IResult> FuelImportPreview(HttpContext http, Dictionary<string, object?> body, CancellationToken ct)
     {
         if (RequirePermission(http, "fuel:manage") is { } denied) return Task.FromResult(denied);
-        return Task.FromResult(Results.Ok(ApiResponse<object>.Ok(new
-        {
-            source = "Fuel Card Import Placeholder",
-            detectedRows = 28,
-            validRows = 26,
-            warnings = new[] { "2 rows missing odometer readings", "Station names matched to known vendor list" },
-            columns = new[] { "transactionNumber", "vehicleCode", "fuelDate", "quantity", "unitPrice", "totalCost", "fuelStation", "fuelCardNumber" }
-        }, "Fuel card import preview generated")));
+        return Task.FromResult(Results.Json(
+            ApiResponse<object>.Fail("Fuel-card import is not configured", "Connect and verify a real provider account before importing provider data."),
+            statusCode: StatusCodes.Status501NotImplemented));
     }
 
     // =====================================================================

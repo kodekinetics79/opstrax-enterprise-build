@@ -454,7 +454,8 @@ CREATE TABLE IF NOT EXISTS fuel_transactions (
   total_cost DECIMAL(12,2) NOT NULL,
   idle_minutes INT NOT NULL DEFAULT 0,
   fuel_station VARCHAR(180) NULL,
-  transaction_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  transaction_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  data_origin VARCHAR(80) NULL
 );
 
 CREATE TABLE IF NOT EXISTS safety_events (
@@ -1150,6 +1151,9 @@ CREATE TABLE IF NOT EXISTS idling_events (
   estimated_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
   currency VARCHAR(10) NOT NULL DEFAULT 'USD',
   status VARCHAR(80) NOT NULL DEFAULT 'Open',
+  data_origin VARCHAR(80) NULL,
+  cost_evidence_status VARCHAR(40) NULL,
+  deleted_at TIMESTAMPTZ NULL,
   reviewed_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1164,6 +1168,9 @@ CREATE TABLE IF NOT EXISTS fuel_anomalies (
   severity VARCHAR(50) NOT NULL DEFAULT 'Medium',
   description TEXT NULL,
   estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
+  currency VARCHAR(10) NULL,
+  data_origin VARCHAR(80) NULL,
+  amount_evidence_status VARCHAR(40) NULL,
   status VARCHAR(80) NOT NULL DEFAULT 'Open',
   reviewed_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

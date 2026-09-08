@@ -10,6 +10,28 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
         await db.ExecuteAsync(
+            @"UPDATE fuel_transactions
+                 SET data_origin=CASE
+                     WHEN transaction_number LIKE 'FT-B5-%' THEN 'demo_seed'
+                     ELSE COALESCE(data_origin, 'legacy_unverified') END
+               WHERE data_origin IS NULL OR transaction_number LIKE 'FT-B5-%';
+              UPDATE idling_events
+                 SET data_origin=CASE
+                     WHEN event_number ~ '^IDLE-10[0-9]{2}$' THEN 'demo_seed'
+                     ELSE COALESCE(data_origin, 'legacy_unverified') END,
+                     cost_evidence_status=COALESCE(cost_evidence_status,
+                         CASE WHEN estimated_cost > 0 THEN 'Recorded estimate' ELSE 'Unavailable' END)
+               WHERE data_origin IS NULL OR cost_evidence_status IS NULL OR event_number ~ '^IDLE-10[0-9]{2}$';
+              UPDATE fuel_anomalies
+                 SET data_origin=CASE
+                     WHEN description LIKE 'AI fuel advisor detected anomaly:%' THEN 'demo_seed'
+                     ELSE COALESCE(data_origin, 'legacy_unverified') END,
+                     amount_evidence_status=COALESCE(amount_evidence_status,
+                         CASE WHEN estimated_loss > 0 THEN 'Recorded estimate' ELSE 'Unavailable' END)
+               WHERE data_origin IS NULL OR amount_evidence_status IS NULL
+                  OR description LIKE 'AI fuel advisor detected anomaly:%'",
+            ct: ct);
+        await db.ExecuteAsync(
             @"UPDATE cost_leakage_items
                  SET data_origin=COALESCE(data_origin, 'runtime_detector'),
                      amount_evidence_status=COALESCE(
@@ -58,6 +80,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         new("fuel_transactions", "notes",               "TEXT NULL"),
         new("fuel_transactions", "updated_at",          "TIMESTAMPTZ NULL"),
         new("fuel_transactions", "deleted_at",          "TIMESTAMPTZ NULL"),
+        new("fuel_transactions", "data_origin",         "VARCHAR(80) NULL"),
 
         new("expenses", "expense_number",       "VARCHAR(80) NULL"),
         new("expenses", "category_id",          "BIGINT NULL"),
@@ -115,6 +138,12 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         new("idling_events", "threshold_status",         "VARCHAR(80) NOT NULL DEFAULT 'Normal'"),
         new("idling_events", "risk_score",               "DECIMAL(6,2) NOT NULL DEFAULT 20"),
         new("idling_events", "recommended_action",       "VARCHAR(260) NULL"),
+        new("idling_events", "data_origin",              "VARCHAR(80) NULL"),
+        new("idling_events", "cost_evidence_status",     "VARCHAR(40) NULL"),
+        new("idling_events", "deleted_at",               "TIMESTAMPTZ NULL"),
+        new("fuel_anomalies", "currency",                "VARCHAR(10) NULL"),
+        new("fuel_anomalies", "data_origin",             "VARCHAR(80) NULL"),
+        new("fuel_anomalies", "amount_evidence_status",  "VARCHAR(40) NULL"),
         new("cost_margin_records", "carrier_cost",       "DECIMAL(12,2) NOT NULL DEFAULT 0"),
         new("cost_margin_records", "expense_total",      "DECIMAL(12,2) NOT NULL DEFAULT 0"),
         new("cost_margin_records", "delay_cost",         "DECIMAL(12,2) NOT NULL DEFAULT 0"),
@@ -144,16 +173,18 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             duration_minutes DECIMAL(8,2) NOT NULL DEFAULT 0, estimated_fuel_burn DECIMAL(10,3) NOT NULL DEFAULT 0,
             estimated_cost DECIMAL(12,2) NOT NULL DEFAULT 0, currency VARCHAR(10) NOT NULL DEFAULT 'USD',
             threshold_status VARCHAR(80) NOT NULL DEFAULT 'Normal', risk_score DECIMAL(6,2) NOT NULL DEFAULT 20,
-            recommended_action VARCHAR(260) NULL,
+            recommended_action VARCHAR(260) NULL, data_origin VARCHAR(80) NULL,
+            cost_evidence_status VARCHAR(40) NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NULL)",
+            updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL)",
 
         @"CREATE TABLE IF NOT EXISTS fuel_anomalies (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             fuel_transaction_id BIGINT NULL, vehicle_id BIGINT NULL, driver_id BIGINT NULL,
             anomaly_type VARCHAR(120) NOT NULL, severity VARCHAR(50) NOT NULL DEFAULT 'Medium',
             description TEXT NULL, estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
-            status VARCHAR(80) NOT NULL DEFAULT 'Open',
+            currency VARCHAR(10) NULL, data_origin VARCHAR(80) NULL,
+            amount_evidence_status VARCHAR(40) NULL, status VARCHAR(80) NOT NULL DEFAULT 'Open',
             reviewed_at TIMESTAMPTZ NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS expense_categories (
@@ -272,7 +303,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         @"INSERT INTO fuel_transactions
             (company_id, transaction_number, vehicle_id, driver_id, job_id, route_id,
              fuel_date, fuel_type, gallons, quantity, unit, unit_price, total_cost,
-             currency, odometer, fuel_station, payment_method, fuel_card_number, region, anomaly_status, notes)
+             currency, odometer, fuel_station, payment_method, fuel_card_number, region, anomaly_status, notes, data_origin)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<50)
           SELECT 1,
             'FT-B5-' || (1000+n),
@@ -291,14 +322,16 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             CASE WHEN n%3=0 THEN 'FC-' || LPAD((n)::TEXT,6,'0') ELSE NULL END,
             (ARRAY['Northern VA','DC Metro','Southern VA','Maryland','West VA'])[(n%5)+1],
             CASE WHEN n%9=0 THEN 'Anomaly Detected' WHEN n%7=0 THEN 'Under Review' ELSE 'Normal' END,
-            CASE WHEN n%9=0 THEN 'AI detected possible quantity discrepancy vs odometer reading.' ELSE NULL END
+            CASE WHEN n%9=0 THEN 'AI detected possible quantity discrepancy vs odometer reading.' ELSE NULL END,
+            'demo_seed'
           FROM seq
           WHERE (SELECT COUNT(*) FROM fuel_transactions WHERE transaction_number LIKE 'FT-B5-%') < 50",
 
         @"INSERT INTO idling_events
             (company_id, event_number, vehicle_id, driver_id, job_id, route_id,
              location_description, started_at, ended_at, duration_minutes,
-             estimated_fuel_burn, estimated_cost, currency, threshold_status, risk_score, recommended_action)
+             estimated_fuel_burn, estimated_cost, currency, threshold_status, risk_score, recommended_action,
+             data_origin, cost_evidence_status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<30)
           SELECT 1,
             'IDLE-' || (1000+n),
@@ -314,18 +347,20 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             CASE WHEN n%3=0 THEN 72+(n%20) ELSE 18+(n%30) END,
             CASE WHEN n%3=0 THEN 'Idle cost leakage detected — coach driver on idling policy'
                  WHEN n%5=0 THEN 'Review idle duration — approaching threshold'
-                 ELSE 'Normal idle within policy' END
+                 ELSE 'Normal idle within policy' END,
+            'demo_seed', 'Recorded estimate'
           FROM seq
           WHERE (SELECT COUNT(*) FROM idling_events) < 30",
 
         @"INSERT INTO fuel_anomalies
-            (company_id, fuel_transaction_id, vehicle_id, driver_id, anomaly_type, severity, description, estimated_loss, status)
+            (company_id, fuel_transaction_id, vehicle_id, driver_id, anomaly_type, severity, description,
+             estimated_loss, currency, data_origin, amount_evidence_status, status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<12)
           SELECT 1, ((n-1)%50)+1, ((n-1)%20)+1, ((n-1)%20)+1,
             (ARRAY['Quantity vs Odometer Mismatch','Unusual Station','High Unit Price','Repeated Fill-up','High Cost per Mile','Off-route Purchase'])[(n%6)+1],
             (ARRAY['Low','Medium','High','Critical'])[(n%4)+1],
             'AI fuel advisor detected anomaly: ' || (ARRAY['fuel quantity inconsistent with odometer delta','transaction at unusual station outside normal route corridor','unit price 18% above regional average — possible mis-key','duplicate fill-up within 4 hours of prior transaction','cost per mile significantly above fleet average','fuel purchase recorded outside active job route'])[(n%6)+1],
-            ROUND((28 + (n%120))::NUMERIC, 2),
+            ROUND((28 + (n%120))::NUMERIC, 2), 'USD', 'demo_seed', 'Recorded estimate',
             (ARRAY['Open','Under Review','Resolved','Closed'])[(n%4)+1]
           FROM seq
           WHERE (SELECT COUNT(*) FROM fuel_anomalies) < 12",

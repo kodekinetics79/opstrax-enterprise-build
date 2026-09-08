@@ -28,9 +28,9 @@ type Kind = "fuel" | "expenses" | "contracts" | "carriers" | "cost-margin" | "co
 /* ── Per-module tab definitions ── */
 const MODULE_TABS: Partial<Record<Kind, Array<{ label: string; columns: string[] }>>> = {
   fuel: [
-    { label: "Transactions",  columns: ["transactionNumber","vehicleCode","driverName","fuelType","quantity","unitPrice","totalCost","odometer","fuelStation","paymentMethod","anomalyStatus","fuelDate"] },
-    { label: "Idling Events", columns: ["eventNumber","vehicleCode","driverName","locationDescription","durationMinutes","estimatedCost","thresholdStatus","riskScore","recommendedAction"] },
-    { label: "Anomalies",     columns: ["anomalyType","severity","description","estimatedLoss","status"] },
+    { label: "Transactions",  columns: ["transactionNumber","recordOrigin","vehicleCode","driverName","fuelType","quantity","unit","unitPrice","totalCost","currency","odometer","fuelStation","paymentMethod","anomalyStatus","fuelDate"] },
+    { label: "Idling Events", columns: ["eventNumber","recordOrigin","vehicleCode","driverName","locationDescription","durationMinutes","estimatedCost","currency","costEvidenceStatus","thresholdStatus","riskScore"] },
+    { label: "Anomaly Findings", columns: ["anomalyType","recordOrigin","severity","description","estimatedLoss","currency","amountEvidenceStatus","status"] },
   ],
 };
 
@@ -46,16 +46,16 @@ const FILTER_OPTIONS: Record<Kind, string[]> = {
 
 const configs = {
   fuel: {
-    queryKey: "fuel", eyebrow: "Fuel & Idling", title: "Fleet fuel cost and idling intelligence", icon: <Fuel />,
-    description: "Fuel transactions, idling cost leakage, anomaly detection, driver and vehicle fuel profiles, and AI cost reduction recommendations.",
+    queryKey: "fuel", eyebrow: "Fuel & Idling Evidence", title: "Recorded fuel and idling evidence", icon: <Fuel />,
+    description: "Persisted fuel transactions and idling events with their source, currency, unit, and estimate status shown explicitly.",
     useRows: useFuelTransactions, useSummary: useFuelSummary, useDetail: useFuelTransaction,
     api: { create: fuelApi.createTransaction, update: (id: string | number, p: AnyRecord) => fuelApi.updateTransaction(id, p) },
     createLabel: "Record Transaction",
-    kpis: [["Spend Today","fuelSpendToday"],["Spend This Month","fuelSpendThisMonth"],["Idle Cost Today","idleCostToday"],["Transactions","fuelTransactions"],["Anomalies","fuelAnomalies"],["High Idle Vehicles","highIdleVehicles"],["Cost / Gallon","costPerGallon"],["Savings Opportunity","estimatedSavingsOpportunity"]],
-    columns: ["transactionNumber","vehicleCode","driverName","fuelType","quantity","unitPrice","totalCost","odometer","fuelStation","paymentMethod","anomalyStatus","fuelDate"],
-    fields: [["vehicleId","Vehicle ID"],["driverId","Driver ID"],["jobId","Job ID"],["fuelDate","Fuel Date"],["fuelType","Fuel Type"],["quantity","Gallons"],["unitPrice","Unit Price"],["totalCost","Total Cost"],["odometer","Odometer"],["fuelStation","Fuel Station"],["paymentMethod","Payment Method"],["region","Region"],["anomalyStatus","Anomaly Status"],["notes","Notes"]],
+    kpis: [["Evidence-Qualified Transactions","fuelTransactions"],["Open Runtime Findings","openAnomalies"],["High Idle Vehicles","highIdleVehicles"],["Idling Events Today","idlingEventsToday"],["Legacy Fuel Origin Unverified","legacyUnverifiedTransactions"]],
+    columns: ["transactionNumber","recordOrigin","vehicleCode","driverName","fuelType","quantity","unit","unitPrice","totalCost","currency","odometer","fuelStation","paymentMethod","anomalyStatus","fuelDate"],
+    fields: [["transactionNumber","Transaction #"],["vehicleId","Vehicle ID"],["driverId","Driver ID"],["jobId","Job ID"],["fuelDate","Fuel Date"],["fuelType","Fuel Type"],["quantity","Quantity"],["unit","Unit (Gallons or Liters)"],["unitPrice","Unit Price"],["currency","Currency"],["odometer","Odometer"],["fuelStation","Fuel Station"],["paymentMethod","Payment Method"],["region","Region"],["notes","Notes"]],
     actions: ["reviewAnomaly"],
-    sections: [["Fuel Anomalies","anomalies",["anomalyType","severity","estimatedLoss","status","createdAt"]]] as [string,string,string[]][],
+    sections: [["Recorded Anomaly Findings","anomalies",["anomalyType","severity","estimatedLoss","currency","amountEvidenceStatus","status","createdAt"]]] as [string,string,string[]][],
   },
   expenses: {
     queryKey: "expenses", eyebrow: "Expenses", title: "Operating expense register and approval workflow", icon: <WalletCards />,
@@ -149,7 +149,22 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
   const anomalyQ     = useQuery({ queryKey: ["fuel","anomaly-tab"],  queryFn: fuelApi.anomalies,      enabled: kind === "fuel" });
   const vehicleAggQ  = useQuery({ queryKey: ["fuel","vehicle-agg"],  queryFn: fuelApi.vehicleSummary, enabled: kind === "fuel" });
 
-  const detail = config.useDetail(selected?.id as string | number | undefined);
+  const tabDefs = MODULE_TABS[kind];
+  const tabSources: AnyRecord[][] = kind === "fuel"
+    ? [rowsQ.data ?? [], idlingQ.data ?? [], anomalyQ.data ?? []]
+    : [rowsQ.data ?? []];
+  const safeTab = Math.min(activeTab, tabSources.length - 1);
+  const standardDetail = config.useDetail(kind === "fuel" ? undefined : selected?.id as string | number | undefined);
+  const fuelDetail = useQuery({
+    queryKey: ["fuel", "selected-detail", safeTab, selected?.id],
+    queryFn: () => safeTab === 0
+      ? fuelApi.transaction(selected!.id as string | number)
+      : safeTab === 1
+        ? fuelApi.idlingEvent(selected!.id as string | number)
+        : Promise.resolve({ record: selected! }),
+    enabled: kind === "fuel" && Boolean(selected?.id),
+  });
+  const detail = kind === "fuel" ? fuelDetail : standardDetail;
   const qc     = useQueryClient();
 
   const invalidate = async () => {
@@ -171,11 +186,6 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
   });
 
   // Tab data sources
-  const tabDefs = MODULE_TABS[kind];
-  const tabSources: AnyRecord[][] = kind === "fuel"
-    ? [rowsQ.data ?? [], idlingQ.data ?? [], anomalyQ.data ?? []]
-    : [rowsQ.data ?? []];
-  const safeTab  = Math.min(activeTab, tabSources.length - 1);
   const tabRows  = tabSources[safeTab] ?? [];
   const tabCols  = tabDefs ? (tabDefs[safeTab]?.columns ?? config.columns) : config.columns;
 
@@ -186,7 +196,7 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
       String(row.transactionNumber || row.expenseNumber || row.contractNumber || row.carrierNumber || row.leakageNumber || "").toLowerCase().includes(searchLower) ||
       String(row.vehicleCode || row.driverName || row.customerName || row.vendorName || row.entityLabel || row.status || "").toLowerCase().includes(searchLower);
 
-    const statusVal = String(row.status ?? row.approvalStatus ?? row.complianceStatus ?? row.severity ?? row.threshold_status ?? "").toLowerCase();
+    const statusVal = String(row.status ?? row.approvalStatus ?? row.complianceStatus ?? row.severity ?? row.thresholdStatus ?? row.threshold_status ?? "").toLowerCase();
     const matchesFilter = filter === "All" || statusVal.includes(filterLower);
     return matchesSearch && matchesFilter;
   }), [tabRows, search, filter]);
@@ -239,6 +249,37 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
 
       {/* Module Chart */}
       <ModuleChart kind={kind} rows={rowsQ.data ?? []} vehicleSummary={vehicleAggQ.data as AnyRecord[] | undefined} />
+
+      {kind === "fuel" && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="panel p-4 text-sm text-slate-600">
+            <p className="font-semibold text-slate-900">Recorded fuel spend by currency and unit</p>
+            {((summaryData.fuelByCurrencyAndUnit as AnyRecord[] | undefined) ?? []).length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {((summaryData.fuelByCurrencyAndUnit as AnyRecord[]) ?? []).map((total) => (
+                  <span key={`${String(total.currency)}:${String(total.unit)}`} className="badge">
+                    {String(total.currency)} · {String(total.unit)} · today {Number(total.spendToday ?? 0).toLocaleString()} · month {Number(total.spendThisMonth ?? 0).toLocaleString()} · avg/unit {Number(total.averageUnitPrice ?? 0).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                  </span>
+                ))}
+              </div>
+            ) : <p className="mt-2">No non-demo fuel transactions are recorded.</p>}
+            <p className="mt-2 text-xs text-slate-500">Currencies and measurement units remain separate. No MPG result is claimed without distance evidence.</p>
+          </div>
+          <div className="panel p-4 text-sm text-slate-600">
+            <p className="font-semibold text-slate-900">Today’s recorded idling estimates by currency</p>
+            {((summaryData.idlingByCurrency as AnyRecord[] | undefined) ?? []).length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {((summaryData.idlingByCurrency as AnyRecord[]) ?? []).map((total) => (
+                  <span key={String(total.currency)} className="badge">
+                    {String(total.currency)} · estimated cost {Number(total.recordedEstimatedCost ?? 0).toLocaleString()} · {Number(total.durationMinutes ?? 0).toLocaleString()} minutes · {String(total.eventCount ?? 0)} events
+                  </span>
+                ))}
+              </div>
+            ) : <p className="mt-2">No non-demo idling events are recorded today.</p>}
+            <p className="mt-2 text-xs text-slate-500">Costs remain estimates supplied with each event; they are not certified savings.</p>
+          </div>
+        </div>
+      )}
 
       {kind === "expenses" && (
         <div className="panel p-4 text-sm text-slate-600">
@@ -308,7 +349,7 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
           {FILTER_OPTIONS[kind].map((opt) => <option key={opt}>{opt}</option>)}
         </select>
         <div className="ml-auto flex items-center gap-2">
-          {kind === "fuel" && <span className="text-xs text-slate-400">Anomaly detection active</span>}
+          {kind === "fuel" && <span className="text-xs text-slate-500">Fuel-card provider import: not configured</span>}
         </div>
       </div>
 
@@ -402,20 +443,20 @@ function ModuleChart({ kind, rows, vehicleSummary }: {
 }) {
   if (kind === "fuel") {
     const data = (vehicleSummary ?? []).slice(0, 10).map((r) => ({
-      name: String(r.vehicle_code ?? r.vehicleCode ?? `V${r.vehicle_id}`).slice(0, 9),
+      name: `${String(r.currency ?? "Unknown")} · ${String(r.unit ?? "Unit")} · ${String(r.vehicle_code ?? r.vehicleCode ?? `V${r.vehicle_id}`)}`.slice(0, 24),
       cost: Number(r.total_cost ?? r.totalCost ?? 0),
       anomalies: Number(r.anomaly_count ?? r.anomalyCount ?? 0),
     }));
     if (!data.length) return null;
     return (
       <div className="panel p-5">
-        <p className="section-title mb-4">Fuel Cost by Vehicle (Fleet Top 10)</p>
+        <p className="section-title mb-4">Recorded fuel cost by vehicle, currency and unit</p>
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
             <XAxis dataKey="name" tick={{ fill: chart.slate500, fontSize: 11 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fill: chart.slate500, fontSize: 11 }} axisLine={false} tickLine={false} width={52} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(1)}k` : v}`} />
-            <ChartTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: unknown) => [`$${Number(v ?? 0).toFixed(2)}`, "Fuel Cost"]} />
+            <YAxis tick={{ fill: chart.slate500, fontSize: 11 }} axisLine={false} tickLine={false} width={52} tickFormatter={(v: number) => v >= 1000 ? `${(v/1000).toFixed(1)}k` : String(v)} />
+            <ChartTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: unknown) => [Number(v ?? 0).toFixed(2), "Recorded cost"]} />
             <Bar dataKey="cost" radius={[3, 3, 0, 0]}>
               {data.map((d, i) => (
                 <Cell key={i} fill={d.anomalies > 0 ? "rgba(248,113,113,.75)" : "rgba(45,212,191,.7)"} />
@@ -423,7 +464,7 @@ function ModuleChart({ kind, rows, vehicleSummary }: {
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-        <p className="mt-2 text-[11px] text-slate-500">Red bars indicate vehicles with fuel anomalies detected.</p>
+        <p className="mt-2 text-[11px] text-slate-500">Each bar is scoped to one currency and measurement unit. Red indicates a persisted, non-demo anomaly finding.</p>
       </div>
     );
   }
@@ -512,8 +553,12 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
     record.entityLabel ?? record.entity_label ?? `Record ${record.id}`
   );
   const isExpense = config.queryKey === "expenses";
+  const isFuel = config.queryKey === "fuel";
   const isCostMargin = config.queryKey === "cost-margin";
   const isCostLeakage = config.queryKey === "cost-leakage";
+  const isFuelTransaction = isFuel && Boolean(record.transactionNumber);
+  const isFuelAnomaly = isFuel && Boolean(record.anomalyType);
+  const fuelAnomalyReviewable = ["open", "under review"].includes(String(record.status ?? "").toLowerCase());
   const expensePending = String(record.approvalStatus ?? "").toLowerCase() === "pending";
   const leakageOpen = String(record.status ?? "").toLowerCase() === "open";
 
@@ -534,16 +579,16 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={record.status ?? record.approvalStatus ?? record.complianceStatus} />
             {!isExpense && !isCostMargin && <RiskBadge risk={record.severity ?? record.marginRisk ?? record.riskScore ?? record.anomalyStatus} />}
-            <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : isCostMargin ? "Recorded financial evidence" : isCostLeakage ? String(record.recordOrigin ?? "Runtime detector") : "OpsTrax Finance Intelligence"}</span>
+            <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : isCostMargin ? "Recorded financial evidence" : isCostLeakage ? String(record.recordOrigin ?? "Runtime detector") : isFuel ? String(record.recordOrigin ?? "Origin unavailable") : "OpsTrax Finance Intelligence"}</span>
           </div>
 
           <div className="flex flex-wrap gap-3">
-            {!!config.createLabel && (!isExpense || expensePending) && (
+            {!!config.createLabel && (!isExpense || expensePending) && (!isFuel || isFuelTransaction) && (
               <button type="button" className="btn-primary" onClick={() => onEdit(record)}>
                 <PenTool className="h-4 w-4" /> Edit
               </button>
             )}
-            {config.actions.filter(() => (!isExpense || expensePending) && (!isCostLeakage || leakageOpen)).map((type) => (
+            {config.actions.filter(() => (!isExpense || expensePending) && (!isCostLeakage || leakageOpen) && (!isFuel || (isFuelAnomaly && fuelAnomalyReviewable))).map((type) => (
               <button key={type} type="button" className="btn-ghost" onClick={() => onAction(type, record)}>
                 {actionLabel(type)}
               </button>
@@ -563,7 +608,9 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
                   ? ["revenueEstimate","totalCost","marginEstimate","marginPercent","currency","invoiceCount","costRecordCount","dataOrigin"]
                   : isCostLeakage
                     ? ["estimatedLoss","currency","amountEvidenceStatus","category","severity","dataOrigin","actionsCount","openActionEstimatedSavings"]
-                  : ["totalCost","amount","baseRate","estimatedLoss","marginPercent","marginRisk","riskScore","anomalyStatus","complianceStatus","approvalStatus"]}
+                  : isFuel
+                    ? ["totalCost","currency","quantity","unit","unitPrice","estimatedCost","costEvidenceStatus","estimatedLoss","amountEvidenceStatus","dataOrigin","anomalyStatus"]
+                    : ["totalCost","amount","baseRate","estimatedLoss","marginPercent","marginRisk","riskScore","anomalyStatus","complianceStatus","approvalStatus"]}
             />
             <Info title="Recommended Action" record={record} keys={["recommendedAction","thresholdStatus","source","ownerRole","notes"]} />
           </div>
@@ -711,7 +758,7 @@ function actionLabel(type: string): string {
 
 function defaultForm(kind: Kind): AnyRecord {
   const today = new Date().toISOString().split("T")[0];
-  if (kind === "fuel")       return { fuelType: "Diesel", quantity: 50, unitPrice: 3.89, paymentMethod: "Fleet Card", anomalyStatus: "Normal", fuelDate: today };
+  if (kind === "fuel")       return { fuelType: "Diesel", quantity: "", unit: "Gallons", unitPrice: "", currency: "USD", paymentMethod: "Fleet Card", fuelDate: today };
   if (kind === "expenses")   return { categoryName: "", amount: "", currency: "", receiptStatus: "Missing", expenseDate: today };
   if (kind === "contracts")  return { contractType: "Customer", rateType: "Per Mile", baseRate: 2.85, currency: "USD", status: "Active", marginRisk: "Low", effectiveDate: today };
   if (kind === "carriers")   return { status: "Active", complianceStatus: "Compliant", contractStatus: "Active", onTimePercent: 90, safetyScore: 88, performanceScore: 86, riskScore: 20 };
