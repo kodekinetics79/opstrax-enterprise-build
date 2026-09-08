@@ -14,6 +14,17 @@ namespace Opstrax.Telematics.Gateway.Eventing;
 /// </summary>
 internal sealed class PostgresEventBackbone(string systemConnectionString) : IEventBackbone
 {
+    private static readonly HashSet<string> CustomerSafeSignalEvidenceHeaders = new(StringComparer.Ordinal)
+    {
+        "j1939.pgn",
+        "j1939.spns",
+        "j1939.source_address",
+        "j1939.destination_address",
+        "j1939.adapter_type",
+        "j1939.channel",
+        "j1939.capture_references",
+    };
+
     private readonly string _connectionString = string.IsNullOrWhiteSpace(systemConnectionString)
         ? throw new ArgumentException("A telematics system connection string is required.", nameof(systemConnectionString))
         : systemConnectionString;
@@ -41,6 +52,8 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
                 canonicalPayload.TenantId, canonicalPayload.CompanyId, canonicalPayload.DeviceId);
             if (!string.Equals(key, expectedKey, StringComparison.Ordinal))
                 throw new InvalidOperationException("Telemetry partition key does not match registry-resolved ownership.");
+            if (canonicalPayload.Signals.Count > 0 && !long.TryParse(canonicalPayload.DeviceId, out _))
+                throw new InvalidOperationException("Canonical device signals require the numeric registry device identity.");
         }
         else
         {
@@ -139,7 +152,101 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
         command.Parameters.AddWithValue("gateway_received_at", Utc(evt.ReceivedAtGatewayUtc));
         command.Parameters.AddWithValue("event_time", Utc(evt.OccurredAtDeviceUtc));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await PersistLatestSignalsAsync(
+            connection,
+            transaction,
+            evt,
+            envelope.EventId,
+            envelope.CorrelationId,
+            envelope.Headers,
+            cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task PersistLatestSignalsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CanonicalTelemetryEvent evt,
+        Guid eventId,
+        Guid correlationId,
+        IReadOnlyDictionary<string, string> headers,
+        CancellationToken cancellationToken)
+    {
+        if (evt.Signals.Count == 0)
+            return;
+
+        if (!long.TryParse(evt.DeviceId, out long deviceId))
+            throw new InvalidOperationException("Canonical device signals require the numeric registry device identity.");
+
+        const string sql = """
+            INSERT INTO latest_device_signals
+                (company_id,device_id,vehicle_id,signal_path,value_json,unit,availability,
+                 source,transport,protocol,adapter_name,adapter_version,trust_score,confidence,
+                 quality_flags,evidence_headers,event_id,correlation_id,observed_at,
+                 gateway_received_at,normalized_at,certification_claim,updated_at)
+            VALUES
+                (@company_id,@device_id,@vehicle_id,@signal_path,@value_json::jsonb,@unit,@availability,
+                 @source,@transport,@protocol,@adapter_name,@adapter_version,@trust_score,@confidence,
+                 @quality_flags::jsonb,@evidence_headers::jsonb,@event_id,@correlation_id,@observed_at,
+                 @gateway_received_at,@normalized_at,FALSE,NOW())
+            ON CONFLICT(company_id,device_id,signal_path) DO UPDATE SET
+                vehicle_id=EXCLUDED.vehicle_id,
+                value_json=EXCLUDED.value_json,
+                unit=EXCLUDED.unit,
+                availability=EXCLUDED.availability,
+                source=EXCLUDED.source,
+                transport=EXCLUDED.transport,
+                protocol=EXCLUDED.protocol,
+                adapter_name=EXCLUDED.adapter_name,
+                adapter_version=EXCLUDED.adapter_version,
+                trust_score=EXCLUDED.trust_score,
+                confidence=EXCLUDED.confidence,
+                quality_flags=EXCLUDED.quality_flags,
+                evidence_headers=EXCLUDED.evidence_headers,
+                event_id=EXCLUDED.event_id,
+                correlation_id=EXCLUDED.correlation_id,
+                observed_at=EXCLUDED.observed_at,
+                gateway_received_at=EXCLUDED.gateway_received_at,
+                normalized_at=EXCLUDED.normalized_at,
+                certification_claim=FALSE,
+                updated_at=NOW()
+            WHERE EXCLUDED.observed_at>latest_device_signals.observed_at
+               OR (EXCLUDED.observed_at=latest_device_signals.observed_at
+                   AND EXCLUDED.normalized_at>latest_device_signals.normalized_at);
+            """;
+        string qualityFlags = JsonSerializer.Serialize(evt.Quality);
+        string evidenceHeaders = JsonSerializer.Serialize(headers
+            .Where(entry => CustomerSafeSignalEvidenceHeaders.Contains(entry.Key) && entry.Value.Length <= 1024)
+            .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal));
+        foreach (var (signalPath, signal) in evt.Signals)
+        {
+            await using var command = new NpgsqlCommand(sql, connection, transaction);
+            command.Parameters.AddWithValue("company_id", evt.CompanyId);
+            command.Parameters.AddWithValue("device_id", deviceId);
+            command.Parameters.AddWithValue("vehicle_id", (object?)evt.VehicleId ?? DBNull.Value);
+            command.Parameters.AddWithValue("signal_path", signalPath);
+            command.Parameters.Add(new NpgsqlParameter("value_json", NpgsqlDbType.Text)
+            {
+                Value = signal.Value is null ? DBNull.Value : JsonSerializer.Serialize(signal.Value),
+            });
+            command.Parameters.AddWithValue("unit", signal.Unit);
+            command.Parameters.AddWithValue("availability", signal.Availability.ToString());
+            command.Parameters.AddWithValue("source", signal.Source.ToString());
+            command.Parameters.AddWithValue("transport", evt.Transport.ToString());
+            command.Parameters.AddWithValue("protocol", evt.ProtocolName);
+            command.Parameters.AddWithValue("adapter_name", evt.AdapterName);
+            command.Parameters.AddWithValue("adapter_version", evt.AdapterVersion);
+            command.Parameters.AddWithValue("trust_score", (decimal)Math.Clamp(evt.TrustScore, 0, 1));
+            command.Parameters.AddWithValue("confidence", (decimal)Math.Clamp(signal.Confidence, 0, 1));
+            command.Parameters.Add(new NpgsqlParameter("quality_flags", NpgsqlDbType.Text) { Value = qualityFlags });
+            command.Parameters.Add(new NpgsqlParameter("evidence_headers", NpgsqlDbType.Text) { Value = evidenceHeaders });
+            command.Parameters.AddWithValue("event_id", eventId);
+            command.Parameters.AddWithValue("correlation_id", correlationId);
+            command.Parameters.AddWithValue("observed_at", Utc(evt.OccurredAtDeviceUtc));
+            command.Parameters.AddWithValue("gateway_received_at", Utc(evt.ReceivedAtGatewayUtc));
+            command.Parameters.AddWithValue("normalized_at", Utc(evt.NormalizedAtUtc));
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     internal static string ClassifyCanonicalEventType(CanonicalTelemetryEvent evt)

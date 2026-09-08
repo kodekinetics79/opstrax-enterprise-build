@@ -1577,6 +1577,7 @@ export type TelematicsClusterRecord = {
   deviceFixAt: string;
   gatewayReceivedAt: string;
   routingReadiness: string;
+  engineSpeed: string;
   engineHours: string;
   odometer: string;
   fuelLevel: string;
@@ -1586,6 +1587,12 @@ export type TelematicsClusterRecord = {
   emissionsStatus: string;
   lastEngineDataAt: string;
   dataFreshnessStatus: string;
+  signalAvailability: string;
+  signalTransport: string;
+  signalAdapterVersion: string;
+  signalTrust: string;
+  signalEvidenceReference: string;
+  certificationBoundary: string;
   sensorType: string;
   latestReading: string;
   expectedRange: string;
@@ -2040,7 +2047,10 @@ function isValidPosition(position: AnyRecord | undefined) {
 function readableSource(source: unknown) {
   const value = String(source ?? "").trim();
   if (!value) return "Unknown source";
-  return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function normalizeProviderToken(value: string) {
@@ -2287,6 +2297,32 @@ function positionForDevice(device: DeviceCommandRecord, positions: AnyRecord[]):
   });
 }
 
+function signalCaptureReferences(headers: unknown) {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return "—";
+  const raw = (headers as AnyRecord)["j1939.capture_references"];
+  if (typeof raw !== "string" || !raw.trim()) return "—";
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return "—";
+    const references = parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+    return references.join(", ") || "—";
+  } catch {
+    return "—";
+  }
+}
+
+function readableSignalAvailability(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "—";
+  return raw.split(",").map((entry) => {
+    const separator = entry.lastIndexOf(":");
+    if (separator < 0) return entry;
+    const path = entry.slice(0, separator);
+    const status = entry.slice(separator + 1);
+    return `${path.split(".").at(-1) ?? path}: ${status}`;
+  }).join(", ");
+}
+
 // Build a cluster row from a real device + its real live position + real fault codes.
 // Every value is either a live field or an honest "—"/empty marker — no fake defaults.
 function toClusterRecord(
@@ -2321,7 +2357,16 @@ function toClusterRecord(
   const gatewayReceivedAt = position?.gateway_received_at;
   const lastPingAt = deviceFixAt ? String(deviceFixAt) : device.lastCheckIn;
   const engineStatus = position?.engine_status ? String(position.engine_status) : "—";
-  const hasEngineEvidence = troubleCodes.length > 0 || [position?.engine_status, position?.odometer_miles, position?.fuel_level, position?.battery_voltage].some((value) => value != null && String(value).trim() !== "");
+  const canonicalSignalCount = Number(position?.signal_count ?? 0);
+  const hasCanonicalSignals = Number.isInteger(canonicalSignalCount) && canonicalSignalCount > 0;
+  const hasEngineEvidence = troubleCodes.length > 0 || hasCanonicalSignals || [
+    position?.engine_status,
+    position?.engine_speed_rpm,
+    position?.engine_hours,
+    position?.odometer_miles,
+    position?.fuel_level,
+    position?.battery_voltage,
+  ].some((value) => value != null && String(value).trim() !== "");
   const requiredEvidenceAvailable = evidenceKind === "diagnostics" ? hasEngineEvidence : positionAvailable;
   // GPS and diagnostics have different evidence contracts. A vehicle-level fix is
   // never substituted for a source device's own evidence by the API.
@@ -2378,7 +2423,8 @@ function toClusterRecord(
     deviceFixAt: deviceFixAt ? String(deviceFixAt) : "—",
     gatewayReceivedAt: gatewayReceivedAt ? String(gatewayReceivedAt) : "—",
     routingReadiness,
-    engineHours: "—",
+    engineSpeed: position?.engine_speed_rpm != null ? `${position.engine_speed_rpm} rpm` : "—",
+    engineHours: position?.engine_hours != null ? `${position.engine_hours} h` : "—",
     odometer: position?.odometer_miles != null ? String(position.odometer_miles) : "—",
     fuelLevel: position?.fuel_level != null ? String(position.fuel_level) : "—",
     batteryVoltage: position?.battery_voltage != null ? String(position.battery_voltage) : "—",
@@ -2389,6 +2435,18 @@ function toClusterRecord(
     emissionsStatus: "Not evaluated",
     lastEngineDataAt: hasEngineEvidence ? lastPingAt : "—",
     dataFreshnessStatus,
+    signalAvailability: readableSignalAvailability(position?.signal_availability),
+    signalTransport: position?.transport ? String(position.transport) : "—",
+    signalAdapterVersion: position?.adapter_version ? String(position.adapter_version) : "—",
+    signalTrust: position?.trust_score != null && Number.isFinite(Number(position.trust_score))
+      ? `${Math.round(Number(position.trust_score) * 100)}%`
+      : "—",
+    signalEvidenceReference: signalCaptureReferences(position?.signal_evidence_headers),
+    certificationBoundary: hasCanonicalSignals
+      ? position?.certification_claim === true
+        ? "Certification claim present"
+        : "Operational observation only — not certification"
+      : "—",
     sensorType,
     // No standalone sensor-reading feed in the verified backend contract, so we
     // NEVER fabricate a reading or an expected-range setpoint. Both stay honest "—".
@@ -2476,6 +2534,7 @@ function toColdChainClusterRecord(
     deviceFixAt: "—",
     gatewayReceivedAt: lastPingAt || "—",
     routingReadiness: "Not applicable",
+    engineSpeed: "—",
     engineHours: "—",
     odometer: "—",
     fuelLevel: "—",
@@ -2485,6 +2544,12 @@ function toColdChainClusterRecord(
     emissionsStatus: "Not applicable",
     lastEngineDataAt: "—",
     dataFreshnessStatus: freshness,
+    signalAvailability: "—",
+    signalTransport: "—",
+    signalAdapterVersion: "—",
+    signalTrust: "—",
+    signalEvidenceReference: "—",
+    certificationBoundary: "—",
     sensorType: zone?.name || device.zoneName || "Temperature",
     latestReading: hasTemperature ? `${Number(temperature).toFixed(1)} °C` : "—",
     expectedRange,
@@ -2651,6 +2716,8 @@ export const telematicsService = {
         heading: row.position_heading,
         accuracy_meters: row.position_accuracy_meters,
         engine_status: row.position_engine_status,
+        engine_speed_rpm: row.position_engine_speed_rpm,
+        engine_hours: row.position_engine_hours,
         odometer_miles: row.position_odometer_miles,
         fuel_level: row.position_fuel_level,
         battery_voltage: row.position_battery_voltage,
@@ -2660,6 +2727,13 @@ export const telematicsService = {
         provider: row.position_provider,
         protocol: row.position_protocol,
         confidence: row.position_confidence,
+        transport: row.position_transport,
+        adapter_version: row.position_adapter_version,
+        signal_availability: row.position_signal_availability,
+        signal_evidence_headers: row.position_signal_evidence_headers,
+        trust_score: row.position_trust_score,
+        signal_count: row.position_signal_count,
+        certification_claim: row.position_certification_claim,
         device_fix_time: row.position_device_fix_time,
         gateway_received_at: row.position_gateway_received_at,
         freshness: row.position_freshness,

@@ -72,6 +72,14 @@ Canonical signals carry named `Available`, `Stale`, `ParameterSpecific`, `Error`
 
 The gateway publication seam writes the event to the tenant/company/device partition on `telemetry.normalized`, with bounded headers for PGN/SPN, source/destination address, adapter/channel and capture references. The PostgreSQL backbone stores these as `vehicle.signal` events. In-memory integration tests prove partitioning, tenant-filter isolation and rejection of mixed adapter evidence. Starting the physical CAN listener and proving these writes against an exact adapter/device/firmware candidate remain EXTERNAL HOLD.
 
+## Seventh implementation slice — durable customer signal visibility
+
+Stage 129 projects the latest canonical signal per tenant, registry device and exact signal path in the same transaction as canonical event storage. Newer observations win deterministically; a later explicit unavailable/error indicator clears the numeric value. The projection preserves source, CAN transport, protocol, adapter version, freshness, confidence, trust and approved capture provenance while fixing `certification_claim` at false. Forced row-level security gives the tenant application SELECT-only access and the system publisher SELECT/INSERT/UPDATE access without delete.
+
+The OBD/J1939 customer diagnostics page now consumes the three reviewed catalog paths and shows engine speed, engine hours, battery voltage, named signal state, transport, adapter version, trust and capture reference. A signal-only device is eligible for the diagnostics inventory without borrowing another device's GPS position. Every projected observation is labelled `Operational observation only — not certification`.
+
+This closes the software path from admitted CAN evidence through decode, canonical publication, durable latest-value projection, tenant API and customer UI. It does not close G5B certification. Exact physical adapter/device/firmware identity, authenticated acquisition, reference-value agreement, controlled vehicle testing, recovery, soak and qualified human acceptance remain `EXTERNAL HOLD`.
+
 ## DeviceOps registry integration
 
 Stage 115 provides the shared exact manufacturer/model/hardware revision/firmware and software-SHA candidate identity needed by a later PT40 or OEM certification candidate. It deliberately seeds no PT40, GT06, J1939 adapter or OEM record and its database contract fixes every engineering candidate at `ExternalHold` / `Unverified`. A candidate may be recorded only after the exact physical tuple is observed; tier promotion requires the evidence gates in this document and a separately frozen certification candidate.

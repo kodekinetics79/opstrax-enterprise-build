@@ -288,7 +288,8 @@ BEGIN
       ('2026_09_07_stage124_rma_support_ownership'),
       ('2026_09_07_stage125_device_spare_pool'),
       ('2026_09_07_stage126_device_support_tier_history'),
-      ('2026_09_08_stage128_device_compatibility_capability_catalog')) required(version)
+      ('2026_09_08_stage128_device_compatibility_capability_catalog'),
+      ('2026_09_08_stage129_latest_device_signal_projection')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
     RAISE EXCEPTION 'Clean-chain target ledgers are missing or duplicated';
@@ -981,6 +982,20 @@ BEGIN
                      OR physical_evidence_claim OR provider_evidence_claim OR certification_claim
                      OR capability_declaration_status NOT IN ('NotRecorded','EngineeringDeclaredUnverified')) THEN
     RAISE EXCEPTION 'Clean-chain Stage128 compatibility capability boundary failed';
+  END IF;
+
+  IF to_regclass('public.latest_device_signals') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.latest_device_signals')),false)
+     OR NOT has_table_privilege('opstrax_app','latest_device_signals','SELECT')
+     OR has_table_privilege('opstrax_app','latest_device_signals','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','latest_device_signals','SELECT,INSERT,UPDATE')
+     OR has_table_privilege('opstrax_system','latest_device_signals','DELETE')
+     OR (SELECT count(*) FROM pg_policies p WHERE p.schemaname='public'
+           AND p.tablename='latest_device_signals'
+           AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR EXISTS (SELECT 1 FROM latest_device_signals WHERE certification_claim) THEN
+    RAISE EXCEPTION 'Clean-chain Stage129 latest device signal projection boundary failed';
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])

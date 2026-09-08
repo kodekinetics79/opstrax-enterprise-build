@@ -13,7 +13,18 @@ on:
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/J1939*Tests.cs'
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/Opstrax.Telematics.Protocols.Tests.csproj'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939SignalPublisherTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/PostgresProductionDurabilityTests.cs'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj'
+      - 'database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql'
+      - 'backend-dotnet/Controllers/EndpointMappings.cs'
+      - 'backend-dotnet/Services/TelemetrySchemaService.cs'
+      - 'backend-dotnet.Tests/TelemetryClusterPaginationContractTests.cs'
+      - 'frontend/src/services/telematicsService.ts'
+      - 'frontend/src/pages/TelematicsCommandPage.tsx'
+      - 'frontend/scripts/test-j1939-signal-visibility-contract.mjs'
+      - 'frontend/package.json'
+      - 'tools/apply-neon-predeploy-migrations.sh'
+      - 'tools/test-predeploy-clean-chain.sh'
       - 'docs/telematics/j1939-can-acquisition.md'
       - 'docs/commercialization/wave5/G5B_J1939_PT40_EXECUTION.md'
       - '.github/workflows/j1939-signal-integrity.yml'
@@ -30,7 +41,18 @@ on:
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/J1939*Tests.cs'
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/Opstrax.Telematics.Protocols.Tests.csproj'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939SignalPublisherTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/PostgresProductionDurabilityTests.cs'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj'
+      - 'database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql'
+      - 'backend-dotnet/Controllers/EndpointMappings.cs'
+      - 'backend-dotnet/Services/TelemetrySchemaService.cs'
+      - 'backend-dotnet.Tests/TelemetryClusterPaginationContractTests.cs'
+      - 'frontend/src/services/telematicsService.ts'
+      - 'frontend/src/pages/TelematicsCommandPage.tsx'
+      - 'frontend/scripts/test-j1939-signal-visibility-contract.mjs'
+      - 'frontend/package.json'
+      - 'tools/apply-neon-predeploy-migrations.sh'
+      - 'tools/test-predeploy-clean-chain.sh'
       - 'docs/telematics/j1939-can-acquisition.md'
       - 'docs/commercialization/wave5/G5B_J1939_PT40_EXECUTION.md'
       - '.github/workflows/j1939-signal-integrity.yml'
@@ -61,4 +83,11 @@ jobs:
         run: >-
           dotnet test telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj
           --filter "FullyQualifiedName~J1939SignalPublisherTests"
+          --logger "console;verbosity=minimal"
+      - name: Run customer signal visibility contract
+        run: node frontend/scripts/test-j1939-signal-visibility-contract.mjs
+      - name: Run backend diagnostics visibility contract
+        run: >-
+          dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj
+          --filter "FullyQualifiedName~TelemetryClusterPaginationContractTests"
           --logger "console;verbosity=minimal"

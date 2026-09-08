@@ -60,7 +60,7 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
     eyebrow: "Telematics & IoT",
     title: "OBD / J1939",
     description: "Received OBD/J1939/CAN evidence with explicit protocol identity, active DTCs, freshness, and maintenance escalation. DTCs are not assumed to be emissions faults.",
-    columns: ["serialNumber", "vehicleCode", "deviceName", "protocolType", "troubleCodes", "engineStatus", "odometer", "fuelLevel", "batteryVoltage", "lastEngineDataAt", "dataFreshnessStatus"],
+    columns: ["serialNumber", "vehicleCode", "protocolType", "troubleCodes", "engineSpeed", "engineHours", "batteryVoltage", "signalAvailability", "lastEngineDataAt", "dataFreshnessStatus"],
     emptyTitle: "No diagnostics records found",
     emptySubtitle: "No engine or bus diagnostics are visible for the current filters.",
     searchPlaceholder: "Search vehicle, protocol, driver, fault code, freshness, or provider...",
@@ -165,9 +165,12 @@ const columnLabels: Record<string, string> = {
   protocolType: "Protocol",
   troubleCodes: "Trouble codes",
   engineStatus: "Engine status",
+  engineSpeed: "Engine speed",
+  engineHours: "Engine hours",
   odometer: "Odometer",
   fuelLevel: "Fuel level",
   batteryVoltage: "Battery voltage",
+  signalAvailability: "Signal state",
   lastEngineDataAt: "Last engine data",
 };
 
@@ -750,6 +753,12 @@ function TelematicsDetailDrawer({
           ["Protocol", row.protocolType],
           ["Trouble codes", row.troubleCodes.join(", ") || "None reported"],
           ["Battery", row.batteryVoltage],
+          ["Signal availability", row.signalAvailability],
+          ["Transport", row.signalTransport],
+          ["Adapter version", row.signalAdapterVersion],
+          ["Trust", row.signalTrust],
+          ["Capture reference", row.signalEvidenceReference],
+          ["Evidence boundary", row.certificationBoundary],
           ["Latest reading", row.latestReading],
           ["Expected range", row.expectedRange],
           ["Alert status", row.alertStatus],
@@ -759,6 +768,7 @@ function TelematicsDetailDrawer({
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
         <InfoPanel title="Engine / Powertrain" items={[
           ["Engine status", row.engineStatus],
+          ["Engine speed", row.engineSpeed],
           ["Engine hours", row.engineHours],
           ["Odometer", row.odometer],
           ["Fuel level", row.fuelLevel],

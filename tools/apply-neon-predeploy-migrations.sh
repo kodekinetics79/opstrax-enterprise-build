@@ -100,6 +100,7 @@ reapply_late_control_boundaries() {
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage125_device_spare_pool.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage126_device_support_tier_history.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql
 }
 
 MIGRATIONS=(
@@ -302,6 +303,8 @@ MIGRATIONS=(
   2026_09_07_stage126_device_support_tier_history
   # Engineering-declared capability catalog; physical, provider and certification claims remain false.
   2026_09_08_stage128_device_compatibility_capability_catalog
+  # Tenant-readable latest canonical signals; operational observations never become certification claims.
+  2026_09_08_stage129_latest_device_signal_projection
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -404,7 +407,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_09_07_stage124_rma_support_ownership|\
     2026_09_07_stage125_device_spare_pool|\
     2026_09_07_stage126_device_support_tier_history|\
-    2026_09_08_stage128_device_compatibility_capability_catalog) repair_migration=true ;;
+    2026_09_08_stage128_device_compatibility_capability_catalog|\
+    2026_09_08_stage129_latest_device_signal_projection) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -486,7 +490,8 @@ BEGIN
       ('2026_09_07_stage124_rma_support_ownership'),
       ('2026_09_07_stage125_device_spare_pool'),
       ('2026_09_07_stage126_device_support_tier_history'),
-      ('2026_09_08_stage128_device_compatibility_capability_catalog')) required(version)
+      ('2026_09_08_stage128_device_compatibility_capability_catalog'),
+      ('2026_09_08_stage129_latest_device_signal_projection')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -839,6 +844,22 @@ BEGIN
                      OR physical_evidence_claim OR provider_evidence_claim OR certification_claim
                      OR capability_declaration_status NOT IN ('NotRecorded','EngineeringDeclaredUnverified')) THEN
     RAISE EXCEPTION 'Stage128 compatibility capability boundary is missing or invalid';
+  END IF;
+  IF to_regclass('public.latest_device_signals') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.latest_device_signals')),false)
+     OR EXISTS (SELECT 1 FROM (VALUES
+          ('fk_stage129_signal_device'),('ck_stage129_signal_path'),
+          ('ck_stage129_signal_availability'),('ck_stage129_signal_value_shape'),
+          ('ck_stage129_signal_source'),('ck_stage129_signal_transport'),
+          ('ck_stage129_signal_protocol'),('ck_stage129_signal_adapter'),
+          ('ck_stage129_signal_scores'),('ck_stage129_signal_bounded_json'),
+          ('ck_stage129_signal_times'),('ck_stage129_signal_no_certification')) required(conname)
+        WHERE NOT EXISTS (SELECT 1 FROM pg_constraint actual
+          WHERE actual.conrelid=to_regclass('public.latest_device_signals')
+            AND actual.conname=required.conname))
+     OR EXISTS (SELECT 1 FROM latest_device_signals WHERE certification_claim) THEN
+    RAISE EXCEPTION 'Stage129 latest device signal projection boundary is missing or invalid';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -2044,7 +2065,18 @@ BEGIN
                   WHERE catalog_support_tier<>'Unverified'
                      OR certification_reference IS NOT NULL OR certification_date IS NOT NULL
                      OR physical_evidence_claim OR provider_evidence_claim OR certification_claim
-                     OR capability_declaration_status NOT IN ('NotRecorded','EngineeringDeclaredUnverified')) THEN
+                     OR capability_declaration_status NOT IN ('NotRecorded','EngineeringDeclaredUnverified'))
+     OR to_regclass('public.latest_device_signals') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.latest_device_signals')),false)
+     OR NOT has_table_privilege('opstrax_app','latest_device_signals','SELECT')
+     OR has_table_privilege('opstrax_app','latest_device_signals','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','latest_device_signals','SELECT,INSERT,UPDATE')
+     OR has_table_privilege('opstrax_system','latest_device_signals','DELETE')
+     OR (SELECT count(*) FROM pg_policies p WHERE p.schemaname='public'
+           AND p.tablename='latest_device_signals'
+           AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR EXISTS (SELECT 1 FROM latest_device_signals WHERE certification_claim) THEN
     RAISE EXCEPTION 'Stage76 is not the effective terminal telemetry boundary';
   END IF;
   IF EXISTS (

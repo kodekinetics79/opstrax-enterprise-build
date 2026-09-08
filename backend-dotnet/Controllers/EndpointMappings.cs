@@ -20174,15 +20174,52 @@ LEFT JOIN LATERAL (
     CASE WHEN lp.engine_status IS NOT NULL OR lp.odometer_miles IS NOT NULL
                    OR lp.fuel_level IS NOT NULL OR lp.battery_voltage IS NOT NULL
          THEN COALESCE(lp.device_fix_time,lp.event_time,lp.received_at) END,
+    signal_evidence.observed_at,
     (SELECT MAX(fc.last_observed_at) FROM fault_codes fc
       WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')
   ) observed_at
 ) diagnostic_evidence ON TRUE" : "";
+        var signalEvidenceJoin = cluster == "diagnostics" ? @"
+LEFT JOIN LATERAL (
+  SELECT MAX(s.observed_at) observed_at,
+         MAX(s.value_json#>>'{}') FILTER (
+           WHERE s.signal_path='Vehicle.Powertrain.CombustionEngine.Speed'
+             AND s.availability IN ('Available','Stale') AND jsonb_typeof(s.value_json)='number') engine_speed_rpm,
+         MAX(s.value_json#>>'{}') FILTER (
+           WHERE s.signal_path='Vehicle.Powertrain.CombustionEngine.EngineHours'
+             AND s.availability IN ('Available','Stale') AND jsonb_typeof(s.value_json)='number') engine_hours,
+         MAX(s.value_json#>>'{}') FILTER (
+           WHERE s.signal_path='Vehicle.LowVoltageBattery.CurrentVoltage'
+             AND s.availability IN ('Available','Stale') AND jsonb_typeof(s.value_json)='number') battery_voltage,
+         MAX(s.observed_at) FILTER (
+           WHERE s.signal_path='Vehicle.LowVoltageBattery.CurrentVoltage') battery_observed_at,
+         (ARRAY_AGG(s.source ORDER BY s.observed_at DESC,s.signal_path))[1] source,
+         (ARRAY_AGG(s.transport ORDER BY s.observed_at DESC,s.signal_path))[1] transport,
+         (ARRAY_AGG(s.protocol ORDER BY s.observed_at DESC,s.signal_path))[1] protocol,
+         (ARRAY_AGG(s.adapter_name ORDER BY s.observed_at DESC,s.signal_path))[1] adapter_name,
+         (ARRAY_AGG(s.adapter_version ORDER BY s.observed_at DESC,s.signal_path))[1] adapter_version,
+         (ARRAY_AGG(s.confidence ORDER BY s.observed_at DESC,s.signal_path))[1] confidence,
+         (ARRAY_AGG(s.trust_score ORDER BY s.observed_at DESC,s.signal_path))[1] trust_score,
+         (ARRAY_AGG(s.gateway_received_at ORDER BY s.observed_at DESC,s.signal_path))[1] gateway_received_at,
+         (ARRAY_AGG(s.evidence_headers ORDER BY s.observed_at DESC,s.signal_path))[1] evidence_headers,
+         STRING_AGG(s.signal_path || ':' || s.availability, ',' ORDER BY s.signal_path) signal_availability,
+         BOOL_OR(s.certification_claim) certification_claim,
+         COUNT(*) signal_count
+    FROM latest_device_signals s
+   WHERE s.company_id=e.company_id AND s.device_id=e.id
+     AND s.signal_path IN (
+       'Vehicle.Powertrain.CombustionEngine.Speed',
+       'Vehicle.Powertrain.CombustionEngine.EngineHours',
+       'Vehicle.LowVoltageBattery.CurrentVoltage')
+) signal_evidence ON TRUE" : "";
         var evidenceSearch = cluster switch
         {
             "gps" => " OR COALESCE(lp.address,'') ILIKE '%' || @search || '%'",
             "diagnostics" => @" OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial
-               AND (fc.code ILIKE '%' || @search || '%' OR COALESCE(fc.description,'') ILIKE '%' || @search || '%'))",
+               AND (fc.code ILIKE '%' || @search || '%' OR COALESCE(fc.description,'') ILIKE '%' || @search || '%'))
+               OR EXISTS (SELECT 1 FROM latest_device_signals s WHERE s.company_id=e.company_id AND s.device_id=e.id
+                 AND (s.signal_path ILIKE '%' || @search || '%' OR s.protocol ILIKE '%' || @search || '%'
+                   OR s.adapter_name ILIKE '%' || @search || '%'))",
             _ => "",
         };
         // Risk evidence is permission-scoped before it reaches ordering. Severity
@@ -20244,7 +20281,7 @@ LEFT JOIN LATERAL (
                   WHERE ev.company_id=c.company_id AND ev.case_id=c.id
                   ORDER BY ev.sequence_number DESC LIMIT 1),'Open')<>'Resolved'
 ) open_rma ON TRUE
-" + positionEvidenceJoin + diagnosticEvidenceJoin;
+" + positionEvidenceJoin + signalEvidenceJoin + diagnosticEvidenceJoin;
         var whereSql = @"
 WHERE e.company_id=@cid AND e.deleted_at IS NULL
   AND (@branchId::BIGINT IS NULL OR e.branch_id=@branchId)
@@ -20274,10 +20311,14 @@ WHERE e.company_id=@cid AND e.deleted_at IS NULL
        0 active_fault_count,NULL::TEXT active_fault_codes,
        lp.lat position_lat,lp.lng position_lng,lp.speed_mph position_speed_mph,lp.heading position_heading,
        lp.accuracy_meters position_accuracy_meters,NULL::TEXT position_engine_status,
+       NULL::TEXT position_engine_speed_rpm,NULL::TEXT position_engine_hours,
        NULL::NUMERIC position_odometer_miles,NULL::NUMERIC position_fuel_level,
        NULL::NUMERIC position_battery_voltage,lp.event_time position_event_time,
        lp.address position_address,lp.source position_source,lp.provider position_provider,
        NULL::TEXT position_protocol,lp.confidence position_confidence,
+       NULL::TEXT position_transport,NULL::TEXT position_adapter_version,
+       NULL::TEXT position_signal_availability,NULL::JSONB position_signal_evidence_headers,
+       NULL::NUMERIC position_trust_score,0::BIGINT position_signal_count,FALSE position_certification_claim,
        lp.device_fix_time position_device_fix_time,lp.gateway_received_at position_gateway_received_at,
        CASE WHEN lp.id IS NULL THEN 'none'
             WHEN EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 120 THEN 'live'
@@ -20289,12 +20330,26 @@ WHERE e.company_id=@cid AND e.deleted_at IS NULL
           FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active') active_fault_codes,
        NULL::NUMERIC position_lat,NULL::NUMERIC position_lng,NULL::NUMERIC position_speed_mph,NULL::SMALLINT position_heading,
        NULL::NUMERIC position_accuracy_meters,lp.engine_status position_engine_status,
+       signal_evidence.engine_speed_rpm position_engine_speed_rpm,
+       signal_evidence.engine_hours position_engine_hours,
        lp.odometer_miles position_odometer_miles,lp.fuel_level position_fuel_level,
-       lp.battery_voltage position_battery_voltage,
+       CASE WHEN signal_evidence.battery_observed_at IS NOT NULL
+                  AND signal_evidence.battery_observed_at>=COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,'-infinity'::TIMESTAMPTZ)
+            THEN signal_evidence.battery_voltage::NUMERIC ELSE lp.battery_voltage END position_battery_voltage,
        diagnostic_evidence.observed_at position_event_time,
-       NULL::TEXT position_address,lp.source position_source,lp.provider position_provider,
-       lp.protocol position_protocol,lp.confidence position_confidence,
-       lp.device_fix_time position_device_fix_time,lp.gateway_received_at position_gateway_received_at,
+       NULL::TEXT position_address,COALESCE(signal_evidence.source,lp.source) position_source,
+       COALESCE(signal_evidence.adapter_name,lp.provider) position_provider,
+       COALESCE(signal_evidence.protocol,lp.protocol) position_protocol,
+       COALESCE(signal_evidence.confidence,lp.confidence) position_confidence,
+       signal_evidence.transport position_transport,
+       signal_evidence.adapter_version position_adapter_version,
+       signal_evidence.signal_availability position_signal_availability,
+       signal_evidence.evidence_headers position_signal_evidence_headers,
+       signal_evidence.trust_score position_trust_score,
+       signal_evidence.signal_count position_signal_count,
+       COALESCE(signal_evidence.certification_claim,FALSE) position_certification_claim,
+       COALESCE(signal_evidence.observed_at,lp.device_fix_time) position_device_fix_time,
+       COALESCE(signal_evidence.gateway_received_at,lp.gateway_received_at) position_gateway_received_at,
        CASE WHEN diagnostic_evidence.observed_at IS NULL THEN 'none'
             WHEN EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) <= 120 THEN 'live'
             WHEN EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) <= 900 THEN 'delayed'

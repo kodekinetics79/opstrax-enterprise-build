@@ -145,6 +145,57 @@ public sealed class TelemetrySchemaService(Database db)
 
     private static readonly string[] Tables =
     [
+        @"CREATE TABLE IF NOT EXISTS latest_device_signals (
+            company_id BIGINT NOT NULL,
+            device_id BIGINT NOT NULL,
+            vehicle_id BIGINT NULL,
+            signal_path VARCHAR(240) NOT NULL,
+            value_json JSONB NULL,
+            unit VARCHAR(32) NOT NULL DEFAULT '',
+            availability VARCHAR(32) NOT NULL,
+            source VARCHAR(32) NOT NULL,
+            transport VARCHAR(32) NOT NULL,
+            protocol VARCHAR(80) NOT NULL,
+            adapter_name VARCHAR(120) NOT NULL,
+            adapter_version VARCHAR(40) NOT NULL,
+            trust_score NUMERIC(4,3) NOT NULL,
+            confidence NUMERIC(4,3) NOT NULL,
+            quality_flags JSONB NOT NULL DEFAULT '{}'::JSONB,
+            evidence_headers JSONB NOT NULL DEFAULT '{}'::JSONB,
+            event_id UUID NOT NULL,
+            correlation_id UUID NOT NULL,
+            observed_at TIMESTAMPTZ NOT NULL,
+            gateway_received_at TIMESTAMPTZ NOT NULL,
+            normalized_at TIMESTAMPTZ NOT NULL,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY(company_id,device_id,signal_path),
+            CONSTRAINT ck_stage129_runtime_signal_path CHECK (signal_path ~ '^[A-Za-z][A-Za-z0-9_.]{2,239}$'),
+            CONSTRAINT ck_stage129_runtime_signal_availability CHECK (
+              availability IN ('Available','Stale','ParameterSpecific','Error','NotAvailable')),
+            CONSTRAINT ck_stage129_runtime_signal_value_shape CHECK (
+              (availability IN ('Available','Stale') AND value_json IS NOT NULL)
+              OR (availability IN ('ParameterSpecific','Error','NotAvailable') AND value_json IS NULL)),
+            CONSTRAINT ck_stage129_runtime_signal_source CHECK (
+              source IN ('DirectDevice','VendorCloud','MobileApp','Simulator','Seed','Import','Manual')),
+            CONSTRAINT ck_stage129_runtime_signal_transport CHECK (
+              transport IN ('Tcp','Udp','Http','Mqtt','WebSocket','VendorWebhook','VendorPoll','Can')),
+            CONSTRAINT ck_stage129_runtime_signal_protocol CHECK (LENGTH(BTRIM(protocol)) BETWEEN 1 AND 80),
+            CONSTRAINT ck_stage129_runtime_signal_adapter CHECK (
+              LENGTH(BTRIM(adapter_name)) BETWEEN 1 AND 120
+              AND LENGTH(BTRIM(adapter_version)) BETWEEN 1 AND 40),
+            CONSTRAINT ck_stage129_runtime_signal_scores CHECK (
+              trust_score BETWEEN 0 AND 1 AND confidence BETWEEN 0 AND 1),
+            CONSTRAINT ck_stage129_runtime_signal_bounded_json CHECK (
+              pg_column_size(value_json)<=4096
+              AND pg_column_size(quality_flags)<=4096
+              AND pg_column_size(evidence_headers)<=16384),
+            CONSTRAINT ck_stage129_runtime_signal_times CHECK (
+              observed_at<=gateway_received_at+INTERVAL '5 minutes'
+              AND gateway_received_at<=normalized_at+INTERVAL '5 minutes'),
+            CONSTRAINT ck_stage129_runtime_no_certification CHECK (certification_claim=FALSE)
+        )",
+
         @"CREATE TABLE IF NOT EXISTS latest_vehicle_positions (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL,
@@ -703,6 +754,8 @@ public sealed class TelemetrySchemaService(Database db)
 
     private static readonly string[] Indexes =
     [
+        "CREATE INDEX IF NOT EXISTS ix_stage129_signal_device_observed ON latest_device_signals(company_id,device_id,observed_at DESC,signal_path)",
+        "CREATE INDEX IF NOT EXISTS ix_stage129_signal_vehicle_observed ON latest_device_signals(company_id,vehicle_id,observed_at DESC) WHERE vehicle_id IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_ta_company_status ON telemetry_alerts(company_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_ta_vehicle ON telemetry_alerts(vehicle_id, company_id)",
         "CREATE INDEX IF NOT EXISTS idx_ta_type ON telemetry_alerts(company_id, alert_type, vehicle_id)",

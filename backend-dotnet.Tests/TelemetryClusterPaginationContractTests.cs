@@ -22,6 +22,12 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains("var cluster = http.Request.Query[\"cluster\"]", source, StringComparison.Ordinal);
         Assert.Contains("\"diagnostics\" => \" AND diagnostic_evidence.observed_at IS NOT NULL\"", source, StringComparison.Ordinal);
         Assert.Contains("SELECT p.* FROM latest_vehicle_positions p", source, StringComparison.Ordinal);
+        Assert.Contains("FROM latest_device_signals s", source, StringComparison.Ordinal);
+        Assert.Contains("signal_evidence.observed_at", source, StringComparison.Ordinal);
+        Assert.Contains("Vehicle.Powertrain.CombustionEngine.EngineHours", source, StringComparison.Ordinal);
+        Assert.Contains("Vehicle.LowVoltageBattery.CurrentVoltage", source, StringComparison.Ordinal);
+        Assert.Contains("signal_evidence.signal_availability position_signal_availability", source, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(signal_evidence.certification_claim,FALSE) position_certification_claim", source, StringComparison.Ordinal);
         Assert.Contains("p.company_id=e.company_id AND p.device_id=e.id", source, StringComparison.Ordinal);
         Assert.DoesNotContain("p.vehicle_id=current_install.vehicle_id", source, StringComparison.Ordinal);
         Assert.Contains("LIMIT @limit OFFSET @offset", source, StringComparison.Ordinal);
@@ -72,6 +78,10 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains("filterTabs: [\"All\", \"Online\", \"Delayed / Watch\"", page, StringComparison.Ordinal);
         Assert.Contains("pageSize: 10_000", service, StringComparison.Ordinal);
         Assert.Contains("new Set(identities).size", service, StringComparison.Ordinal);
+        Assert.Contains("Operational observation only — not certification", service, StringComparison.Ordinal);
+        Assert.Contains("position_signal_evidence_headers", service, StringComparison.Ordinal);
+        Assert.Contains("signalAvailability", page, StringComparison.Ordinal);
+        Assert.Contains("Capture reference", page, StringComparison.Ordinal);
         Assert.DoesNotContain("while (rows.length < expectedTotal)", service, StringComparison.Ordinal);
     }
 

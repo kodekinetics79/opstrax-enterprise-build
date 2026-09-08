@@ -562,6 +562,66 @@ public sealed class PostgresProductionDurabilityTests
             """));
     }
 
+    [Fact]
+    public async Task CanonicalBackbone_J1939SignalProjectionKeepsNewestTruthAndExplicitUnavailability()
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync("""
+            CREATE TABLE canonical_telemetry_events(
+                id bigserial PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
+                device_id bigint NULL, installation_id bigint NULL, assignment_id bigint NULL,
+                trip_id bigint NULL, driver_id bigint NULL, correlation_id uuid NOT NULL,
+                event_type text NOT NULL, lat numeric NULL, lng numeric NULL,
+                speed_mph numeric NULL, heading numeric NULL, source text NOT NULL,
+                provider text NULL, protocol text NULL, adapter_version text NULL,
+                confidence numeric NULL, trust_score numeric NULL, quality_flags jsonb NULL,
+                payload jsonb NOT NULL, device_fix_time timestamptz NOT NULL,
+                gateway_received_at timestamptz NOT NULL, event_time timestamptz NOT NULL);
+            CREATE TABLE latest_device_signals(
+                company_id bigint NOT NULL, device_id bigint NOT NULL, vehicle_id bigint NULL,
+                signal_path text NOT NULL, value_json jsonb NULL, unit text NOT NULL,
+                availability text NOT NULL, source text NOT NULL, transport text NOT NULL,
+                protocol text NOT NULL, adapter_name text NOT NULL, adapter_version text NOT NULL,
+                trust_score numeric NOT NULL, confidence numeric NOT NULL,
+                quality_flags jsonb NOT NULL, evidence_headers jsonb NOT NULL,
+                event_id uuid NOT NULL, correlation_id uuid NOT NULL,
+                observed_at timestamptz NOT NULL, gateway_received_at timestamptz NOT NULL,
+                normalized_at timestamptz NOT NULL, certification_claim boolean NOT NULL,
+                updated_at timestamptz NOT NULL,
+                PRIMARY KEY(company_id,device_id,signal_path));
+            """);
+        var backbone = new PostgresEventBackbone(database.ScopedConnectionString);
+        DateTime newestAt = new(2026, 9, 8, 18, 0, 0, DateTimeKind.Utc);
+
+        await backbone.PublishAsync(
+            TelematicsTopics.TelemetryNormalized,
+            TelematicsEventKey.ForDevice(Guid.Parse("80000000-0000-0000-0000-000000000008"), 42, "101"),
+            SignalEnvelope(1500d, SignalAvailability.Available, newestAt));
+        await backbone.PublishAsync(
+            TelematicsTopics.TelemetryNormalized,
+            TelematicsEventKey.ForDevice(Guid.Parse("80000000-0000-0000-0000-000000000008"), 42, "101"),
+            SignalEnvelope(900d, SignalAvailability.Available, newestAt.AddMinutes(-1)));
+
+        Assert.Equal("1500", await database.ScalarStringAsync(
+            "SELECT value_json#>>'{}' FROM latest_device_signals WHERE company_id=42 AND device_id=101"));
+        Assert.Equal("[\"capture-stage129-001\"]", await database.ScalarStringAsync(
+            "SELECT evidence_headers->>'j1939.capture_references' FROM latest_device_signals WHERE company_id=42 AND device_id=101"));
+        Assert.Equal(0, await database.ScalarLongAsync(
+            "SELECT count(*) FROM latest_device_signals WHERE evidence_headers ? 'authorization'"));
+        Assert.Equal(2, await database.ScalarLongAsync(
+            "SELECT count(*) FROM canonical_telemetry_events WHERE event_type='vehicle.signal'"));
+
+        await backbone.PublishAsync(
+            TelematicsTopics.TelemetryNormalized,
+            TelematicsEventKey.ForDevice(Guid.Parse("80000000-0000-0000-0000-000000000008"), 42, "101"),
+            SignalEnvelope(null, SignalAvailability.NotAvailable, newestAt.AddMinutes(1)));
+
+        Assert.Equal("NotAvailable", await database.ScalarStringAsync(
+            "SELECT availability FROM latest_device_signals WHERE company_id=42 AND device_id=101"));
+        Assert.Equal(1, await database.ScalarLongAsync(
+            "SELECT count(*) FROM latest_device_signals WHERE value_json IS NULL AND certification_claim=FALSE"));
+    }
+
     private static StoreAndForwardEntry Entry(Guid eventId, string deviceId, long companyId)
     {
         Guid tenant = Guid.NewGuid();
@@ -583,6 +643,54 @@ public sealed class PostgresProductionDurabilityTests
         };
         return new StoreAndForwardEntry(
             TelematicsTopics.TelemetryNormalized, $"{companyId}:{deviceId}", envelope, DateTimeOffset.UtcNow);
+    }
+
+    private static EventEnvelope<CanonicalTelemetryEvent> SignalEnvelope(
+        double? value,
+        SignalAvailability availability,
+        DateTime observedAt)
+    {
+        var eventId = Guid.NewGuid();
+        var tenantId = Guid.Parse("80000000-0000-0000-0000-000000000008");
+        var payload = new CanonicalTelemetryEvent
+        {
+            SchemaVersion = 1,
+            EventId = eventId,
+            CorrelationId = eventId,
+            OccurredAtDeviceUtc = observedAt,
+            ReceivedAtGatewayUtc = observedAt.AddSeconds(1),
+            NormalizedAtUtc = observedAt.AddSeconds(2),
+            TenantId = tenantId,
+            CompanyId = 42,
+            DeviceId = "101",
+            VehicleId = 501,
+            Source = TelemetrySource.DirectDevice,
+            Transport = Transport.Can,
+            ProtocolName = "J1939",
+            AdapterName = "J1939SignalCatalog",
+            AdapterVersion = "1.1.0",
+            Signals = new Dictionary<string, SignalValue>
+            {
+                [VssSignals.EngineSpeed] = new(value, "rpm", TelemetrySource.DirectDevice, 0.9d, availability),
+            },
+            TrustScore = 0.8d,
+            Confidence = 0.9d,
+        };
+        return new EventEnvelope<CanonicalTelemetryEvent>
+        {
+            EventId = eventId,
+            CorrelationId = eventId,
+            OccurredAt = observedAt,
+            TenantId = tenantId,
+            CompanyId = 42,
+            SchemaVersion = 1,
+            Payload = payload,
+            Headers = new Dictionary<string, string>
+            {
+                ["j1939.capture_references"] = "[\"capture-stage129-001\"]",
+                ["authorization"] = "must-never-reach-the-customer-projection",
+            },
+        };
     }
 
 
