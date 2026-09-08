@@ -756,6 +756,26 @@ export type DeviceRmaReplacementRecord = {
   createdAt: string;
 };
 
+export type DeviceRmaSupportActionRecord = {
+  id: string;
+  caseId: string;
+  deviceId: string;
+  actionType: "OwnershipClaimed" | "OwnershipReassigned" | "Escalated";
+  ownerUserId: string;
+  ownerNameSnapshot: string;
+  supportQueue: string;
+  escalationSeverity: "P0" | "P1" | "P2" | "P3" | null;
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
+  supportActionStatus: "OperatorRecorded";
+  supportResponseClaim: false;
+  physicalOutcomeClaim: false;
+  warrantyAcceptanceClaim: false;
+  recordedBy: string;
+  createdAt: string;
+};
+
 export type DeviceRmaCaseRecord = {
   id: string;
   deviceId: string;
@@ -780,6 +800,7 @@ export type DeviceRmaCaseRecord = {
   createdAt: string;
   events: DeviceRmaEventRecord[];
   replacement: DeviceRmaReplacementRecord | null;
+  supportActions: DeviceRmaSupportActionRecord[];
 };
 
 export type DeviceRmaCaseInput = {
@@ -809,6 +830,16 @@ export type DeviceRmaReplacementInput = {
   replacementDeviceSerial: string;
   changeReason: string;
   sourceReference: string;
+  idempotencyKey: string;
+};
+
+export type DeviceRmaSupportActionInput = {
+  actionType: "TakeOwnership" | "Escalate";
+  supportQueue: string;
+  escalationSeverity?: "P0" | "P1" | "P2" | "P3";
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
   idempotencyKey: string;
 };
 
@@ -1087,7 +1118,30 @@ function mapRmaReplacement(raw: AnyRecord): DeviceRmaReplacementRecord {
   };
 }
 
-function mapRmaCase(raw: AnyRecord, events: DeviceRmaEventRecord[] = [], replacement: DeviceRmaReplacementRecord | null = null): DeviceRmaCaseRecord {
+function mapRmaSupportAction(raw: AnyRecord): DeviceRmaSupportActionRecord {
+  const row = normalizeKeys(raw);
+  const actionTypes = ["OwnershipClaimed", "OwnershipReassigned", "Escalated"];
+  const severity = row.escalation_severity == null ? null : String(row.escalation_severity);
+  if (!actionTypes.includes(String(row.action_type)) ||
+      (severity !== null && !["P0", "P1", "P2", "P3"].includes(severity)) ||
+      row.support_action_status !== "OperatorRecorded" || row.support_response_claim !== false ||
+      row.physical_outcome_claim !== false || row.warranty_acceptance_claim !== false)
+    throw new Error("RMA support data crossed the operator-recorded no-outcome-claim boundary.");
+  return {
+    id: String(row.id ?? ""), caseId: String(row.case_id ?? ""), deviceId: String(row.device_id ?? ""),
+    actionType: String(row.action_type) as DeviceRmaSupportActionRecord["actionType"],
+    ownerUserId: String(row.owner_user_id ?? ""), ownerNameSnapshot: String(row.owner_name_snapshot ?? ""),
+    supportQueue: String(row.support_queue ?? ""),
+    escalationSeverity: severity as DeviceRmaSupportActionRecord["escalationSeverity"],
+    actionReason: String(row.action_reason ?? ""), sourceReference: String(row.source_reference ?? ""),
+    effectiveAt: String(row.effective_at ?? ""), supportActionStatus: "OperatorRecorded",
+    supportResponseClaim: false, physicalOutcomeClaim: false, warrantyAcceptanceClaim: false,
+    recordedBy: String(row.recorded_by ?? ""), createdAt: String(row.created_at ?? ""),
+  };
+}
+
+function mapRmaCase(raw: AnyRecord, events: DeviceRmaEventRecord[] = [], replacement: DeviceRmaReplacementRecord | null = null,
+  supportActions: DeviceRmaSupportActionRecord[] = []): DeviceRmaCaseRecord {
   const row = normalizeKeys(raw);
   if (row.physical_evidence_claim !== false || row.warranty_evidence_status !== "Unverified")
     throw new Error("RMA case data crossed the unverified evidence boundary.");
@@ -1110,7 +1164,7 @@ function mapRmaCase(raw: AnyRecord, events: DeviceRmaEventRecord[] = [], replace
     physicalEvidenceClaim: false,
     currentStatus: statuses.includes(String(row.current_status)) ? String(row.current_status) as DeviceRmaCaseRecord["currentStatus"] : "Unknown",
     latestEventAt: row.latest_event_at == null ? null : String(row.latest_event_at),
-    createdAt: String(row.created_at ?? ""), events, replacement,
+    createdAt: String(row.created_at ?? ""), events, replacement, supportActions,
   };
 }
 
@@ -2569,11 +2623,13 @@ export const telematicsService = {
     const firmwareCampaigns = firmwareCampaignRows.map(mapFirmwareCampaign);
     const rmaEvents = (Array.isArray(detail.rma_events) ? detail.rma_events as AnyRecord[] : []).map(mapRmaEvent);
     const rmaReplacements = (Array.isArray(detail.rma_replacements) ? detail.rma_replacements as AnyRecord[] : []).map(mapRmaReplacement);
+    const rmaSupportActions = (Array.isArray(detail.rma_support_actions) ? detail.rma_support_actions as AnyRecord[] : []).map(mapRmaSupportAction);
     const rmaCases = (Array.isArray(detail.rma_cases) ? detail.rma_cases as AnyRecord[] : []).map(rawCase => {
       const caseId = String(normalizeKeys(rawCase).id ?? "");
       return mapRmaCase(rawCase,
         rmaEvents.filter(event => event.caseId === caseId),
-        rmaReplacements.find(replacement => replacement.caseId === caseId) ?? null);
+        rmaReplacements.find(replacement => replacement.caseId === caseId) ?? null,
+        rmaSupportActions.filter(action => action.caseId === caseId));
     });
     const hasRemoteCommandGovernance = detail.remote_command_governance !== null &&
       typeof detail.remote_command_governance === "object";
@@ -2900,6 +2956,36 @@ export const telematicsService = {
       replacement: mapRmaReplacement(payload.replacement as AnyRecord),
       idempotentReplay: payload.idempotent_replay === true,
       note: String(payload.note ?? "Replacement planned; no physical swap is claimed."),
+    };
+  },
+
+  async recordDeviceRmaSupportAction(caseId: string | number, input: DeviceRmaSupportActionInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(caseId);
+    if (canonicalId === null) throw new Error("The RMA case identity is invalid.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/rma-cases/${canonicalId}/support-actions`, {
+        ...input,
+        supportQueue: input.supportQueue.trim(),
+        escalationSeverity: input.actionType === "Escalate" ? input.escalationSeverity : null,
+        actionReason: input.actionReason.trim(), sourceReference: input.sourceReference.trim(),
+      })));
+    if (payload.support_response_claim !== false || payload.physical_outcome_claim !== false ||
+        payload.warranty_acceptance_claim !== false || !payload.support_action || typeof payload.support_action !== "object")
+      throw new Error("The server did not return an operator-recorded, no-outcome-claim support acknowledgement.");
+    const supportAction = mapRmaSupportAction(payload.support_action as AnyRecord);
+    const expectedStoredType = input.actionType === "Escalate" ? "Escalated" : null;
+    if ((expectedStoredType && supportAction.actionType !== expectedStoredType) ||
+        (!expectedStoredType && supportAction.actionType !== "OwnershipClaimed" && supportAction.actionType !== "OwnershipReassigned") ||
+        supportAction.supportQueue !== input.supportQueue.trim() ||
+        supportAction.escalationSeverity !== (input.actionType === "Escalate" ? input.escalationSeverity ?? null : null) ||
+        supportAction.actionReason !== input.actionReason.trim() || supportAction.sourceReference !== input.sourceReference.trim())
+      throw new Error("The recorded RMA support action does not match the submitted facts.");
+    return {
+      supportAction,
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "RMA support routing recorded; response and outcomes remain unverified."),
     };
   },
 

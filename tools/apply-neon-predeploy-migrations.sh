@@ -96,6 +96,7 @@ reapply_late_control_boundaries() {
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage121_device_installation_work_packages.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage122_installation_work_package_links.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage123_device_retirement.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage124_rma_support_ownership.sql
 }
 
 MIGRATIONS=(
@@ -290,6 +291,8 @@ MIGRATIONS=(
   2026_09_07_stage122_installation_work_package_links
   # Governed software retirement; physical disposition and certification remain unverified.
   2026_09_07_stage123_device_retirement
+  # Append-only RMA ownership and escalation; response, warranty and physical outcomes remain unverified.
+  2026_09_07_stage124_rma_support_ownership
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -388,7 +391,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_09_07_stage120_device_connectivity_observations|\
     2026_09_07_stage121_device_installation_work_packages|\
     2026_09_07_stage122_installation_work_package_links|\
-    2026_09_07_stage123_device_retirement) repair_migration=true ;;
+    2026_09_07_stage123_device_retirement|\
+    2026_09_07_stage124_rma_support_ownership) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -466,7 +470,8 @@ BEGIN
       ('2026_09_07_stage120_device_connectivity_observations'),
       ('2026_09_07_stage121_device_installation_work_packages'),
       ('2026_09_07_stage122_installation_work_package_links'),
-      ('2026_09_07_stage123_device_retirement')) required(version)
+      ('2026_09_07_stage123_device_retirement'),
+      ('2026_09_07_stage124_rma_support_ownership')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -715,6 +720,28 @@ BEGIN
                     OR physical_disposition_status<>'Unverified'
                     OR physical_disposition_claim OR certification_claim) THEN
     RAISE EXCEPTION 'Stage123 device-retirement boundary is missing or invalid';
+  END IF;
+  IF to_regclass('public.device_rma_support_actions') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_rma_support_actions')),false)
+     OR (to_regprocedure('opstrax_security.current_tenant_id()') IS NOT NULL
+         AND NOT has_table_privilege('opstrax_app','device_rma_support_actions','SELECT'))
+     OR has_table_privilege('opstrax_app','device_rma_support_actions','INSERT,UPDATE,DELETE')
+     OR (EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') AND (
+           NOT has_table_privilege('opstrax_system','device_rma_support_actions','SELECT,INSERT')
+        OR has_table_privilege('opstrax_system','device_rma_support_actions','UPDATE,DELETE')))
+     OR EXISTS (SELECT 1 FROM pg_policies p
+                 WHERE p.schemaname='public' AND p.tablename='device_rma_support_actions'
+                   AND p.roles='{public}'::name[])
+     OR to_regprocedure('stage124_guard_rma_support_action()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_rma_support_actions')
+                        AND tgname='trg_stage124_guard_rma_support_action'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_rma_support_actions
+                 WHERE support_action_status<>'OperatorRecorded' OR support_response_claim
+                    OR physical_outcome_claim OR warranty_acceptance_claim) THEN
+    RAISE EXCEPTION 'Stage124 RMA support boundary is missing or invalid';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -1851,6 +1878,18 @@ BEGIN
      OR NOT EXISTS (SELECT 1 FROM pg_trigger
                       WHERE tgrelid=to_regclass('public.device_retirement_records')
                         AND tgname='trg_stage123_guard_device_retirement'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR to_regclass('public.device_rma_support_actions') IS NULL
+     OR NOT has_table_privilege('opstrax_app','device_rma_support_actions','SELECT')
+     OR has_table_privilege('opstrax_app','device_rma_support_actions','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_rma_support_actions','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_rma_support_actions','UPDATE,DELETE')
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_rma_support_actions')),false)
+     OR to_regprocedure('stage124_guard_rma_support_action()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_rma_support_actions')
+                        AND tgname='trg_stage124_guard_rma_support_action'
                         AND NOT tgisinternal AND tgenabled<>'D') THEN
     RAISE EXCEPTION 'Stage76 is not the effective terminal telemetry boundary';
   END IF;

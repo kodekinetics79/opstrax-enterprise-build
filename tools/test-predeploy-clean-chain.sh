@@ -284,7 +284,8 @@ BEGIN
       ('2026_08_12_stage77_protected_role_bootstrap'),
       ('2026_08_13_stage78_country_profiles_runtime_contract'),
       ('2026_08_13_stage79_tenant_provisioning_runtime_contract'),
-      ('2026_08_11_stage76_telematics_security_hardening')) required(version)
+      ('2026_08_11_stage76_telematics_security_hardening'),
+      ('2026_09_07_stage124_rma_support_ownership')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
     RAISE EXCEPTION 'Clean-chain target ledgers are missing or duplicated';
@@ -874,6 +875,27 @@ BEGIN
                     OR physical_disposition_status<>'Unverified'
                     OR physical_disposition_claim OR certification_claim) THEN
     RAISE EXCEPTION 'Clean-chain Stage123 device-retirement boundary failed';
+  END IF;
+
+  IF to_regclass('public.device_rma_support_actions') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_rma_support_actions')),false)
+     OR NOT has_table_privilege('opstrax_app','device_rma_support_actions','SELECT')
+     OR has_table_privilege('opstrax_app','device_rma_support_actions','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_rma_support_actions','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_rma_support_actions','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p
+           WHERE p.schemaname='public' AND p.tablename='device_rma_support_actions'
+             AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR to_regprocedure('stage124_guard_rma_support_action()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_rma_support_actions')
+                        AND tgname='trg_stage124_guard_rma_support_action'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_rma_support_actions
+                 WHERE support_action_status<>'OperatorRecorded' OR support_response_claim
+                    OR physical_outcome_claim OR warranty_acceptance_claim) THEN
+    RAISE EXCEPTION 'Clean-chain Stage124 RMA support boundary failed';
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])

@@ -50,6 +50,7 @@ import {
   type DeviceRmaCaseInput,
   type DeviceRmaEventInput,
   type DeviceRmaReplacementInput,
+  type DeviceRmaSupportActionInput,
   type DeviceRemoteCommandInput,
   type DeviceRetirementInput,
   type DeviceIdentityQuarantineRecord,
@@ -224,6 +225,7 @@ function newFirmwareCampaignForm(): FirmwareCampaignFormState {
 type RmaCaseFormState = Omit<DeviceRmaCaseInput, "observedAt" | "responseDueAt"> & { observedAt: string; responseDueAt: string; warrantyReference: string };
 type RmaEventFormState = Omit<DeviceRmaEventInput, "occurredAt"> & { occurredAt: string; custodyLocation: string; trackingReference: string };
 type RmaReplacementFormState = DeviceRmaReplacementInput;
+type RmaSupportFormState = Omit<DeviceRmaSupportActionInput, "effectiveAt"> & { effectiveAt: string };
 
 function localMinuteAfter(hours: number) {
   const date = new Date(Date.now() + hours * 60 * 60_000);
@@ -247,6 +249,13 @@ function newRmaEventForm(): RmaEventFormState {
 
 function newRmaReplacementForm(): RmaReplacementFormState {
   return { replacementDeviceSerial: "", changeReason: "", sourceReference: "", idempotencyKey: crypto.randomUUID() };
+}
+
+function newRmaSupportForm(actionType: DeviceRmaSupportActionInput["actionType"], supportQueue = "Device Support"): RmaSupportFormState {
+  return {
+    actionType, supportQueue, escalationSeverity: actionType === "Escalate" ? "P2" : undefined,
+    actionReason: "", sourceReference: "", effectiveAt: currentLocalMinute(), idempotencyKey: crypto.randomUUID(),
+  };
 }
 
 type RemoteCommandFormState = {
@@ -2407,6 +2416,8 @@ function DeviceDetailDrawer({
   const [rmaEventForm, setRmaEventForm] = useState<RmaEventFormState>(newRmaEventForm);
   const [rmaReplacementCaseId, setRmaReplacementCaseId] = useState<string | null>(null);
   const [rmaReplacementForm, setRmaReplacementForm] = useState<RmaReplacementFormState>(newRmaReplacementForm);
+  const [rmaSupportCaseId, setRmaSupportCaseId] = useState<string | null>(null);
+  const [rmaSupportForm, setRmaSupportForm] = useState<RmaSupportFormState>(() => newRmaSupportForm("TakeOwnership"));
   const [rmaError, setRmaError] = useState<string | null>(null);
   const [rmaNotice, setRmaNotice] = useState<string | null>(null);
   const rmaSubmitting = useRef(false);
@@ -2429,7 +2440,17 @@ function DeviceDetailDrawer({
     onError: (error) => setRmaError(apiErrorMessage(error, "The replacement plan was not recorded.")),
     onSettled: () => { rmaSubmitting.current = false; },
   });
-  const rmaBusy = rmaCaseMut.isPending || rmaEventMut.isPending || rmaReplacementMut.isPending;
+  const rmaSupportMut = useMutation({
+    mutationFn: ({ caseId, input }: { caseId: string; input: DeviceRmaSupportActionInput }) =>
+      telematicsService.recordDeviceRmaSupportAction(caseId, input), retry: false,
+    onSuccess: async (result) => {
+      setRmaSupportForm(newRmaSupportForm("TakeOwnership")); setRmaSupportCaseId(null);
+      setRmaError(null); setRmaNotice(result.note); await refreshRma();
+    },
+    onError: (error) => setRmaError(apiErrorMessage(error, "The RMA support action was not recorded.")),
+    onSettled: () => { rmaSubmitting.current = false; },
+  });
+  const rmaBusy = rmaCaseMut.isPending || rmaEventMut.isPending || rmaReplacementMut.isPending || rmaSupportMut.isPending;
   const submitRmaCase = (event: FormEvent) => {
     event.preventDefault();
     if (!canManageRma || rmaSubmitting.current || rmaBusy) return;
@@ -2463,6 +2484,22 @@ function DeviceDetailDrawer({
     rmaSubmitting.current = true;
     setRmaError(null);
     rmaReplacementMut.mutate({ caseId: rmaReplacementCaseId, input: rmaReplacementForm });
+  };
+  const submitRmaSupport = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageRma || !rmaSupportCaseId || rmaSubmitting.current || rmaBusy) return;
+    setRmaError(null);
+    try {
+      rmaSubmitting.current = true;
+      rmaSupportMut.mutate({ caseId: rmaSupportCaseId, input: {
+        ...rmaSupportForm,
+        effectiveAt: toUtcIso(rmaSupportForm.effectiveAt, "support action time"),
+        escalationSeverity: rmaSupportForm.actionType === "Escalate" ? rmaSupportForm.escalationSeverity : undefined,
+      } });
+    } catch (error) {
+      rmaSubmitting.current = false;
+      setRmaError(error instanceof Error ? error.message : "RMA support action validation failed.");
+    }
   };
   const [remoteCommandForm, setRemoteCommandForm] = useState<RemoteCommandFormState | null>(null);
   const [remoteCommandError, setRemoteCommandError] = useState<string | null>(null);
@@ -2995,14 +3032,16 @@ function DeviceDetailDrawer({
             {detail.rmaCases.length === 0 ? <p className="text-sm text-slate-400">No RMA cases recorded for this device.</p> : detail.rmaCases.map(rmaCase => (
               <div key={rmaCase.id} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold text-white">RMA #{rmaCase.id} · {rmaCase.failureCategory}</p><p className="mt-1 text-sm text-slate-300">{rmaCase.failureDescription}</p></div><div className="flex gap-2"><RiskBadge risk={rmaCase.severity} /><StatusBadge status={rmaCase.currentStatus} /></div></div>
-                <div className="mt-3"><MiniGrid rows={[["Observed", rmaCase.observedAt], ["Response due", rmaCase.responseDueAt], ["SLA", rmaCase.supportSlaReference], ["Warranty posture", rmaCase.warrantyPosture], ["Warranty evidence", rmaCase.warrantyEvidenceStatus], ["Source", rmaCase.sourceReference]]} /></div>
+                <div className="mt-3"><MiniGrid rows={[["Observed", rmaCase.observedAt], ["Response due", rmaCase.responseDueAt], ["SLA", rmaCase.supportSlaReference], ["Current owner", rmaCase.supportActions[0]?.ownerNameSnapshot ?? "Unassigned"], ["Support queue", rmaCase.supportActions[0]?.supportQueue ?? "Unassigned"], ["Latest escalation", rmaCase.supportActions.find(action => action.actionType === "Escalated")?.escalationSeverity ?? "None"], ["Warranty posture", rmaCase.warrantyPosture], ["Warranty evidence", rmaCase.warrantyEvidenceStatus], ["Source", rmaCase.sourceReference]]} /></div>
                 {rmaCase.replacement ? (
                   <p className="mt-3 rounded-lg border border-sky-400/20 bg-sky-500/10 p-3 text-sm text-sky-100">Replacement planned: {rmaCase.replacement.replacementDeviceSerial} · physical swap {rmaCase.replacement.physicalSwapStatus}. No installation is claimed.</p>
                 ) : null}
                 {canManageRma && rmaCase.currentStatus !== "Resolved" ? (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => { setRmaEventForm(newRmaEventForm()); setRmaEventCaseId(rmaCase.id); setRmaReplacementCaseId(null); setRmaError(null); }}>Add custody event</button>
-                    {!rmaCase.replacement ? <button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => { setRmaReplacementForm(newRmaReplacementForm()); setRmaReplacementCaseId(rmaCase.id); setRmaEventCaseId(null); setRmaError(null); }}>Plan replacement</button> : null}
+                    <button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => { setRmaEventForm(newRmaEventForm()); setRmaEventCaseId(rmaCase.id); setRmaReplacementCaseId(null); setRmaSupportCaseId(null); setRmaError(null); }}>Add custody event</button>
+                    {!rmaCase.replacement ? <button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => { setRmaReplacementForm(newRmaReplacementForm()); setRmaReplacementCaseId(rmaCase.id); setRmaEventCaseId(null); setRmaSupportCaseId(null); setRmaError(null); }}>Plan replacement</button> : null}
+                    <button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => { setRmaSupportForm(newRmaSupportForm("TakeOwnership", rmaCase.supportActions[0]?.supportQueue)); setRmaSupportCaseId(rmaCase.id); setRmaEventCaseId(null); setRmaReplacementCaseId(null); setRmaError(null); }}>Take ownership</button>
+                    {rmaCase.supportActions.length > 0 ? <button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => { setRmaSupportForm(newRmaSupportForm("Escalate", rmaCase.supportActions[0]?.supportQueue)); setRmaSupportCaseId(rmaCase.id); setRmaEventCaseId(null); setRmaReplacementCaseId(null); setRmaError(null); }}>Escalate</button> : null}
                   </div>
                 ) : null}
                 {rmaEventCaseId === rmaCase.id && canManageRma ? (
@@ -3029,6 +3068,21 @@ function DeviceDetailDrawer({
                     <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => setRmaReplacementCaseId(null)}>Cancel</button><button type="submit" className="btn-primary" disabled={rmaBusy}>{rmaReplacementMut.isPending ? "Recording…" : "Record replacement plan"}</button></div>
                   </form>
                 ) : null}
+                {rmaSupportCaseId === rmaCase.id && canManageRma ? (
+                  <form className="mt-4 space-y-3 rounded-lg border border-white/[0.08] bg-black/10 p-3" onSubmit={submitRmaSupport}>
+                    <p className="text-sm font-semibold text-white">{rmaSupportForm.actionType === "Escalate" ? "Escalate support case" : "Take support ownership"}</p>
+                    <p className="text-xs text-amber-200">This records operator routing only. It does not claim a support response, warranty acceptance, or physical outcome.</p>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <FormField label="Support queue"><input className="field w-full" required minLength={3} maxLength={120} value={rmaSupportForm.supportQueue} onChange={event => setRmaSupportForm(form => ({ ...form, supportQueue: event.target.value }))} disabled={rmaBusy} /></FormField>
+                      {rmaSupportForm.actionType === "Escalate" ? <FormField label="Escalation severity"><select className="field w-full" value={rmaSupportForm.escalationSeverity} onChange={event => setRmaSupportForm(form => ({ ...form, escalationSeverity: event.target.value as DeviceRmaSupportActionInput["escalationSeverity"] }))} disabled={rmaBusy}><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></FormField> : null}
+                      <FormField label="Effective at"><input className="field w-full" type="datetime-local" required max={currentLocalMinute()} value={rmaSupportForm.effectiveAt} onChange={event => setRmaSupportForm(form => ({ ...form, effectiveAt: event.target.value }))} disabled={rmaBusy} /></FormField>
+                      <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} placeholder="Support ticket or incident" value={rmaSupportForm.sourceReference} onChange={event => setRmaSupportForm(form => ({ ...form, sourceReference: event.target.value }))} disabled={rmaBusy} /></FormField>
+                    </div>
+                    <FormField label="Action reason"><textarea className="field h-20 w-full resize-none" required minLength={5} maxLength={500} value={rmaSupportForm.actionReason} onChange={event => setRmaSupportForm(form => ({ ...form, actionReason: event.target.value }))} disabled={rmaBusy} /></FormField>
+                    <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => setRmaSupportCaseId(null)}>Cancel</button><button type="submit" className="btn-primary" disabled={rmaBusy}>{rmaSupportMut.isPending ? "Recording…" : rmaSupportForm.actionType === "Escalate" ? "Record escalation" : "Take ownership"}</button></div>
+                  </form>
+                ) : null}
+                {rmaCase.supportActions.length > 0 ? <div className="mt-4"><TimelineList rows={rmaCase.supportActions.map(action => ({ id: `support-${action.id}`, title: `${action.actionType.replace(/([a-z])([A-Z])/g, "$1 $2")} · ${action.ownerNameSnapshot}`, subtitle: `${action.supportQueue}${action.escalationSeverity ? ` · ${action.escalationSeverity}` : ""} · ${action.actionReason} · ${action.supportActionStatus}`, meta: action.effectiveAt }))} emptyText="No support ownership history recorded." /></div> : null}
                 <div className="mt-4"><TimelineList rows={rmaCase.events.map(rmaEvent => ({ id: rmaEvent.id, title: `${rmaEvent.sequenceNumber}. ${rmaEvent.eventType}`, subtitle: `${rmaEvent.caseStatusAfter} · Evidence ${rmaEvent.evidenceStatus} · ${rmaEvent.evidenceReference}${rmaEvent.custodyLocation ? ` · ${rmaEvent.custodyLocation}` : ""}`, meta: rmaEvent.occurredAt }))} emptyText="No RMA events recorded." /></div>
               </div>
             ))}

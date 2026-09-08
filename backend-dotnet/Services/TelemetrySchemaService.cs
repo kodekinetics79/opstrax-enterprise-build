@@ -567,6 +567,34 @@ public sealed class TelemetrySchemaService(Database db)
             CONSTRAINT ck_stage123_no_certification_claim CHECK (certification_claim=FALSE),
             UNIQUE(company_id,device_id), UNIQUE(company_id,idempotency_key)
         )",
+
+        @"CREATE TABLE IF NOT EXISTS device_rma_support_actions (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, case_id BIGINT NOT NULL,
+            device_id BIGINT NOT NULL, action_type VARCHAR(32) NOT NULL,
+            owner_user_id BIGINT NOT NULL, owner_name_snapshot VARCHAR(200) NOT NULL,
+            support_queue VARCHAR(120) NOT NULL, escalation_severity VARCHAR(2) NULL,
+            action_reason VARCHAR(500) NOT NULL, source_reference VARCHAR(240) NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL, idempotency_key UUID NOT NULL,
+            support_action_status VARCHAR(32) NOT NULL DEFAULT 'OperatorRecorded',
+            support_response_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            physical_outcome_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            warranty_acceptance_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            recorded_by BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage124_action_type CHECK
+              (action_type IN ('OwnershipClaimed','OwnershipReassigned','Escalated')),
+            CONSTRAINT ck_stage124_support_queue CHECK (LENGTH(BTRIM(support_queue)) BETWEEN 3 AND 120),
+            CONSTRAINT ck_stage124_escalation_pair CHECK
+              ((action_type='Escalated' AND escalation_severity IN ('P0','P1','P2','P3')) OR
+               (action_type IN ('OwnershipClaimed','OwnershipReassigned') AND escalation_severity IS NULL)),
+            CONSTRAINT ck_stage124_action_reason CHECK (LENGTH(BTRIM(action_reason)) BETWEEN 5 AND 500),
+            CONSTRAINT ck_stage124_source_reference CHECK (LENGTH(BTRIM(source_reference)) BETWEEN 3 AND 240),
+            CONSTRAINT ck_stage124_operator_recorded CHECK (support_action_status='OperatorRecorded'),
+            CONSTRAINT ck_stage124_no_response_claim CHECK (support_response_claim=FALSE),
+            CONSTRAINT ck_stage124_no_physical_claim CHECK (physical_outcome_claim=FALSE),
+            CONSTRAINT ck_stage124_no_warranty_claim CHECK (warranty_acceptance_claim=FALSE),
+            UNIQUE(company_id,idempotency_key)
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -645,6 +673,10 @@ public sealed class TelemetrySchemaService(Database db)
           ON device_installation_work_package_links(company_id,device_id,linked_at DESC,id DESC)",
         @"CREATE INDEX IF NOT EXISTS ix_stage123_retirement_recent
           ON device_retirement_records(company_id,effective_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage124_support_case_recent
+          ON device_rma_support_actions(company_id,case_id,effective_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage124_support_owner_queue
+          ON device_rma_support_actions(company_id,owner_user_id,support_queue,effective_at DESC,id DESC)",
     ];
 
     private static readonly string[] Seeds =
