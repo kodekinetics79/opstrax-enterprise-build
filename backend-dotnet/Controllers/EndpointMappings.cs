@@ -25387,7 +25387,7 @@ LIMIT 100000",
                        ELSE 'ObservationOnly'
                      END safety_action_status,
                      CASE
-                       WHEN fc.raw_evidence ? 'eventId' AND fc.raw_evidence ? 'Adapter'
+                       WHEN canonical_gateway.matched
                          THEN 'CanonicalCanObservation'
                        WHEN EXISTS (
                          SELECT 1 FROM fault_occurrences evidence
@@ -25396,11 +25396,44 @@ LIMIT 100000",
                             AND evidence.payload_fingerprint ~ '^[0-9a-f]{64}$')
                          THEN 'AuthenticatedDeviceObservation'
                        ELSE 'LegacyOrUnclassified'
-                     END evidence_classification
+                     END evidence_classification,
+                     CASE WHEN canonical_gateway.matched
+                               AND jsonb_typeof(fc.raw_evidence->'CaptureReferences')='array'
+                               AND pg_column_size(fc.raw_evidence->'CaptureReferences')<=8192
+                          THEN (fc.raw_evidence->'CaptureReferences')::text ELSE '[]' END
+                       diagnostic_evidence_references,
+                     CASE WHEN canonical_gateway.matched
+                               AND COALESCE(fc.raw_evidence->>'CaptureReferenceCount','') ~ '^[0-9]{1,3}$'
+                          THEN (fc.raw_evidence->>'CaptureReferenceCount')::integer ELSE 0 END
+                       diagnostic_evidence_reference_count,
+                     CASE WHEN canonical_gateway.matched
+                               AND COALESCE(fc.raw_evidence->>'CaptureReferenceDigest','') ~ '^[0-9a-f]{64}$'
+                          THEN fc.raw_evidence->>'CaptureReferenceDigest' ELSE NULL END
+                       diagnostic_evidence_reference_digest
               FROM fault_codes fc
               LEFT JOIN vehicles v ON v.id=fc.vehicle_id AND v.company_id=fc.company_id
               LEFT JOIN diagnostic_holds dh ON dh.company_id=fc.company_id AND dh.fault_code_id=fc.id
                                            AND dh.status IN ('active','acknowledged')
+              LEFT JOIN LATERAL (
+                SELECT TRUE matched
+                  FROM canonical_telemetry_events event
+                  JOIN eld_devices evidence_device
+                    ON evidence_device.company_id=event.company_id AND evidence_device.id=event.device_id
+                   AND evidence_device.device_serial=fc.device_id
+                 WHERE event.company_id=fc.company_id AND event.vehicle_id=fc.vehicle_id
+                   AND event.event_time=fc.last_observed_at
+                   AND event.payload->>'_envelopeEventId'=fc.last_source_event_id
+                   AND event.event_type='diagnostic.event' AND event.source='DirectDevice'
+                   AND UPPER(event.protocol)='J1939'
+                   AND EXISTS (
+                     SELECT 1
+                       FROM jsonb_array_elements(CASE
+                         WHEN jsonb_typeof(event.payload->'Event'->'Diagnostic'->'TroubleCodes')='array'
+                           THEN event.payload->'Event'->'Diagnostic'->'TroubleCodes'
+                         ELSE '[]'::jsonb END) diagnostic_code
+                      WHERE diagnostic_code->>'CanonicalIdentity'=fc.canonical_identity)
+                 LIMIT 1
+              ) canonical_gateway ON TRUE
               WHERE fc.company_id=@cid AND fc.status=@status
                 AND (@branchId::BIGINT IS NULL OR fc.branch_id=@branchId)
               ORDER BY ARRAY_POSITION(ARRAY['Critical','Warning','Info'], fc.severity), fc.last_seen_at DESC

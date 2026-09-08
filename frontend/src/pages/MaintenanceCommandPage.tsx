@@ -589,7 +589,7 @@ function FaultCodesTab({ rows, isLoading }: { rows: AnyRecord[]; isLoading: bool
   return (
     <DataTable
       rows={rows}
-      columns={["vehicleCode", "code", "protocol", "severity", "evidenceClassification", "safetyActionStatus", "sourceAddress", "bus", "occurrenceCount", "lastObservedAt", "status"]}
+      columns={["vehicleCode", "code", "protocol", "severity", "evidenceClassification", "safetyActionStatus", "diagnosticEvidenceReferences", "diagnosticEvidenceReferenceCount", "diagnosticEvidenceReferenceDigest", "sourceAddress", "bus", "occurrenceCount", "lastObservedAt", "status"]}
     />
   );
 }

@@ -23,6 +23,7 @@ on:
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/PostgresProductionDurabilityTests.cs'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj'
       - 'database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql'
+      - 'database/migrations/2026_09_08_stage130_canonical_diagnostic_evidence_identity.sql'
       - 'backend-dotnet/Controllers/EndpointMappings.cs'
       - 'backend-dotnet/Services/TelemetrySchemaService.cs'
       - 'backend-dotnet.Tests/TelemetryClusterPaginationContractTests.cs'
@@ -59,6 +60,7 @@ on:
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/PostgresProductionDurabilityTests.cs'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj'
       - 'database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql'
+      - 'database/migrations/2026_09_08_stage130_canonical_diagnostic_evidence_identity.sql'
       - 'backend-dotnet/Controllers/EndpointMappings.cs'
       - 'backend-dotnet/Services/TelemetrySchemaService.cs'
       - 'backend-dotnet.Tests/TelemetryClusterPaginationContractTests.cs'
@@ -105,5 +107,5 @@ jobs:
       - name: Run backend diagnostics visibility contract
         run: >-
           dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj
-          --filter "FullyQualifiedName~TelemetryClusterPaginationContractTests"
+          --filter "FullyQualifiedName~TelemetryClusterPaginationContractTests|FullyQualifiedName~DiagnosticsPilotContractTests"
           --logger "console;verbosity=minimal"

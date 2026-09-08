@@ -1597,6 +1597,8 @@ export type TelematicsClusterRecord = {
   certificationBoundary: string;
   diagnosticEvidenceClassification: string;
   diagnosticSafetyAction: string;
+  diagnosticEvidenceReference: string;
+  diagnosticEvidenceDigest: string;
   sensorType: string;
   latestReading: string;
   expectedRange: string;
@@ -2315,6 +2317,17 @@ function signalCaptureReferences(headers: unknown) {
   }
 }
 
+function parseDiagnosticCaptureReferences(value: unknown): string[] {
+  let candidate = value;
+  if (typeof candidate === "string") {
+    try { candidate = JSON.parse(candidate); } catch { return []; }
+  }
+  if (!Array.isArray(candidate)) return [];
+  return candidate
+    .filter((reference): reference is string => typeof reference === "string" && reference.trim().length > 0)
+    .map((reference) => reference.trim());
+}
+
 function readableSignalAvailability(value: unknown) {
   const raw = String(value ?? "").trim();
   if (!raw) return "—";
@@ -2352,6 +2365,13 @@ function toClusterRecord(
     .sort((left, right) => (Date.parse(right) || 0) - (Date.parse(left) || 0))[0] ?? "";
   const diagnosticEvidenceClassification = Array.from(new Set(deviceFaults
     .map((fault) => String(fault.evidence_classification ?? "LegacyOrUnclassified"))))
+    .join(", ") || "—";
+  const diagnosticEvidenceReference = Array.from(new Set(deviceFaults
+    .flatMap((fault) => parseDiagnosticCaptureReferences(fault.diagnostic_evidence_references))))
+    .join(", ") || "—";
+  const diagnosticEvidenceDigest = Array.from(new Set(deviceFaults
+    .map((fault) => String(fault.diagnostic_evidence_reference_digest ?? "").trim())
+    .filter(Boolean)))
     .join(", ") || "—";
   const safetyActions = deviceFaults.map((fault) => String(fault.safety_action_status ?? "ObservationOnly"));
   const diagnosticSafetyAction = safetyActions.includes("VehicleHoldActive")
@@ -2472,6 +2492,8 @@ function toClusterRecord(
       : "—",
     diagnosticEvidenceClassification,
     diagnosticSafetyAction,
+    diagnosticEvidenceReference,
+    diagnosticEvidenceDigest,
     sensorType,
     // No standalone sensor-reading feed in the verified backend contract, so we
     // NEVER fabricate a reading or an expected-range setpoint. Both stay honest "—".
@@ -2577,6 +2599,8 @@ function toColdChainClusterRecord(
     certificationBoundary: "—",
     diagnosticEvidenceClassification: "—",
     diagnosticSafetyAction: "—",
+    diagnosticEvidenceReference: "—",
+    diagnosticEvidenceDigest: "—",
     sensorType: zone?.name || device.zoneName || "Temperature",
     latestReading: hasTemperature ? `${Number(temperature).toFixed(1)} °C` : "—",
     expectedRange,

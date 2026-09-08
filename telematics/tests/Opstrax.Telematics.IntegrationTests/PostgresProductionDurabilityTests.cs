@@ -713,18 +713,27 @@ public sealed class PostgresProductionDurabilityTests
             "SELECT severity FROM fault_codes WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
         Assert.Equal("false", await database.ScalarStringAsync(
             "SELECT raw_evidence->>'ConversionMethod' FROM fault_occurrences WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
+        Assert.Equal("capture-diagnostic-001", await database.ScalarStringAsync(
+            "SELECT raw_evidence->'CaptureReferences'->>0 FROM fault_occurrences WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
+        Assert.Equal(1, await database.ScalarLongAsync(
+            "SELECT (raw_evidence->>'CaptureReferenceCount')::bigint FROM fault_occurrences WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
+        Assert.Equal(64, (await database.ScalarStringAsync(
+            "SELECT raw_evidence->>'CaptureReferenceDigest' FROM fault_occurrences WHERE company_id=42 AND device_id='CAN-DEVICE-101'")).Length);
         Assert.Equal(envelope.EventId.ToString("D"), await database.ScalarStringAsync(
             "SELECT last_source_event_id FROM fault_codes WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
 
         // A delayed stale DM1 is retained as immutable occurrence evidence, but cannot establish
         // or overwrite live state even if it arrives through a later publish transaction.
         EventEnvelope<CanonicalTelemetryEvent> staleDm1 = DiagnosticEnvelope(
-            observedAt: envelope.Payload.OccurredAtDeviceUtc.AddMinutes(-1), isStale: true);
+            observedAt: envelope.Payload.OccurredAtDeviceUtc.AddMinutes(-1), isStale: true,
+            captureReferencesJson: "[\"invalid\\u0000capture\"]");
         await backbone.PublishAsync(
             TelematicsTopics.TelemetryNormalized,
             TelematicsEventKey.ForDevice(staleDm1.TenantId, staleDm1.CompanyId, staleDm1.Payload.DeviceId),
             staleDm1);
         Assert.Equal(2, await database.ScalarLongAsync("SELECT count(*) FROM fault_occurrences"));
+        Assert.Equal(0, await database.ScalarLongAsync(
+            $"SELECT (raw_evidence->>'CaptureReferenceCount')::bigint FROM fault_occurrences WHERE source_event_id='{staleDm1.EventId:D}'"));
         Assert.Equal(envelope.EventId.ToString("D"), await database.ScalarStringAsync(
             "SELECT last_source_event_id FROM fault_codes WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
 
@@ -836,7 +845,8 @@ public sealed class PostgresProductionDurabilityTests
     private static EventEnvelope<CanonicalTelemetryEvent> DiagnosticEnvelope(
         bool isActive = true,
         DateTime? observedAt = null,
-        bool isStale = false)
+        bool isStale = false,
+        string captureReferencesJson = "[\"capture-diagnostic-001\"]")
     {
         Guid eventId = Guid.NewGuid();
         Guid tenantId = Guid.Parse("80000000-0000-0000-0000-000000000008");
@@ -900,7 +910,7 @@ public sealed class PostgresProductionDurabilityTests
             Headers = new Dictionary<string, string>
             {
                 ["j1939.diagnostic_kind"] = "DM1",
-                ["j1939.capture_references"] = "[\"capture-diagnostic-001\"]",
+                ["j1939.capture_references"] = captureReferencesJson,
             },
         };
     }

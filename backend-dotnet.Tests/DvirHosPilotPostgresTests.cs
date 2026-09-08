@@ -842,6 +842,130 @@ public sealed class DvirHosPilotPostgresTests
     }
 
     [Fact]
+    public async Task FaultListProvesCanonicalDiagnosticIdentityAndHidesSpoofedCaptureEvidence()
+    {
+        var db = Db(); var seed = await Seed(db);
+        try
+        {
+            const string serialSuffix = "CAN-EVIDENCE";
+            var device = await Device(db, seed.CompanyId, seed.BranchA, seed.VehicleA, serialSuffix);
+            string deviceSerial = $"DH-ELD-{serialSuffix}-{seed.CompanyId}";
+            Guid eventId = Guid.NewGuid();
+            DateTimeOffset observedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+            string canonicalIdentity = "J1939:SA:49:SPN:4660:FMI:5";
+            string payload = JsonSerializer.Serialize(new
+            {
+                _envelopeEventId = eventId,
+                Event = new
+                {
+                    Diagnostic = new
+                    {
+                        TroubleCodes = new[] { new { CanonicalIdentity = canonicalIdentity } },
+                    },
+                },
+            });
+            await db.ExecuteAsync(
+                @"INSERT INTO canonical_telemetry_events(
+                    company_id,vehicle_id,device_id,correlation_id,event_type,source,protocol,payload,
+                    device_fix_time,gateway_received_at,event_time)
+                  VALUES(@c,@v,@d,@correlation,'diagnostic.event','DirectDevice','J1939',@payload::jsonb,
+                    @observed,@observed,@observed)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", seed.CompanyId);
+                    c.Parameters.AddWithValue("@v", seed.VehicleA);
+                    c.Parameters.AddWithValue("@d", device);
+                    c.Parameters.AddWithValue("@correlation", Guid.NewGuid());
+                    c.Parameters.AddWithValue("@payload", payload);
+                    c.Parameters.AddWithValue("@observed", observedAt);
+                });
+
+            string canonicalEvidence = JsonSerializer.Serialize(new
+            {
+                eventId,
+                Adapter = "J1939DiagnosticDecoder",
+                CaptureReferences = new[] { "candump:test:canonical-001" },
+                CaptureReferenceCount = 1,
+                CaptureReferenceDigest = new string('a', 64),
+            });
+            await db.InsertAsync(
+                @"INSERT INTO fault_codes(company_id,branch_id,device_id,vehicle_id,source_event_id,
+                    canonical_identity,last_source_event_id,code_type,protocol,code,severity,status,
+                    raw_evidence,observed_at,last_observed_at,first_seen_at,last_seen_at)
+                  VALUES(@c,@b,@device,@vehicle,@event,@identity,@event,'J1939','J1939','SPN-4660-FMI-5',
+                    'Warning','active',@evidence::jsonb,@observed,@observed,@observed,@observed)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", seed.CompanyId);
+                    c.Parameters.AddWithValue("@b", seed.BranchA);
+                    c.Parameters.AddWithValue("@device", deviceSerial);
+                    c.Parameters.AddWithValue("@vehicle", seed.VehicleA);
+                    c.Parameters.AddWithValue("@event", eventId.ToString("D"));
+                    c.Parameters.AddWithValue("@identity", canonicalIdentity);
+                    c.Parameters.AddWithValue("@evidence", canonicalEvidence);
+                    c.Parameters.AddWithValue("@observed", observedAt);
+                });
+
+            string spoofedIdentity = "J1939:SA:49:SPN:9999:FMI:7";
+            string spoofedEvent = eventId.ToString("D");
+            string spoofedEvidence = JsonSerializer.Serialize(new
+            {
+                eventId,
+                Adapter = "J1939DiagnosticDecoder",
+                CaptureReferences = new[] { "must-not-leak-spoofed-capture" },
+                CaptureReferenceCount = 1,
+                CaptureReferenceDigest = new string('f', 64),
+            });
+            await db.InsertAsync(
+                @"INSERT INTO fault_codes(company_id,branch_id,device_id,vehicle_id,source_event_id,
+                    canonical_identity,last_source_event_id,code_type,protocol,code,severity,status,
+                    raw_evidence,observed_at,last_observed_at,first_seen_at,last_seen_at)
+                  VALUES(@c,@b,@device,@vehicle,@event,@identity,@event,'J1939','J1939','SPN-9999-FMI-7',
+                    'Warning','active',@evidence::jsonb,@observed,@observed,@observed,@observed)
+                  RETURNING id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", seed.CompanyId);
+                    c.Parameters.AddWithValue("@b", seed.BranchA);
+                    c.Parameters.AddWithValue("@device", deviceSerial);
+                    c.Parameters.AddWithValue("@vehicle", seed.VehicleA);
+                    c.Parameters.AddWithValue("@event", spoofedEvent);
+                    c.Parameters.AddWithValue("@identity", spoofedIdentity);
+                    c.Parameters.AddWithValue("@evidence", spoofedEvidence);
+                    c.Parameters.AddWithValue("@observed", observedAt);
+                });
+            await db.InsertAsync(
+                @"INSERT INTO fault_occurrences(company_id,branch_id,device_id,vehicle_id,source_event_id,
+                    dtc_ordinal,canonical_dtc,observed_at,protocol,code,occurrence_count,payload_fingerprint)
+                  VALUES(@c,@b,@device,@vehicle,@event,1,@identity,@observed,'J1939','SPN-9999-FMI-7',1,@fingerprint)
+                  RETURNING id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", seed.CompanyId);
+                    c.Parameters.AddWithValue("@b", seed.BranchA);
+                    c.Parameters.AddWithValue("@device", deviceSerial);
+                    c.Parameters.AddWithValue("@vehicle", seed.VehicleA);
+                    c.Parameters.AddWithValue("@event", spoofedEvent);
+                    c.Parameters.AddWithValue("@identity", spoofedIdentity);
+                    c.Parameters.AddWithValue("@observed", observedAt);
+                    c.Parameters.AddWithValue("@fingerprint", new string('b', 64));
+                });
+
+            var result = await Invoke("MaintFaultCodesList",
+                Principal(seed.CompanyId, seed.BranchA, "maintenance:view"), db, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, Status(result));
+            string json = JsonSerializer.Serialize(Assert.IsAssignableFrom<IValueHttpResult>(result).Value);
+            Assert.Contains("CanonicalCanObservation", json, StringComparison.Ordinal);
+            Assert.Contains("AuthenticatedDeviceObservation", json, StringComparison.Ordinal);
+            Assert.Contains("candump:test:canonical-001", json, StringComparison.Ordinal);
+            Assert.Contains(new string('a', 64), json, StringComparison.Ordinal);
+            Assert.DoesNotContain("must-not-leak-spoofed-capture", json, StringComparison.Ordinal);
+            Assert.DoesNotContain(new string('f', 64), json, StringComparison.Ordinal);
+        }
+        finally { await Cleanup(db, seed.CompanyId); }
+    }
+
+    [Fact]
     public async Task EldReadModelsNeverExposeProvisioningSecrets()
     {
         var db = Db(); var seed = await Seed(db);
@@ -1103,6 +1227,7 @@ public sealed class DvirHosPilotPostgresTests
             "DELETE FROM dvir_reports WHERE company_id=@c", "UPDATE hos_logs SET location=COALESCE(location,'') || '-cleanup' WHERE company_id=@c AND is_certified", "DELETE FROM hos_logs WHERE company_id=@c",
             "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM eld_malfunction_history WHERE company_id=@c",
             "DELETE FROM diagnostic_holds WHERE company_id=@c", "DELETE FROM fault_occurrences WHERE company_id=@c", "DELETE FROM fault_codes WHERE company_id=@c",
+            "DELETE FROM canonical_telemetry_events WHERE company_id=@c",
             "DELETE FROM eld_devices WHERE company_id=@c",
             "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c",
             "DELETE FROM companies WHERE id=@c"

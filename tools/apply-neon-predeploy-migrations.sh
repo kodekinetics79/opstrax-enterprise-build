@@ -101,6 +101,7 @@ reapply_late_control_boundaries() {
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage126_device_support_tier_history.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage130_canonical_diagnostic_evidence_identity.sql
 }
 
 MIGRATIONS=(
@@ -305,6 +306,8 @@ MIGRATIONS=(
   2026_09_08_stage128_device_compatibility_capability_catalog
   # Tenant-readable latest canonical signals; operational observations never become certification claims.
   2026_09_08_stage129_latest_device_signal_projection
+  # Indexed exact-event proof for customer-visible canonical diagnostic classification.
+  2026_09_08_stage130_canonical_diagnostic_evidence_identity
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -408,7 +411,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_09_07_stage125_device_spare_pool|\
     2026_09_07_stage126_device_support_tier_history|\
     2026_09_08_stage128_device_compatibility_capability_catalog|\
-    2026_09_08_stage129_latest_device_signal_projection) repair_migration=true ;;
+    2026_09_08_stage129_latest_device_signal_projection|\
+    2026_09_08_stage130_canonical_diagnostic_evidence_identity) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -491,7 +495,8 @@ BEGIN
       ('2026_09_07_stage125_device_spare_pool'),
       ('2026_09_07_stage126_device_support_tier_history'),
       ('2026_09_08_stage128_device_compatibility_capability_catalog'),
-      ('2026_09_08_stage129_latest_device_signal_projection')) required(version)
+      ('2026_09_08_stage129_latest_device_signal_projection'),
+      ('2026_09_08_stage130_canonical_diagnostic_evidence_identity')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -860,6 +865,9 @@ BEGIN
             AND actual.conname=required.conname))
      OR EXISTS (SELECT 1 FROM latest_device_signals WHERE certification_claim) THEN
     RAISE EXCEPTION 'Stage129 latest device signal projection boundary is missing or invalid';
+  END IF;
+  IF to_regclass('public.idx_stage130_canonical_diagnostic_identity') IS NULL THEN
+    RAISE EXCEPTION 'Stage130 canonical diagnostic evidence identity index is missing';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns

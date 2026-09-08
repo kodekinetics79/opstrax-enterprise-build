@@ -18,6 +18,11 @@ namespace Opstrax.Telematics.Gateway.Eventing;
 /// </summary>
 internal sealed class PostgresEventBackbone(string systemConnectionString) : IEventBackbone
 {
+    private const int MaxDiagnosticCaptureHeaderBytes = 131_072;
+    private const int MaxDiagnosticCaptureReferences = 256;
+    private const int MaxRetainedDiagnosticCaptureReferences = 16;
+    private const int MaxDiagnosticCaptureReferenceLength = 256;
+
     private static readonly HashSet<string> CustomerSafeSignalEvidenceHeaders = new(StringComparer.Ordinal)
     {
         "j1939.pgn",
@@ -238,6 +243,7 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
         string fingerprint = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(diagnostic)))).ToLowerInvariant();
         string severity = DeriveDiagnosticSeverity(diagnostic.Lamps);
+        DiagnosticCaptureEvidence captureEvidence = ReadDiagnosticCaptureEvidence(headers);
 
         foreach ((DiagnosticTroubleCode dtc, int ordinal) in diagnostic.TroubleCodes.Select((value, index) => (value, index)))
         {
@@ -254,6 +260,9 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
                 evt.AdapterVersion,
                 evt.TrustScore,
                 evt.Confidence,
+                CaptureReferences = captureEvidence.RetainedReferences,
+                CaptureReferenceCount = captureEvidence.TotalCount,
+                CaptureReferenceDigest = captureEvidence.SetDigest,
             });
             await using var occurrence = new NpgsqlCommand(
                 """
@@ -481,7 +490,56 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
         return "Info";
     }
 
+    private static DiagnosticCaptureEvidence ReadDiagnosticCaptureEvidence(
+        IReadOnlyDictionary<string, string> headers)
+    {
+        if (!headers.TryGetValue("j1939.capture_references", out string? raw) ||
+            string.IsNullOrWhiteSpace(raw) || Encoding.UTF8.GetByteCount(raw) > MaxDiagnosticCaptureHeaderBytes)
+            return DiagnosticCaptureEvidence.Empty;
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(raw);
+            if (document.RootElement.ValueKind != JsonValueKind.Array ||
+                document.RootElement.GetArrayLength() is 0 or > MaxDiagnosticCaptureReferences)
+                return DiagnosticCaptureEvidence.Empty;
+
+            var references = new List<string>(document.RootElement.GetArrayLength());
+            foreach (JsonElement element in document.RootElement.EnumerateArray())
+            {
+                if (element.ValueKind != JsonValueKind.String)
+                    return DiagnosticCaptureEvidence.Empty;
+                string? reference = element.GetString();
+                if (string.IsNullOrWhiteSpace(reference) ||
+                    reference.Length > MaxDiagnosticCaptureReferenceLength ||
+                    !string.Equals(reference, reference.Trim(), StringComparison.Ordinal) ||
+                    reference.Any(char.IsControl))
+                    return DiagnosticCaptureEvidence.Empty;
+                references.Add(reference);
+            }
+
+            string canonicalSet = JsonSerializer.Serialize(references);
+            string digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonicalSet)))
+                .ToLowerInvariant();
+            return new DiagnosticCaptureEvidence(
+                references.Take(MaxRetainedDiagnosticCaptureReferences).ToArray(),
+                references.Count,
+                digest);
+        }
+        catch (JsonException)
+        {
+            return DiagnosticCaptureEvidence.Empty;
+        }
+    }
+
     private readonly record struct DiagnosticProjectionOwner(string DeviceSerial, long VehicleId, long? BranchId);
+    private readonly record struct DiagnosticCaptureEvidence(
+        IReadOnlyList<string> RetainedReferences,
+        int TotalCount,
+        string? SetDigest)
+    {
+        public static DiagnosticCaptureEvidence Empty { get; } = new(Array.Empty<string>(), 0, null);
+    }
 
     private static async Task PersistLatestSignalsAsync(
         NpgsqlConnection connection,

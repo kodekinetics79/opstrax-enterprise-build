@@ -16,7 +16,10 @@ assert.match(service, /Operational observation only — not certification/, "obs
 assert.match(service, /signalCaptureReferences/, "capture references must be parsed from persisted evidence headers");
 assert.match(page, /"engineSpeed", "engineHours", "batteryVoltage", "signalAvailability"/, "diagnostics table must show decoded J1939 fields");
 assert.match(page, /\["Evidence boundary", row\.certificationBoundary\]/, "detail must state the certification boundary");
-assert.match(page, /\["Capture reference", row\.signalEvidenceReference\]/, "detail must identify retained capture evidence");
+assert.match(page, /\["Signal capture reference", row\.signalEvidenceReference\]/, "detail must identify retained signal capture evidence");
+assert.match(page, /\["Diagnostic capture reference", row\.diagnosticEvidenceReference\]/, "detail must identify retained diagnostic capture evidence");
+assert.match(page, /\["Diagnostic capture-set digest", row\.diagnosticEvidenceDigest\]/, "detail must identify the bounded diagnostic capture set");
+assert.match(maintenancePage, /diagnosticEvidenceReferenceDigest/, "maintenance fault rows must expose the canonical capture-set digest");
 assert.match(page, /\["Safety action", row\.diagnosticSafetyAction\]/, "diagnostics detail must separate evidence from a persisted safety action");
 assert.match(maintenancePage, /"Diagnostic Holds"/, "persisted diagnostic holds must have a customer-visible maintenance tab");
 assert.match(maintenancePage, /Resolve with evidence/, "a hold must expose its governed resolution workflow");
