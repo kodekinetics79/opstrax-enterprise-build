@@ -523,6 +523,11 @@ public sealed class PostgresProductionDurabilityTests
         var unownedError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             backbone.PublishAsync(TelematicsTopics.TelemetryNormalized, entry.Key, unownedEnvelope));
         Assert.Contains("registry-resolved tenant ownership", unownedError.Message, StringComparison.Ordinal);
+
+        var mismatchedIdentity = valid with { EventId = Guid.NewGuid() };
+        var identityError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            backbone.PublishAsync(TelematicsTopics.TelemetryNormalized, entry.Key, mismatchedIdentity));
+        Assert.Contains("identity", identityError.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -628,6 +633,20 @@ public sealed class PostgresProductionDurabilityTests
     {
         await using var database = await IsolatedSchema.CreateAsync();
         await database.ExecuteAsync("""
+            CREATE TABLE vehicles(
+                id bigint PRIMARY KEY, company_id bigint NOT NULL, branch_id bigint NULL,
+                deleted_at timestamptz NULL);
+            CREATE TABLE eld_devices(
+                id bigint PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
+                branch_id bigint NULL, device_serial text NULL, status text NOT NULL,
+                device_state text NULL, revoked_at timestamptz NULL, deleted_at timestamptz NULL);
+            CREATE TABLE device_installations(
+                id bigint PRIMARY KEY, company_id bigint NOT NULL, branch_id bigint NULL,
+                device_id bigint NOT NULL, vehicle_id bigint NULL, status text NOT NULL,
+                effective_from timestamptz NOT NULL, effective_to timestamptz NULL);
+            CREATE TABLE device_installation_quarantine(
+                id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id bigint NOT NULL,
+                device_id bigint NOT NULL, resolved_at timestamptz NULL);
             CREATE TABLE canonical_telemetry_events(
                 id bigserial PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
                 device_id bigint NULL, installation_id bigint NULL, assignment_id bigint NULL,
@@ -638,6 +657,33 @@ public sealed class PostgresProductionDurabilityTests
                 confidence numeric NULL, trust_score numeric NULL, quality_flags jsonb NULL,
                 payload jsonb NOT NULL, device_fix_time timestamptz NOT NULL,
                 gateway_received_at timestamptz NOT NULL, event_time timestamptz NOT NULL);
+            CREATE TABLE fault_occurrences(
+                id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id bigint NOT NULL,
+                branch_id bigint NULL, device_id text NOT NULL, vehicle_id bigint NULL,
+                source_event_id text NOT NULL, dtc_ordinal int NOT NULL, canonical_dtc text NOT NULL,
+                observed_at timestamptz NOT NULL, received_at timestamptz NOT NULL DEFAULT now(),
+                controller text NULL, source_address smallint NULL, bus text NULL, protocol text NOT NULL,
+                code text NOT NULL, spn int NULL, fmi smallint NULL, occurrence_count int NOT NULL,
+                lamp_status jsonb NULL, raw_evidence jsonb NULL, payload_fingerprint text NULL,
+                UNIQUE(company_id,device_id,source_event_id,dtc_ordinal,canonical_dtc));
+            CREATE TABLE fault_codes(
+                id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id bigint NOT NULL,
+                branch_id bigint NULL, device_id text NOT NULL, vehicle_id bigint NULL,
+                source_event_id text NULL, canonical_identity text NOT NULL, last_source_event_id text NOT NULL,
+                code_type text NOT NULL, protocol text NOT NULL, code text NOT NULL, description text NULL,
+                severity text NOT NULL, controller text NULL, source_address smallint NULL, bus text NULL,
+                spn int NULL, fmi smallint NULL, lamp_status jsonb NULL, raw_evidence jsonb NULL,
+                observed_at timestamptz NULL, received_at timestamptz NOT NULL, last_observed_at timestamptz NOT NULL,
+                occurrence_count int NOT NULL, status text NOT NULL, first_seen_at timestamptz NOT NULL,
+                last_seen_at timestamptz NOT NULL, updated_at timestamptz NULL, cleared_at timestamptz NULL,
+                clear_source text NULL,
+                UNIQUE(company_id,device_id,protocol,canonical_identity));
+            INSERT INTO vehicles(id,company_id,branch_id) VALUES (501,42,7);
+            INSERT INTO eld_devices(id,company_id,vehicle_id,branch_id,device_serial,status,device_state)
+            VALUES (101,42,501,9,'CAN-DEVICE-101','Active','Online');
+            INSERT INTO device_installations(
+                id,company_id,branch_id,device_id,vehicle_id,status,effective_from)
+            VALUES (1001,42,7,101,501,'Verified','2026-09-01T00:00:00Z');
             """);
         var backbone = new PostgresEventBackbone(database.ScopedConnectionString);
         EventEnvelope<CanonicalTelemetryEvent> envelope = DiagnosticEnvelope();
@@ -659,6 +705,61 @@ public sealed class PostgresProductionDurabilityTests
             SELECT payload->'Event'->'Diagnostic'->>'IsActive'
               FROM canonical_telemetry_events
             """));
+        Assert.Equal(1, await database.ScalarLongAsync(
+            "SELECT count(*) FROM fault_occurrences WHERE company_id=42 AND device_id='CAN-DEVICE-101' AND vehicle_id=501 AND branch_id=7"));
+        Assert.Equal(1, await database.ScalarLongAsync(
+            "SELECT count(*) FROM fault_codes WHERE company_id=42 AND device_id='CAN-DEVICE-101' AND vehicle_id=501 AND branch_id=7 AND status='active'"));
+        Assert.Equal("Critical", await database.ScalarStringAsync(
+            "SELECT severity FROM fault_codes WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
+        Assert.Equal("false", await database.ScalarStringAsync(
+            "SELECT raw_evidence->>'ConversionMethod' FROM fault_occurrences WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
+        Assert.Equal(envelope.EventId.ToString("D"), await database.ScalarStringAsync(
+            "SELECT last_source_event_id FROM fault_codes WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
+
+        // A delayed stale DM1 is retained as immutable occurrence evidence, but cannot establish
+        // or overwrite live state even if it arrives through a later publish transaction.
+        EventEnvelope<CanonicalTelemetryEvent> staleDm1 = DiagnosticEnvelope(
+            observedAt: envelope.Payload.OccurredAtDeviceUtc.AddMinutes(-1), isStale: true);
+        await backbone.PublishAsync(
+            TelematicsTopics.TelemetryNormalized,
+            TelematicsEventKey.ForDevice(staleDm1.TenantId, staleDm1.CompanyId, staleDm1.Payload.DeviceId),
+            staleDm1);
+        Assert.Equal(2, await database.ScalarLongAsync("SELECT count(*) FROM fault_occurrences"));
+        Assert.Equal(envelope.EventId.ToString("D"), await database.ScalarStringAsync(
+            "SELECT last_source_event_id FROM fault_codes WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
+
+        // A newer DM2 remains historical evidence. It never clears or otherwise mutates the live
+        // DM1 projection, and this path deliberately does not create diagnostic holds.
+        EventEnvelope<CanonicalTelemetryEvent> dm2 = DiagnosticEnvelope(
+            isActive: false, observedAt: envelope.Payload.OccurredAtDeviceUtc.AddMinutes(1));
+        await backbone.PublishAsync(
+            TelematicsTopics.TelemetryNormalized,
+            TelematicsEventKey.ForDevice(dm2.TenantId, dm2.CompanyId, dm2.Payload.DeviceId),
+            dm2);
+        Assert.Equal(3, await database.ScalarLongAsync("SELECT count(*) FROM fault_occurrences"));
+        Assert.Equal(1, await database.ScalarLongAsync("SELECT count(*) FROM fault_codes WHERE status='active'"));
+        Assert.Equal(envelope.EventId.ToString("D"), await database.ScalarStringAsync(
+            "SELECT last_source_event_id FROM fault_codes WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
+        Assert.Equal(0, await database.ScalarLongAsync("""
+            SELECT count(*) FROM information_schema.tables
+             WHERE table_schema=current_schema() AND table_name='diagnostic_holds'
+            """));
+
+        // A device put on a lifecycle hold after acquisition can still retain its canonical record,
+        // but delayed store-and-forward delivery cannot change the customer maintenance projection.
+        await database.ExecuteAsync("UPDATE eld_devices SET status='Suspended' WHERE id=101");
+        EventEnvelope<CanonicalTelemetryEvent> heldDeviceDm1 = DiagnosticEnvelope(
+            observedAt: envelope.Payload.OccurredAtDeviceUtc.AddMinutes(2));
+        await backbone.PublishAsync(
+            TelematicsTopics.TelemetryNormalized,
+            TelematicsEventKey.ForDevice(
+                heldDeviceDm1.TenantId, heldDeviceDm1.CompanyId, heldDeviceDm1.Payload.DeviceId),
+            heldDeviceDm1);
+        Assert.Equal(4, await database.ScalarLongAsync(
+            "SELECT count(*) FROM canonical_telemetry_events WHERE event_type='diagnostic.event'"));
+        Assert.Equal(3, await database.ScalarLongAsync("SELECT count(*) FROM fault_occurrences"));
+        Assert.Equal(envelope.EventId.ToString("D"), await database.ScalarStringAsync(
+            "SELECT last_source_event_id FROM fault_codes WHERE company_id=42 AND device_id='CAN-DEVICE-101'"));
     }
 
     private static StoreAndForwardEntry Entry(Guid eventId, string deviceId, long companyId)
@@ -732,20 +833,23 @@ public sealed class PostgresProductionDurabilityTests
         };
     }
 
-    private static EventEnvelope<CanonicalTelemetryEvent> DiagnosticEnvelope()
+    private static EventEnvelope<CanonicalTelemetryEvent> DiagnosticEnvelope(
+        bool isActive = true,
+        DateTime? observedAt = null,
+        bool isStale = false)
     {
         Guid eventId = Guid.NewGuid();
         Guid tenantId = Guid.Parse("80000000-0000-0000-0000-000000000008");
-        DateTime observedAt = new(2026, 9, 8, 19, 0, 0, DateTimeKind.Utc);
+        DateTime observationTime = observedAt ?? new DateTime(2026, 9, 8, 19, 0, 0, DateTimeKind.Utc);
         var diagnostic = new DiagnosticSnapshot(
             "J1939",
-            65226,
-            IsActive: true,
+            isActive ? 65226 : 65227,
+            IsActive: isActive,
             SourceAddress: 49,
             new DiagnosticLampSnapshot(
                 DiagnosticLampState.On,
                 DiagnosticLampState.Off,
-                DiagnosticLampState.NotAvailable,
+                DiagnosticLampState.On,
                 DiagnosticLampState.On,
                 DiagnosticLampState.Off,
                 DiagnosticLampState.On,
@@ -766,9 +870,9 @@ public sealed class PostgresProductionDurabilityTests
             SchemaVersion = 1,
             EventId = eventId,
             CorrelationId = eventId,
-            OccurredAtDeviceUtc = observedAt,
-            ReceivedAtGatewayUtc = observedAt,
-            NormalizedAtUtc = observedAt.AddSeconds(1),
+            OccurredAtDeviceUtc = observationTime,
+            ReceivedAtGatewayUtc = observationTime,
+            NormalizedAtUtc = observationTime.AddSeconds(1),
             TenantId = tenantId,
             CompanyId = 42,
             DeviceId = "101",
@@ -780,6 +884,7 @@ public sealed class PostgresProductionDurabilityTests
             AdapterVersion = "1.0.0",
             DtcCodes = ["SPN-4660-FMI-5"],
             Diagnostic = diagnostic,
+            Quality = new() { IsStale = isStale },
             TrustScore = 0.25,
             Confidence = 0.75,
         };
@@ -787,7 +892,7 @@ public sealed class PostgresProductionDurabilityTests
         {
             EventId = eventId,
             CorrelationId = eventId,
-            OccurredAt = observedAt,
+            OccurredAt = observationTime,
             TenantId = tenantId,
             CompanyId = 42,
             SchemaVersion = 1,

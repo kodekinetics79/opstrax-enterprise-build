@@ -92,7 +92,13 @@ This closes the missing software orchestration seam between a real SocketCAN str
 
 The CAN host now publishes decoded DM1/DM2 through the tenant-owned canonical durability path instead of dropping the already-decoded result. The additive canonical diagnostic snapshot retains PGN, active/historical state, source address, eight lamp states, decoded SPN/FMI codes, occurrence counts and conversion-method flags. Bounded headers retain the diagnostic kind, adapter/channel and capture hashes without raw bus bytes. Exact capture replay converges on the same event identity, and the PostgreSQL ledger classifies it as `diagnostic.event`.
 
-DM1 is active evidence. DM2 is historical evidence only and cannot clear DM1 state. The implementation deliberately stops before updating `fault_codes`, creating diagnostic holds, grounding a vehicle or opening a work order; those safety-relevant maintenance actions require a dedicated idempotent consumer and independent SDET review. Physical source authenticity, reference-value agreement and hardware certification remain EXTERNAL HOLD.
+DM1 is active evidence. DM2 is historical evidence only and cannot clear DM1 state. Physical source authenticity, reference-value agreement and hardware certification remain EXTERNAL HOLD.
+
+## Tenth implementation slice — order-safe maintenance diagnostic projection
+
+The production PostgreSQL backbone now persists decoded DTC occurrences and current DM1 state atomically with the canonical diagnostic event. It resolves the registry device serial and exact installation effective at the observation time; ambiguous, missing or quarantined ownership remains canonical evidence and cannot be projected by guessing a vehicle or branch. Exact replay is idempotent. Older or freshness-failed DM1 records remain occurrence evidence without changing live state. DM2 always remains historical occurrence evidence and cannot clear or overwrite `fault_codes`.
+
+The customer maintenance surfaces can now read received canonical CAN diagnostic state through their existing fault-code APIs. This slice does not create `diagnostic_holds`, ground vehicles, hold dispatch, create work orders or promote any certification candidate. Those safety effects remain a separate independently reviewed gate, and all physical claims remain EXTERNAL HOLD.
 
 ## DeviceOps registry integration
 

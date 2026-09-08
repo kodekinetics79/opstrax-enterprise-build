@@ -138,7 +138,9 @@ window with consumers drained.
   clear instruction.
 - **Producer:** the normalization worker.
 - **Consumers:** position validator; signal normalizer; device-health monitor; trip detector;
-  diagnostic engine; safety/rules engine; the timeseries/Postgres sink; analytics.
+  diagnostic engine; safety/rules engine; the timeseries/Postgres sink; analytics. Fresh direct-CAN
+  J1939 DM1 also advances the maintenance fault projection atomically; stale DM1 and every DM2 are
+  retained as occurrence evidence only.
 - **Retention:** **30 days** (the longest of the telemetry lane — it is the rebuild source for
   every derived read model), compacted-off, plus tiered/object-storage archive for long-horizon
   analytics.
@@ -217,17 +219,23 @@ window with consumers drained.
 - **DLQ:** `integration.deadletter`.
 
 #### `diagnostic.event`
-- **Purpose:** DTCs and maintenance-relevant diagnostics (MIL on, DTC set/cleared, service
-  interval reached).
+- **Purpose:** the reserved enriched-domain topic for DTC and lamp evidence. In the current
+  PostgreSQL edge topology, the structured record is published on `telemetry.normalized` and its
+  canonical database row is classified with `event_type='diagnostic.event'`; no separate broker
+  publication is claimed. J1939 DM1 represents active evidence, while DM2 represents historical
+  evidence and is never a clear instruction.
 - **Key:** `ForDevice(...)`.
 - **Ordering:** per device — set/cleared pairs must not invert.
-- **Schema:** `EventEnvelope<DiagnosticEvent>` — DTC codes (from
-  `CanonicalTelemetryEvent.DtcCodes`), severity, set/cleared, `CoolantTempC`, `OdometerKm` at
-  detection, freeze-frame signals.
-- **Producer:** diagnostic engine.
-- **Consumers:** maintenance module (work-order creation); fleet-health dashboard; warranty
-  reporting.
-- **Retention:** **90 days**.
+- **Schema:** current persisted form is `EventEnvelope<CanonicalTelemetryEvent>` carrying the
+  structured `Diagnostic` snapshot and compatibility `DtcCodes` summary. A distinct enriched
+  broker contract remains future work.
+- **Producer:** authenticated protocol acquisition and canonical normalization into the PostgreSQL
+  classification described above.
+- **Consumers:** the PostgreSQL maintenance occurrence/current-fault projection; fleet-health
+  dashboard; warranty reporting. Automatic holds, grounding and work-order creation remain a
+  separately gated consumer.
+- **Retention:** current canonical-ledger policy applies; **90 days** remains the target for a
+  separately provisioned enriched topic.
 - **Replay:** rebuild the open-fault list per vehicle.
 - **DLQ:** `integration.deadletter`.
 
