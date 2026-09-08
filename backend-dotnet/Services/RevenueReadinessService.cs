@@ -1646,15 +1646,18 @@ public sealed class RevenueReadinessService(
     // Tenant opt-in to POD-gated issuance (feature_flags). Default OFF (no row -> false).
     private async Task<bool> IsPodRequiredToIssueAsync(long companyId, CancellationToken ct)
     {
-        try
-        {
-            var n = await db.ScalarLongAsync(
-                @"SELECT CASE WHEN EXISTS (SELECT 1 FROM feature_flags
-                    WHERE company_id=@cid AND flag_key='billing.require_pod_to_issue' AND enabled) THEN 1 ELSE 0 END",
-                c => c.Parameters.AddWithValue("@cid", companyId), ct);
-            return n == 1;
-        }
-        catch { return false; } // feature_flags absent (pre-migration) -> flag off, unchanged behavior
+        // Do not probe a possibly absent table by catching 42P01. This service can
+        // run inside a larger PostgreSQL transaction, where any failed statement
+        // aborts the transaction even if the .NET exception is caught.
+        var featureFlagsAvailable = await db.ScalarLongAsync(
+            "SELECT CASE WHEN to_regclass('public.feature_flags') IS NULL THEN 0 ELSE 1 END", ct: ct);
+        if (featureFlagsAvailable == 0) return false;
+
+        var n = await db.ScalarLongAsync(
+            @"SELECT CASE WHEN EXISTS (SELECT 1 FROM feature_flags
+                WHERE company_id=@cid AND flag_key='billing.require_pod_to_issue' AND enabled) THEN 1 ELSE 0 END",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        return n == 1;
     }
 
     // A job "has POD" if EITHER store shows it: proof_of_delivery.status='Captured' (ops/job path)

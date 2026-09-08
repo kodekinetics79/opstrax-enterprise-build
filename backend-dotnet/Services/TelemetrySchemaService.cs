@@ -63,6 +63,15 @@ public sealed class TelemetrySchemaService(Database db)
         new("eld_devices", "hmac_secret_encrypted", "TEXT NULL"),
         new("eld_devices", "hmac_previous_secret_encrypted", "TEXT NULL"),
         new("eld_devices", "hmac_previous_valid_until", "TIMESTAMPTZ NULL"),
+        new("eld_devices", "hmac_key_version", "INT NOT NULL DEFAULT 1"),
+        new("eld_devices", "hmac_rotated_at", "TIMESTAMPTZ NULL"),
+        new("eld_devices", "credential_revoked_reason", "TEXT NULL"),
+        new("eld_devices", "device_state", "TEXT NOT NULL DEFAULT 'Provisioned'"),
+        new("eld_devices", "health_status", "VARCHAR(40) NOT NULL DEFAULT 'unknown'"),
+        new("eld_devices", "health_reason", "VARCHAR(120) NULL"),
+        new("eld_devices", "recommended_action", "TEXT NULL"),
+        new("eld_devices", "first_connected_at", "TIMESTAMPTZ NULL"),
+        new("eld_devices", "last_heartbeat_at", "TIMESTAMPTZ NULL"),
         new("eld_devices", "last_seen_at", "TIMESTAMPTZ NULL"),
         new("eld_devices", "revoked_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "retired_at",   "TIMESTAMPTZ NULL"),
@@ -106,6 +115,8 @@ public sealed class TelemetrySchemaService(Database db)
         new("location_events", "client_generated_id", "VARCHAR(120) NULL"),
         new("location_events", "idempotency_key", "VARCHAR(120) NULL"),
         new("location_events", "ingest_fingerprint", "VARCHAR(64) NULL"),
+        new("location_events", "observed_at", "TIMESTAMPTZ NULL"),
+        new("location_events", "normalized_at", "TIMESTAMPTZ NULL"),
         // Keep owner-capable fresh installs aligned with the committed polygon
         // geofence migration. GeofenceEvaluator always selects this column.
         new("geofences", "polygon_json", "JSONB NULL"),
@@ -152,6 +163,35 @@ public sealed class TelemetrySchemaService(Database db)
 
     private static readonly string[] Tables =
     [
+        // Owner-capable development databases do not necessarily run the dated
+        // migration chain. Keep the command ledger's base shape here before the
+        // Stage119 columns below are reconciled.
+        @"CREATE TABLE IF NOT EXISTS telematics_device_commands (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            branch_id BIGINT NULL,
+            device_id BIGINT NOT NULL,
+            command_type VARCHAR(60) NOT NULL,
+            desired_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            reported_payload JSONB NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'queued',
+            idempotency_key VARCHAR(120) NOT NULL,
+            correlation_id VARCHAR(120) NULL,
+            attempt_count INT NOT NULL DEFAULT 0,
+            max_attempts INT NOT NULL DEFAULT 3,
+            scheduled_for TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            dispatched_at TIMESTAMPTZ NULL,
+            acknowledged_at TIMESTAMPTZ NULL,
+            applied_at TIMESTAMPTZ NULL,
+            expires_at TIMESTAMPTZ NULL,
+            last_error TEXT NULL,
+            requested_by BIGINT NULL,
+            approved_by BIGINT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL,
+            UNIQUE(company_id,idempotency_key)
+        )",
+
         @"CREATE TABLE IF NOT EXISTS latest_device_signals (
             company_id BIGINT NOT NULL,
             device_id BIGINT NOT NULL,

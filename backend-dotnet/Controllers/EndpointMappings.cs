@@ -19364,6 +19364,12 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
            OR (se.data_origin='runtime_detection' AND se.verification_status='derived_from_qualified_source')
            OR (se.data_origin='provider_import' AND se.verification_status='provider_verified'))";
 
+    private const string QualifiedDriverSafetyScoreSql =
+        @"dss.data_origin='runtime_computed'
+           AND dss.verification_status='calculated_from_qualified_sources'
+           AND dss.computed_at>=NOW()-INTERVAL '15 minutes'
+           AND dss.events_30d>0";
+
     private const string QualifiedCoachingTaskSql =
         @"((ct.data_origin='user_workflow' AND ct.verification_status='recorded_by_authenticated_actor')
            OR (ct.data_origin='runtime_detection' AND ct.verification_status='derived_from_qualified_source')
@@ -24769,7 +24775,7 @@ LIMIT 100000",
     {
         if (RequireAnyDirectPermission(http, "safety:create", "safety:update", "safety:manage") is { } denied) return denied;
         var ev = await db.QuerySingleAsync(
-            "SELECT se.driver_id,se.event_type,se.severity FROM safety_events se WHERE se.id=@id AND se.company_id=@cid" + LegacySafetyBranchScope(http),
+            $"SELECT se.driver_id,se.event_type,se.severity FROM safety_events se WHERE se.id=@id AND se.company_id=@cid AND {QualifiedSafetyEventSql}" + LegacySafetyBranchScope(http),
             c => { c.Parameters.AddWithValue("@id", id); BindLegacySafetyScope(c, http); }, ct);
         if (ev is null) return Results.NotFound(ApiResponse<object>.Fail("Safety event not found"));
         if (ev["driverId"] is null or DBNull)
@@ -24800,9 +24806,9 @@ LIMIT 100000",
         var vehicleId  = http.Request.Query["vehicleId"].FirstOrDefault();
 
         var events = await db.QueryAsync(
-            @"SELECT se.id, se.row_version, se.event_type, se.severity, se.score_impact, se.status,
+            $@"SELECT se.id, se.row_version, se.event_type, se.severity, se.score_impact, se.status,
                      se.event_time, se.created_at, se.reviewed_at, se.resolved_at, se.notes,
-                     se.evidence_hash, se.meta_json,
+                     se.evidence_hash, se.meta_json, se.data_origin, se.verification_status,
                      se.source_telemetry_alert_id, se.source_location_event_id,
                      d.full_name driver_name, d.id driver_id,
                      v.vehicle_code, v.id vehicle_id,
@@ -24814,8 +24820,14 @@ LIMIT 100000",
               LEFT JOIN vehicles    v   ON v.id = se.vehicle_id AND v.company_id=se.company_id
               LEFT JOIN eld_devices e   ON e.id = se.device_id AND e.company_id=se.company_id
               LEFT JOIN users       ur  ON ur.id = se.reviewed_by AND ur.company_id=se.company_id
-              LEFT JOIN safety_coaching_tasks sct ON sct.safety_event_id = se.id AND sct.company_id=se.company_id
+              LEFT JOIN LATERAL (
+                SELECT ct.id,ct.status FROM coaching_tasks ct
+                WHERE ct.safety_event_id=se.id AND ct.company_id=se.company_id AND ct.deleted_at IS NULL
+                  AND {QualifiedCoachingTaskSql} AND {QualifiedCoachingSourceSql}
+                ORDER BY ct.created_at DESC LIMIT 1
+              ) sct ON TRUE
               WHERE se.company_id = @cid
+                AND {QualifiedSafetyEventSql}
                 AND (@status::TEXT = 'all' OR se.status = @status::TEXT)
                 AND (@evType::TEXT IS NULL OR se.event_type = @evType::TEXT)
                 AND (@drvId::TEXT IS NULL OR se.driver_id = @drvId::BIGINT)
@@ -24847,9 +24859,9 @@ LIMIT 100000",
         var companyId = GetCompanyId(http);
 
         var ev = await db.QuerySingleAsync(
-            @"SELECT se.id, se.row_version, se.event_type, se.severity, se.score_impact, se.status,
+            $@"SELECT se.id, se.row_version, se.event_type, se.severity, se.score_impact, se.status,
                      se.event_time, se.created_at, se.reviewed_at, se.resolved_at,
-                     se.notes, se.evidence_hash, se.meta_json,
+                     se.notes, se.evidence_hash, se.meta_json, se.data_origin, se.verification_status,
                      se.source_telemetry_alert_id, se.source_location_event_id,
                      d.full_name driver_name, d.id driver_id, d.email driver_email,
                      v.vehicle_code, v.make, v.model, v.id vehicle_id,
@@ -24860,21 +24872,24 @@ LIMIT 100000",
               LEFT JOIN vehicles    v    ON v.id = se.vehicle_id AND v.company_id=se.company_id
               LEFT JOIN eld_devices e    ON e.id = se.device_id AND e.company_id=se.company_id
               LEFT JOIN users       ur   ON ur.id = se.reviewed_by AND ur.company_id=se.company_id
-              LEFT JOIN users       ures ON ures.id = se.reviewed_by AND ures.company_id=se.company_id
-              WHERE se.id = @id AND se.company_id = @cid" + LegacySafetyBranchScope(http),
+              LEFT JOIN users       ures ON ures.id = se.resolved_by AND ures.company_id=se.company_id
+              WHERE se.id = @id AND se.company_id = @cid
+                AND {QualifiedSafetyEventSql}" + LegacySafetyBranchScope(http),
             c => { c.Parameters.AddWithValue("@id", id); BindLegacySafetyScope(c, http); }, ct);
 
         if (ev is null) return Results.NotFound(ApiResponse<object>.Fail("Safety event not found"));
 
         // Coaching tasks for this event
         var coaching = await db.QueryAsync(
-            @"SELECT sct.id, sct.status, sct.coaching_type, sct.due_date,
-                     sct.notes, sct.outcome, sct.driver_acknowledged_at, sct.completed_at,
-                     ua.full_name assigned_to_name, ub.full_name assigned_by_name
-              FROM safety_coaching_tasks sct
-              LEFT JOIN users ua ON ua.id = sct.assigned_to
-              LEFT JOIN users ub ON ub.id = sct.assigned_by
-              WHERE sct.safety_event_id = @id AND sct.company_id = @cid",
+            $@"SELECT ct.id,ct.status,ct.coaching_type,ct.due_at due_date,
+                     ct.description notes,ct.driver_acknowledged,ct.acknowledged_at driver_acknowledged_at,
+                     ct.completed_at,ua.full_name assigned_to_name,
+                     ct.data_origin,ct.verification_status
+              FROM coaching_tasks ct
+              LEFT JOIN users ua ON ua.id=ct.assigned_to_user_id AND ua.company_id=ct.company_id
+              WHERE ct.safety_event_id=@id AND ct.company_id=@cid AND ct.deleted_at IS NULL
+                AND {QualifiedCoachingTaskSql} AND {QualifiedCoachingSourceSql}
+              ORDER BY ct.created_at DESC",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         // Source telemetry alert evidence
@@ -25093,17 +25108,24 @@ LIMIT 100000",
         var companyId = GetCompanyId(http);
 
         var scores = await db.QueryAsync(
-            @"SELECT dss.driver_id, dss.score_7d, dss.score_30d, dss.score_90d,
+            $@"SELECT dss.driver_id, dss.score_7d, dss.score_30d, dss.score_90d,
                      dss.events_7d, dss.events_30d, dss.events_90d,
-                     dss.breakdown_json, dss.computed_at,
+                     dss.breakdown_json, dss.computed_at, dss.data_origin, dss.verification_status,
                      d.full_name driver_name, d.email, d.license_number,
                      d.status driver_status,
-                     v.vehicle_code current_vehicle
+                     current_assignment.vehicle_code current_vehicle
               FROM driver_safety_scores dss
               JOIN drivers d ON d.id = dss.driver_id AND d.company_id=dss.company_id
-              LEFT JOIN eld_devices ed ON ed.driver_id = d.id AND ed.company_id=dss.company_id AND ed.status='Active' AND ed.deleted_at IS NULL
-              LEFT JOIN vehicles v ON v.id = ed.vehicle_id AND v.company_id=dss.company_id
-              WHERE dss.company_id = @cid" + (GetBranchId(http) is null ? string.Empty : " AND d.branch_id=@branchId") + @"
+              LEFT JOIN LATERAL (
+                SELECT v.vehicle_code
+                FROM eld_devices ed
+                JOIN vehicles v ON v.id=ed.vehicle_id AND v.company_id=ed.company_id
+                WHERE ed.driver_id=d.id AND ed.company_id=dss.company_id
+                  AND ed.status='Active' AND ed.deleted_at IS NULL
+                ORDER BY ed.last_seen_at DESC NULLS LAST,ed.id DESC
+                LIMIT 1
+              ) current_assignment ON TRUE
+              WHERE dss.company_id = @cid AND {QualifiedDriverSafetyScoreSql}" + (GetBranchId(http) is null ? string.Empty : " AND d.branch_id=@branchId") + @"
               ORDER BY dss.score_30d ASC, dss.events_30d DESC
               LIMIT 100",
             c => { c.Parameters.AddWithValue("@cid", companyId); if (GetBranchId(http) is { } branchId) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
@@ -25111,7 +25133,6 @@ LIMIT 100000",
         // DEF-015: scorecards identify the driver by name/code; the license renders masked.
         MaskDriverLicenseIn(scores, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
 
-        // For drivers with no score record, surface them at 100 (no events)
         return Results.Ok(ApiResponse<object>.Ok(scores, $"Driver safety scores ({scores.Count})"));
     }
 
@@ -25125,56 +25146,70 @@ LIMIT 100000",
 
         // Core event counts
         var counts = await db.QuerySingleAsync(
-            @"SELECT
+            $@"SELECT
                 COUNT(*) total_events,
-                SUM(CASE WHEN review_status='New' THEN 1 ELSE 0 END) open_events,
-                SUM(CASE WHEN review_status='Coaching Assigned' THEN 1 ELSE 0 END) coaching_assigned,
-                SUM(CASE WHEN review_status='Reviewed' THEN 1 ELSE 0 END) resolved_events,
-                SUM(CASE WHEN review_status='Escalated' THEN 1 ELSE 0 END) dismissed_events,
-                SUM(CASE WHEN severity='Critical' AND review_status NOT IN ('Reviewed','Escalated') THEN 1 ELSE 0 END) critical_open,
-                SUM(CASE WHEN event_type='Speeding' THEN 1 ELSE 0 END) speeding_events,
-                SUM(CASE WHEN event_type='Harsh Braking' THEN 1 ELSE 0 END) repeated_speeding,
-                SUM(CASE WHEN event_type='Distracted Driving' THEN 1 ELSE 0 END) geofence_events,
-                SUM(CASE WHEN event_type='Tailgating' THEN 1 ELSE 0 END) stale_device_events,
-                SUM(CASE WHEN event_time > NOW() - 24 * INTERVAL '1 hour' THEN 1 ELSE 0 END) events_24h
-              FROM safety_events
-              WHERE company_id=@cid
-                AND event_time > NOW() - 30 * INTERVAL '1 day'" + LegacySafetyBranchScope(http, "safety_events"),
+                COUNT(*) FILTER (WHERE LOWER(REPLACE(COALESCE(NULLIF(status,''),review_status),' ','_')) NOT IN ('resolved','dismissed')) open_events,
+                COUNT(*) FILTER (WHERE EXISTS (
+                  SELECT 1 FROM coaching_tasks ct WHERE ct.company_id=se.company_id AND ct.safety_event_id=se.id
+                    AND ct.deleted_at IS NULL AND LOWER(ct.status) NOT IN ('completed','cancelled','dismissed')
+                    AND {QualifiedCoachingTaskSql} AND {QualifiedCoachingSourceSql})) coaching_assigned,
+                COUNT(*) FILTER (WHERE LOWER(REPLACE(COALESCE(NULLIF(status,''),review_status),' ','_'))='resolved') resolved_events,
+                COUNT(*) FILTER (WHERE LOWER(REPLACE(COALESCE(NULLIF(status,''),review_status),' ','_'))='dismissed') dismissed_events,
+                COUNT(*) FILTER (WHERE LOWER(severity)='critical' AND LOWER(REPLACE(COALESCE(NULLIF(status,''),review_status),' ','_')) NOT IN ('resolved','dismissed')) critical_open,
+                COUNT(*) FILTER (WHERE LOWER(REPLACE(event_type,' ','_'))='speeding') speeding_events,
+                COUNT(*) FILTER (WHERE LOWER(REPLACE(event_type,' ','_'))='repeated_speeding') repeated_speeding,
+                COUNT(*) FILTER (WHERE LOWER(REPLACE(event_type,' ','_')) IN ('geofence_breach','geofence_exit')) geofence_events,
+                COUNT(*) FILTER (WHERE LOWER(REPLACE(event_type,' ','_'))='stale_device') stale_device_events,
+                COUNT(*) FILTER (WHERE COALESCE(occurred_at,event_time) > NOW() - 24 * INTERVAL '1 hour') events_24h
+              FROM safety_events se
+              WHERE se.company_id=@cid AND se.deleted_at IS NULL
+                AND {QualifiedSafetyEventSql}
+                AND COALESCE(se.occurred_at,se.event_time) > NOW() - 30 * INTERVAL '1 day'" + LegacySafetyBranchScope(http),
             c => { c.Parameters.AddWithValue("@cid", companyId); if (GetBranchId(http) is { } branchId) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
 
         // Average fleet safety score (30d)
         var avgScore = await db.ScalarDecimalAsync(
-            "SELECT AVG(dss.score_30d) FROM driver_safety_scores dss JOIN drivers d ON d.id=dss.driver_id AND d.company_id=dss.company_id WHERE dss.company_id=@cid" + (GetBranchId(http) is null ? string.Empty : " AND d.branch_id=@branchId"),
+            $"SELECT AVG(dss.score_30d) FROM driver_safety_scores dss JOIN drivers d ON d.id=dss.driver_id AND d.company_id=dss.company_id WHERE dss.company_id=@cid AND {QualifiedDriverSafetyScoreSql}" + (GetBranchId(http) is null ? string.Empty : " AND d.branch_id=@branchId"),
             c => { c.Parameters.AddWithValue("@cid", companyId); if (GetBranchId(http) is { } branchId) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
 
         // Open coaching tasks
         var openCoaching = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM safety_coaching_tasks sct WHERE company_id=@cid AND status='pending'" + (GetBranchId(http) is null ? string.Empty : " AND EXISTS (SELECT 1 FROM drivers d WHERE d.id=sct.driver_id AND d.company_id=sct.company_id AND d.branch_id=@branchId)"),
+            $@"SELECT COUNT(*) FROM coaching_tasks ct
+                WHERE ct.company_id=@cid AND ct.deleted_at IS NULL
+                  AND LOWER(ct.status) NOT IN ('completed','cancelled','dismissed')
+                  AND {QualifiedCoachingTaskSql} AND {QualifiedCoachingSourceSql}" +
+                (GetBranchId(http) is null ? string.Empty : " AND ct.branch_id=@branchId"),
             c => { c.Parameters.AddWithValue("@cid", companyId); if (GetBranchId(http) is { } branchId) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
 
         // Overdue coaching
         var overdueCoaching = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM safety_coaching_tasks sct WHERE company_id=@cid AND status='pending' AND due_date < CURRENT_DATE" + (GetBranchId(http) is null ? string.Empty : " AND EXISTS (SELECT 1 FROM drivers d WHERE d.id=sct.driver_id AND d.company_id=sct.company_id AND d.branch_id=@branchId)"),
+            $@"SELECT COUNT(*) FROM coaching_tasks ct
+                WHERE ct.company_id=@cid AND ct.deleted_at IS NULL AND ct.due_at<NOW()
+                  AND LOWER(ct.status) NOT IN ('completed','cancelled','dismissed')
+                  AND {QualifiedCoachingTaskSql} AND {QualifiedCoachingSourceSql}" +
+                (GetBranchId(http) is null ? string.Empty : " AND ct.branch_id=@branchId"),
             c => { c.Parameters.AddWithValue("@cid", companyId); if (GetBranchId(http) is { } branchId) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
 
         // 30-day daily trend (events per day)
         var trend = await db.QueryAsync(
-            @"SELECT event_time::date event_date, COUNT(*) event_count,
+            $@"SELECT COALESCE(se.occurred_at,se.event_time)::date event_date, COUNT(*) event_count,
                      SUM(CASE WHEN severity='Critical' THEN 1 ELSE 0 END) critical_count
-              FROM safety_events
-              WHERE company_id=@cid AND event_time > NOW() - 30 * INTERVAL '1 day'
-                " + (GetBranchId(http) is null ? string.Empty : " AND branch_id=@branchId") + @"
-              GROUP BY event_time::date
+              FROM safety_events se
+              WHERE se.company_id=@cid AND se.deleted_at IS NULL
+                AND {QualifiedSafetyEventSql}
+                AND COALESCE(se.occurred_at,se.event_time) > NOW() - 30 * INTERVAL '1 day'
+                " + (GetBranchId(http) is null ? string.Empty : " AND se.branch_id=@branchId") + @"
+              GROUP BY COALESCE(se.occurred_at,se.event_time)::date
               ORDER BY event_date",
             c => { c.Parameters.AddWithValue("@cid", companyId); if (GetBranchId(http) is { } branchId) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
 
         // Top 5 highest-risk drivers
         var riskDrivers = await db.QueryAsync(
-            @"SELECT dss.driver_id, dss.score_30d, dss.events_30d,
+            $@"SELECT dss.driver_id, dss.score_30d, dss.events_30d,
                      d.full_name driver_name
               FROM driver_safety_scores dss
-              JOIN drivers d ON d.id = dss.driver_id
-              WHERE dss.company_id = @cid AND dss.events_30d > 0" + (GetBranchId(http) is null ? string.Empty : " AND d.branch_id=@branchId") + @"
+              JOIN drivers d ON d.id = dss.driver_id AND d.company_id=dss.company_id
+              WHERE dss.company_id = @cid AND {QualifiedDriverSafetyScoreSql}" + (GetBranchId(http) is null ? string.Empty : " AND d.branch_id=@branchId") + @"
               ORDER BY dss.score_30d ASC
               LIMIT 5",
             c => { c.Parameters.AddWithValue("@cid", companyId); if (GetBranchId(http) is { } branchId) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
@@ -25198,7 +25233,8 @@ LIMIT 100000",
             openCoachingTasks    = openCoaching,
             overdueCoachingTasks = overdueCoaching,
             trend,
-            riskDrivers
+            riskDrivers,
+            evidenceStatus = "Only authenticated, qualified runtime, or provider-verified safety records are included. Driver scores require a fresh calculation from qualified runtime events."
         }, "Safety dashboard"));
     }
 

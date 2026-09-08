@@ -265,8 +265,14 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
         var suffix = isCanonical ? "" : "+" + companyCode.ToLowerInvariant();
         var adminEmail = $"admin{suffix}@meridian.demo";
         var portalEmail = $"portal{suffix}@acme.demo";
+        const string portalPerms = "[\"customer_portal:view\",\"shipments:view\"]";
+        // Seed tenant-local memberships before users. A fresh owner-capable
+        // database may not have the optional global role catalog yet, and role_id
+        // must never be silently left NULL.
+        await UpsertTenantRoleAsync(companyId, "Fleet Manager", internalPerms, ct);
+        await UpsertTenantRoleAsync(companyId, "Customer Portal User", portalPerms, ct);
         await SeedUserAsync(companyId, adminEmail, "Meridian Ops Admin", "Fleet Manager", null, internalPerms, ct);
-        await SeedUserAsync(companyId, portalEmail, "Acme Portal User", "Customer Portal User", customers[0], "[\"customer_portal:view\",\"shipments:view\"]", ct);
+        await SeedUserAsync(companyId, portalEmail, "Acme Portal User", "Customer Portal User", customers[0], portalPerms, ct);
 
         await ReconcileSafetyPilotFixtureAsync(companyId, companyCode, ct);
 
@@ -481,12 +487,13 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
                     speeding_count=EXCLUDED.speeding_count,coaching_open_count=EXCLUDED.coaching_open_count,
                     coaching_completed_count=EXCLUDED.coaching_completed_count,incident_count=EXCLUDED.incident_count,
                     risk_score=EXCLUDED.risk_score,period_start=EXCLUDED.period_start,period_end=EXCLUDED.period_end;
-              INSERT INTO driver_safety_scores (company_id,driver_id,score_7d,score_30d,score_90d,events_7d,events_30d,events_90d,breakdown_json,computed_at)
-                VALUES (@companyId,@driver1,76,80,86,3,5,8,'{""formulaVersion"":""safety-pilot-v2"",""speeding"":3}'::jsonb,NOW()),
-                       (@companyId,@driver2,84,87,91,1,2,3,'{""formulaVersion"":""safety-pilot-v2"",""harshBraking"":1}'::jsonb,NOW())
+              INSERT INTO driver_safety_scores (company_id,driver_id,score_7d,score_30d,score_90d,events_7d,events_30d,events_90d,breakdown_json,computed_at,data_origin,verification_status)
+                VALUES (@companyId,@driver1,76,80,86,3,5,8,'{""formulaVersion"":""safety-pilot-v2"",""speeding"":3}'::jsonb,NOW(),'demo_seed','demo_seed'),
+                       (@companyId,@driver2,84,87,91,1,2,3,'{""formulaVersion"":""safety-pilot-v2"",""harshBraking"":1}'::jsonb,NOW(),'demo_seed','demo_seed')
                 ON CONFLICT (company_id,driver_id) DO UPDATE SET score_7d=EXCLUDED.score_7d,score_30d=EXCLUDED.score_30d,
                     score_90d=EXCLUDED.score_90d,events_7d=EXCLUDED.events_7d,events_30d=EXCLUDED.events_30d,
-                    events_90d=EXCLUDED.events_90d,breakdown_json=EXCLUDED.breakdown_json,computed_at=EXCLUDED.computed_at;",
+                    events_90d=EXCLUDED.events_90d,breakdown_json=EXCLUDED.breakdown_json,computed_at=EXCLUDED.computed_at,
+                    data_origin=EXCLUDED.data_origin,verification_status=EXCLUDED.verification_status;",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branch", northBranchId); c.Parameters.AddWithValue("@driver1", driver1); c.Parameters.AddWithValue("@driver2", driver2); }, ct);
 
         await db.ExecuteAsync(

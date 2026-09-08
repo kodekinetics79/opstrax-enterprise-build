@@ -310,6 +310,22 @@ MIGRATIONS=(
   2026_09_08_stage130_canonical_diagnostic_evidence_identity
   # Disambiguate telemetry follow-up tasks from legacy seed-only insight ids.
   2026_09_08_stage131_alert_source_truth
+  # Commercial truth overlays. These fail customer-facing operational reads
+  # closed unless their persisted evidence is qualified at the source.
+  2026_09_08_notification_delivery_contract
+  2026_09_08_telemetry_rule_activation_integrity
+  2026_09_08_safety_analytics_evidence_integrity
+  2026_09_08_driver_safety_score_evidence_integrity
+  2026_09_08_dispatch_analytics_evidence_integrity
+  2026_09_08_executive_analytics_evidence_integrity
+  2026_09_08_sla_kpi_evidence_integrity
+  2026_09_08_carrier_evidence_integrity
+  2026_09_08_contract_evidence_integrity
+  2026_09_08_fuel_evidence_integrity
+  2026_09_08_maintenance_analytics_evidence_integrity
+  2026_09_08_cost_leakage_evidence
+  2026_09_08_expense_workflow_integrity
+  2026_09_08_invoice_payment_integrity
 )
 
 echo "Pre-check: validated read-only database identity…"

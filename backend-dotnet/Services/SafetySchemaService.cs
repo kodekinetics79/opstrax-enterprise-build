@@ -74,8 +74,17 @@ public sealed class SafetySchemaService(Database db)
             events_90d INT NOT NULL DEFAULT 0,
             breakdown_json JSONB NULL,
             computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+            verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified',
             UNIQUE (company_id, driver_id)
         )",
+
+        @"ALTER TABLE driver_safety_scores
+            ADD COLUMN IF NOT EXISTS data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+            ADD COLUMN IF NOT EXISTS verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'",
+
+        @"ALTER TABLE safety_events
+            ADD COLUMN IF NOT EXISTS resolved_by BIGINT NULL",
     ];
 
     private static readonly string[] Indexes =
@@ -88,6 +97,7 @@ public sealed class SafetySchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_sct_event ON safety_coaching_tasks(safety_event_id)",
         "CREATE INDEX IF NOT EXISTS idx_sct_driver ON safety_coaching_tasks(driver_id, company_id)",
         "CREATE INDEX IF NOT EXISTS idx_dss_company ON driver_safety_scores(company_id, score_30d)",
+        "CREATE INDEX IF NOT EXISTS idx_dss_company_evidence ON driver_safety_scores(company_id, data_origin, verification_status, computed_at)",
     ];
 
     // Inert score-policy templates. Safety scoring is customer operating policy;

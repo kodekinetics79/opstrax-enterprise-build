@@ -318,13 +318,16 @@ public sealed class SafetyBackgroundService(
             await db.ExecuteAsync(
                 @"INSERT INTO driver_safety_scores
                     (company_id, driver_id, score_7d, score_30d, score_90d,
-                     events_7d, events_30d, events_90d, breakdown_json, computed_at)
+                     events_7d, events_30d, events_90d, breakdown_json, computed_at,
+                     data_origin, verification_status)
                   VALUES
-                    (@cid, @did, @s7, @s30, @s90, @e7, @e30, @e90, @bd, NOW())
+                    (@cid, @did, @s7, @s30, @s90, @e7, @e30, @e90, @bd, NOW(),
+                     'runtime_computed', 'calculated_from_qualified_sources')
                   ON CONFLICT (company_id, driver_id) DO UPDATE SET
                     score_7d=EXCLUDED.score_7d, score_30d=EXCLUDED.score_30d, score_90d=EXCLUDED.score_90d,
                     events_7d=EXCLUDED.events_7d, events_30d=EXCLUDED.events_30d, events_90d=EXCLUDED.events_90d,
-                    breakdown_json=EXCLUDED.breakdown_json, computed_at=NOW()",
+                    breakdown_json=EXCLUDED.breakdown_json, computed_at=NOW(),
+                    data_origin=EXCLUDED.data_origin, verification_status=EXCLUDED.verification_status",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",  companyId);

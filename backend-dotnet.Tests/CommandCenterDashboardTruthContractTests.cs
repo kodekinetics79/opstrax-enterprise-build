@@ -104,6 +104,14 @@ public sealed class CommandCenterDashboardTruthContractTests
         var method = Method("private static async Task<IResult> SafetyDashboard(", "// ── GET /api/safety/rules");
         Assert.DoesNotContain("?? 100m", method, StringComparison.Ordinal);
         Assert.Contains("(decimal?)null", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedSafetyEventSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedDriverSafetyScoreSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedCoachingTaskSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedCoachingSourceSql", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("safety_coaching_tasks", method, StringComparison.Ordinal);
+        Assert.Contains("='repeated_speeding'", method, StringComparison.Ordinal);
+        Assert.Contains("IN ('geofence_breach','geofence_exit')", method, StringComparison.Ordinal);
+        Assert.Contains("='stale_device'", method, StringComparison.Ordinal);
     }
 
     [Fact]
