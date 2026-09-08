@@ -8,11 +8,14 @@ on:
       - 'telematics/src/Opstrax.Telematics.Contracts/Provenance/Transport.cs'
       - 'telematics/src/Opstrax.Telematics.Protocols.J1939/**'
       - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939SignalPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/J1939/**'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Program.cs'
       - 'telematics/src/Opstrax.Telematics.Gateway/Eventing/PostgresEventBackbone.cs'
       - 'telematics/src/Opstrax.Telematics.Gateway/Opstrax.Telematics.Gateway.csproj'
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/J1939*Tests.cs'
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/Opstrax.Telematics.Protocols.Tests.csproj'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939SignalPublisherTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939CanHostTests.cs'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/PostgresProductionDurabilityTests.cs'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj'
       - 'database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql'
@@ -36,11 +39,14 @@ on:
       - 'telematics/src/Opstrax.Telematics.Contracts/Provenance/Transport.cs'
       - 'telematics/src/Opstrax.Telematics.Protocols.J1939/**'
       - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939SignalPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/J1939/**'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Program.cs'
       - 'telematics/src/Opstrax.Telematics.Gateway/Eventing/PostgresEventBackbone.cs'
       - 'telematics/src/Opstrax.Telematics.Gateway/Opstrax.Telematics.Gateway.csproj'
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/J1939*Tests.cs'
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/Opstrax.Telematics.Protocols.Tests.csproj'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939SignalPublisherTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939CanHostTests.cs'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/PostgresProductionDurabilityTests.cs'
       - 'telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj'
       - 'database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql'
@@ -82,7 +88,7 @@ jobs:
       - name: Run J1939 canonical publication tests
         run: >-
           dotnet test telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj
-          --filter "FullyQualifiedName~J1939SignalPublisherTests"
+          --filter "FullyQualifiedName~J1939SignalPublisherTests|FullyQualifiedName~J1939CanHostTests"
           --logger "console;verbosity=minimal"
       - name: Run customer signal visibility contract
         run: node frontend/scripts/test-j1939-signal-visibility-contract.mjs

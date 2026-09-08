@@ -8,12 +8,36 @@
 
 ## Purpose
 
-`J1939CanAcquisition` is the boundary between a CAN adapter capture and OpsTrax's existing J1939 message decoders. It turns one copied raw CAN frame into a parsed evidence envelope and returns a complete J1939 message only when either:
+`J1939CanAcquisition` is the protocol boundary between a CAN adapter capture and OpsTrax's existing J1939 message decoders. It turns one copied raw CAN frame into a parsed evidence envelope and returns a complete J1939 message only when either:
 
 - the frame directly carries the message payload; or
 - a valid TP.CM/TP.DT sequence completes the advertised payload exactly.
 
-The component does not open a CAN interface, select a vehicle adapter, identify an ECU, or assert that a capture came from physical hardware. The caller must supply the adapter type, bus/channel, capture timestamp and capture reference from the real acquisition mechanism.
+`J1939CanIngestService` now supplies the bounded production host around that boundary. When explicitly enabled in the trusted gateway topology, it runs the configured absolute `candump` executable as `candump -L <interface>` without a shell, parses timestamped classic-CAN records, resolves one configuration-bound device serial through the trusted registry, and passes catalog-supported messages to `J1939SignalPublisher`.
+
+This host makes software capable of consuming a real Linux SocketCAN interface. Its presence is not proof that an adapter, vehicle, ECU, wiring installation or signal value has been physically tested.
+
+## SocketCAN host and ownership boundary
+
+The CAN host is disabled by default. It is unavailable in the public HTTPS forwarding topology because it requires the platform registry and canonical event backbone. An enabled host fails startup when its executable path, interface, exact adapter evidence label, registry device serial or safety bounds are missing or invalid.
+
+The deployment binds one interface to one registry serial. The registry must resolve that serial uniquely to an active installed device and vehicle. CAN source address remains ECU provenance only: it cannot select or overwrite tenant, company, device or vehicle identity. The registry result is cached for at most the configured refresh interval, with a maximum permitted interval of one minute; a lookup failure clears the cache before retry, so an outage cannot extend a previously accepted owner. Draft, unassigned, unconfigured, quarantined, suspended and retired devices cannot publish.
+
+The local SocketCAN boundary does not provide per-frame cryptographic device authentication. `DirectDevice` means that a locally attached physical acquisition path supplied the bytes; it does not mean the exact hardware tuple is certified or spoof-proof. The default trust score is consequently conservative, and neither trust nor decoder confidence creates a certification claim.
+
+The minimum production configuration uses environment-backed settings equivalent to:
+
+```text
+Gateway__J1939Can__Enabled=true
+Gateway__J1939Can__CandumpPath=/usr/bin/candump
+Gateway__J1939Can__Interface=can0
+Gateway__J1939Can__AdapterType=<exact model / hardware revision / firmware evidence label>
+Gateway__J1939Can__RegistryDeviceSerial=<provisioned registry serial>
+```
+
+The service invokes the executable with `ProcessStartInfo.ArgumentList`, never a shell or a composed command string. It accepts only `candump -L` records carrying an absolute Unix timestamp, the configured interface, an eight-hex-digit extended identifier and zero to eight complete payload bytes. Standard identifiers, CAN FD, RTR, error-shaped, malformed, wrong-interface, control-character and oversized records are dropped. Adapter stderr and raw frame text are never copied to logs. A capture reference contains only a deterministic SHA-256 digest of the admitted record.
+
+Every frame must fall inside the configured capture-age and future-skew window. Supported messages receive deterministic event and correlation identifiers derived from registry scope plus ordered capture references. A replay of exactly the same evidence therefore reaches the PostgreSQL backbone with the same event identifier and is ignored by its existing idempotent ledger check. The stdout stream is consumed sequentially, so event-backbone backpressure propagates to `candump`; an acquisition-process exit resets incomplete transport state and restarts after bounded delay. If canonical publication fails, the exact already-owned envelope is parked in the gateway's existing production store-and-forward ledger and replayed under the same topic, partition key and event identity after recovery.
 
 ## Input contract
 
@@ -93,7 +117,7 @@ The same most-significant-byte rule is applied to the four-byte engine-hours val
 
 Every decoded SPN becomes a canonical `SignalValue` with a named availability state. Fresh valid data is `Available`. An older valid reading is retained as evidence with `Stale` availability and the event's `IsStale` quality flag, but is not promoted to a typed current-value field. Parameter-specific, error and not-available indicators persist with null values and explicit availability names. This prevents a reserved wire code from appearing as a real customer measurement.
 
-`J1939SignalPublisher` creates the tenant/company/device partition key and publishes the canonical event to `telemetry.normalized`. Its envelope headers retain PGN, SPN, source/destination address, adapter type, CAN channel and the ordered capture references without including raw payload bytes. The production PostgreSQL backbone classifies a non-positional event carrying signals as `vehicle.signal` and stores the full canonical payload and envelope headers. The future physical CAN host must authenticate and resolve the owning device before calling this publisher.
+`J1939SignalPublisher` creates the tenant/company/device partition key and publishes the canonical event to `telemetry.normalized`. Its envelope headers retain PGN, SPN, source/destination address, adapter type, CAN channel and the ordered capture references without including raw payload bytes. The production PostgreSQL backbone classifies a non-positional event carrying signals as `vehicle.signal` and stores the full canonical payload and envelope headers. The CAN host resolves the configuration-bound registry device before calling this publisher; the interface and CAN address never become ownership authority.
 
 ## Customer-visible latest signal projection
 
@@ -105,6 +129,6 @@ The OBD/J1939 diagnostics page reads only the three cataloged engine/electrical 
 
 ## Verification
 
-The protocol suite covers direct DM1 decoding, PDU1/PDU2 identifier semantics, input rejection, immutable capture copying, multi-packet DM1/DM2 reconstruction, diagnostic outcome classification, explicit signal routing, little-endian RPM/hours/voltage scaling, two-byte and four-byte indicator ranges, canonical availability and freshness, tenant-filtered publication, unsupported-PGN behavior, evidence retention, bounded malformed-message failures, bus isolation, concurrent channels, abandoned-path expiry, timestamp regression, invalid transported PGNs and mismatched evidence rejection. PostgreSQL durability tests cover newest-observation ordering, explicit unavailable replacement, the false certification boundary and removal of non-allowlisted headers. The clean predeployment migration rehearsal covers Stage 129 creation, idempotent replay, RLS policies and least-privilege grants.
+The protocol suite covers direct DM1 decoding, PDU1/PDU2 identifier semantics, input rejection, immutable capture copying, multi-packet DM1/DM2 reconstruction, diagnostic outcome classification, explicit signal routing, little-endian RPM/hours/voltage scaling, two-byte and four-byte indicator ranges, canonical availability and freshness, tenant-filtered publication, unsupported-PGN behavior, evidence retention, bounded malformed-message failures, bus isolation, concurrent channels, abandoned-path expiry, timestamp regression, invalid transported PGNs and mismatched evidence rejection. CAN-host tests cover strict `candump` admission, registry-bound ownership, source-address non-authority, lifecycle rejection, capture-time bounds, malformed-message recovery and deterministic replay identity. PostgreSQL durability tests cover newest-observation ordering, explicit unavailable replacement, the false certification boundary and removal of non-allowlisted headers. The clean predeployment migration rehearsal covers Stage 129 creation, idempotent replay, RLS policies and least-privilege grants.
 
 Synthetic tests establish deterministic software behavior only. Capability promotion still requires an exact adapter/device/firmware tuple, physical CAN traffic, trusted comparison values, controlled vehicle testing, recovery and soak evidence, and qualified human acceptance under the commercialization plan.

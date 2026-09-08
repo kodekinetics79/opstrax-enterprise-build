@@ -6,6 +6,8 @@ using Opstrax.Telematics.Contracts.Provenance;
 using Opstrax.Telematics.Contracts.Signals;
 using Opstrax.Telematics.Gateway.Eventing;
 using Opstrax.Telematics.Gateway.Forwarding;
+using Opstrax.Telematics.Gateway.Buffering;
+using Microsoft.Extensions.Logging.Abstractions;
 using Opstrax.Telematics.Protocols.J1939;
 
 namespace Opstrax.Telematics.IntegrationTests;
@@ -102,6 +104,30 @@ public sealed class J1939SignalPublisherTests
         Assert.Equal("vehicle.signal", PostgresEventBackbone.ClassifyCanonicalEventType(canonical));
     }
 
+    [Fact]
+    public async Task Backbone_outage_parks_exact_canonical_envelope_for_durable_replay()
+    {
+        var buffer = new InMemoryStoreAndForwardBuffer();
+        var publisher = new J1939SignalPublisher(
+            new FailingBackbone(),
+            buffer,
+            NullLogger<J1939SignalPublisher>.Instance);
+        J1939CanonicalizationContext context = Context();
+
+        CanonicalTelemetryEvent published = await publisher.PublishAsync(
+            Message(
+                J1939SignalDecoder.ElectronicEngineController1Pgn,
+                [0xFF, 0xFF, 0xFF, 0xE0, 0x2E, 0xFF, 0xFF, 0xFF]),
+            context);
+        StoreAndForwardLease lease = Assert.IsType<StoreAndForwardLease>(await buffer.TryAcquireAsync());
+        var envelope = Assert.IsType<EventEnvelope<CanonicalTelemetryEvent>>(lease.Entry.Envelope);
+
+        Assert.Equal(TelematicsTopics.TelemetryNormalized, lease.Entry.Topic);
+        Assert.Equal(TelematicsEventKey.ForDevice(TenantId, 42, "can-gateway-17"), lease.Entry.Key);
+        Assert.Equal(published.EventId, envelope.EventId);
+        Assert.Same(published, envelope.Payload);
+    }
+
     private static J1939CanonicalizationContext Context() => new(
         new ResolvedDeviceOwner(
             TenantId,
@@ -168,5 +194,18 @@ public sealed class J1939SignalPublisherTests
         }
 
         return null;
+    }
+
+    private sealed class FailingBackbone : IEventBackbone
+    {
+        public Task PublishAsync<T>(
+            string topic,
+            string key,
+            EventEnvelope<T> envelope,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException(new IOException("synthetic backbone outage"));
+
+        public IEventSubscription<T> Subscribe<T>(string topic, Guid? tenantFilter = null) =>
+            throw new NotSupportedException();
     }
 }
