@@ -20409,15 +20409,89 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.manuf
     private static async Task<IResult> TelemetryDeviceExport(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "telematics:devices:export") is { } denied) return denied;
+        // This is an operational inventory export, not a certification artifact. Keep a
+        // fixed schema for empty and populated fleets and include the current governed
+        // DeviceOps projections so a 1K+ export does not lose the facts visible in the
+        // customer record. Every assurance claim remains explicit and false.
+        string[] columns =
+        [
+            "deviceSerial", "imei", "deviceCategory", "manufacturer", "deviceModel",
+            "hardwareRevision", "provider", "firmwareVersion", "status", "deviceState",
+            "branchCode", "vehicleCode", "driverName", "currentInstallationStatus",
+            "currentInstallationRole", "currentInstallationPrimary", "exactDeviceTupleComplete",
+            "currentInstallationRecorded", "currentConnectivityProfileRecorded",
+            "currentTelemetryObserved", "softwareLifecycleClear", "openRmaCount",
+            "highestOpenRmaSeverity", "nextSupportResponseDueAt", "sparePoolName",
+            "sparePoolState", "spareInventoryAssuranceStatus", "sparePhysicalPossessionClaim",
+            "spareConditionVerifiedClaim", "spareCompatibilityClaim", "spareCertificationClaim",
+            "supportAssignmentState", "supportTier", "supportCoverageWindow",
+            "supportRoutingResponseTargetMinutes", "supportRecordStatus",
+            "supportCommercialEntitlementVerifiedClaim", "supportProviderClaim",
+            "supportHardwareSupportabilityClaim", "supportCertificationClaim",
+            "deviceOpsGapCount", "lastSeenAt", "revokedAt", "retiredAt", "createdAt",
+            "evidenceBoundary", "certificationClaim"
+        ];
         var rows = await db.QueryAsync(@"
-SELECT e.device_serial, e.imei, e.device_category, e.manufacturer, e.device_model,
-       e.hardware_revision, e.provider, e.firmware_version, e.status, e.device_state, b.branch_code,
-       v.vehicle_code, d.full_name driver_name, e.last_seen_at, e.revoked_at, e.retired_at, e.created_at
+SELECT e.device_serial AS ""deviceSerial"", e.imei AS ""imei"",
+       e.device_category AS ""deviceCategory"", e.manufacturer AS ""manufacturer"",
+       e.device_model AS ""deviceModel"", e.hardware_revision AS ""hardwareRevision"",
+       e.provider AS ""provider"", e.firmware_version AS ""firmwareVersion"",
+       e.status AS ""status"", e.device_state AS ""deviceState"", b.branch_code AS ""branchCode"",
+       v.vehicle_code AS ""vehicleCode"", d.full_name AS ""driverName"",
+       current_install.status AS ""currentInstallationStatus"",
+       current_install.device_role AS ""currentInstallationRole"",
+       current_install.is_primary AS ""currentInstallationPrimary"",
+       (NULLIF(BTRIM(COALESCE(e.device_serial,'')),'') IS NOT NULL
+        AND NULLIF(BTRIM(COALESCE(e.manufacturer,'')),'') IS NOT NULL
+        AND NULLIF(BTRIM(COALESCE(e.device_model,'')),'') IS NOT NULL
+        AND NULLIF(BTRIM(COALESCE(e.hardware_revision,'')),'') IS NOT NULL
+        AND NULLIF(BTRIM(COALESCE(e.firmware_version,'')),'') IS NOT NULL
+        AND NULLIF(BTRIM(COALESCE(e.provider,'')),'') IS NOT NULL) AS ""exactDeviceTupleComplete"",
+       (current_install.id IS NOT NULL) AS ""currentInstallationRecorded"",
+       (current_connectivity.id IS NOT NULL) AS ""currentConnectivityProfileRecorded"",
+       (e.last_seen_at IS NOT NULL AND e.last_seen_at>=NOW()-INTERVAL '15 minutes') AS ""currentTelemetryObserved"",
+       (e.status NOT IN ('Suspended','Malfunction','Diagnostic')
+        AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')) AS ""softwareLifecycleClear"",
+       COALESCE(open_rma.open_case_count,0) AS ""openRmaCount"",
+       CASE open_rma.severity_rank WHEN 0 THEN 'P0' WHEN 1 THEN 'P1' WHEN 2 THEN 'P2' WHEN 3 THEN 'P3' END
+         AS ""highestOpenRmaSeverity"",
+       open_rma.next_response_due_at AS ""nextSupportResponseDueAt"",
+       current_spare.pool_name AS ""sparePoolName"", current_spare.state_after AS ""sparePoolState"",
+       current_spare.inventory_assurance_status AS ""spareInventoryAssuranceStatus"",
+       COALESCE(current_spare.physical_possession_claim,FALSE) AS ""sparePhysicalPossessionClaim"",
+       COALESCE(current_spare.condition_verified_claim,FALSE) AS ""spareConditionVerifiedClaim"",
+       COALESCE(current_spare.compatibility_claim,FALSE) AS ""spareCompatibilityClaim"",
+       COALESCE(current_spare.certification_claim,FALSE) AS ""spareCertificationClaim"",
+       current_support.state_after AS ""supportAssignmentState"", current_support.tier_code AS ""supportTier"",
+       current_support.coverage_window AS ""supportCoverageWindow"",
+       current_support.routing_response_target_minutes AS ""supportRoutingResponseTargetMinutes"",
+       current_support.record_status AS ""supportRecordStatus"",
+       COALESCE(current_support.commercial_entitlement_verified_claim,FALSE)
+         AS ""supportCommercialEntitlementVerifiedClaim"",
+       COALESCE(current_support.provider_support_claim,FALSE) AS ""supportProviderClaim"",
+       COALESCE(current_support.hardware_supportability_claim,FALSE) AS ""supportHardwareSupportabilityClaim"",
+       COALESCE(current_support.certification_claim,FALSE) AS ""supportCertificationClaim"",
+       (CASE WHEN NULLIF(BTRIM(COALESCE(e.device_serial,'')),'') IS NOT NULL
+                   AND NULLIF(BTRIM(COALESCE(e.manufacturer,'')),'') IS NOT NULL
+                   AND NULLIF(BTRIM(COALESCE(e.device_model,'')),'') IS NOT NULL
+                   AND NULLIF(BTRIM(COALESCE(e.hardware_revision,'')),'') IS NOT NULL
+                   AND NULLIF(BTRIM(COALESCE(e.firmware_version,'')),'') IS NOT NULL
+                   AND NULLIF(BTRIM(COALESCE(e.provider,'')),'') IS NOT NULL THEN 0 ELSE 1 END
+        + CASE WHEN current_install.id IS NOT NULL THEN 0 ELSE 1 END
+        + CASE WHEN current_connectivity.id IS NOT NULL THEN 0 ELSE 1 END
+        + CASE WHEN e.last_seen_at IS NOT NULL AND e.last_seen_at>=NOW()-INTERVAL '15 minutes' THEN 0 ELSE 1 END
+        + CASE WHEN e.status NOT IN ('Suspended','Malfunction','Diagnostic')
+                    AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended') THEN 0 ELSE 1 END
+        + CASE WHEN COALESCE(open_rma.open_case_count,0)>0 THEN 1 ELSE 0 END) AS ""deviceOpsGapCount"",
+       e.last_seen_at AS ""lastSeenAt"", e.revoked_at AS ""revokedAt"",
+       e.retired_at AS ""retiredAt"", e.created_at AS ""createdAt"",
+       'OperationalRecordOnly'::TEXT AS ""evidenceBoundary"", FALSE AS ""certificationClaim""
 FROM eld_devices e
 LEFT JOIN branches b ON b.id=e.branch_id AND b.company_id=e.company_id
 LEFT JOIN LATERAL (
-  SELECT i.vehicle_id FROM device_installations i
+  SELECT i.id,i.vehicle_id,i.status,i.device_role,i.is_primary FROM device_installations i
   WHERE i.company_id=e.company_id AND i.device_id=e.id AND i.effective_to IS NULL
+    AND i.branch_id IS NOT DISTINCT FROM e.branch_id
     AND i.status IN ('Installed','Verified')
   ORDER BY i.effective_from DESC,i.id DESC LIMIT 1
 ) current_install ON TRUE
@@ -20429,6 +20503,48 @@ LEFT JOIN LATERAL (
   ORDER BY da.assigned_at DESC,da.id DESC LIMIT 1
 ) active_dispatch ON TRUE
 LEFT JOIN drivers d ON d.id=active_dispatch.driver_id AND d.company_id=e.company_id
+LEFT JOIN LATERAL (
+  SELECT p.id FROM device_connectivity_profiles p
+  WHERE p.company_id=e.company_id AND p.device_id=e.id
+    AND p.branch_id IS NOT DISTINCT FROM e.branch_id
+    AND p.effective_to IS NULL AND p.assignment_status='Assigned'
+  ORDER BY p.effective_from DESC,p.id DESC LIMIT 1
+) current_connectivity ON TRUE
+LEFT JOIN LATERAL (
+  SELECT COUNT(*) open_case_count,
+         MIN(CASE c.severity WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END) severity_rank,
+         MIN(c.response_due_at) next_response_due_at
+  FROM device_rma_cases c
+  WHERE c.company_id=e.company_id AND c.device_id=e.id
+    AND c.branch_id IS NOT DISTINCT FROM e.branch_id
+    AND COALESCE((SELECT ev.case_status_after FROM device_rma_events ev
+                  WHERE ev.company_id=c.company_id AND ev.case_id=c.id
+                  ORDER BY ev.sequence_number DESC LIMIT 1),'Open')<>'Resolved'
+) open_rma ON TRUE
+LEFT JOIN LATERAL (
+  SELECT entry.pool_name,event.state_after,entry.inventory_assurance_status,
+         entry.physical_possession_claim,entry.condition_verified_claim,
+         event.compatibility_claim,entry.certification_claim
+  FROM device_spare_pool_entries entry
+  JOIN LATERAL (
+    SELECT pe.state_after,pe.compatibility_claim
+    FROM device_spare_pool_events pe
+    WHERE pe.company_id=entry.company_id AND pe.entry_id=entry.id
+    ORDER BY pe.effective_at DESC,pe.id DESC LIMIT 1
+  ) event ON TRUE
+  WHERE entry.company_id=e.company_id AND entry.device_id=e.id
+    AND entry.branch_id IS NOT DISTINCT FROM e.branch_id
+  LIMIT 1
+) current_spare ON TRUE
+LEFT JOIN LATERAL (
+  SELECT se.state_after,se.tier_code,se.coverage_window,se.routing_response_target_minutes,
+         se.record_status,se.commercial_entitlement_verified_claim,se.provider_support_claim,
+         se.hardware_supportability_claim,se.certification_claim
+  FROM device_support_tier_events se
+  WHERE se.company_id=e.company_id AND se.device_id=e.id
+    AND se.branch_id IS NOT DISTINCT FROM e.branch_id
+  ORDER BY se.effective_at DESC,se.id DESC LIMIT 1
+) current_support ON TRUE
 WHERE e.company_id=@cid AND e.deleted_at IS NULL
   AND (@branchId::BIGINT IS NULL OR e.branch_id=@branchId)
 ORDER BY e.device_serial
@@ -20438,18 +20554,9 @@ LIMIT 100000",
                 command.Parameters.AddWithValue("@cid", GetCompanyId(http));
                 command.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
             }, ct);
-        var csv = new System.Text.StringBuilder();
-        if (rows.Count == 0)
-        {
-            csv.AppendLine("deviceSerial,imei,deviceCategory,manufacturer,deviceModel,hardwareRevision,provider,firmwareVersion,status,deviceState,branchCode,vehicleCode,driverName,lastSeenAt,revokedAt,createdAt");
-        }
-        else
-        {
-            var columns = rows[0].Keys.ToList();
-            csv.AppendLine(string.Join(",", columns));
-            foreach (var row in rows)
-                csv.AppendLine(string.Join(",", columns.Select(column => CsvCell(row[column]))));
-        }
+        var csv = new System.Text.StringBuilder().AppendLine(string.Join(",", columns));
+        foreach (var row in rows)
+            csv.AppendLine(string.Join(",", columns.Select(column => CsvCell(row.GetValueOrDefault(column)))));
         return Results.File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", $"devices_{DateTime.UtcNow:yyyy-MM-dd_HH-mm}.csv");
     }
 

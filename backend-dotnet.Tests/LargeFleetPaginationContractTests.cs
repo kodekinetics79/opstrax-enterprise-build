@@ -48,6 +48,12 @@ public sealed class LargeFleetPaginationContractTests
         Assert.Contains("RequirePermission(http, \"telematics:devices:export\")", DeviceExportMethod(endpoints), StringComparison.Ordinal);
         Assert.DoesNotContain("api_key_hash", DeviceExportMethod(endpoints), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("hmac_secret", DeviceExportMethod(endpoints), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"deviceOpsGapCount\"", DeviceExportMethod(endpoints), StringComparison.Ordinal);
+        Assert.Contains("\"spareInventoryAssuranceStatus\"", DeviceExportMethod(endpoints), StringComparison.Ordinal);
+        Assert.Contains("\"supportCommercialEntitlementVerifiedClaim\"", DeviceExportMethod(endpoints), StringComparison.Ordinal);
+        Assert.Contains("'OperationalRecordOnly'::TEXT AS \"\"evidenceBoundary\"\"", DeviceExportMethod(endpoints), StringComparison.Ordinal);
+        Assert.Contains("FALSE AS \"\"certificationClaim\"\"", DeviceExportMethod(endpoints), StringComparison.Ordinal);
+        Assert.Contains("row.GetValueOrDefault(column)", DeviceExportMethod(endpoints), StringComparison.Ordinal);
 
         Assert.Contains("getDevicePage(options: DevicePageOptions", service, StringComparison.Ordinal);
         Assert.Contains("pageSize: Math.min(100", service, StringComparison.Ordinal);
