@@ -135,7 +135,8 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
         foreach (var (jobId, status) in new[] { (jobs[2], "active"), (jobs[3], "active"), (jobs[4], "exception"), (completedJobs[0], "completed") })
         {
             var tripId = await db.InsertAsync(
-                @"INSERT INTO trips (company_id, job_id, status, started_at) VALUES (@companyId, @jobId, @status, NOW() - INTERVAL '3 hours')",
+                @"INSERT INTO trips (company_id, job_id, status, started_at, data_origin, verification_status)
+                  VALUES (@companyId, @jobId, @status, NOW() - INTERVAL '3 hours','demo_seed','demo_seed')",
                 c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@jobId", jobId); c.Parameters.AddWithValue("@status", status); }, ct);
             trips++;
             await db.ExecuteAsync(
@@ -627,10 +628,11 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
                 await db.ExecuteAsync(
                     @"INSERT INTO fuel_transactions
                         (company_id, vehicle_id, transaction_time, gallons, quantity, unit, unit_price,
-                         total_cost, currency, fuel_type, idle_minutes, payment_method, anomaly_status, fuel_station)
+                         total_cost, currency, fuel_type, idle_minutes, payment_method, anomaly_status, fuel_station,
+                         data_origin, verification_status)
                       VALUES
                         (@cid, @vid, NOW() - make_interval(days => @d, hours => @h), @g, @g, 'gallon', @up,
-                         @tc, 'USD', 'Diesel', @idle, 'Fuel Card', 'normal', @station)",
+                         @tc, 'USD', 'Diesel', @idle, 'Fuel Card', 'normal', @station,'demo_seed','demo_seed')",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);

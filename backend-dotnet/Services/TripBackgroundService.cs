@@ -177,11 +177,13 @@ public sealed class TripBackgroundService(
                     (company_id, driver_id, vehicle_id, route_id, job_id,
                      status, planned_start_time, planned_end_time,
                      origin, destination,
-                     planned_distance_miles, planned_duration_minutes, total_planned_stops)
+                     planned_distance_miles, planned_duration_minutes, total_planned_stops,
+                     data_origin, verification_status)
                   VALUES (@cid, @did, @vid, @rid, @jid,
                           'planned', @pstart, @pend,
                           @origin, @dest,
-                          @pdist, @pdur, @tstops)",
+                          @pdist, @pdur, @tstops,
+                          'runtime_route_projection','derived_from_recorded_route')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",    companyId);

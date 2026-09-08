@@ -166,6 +166,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         new("fuel_transactions", "updated_at",          "TIMESTAMPTZ NULL"),
         new("fuel_transactions", "deleted_at",          "TIMESTAMPTZ NULL"),
         new("fuel_transactions", "data_origin",         "VARCHAR(80) NULL"),
+        new("fuel_transactions", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
 
         new("expenses", "expense_number",       "VARCHAR(80) NULL"),
         new("expenses", "category_id",          "BIGINT NULL"),
@@ -240,6 +241,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         new("idling_events", "risk_score",               "DECIMAL(6,2) NOT NULL DEFAULT 20"),
         new("idling_events", "recommended_action",       "VARCHAR(260) NULL"),
         new("idling_events", "data_origin",              "VARCHAR(80) NULL"),
+        new("idling_events", "verification_status",      "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
         new("idling_events", "cost_evidence_status",     "VARCHAR(40) NULL"),
         new("idling_events", "deleted_at",               "TIMESTAMPTZ NULL"),
         new("fuel_anomalies", "currency",                "VARCHAR(10) NULL"),
@@ -275,6 +277,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             estimated_cost DECIMAL(12,2) NOT NULL DEFAULT 0, currency VARCHAR(10) NOT NULL DEFAULT 'USD',
             threshold_status VARCHAR(80) NOT NULL DEFAULT 'Normal', risk_score DECIMAL(6,2) NOT NULL DEFAULT 20,
             recommended_action VARCHAR(260) NULL, data_origin VARCHAR(80) NULL,
+            verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified',
             cost_evidence_status VARCHAR(40) NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL)",
@@ -408,7 +411,8 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         @"INSERT INTO fuel_transactions
             (company_id, transaction_number, vehicle_id, driver_id, job_id, route_id,
              fuel_date, fuel_type, gallons, quantity, unit, unit_price, total_cost,
-             currency, odometer, fuel_station, payment_method, fuel_card_number, region, anomaly_status, notes, data_origin)
+             currency, odometer, fuel_station, payment_method, fuel_card_number, region, anomaly_status, notes,
+             data_origin, verification_status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<50)
           SELECT 1,
             'FT-B5-' || (1000+n),
@@ -428,7 +432,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             (ARRAY['Northern VA','DC Metro','Southern VA','Maryland','West VA'])[(n%5)+1],
             CASE WHEN n%9=0 THEN 'Anomaly Detected' WHEN n%7=0 THEN 'Under Review' ELSE 'Normal' END,
             CASE WHEN n%9=0 THEN 'AI detected possible quantity discrepancy vs odometer reading.' ELSE NULL END,
-            'demo_seed'
+            'demo_seed','demo_seed'
           FROM seq
           WHERE (SELECT COUNT(*) FROM fuel_transactions WHERE transaction_number LIKE 'FT-B5-%') < 50",
 
@@ -436,7 +440,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             (company_id, event_number, vehicle_id, driver_id, job_id, route_id,
              location_description, started_at, ended_at, duration_minutes,
              estimated_fuel_burn, estimated_cost, currency, threshold_status, risk_score, recommended_action,
-             data_origin, cost_evidence_status)
+             data_origin, verification_status, cost_evidence_status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<30)
           SELECT 1,
             'IDLE-' || (1000+n),
@@ -453,7 +457,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             CASE WHEN n%3=0 THEN 'Idle cost leakage detected — coach driver on idling policy'
                  WHEN n%5=0 THEN 'Review idle duration — approaching threshold'
                  ELSE 'Normal idle within policy' END,
-            'demo_seed', 'Recorded estimate'
+            'demo_seed','demo_seed','Recorded estimate'
           FROM seq
           WHERE (SELECT COUNT(*) FROM idling_events) < 30",
 

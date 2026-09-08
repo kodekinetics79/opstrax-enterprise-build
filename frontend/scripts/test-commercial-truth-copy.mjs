@@ -22,6 +22,7 @@ const alertRules = fs.readFileSync(new URL("../src/pages/AlertRulesPage.tsx", im
 const analytics = fs.readFileSync(new URL("../src/pages/AnalyticsDashboardPage.tsx", import.meta.url), "utf8");
 const fleetIntelligence = fs.readFileSync(new URL("../src/pages/FleetIntelligencePage.tsx", import.meta.url), "utf8");
 const fleetHealth = fs.readFileSync(new URL("../src/pages/FleetHealthPage.tsx", import.meta.url), "utf8");
+const fleetUtilization = fs.readFileSync(new URL("../src/pages/FleetUtilizationPage.tsx", import.meta.url), "utf8");
 const compliance = fs.readFileSync(new URL("../src/pages/CompliancePage.tsx", import.meta.url), "utf8");
 const operatingModule = fs.readFileSync(new URL("../src/pages/OperatingModulePage.tsx", import.meta.url), "utf8");
 const fleetOverview = fs.readFileSync(new URL("../src/pages/FleetOverviewPage.tsx", import.meta.url), "utf8");
@@ -194,6 +195,10 @@ assert.match(fleetHealth, /Fleet health score unavailable until qualified eviden
 assert.match(fleetHealth, /an empty risk list does not confirm that vehicles and drivers are within acceptable parameters/, "Fleet Health must not treat an empty qualified queue as fleet-wide clearance when coverage is incomplete");
 assert.match(fleetHealth, /System Fleet Insight — rule-based guidance from evidence-qualified operational records/, "Fleet Health must disclose the source boundary of its guidance");
 assert.doesNotMatch(fleetHealth, /live operational data|All drivers within normal parameters|All vehicles within normal parameters|metrics\.deviceOffline|safetyScore, 100/, "Fleet Health must not fabricate live, connectivity, normal, or perfect-score evidence");
+assert.match(fleetUtilization, /No qualified trip-hour evidence is available/, "Fleet Utilization must disclose missing trip evidence");
+assert.match(fleetUtilization, /readiness evidence unavailable/, "Fleet Utilization must disclose missing readiness evidence");
+assert.match(fleetUtilization, /An empty queue does not prove/, "Fleet Utilization must not treat an empty action queue as clearance");
+assert.doesNotMatch(fleetUtilization, /deployabilityScore|riskScore|Export live view|No idle drag detected|all within range/i, "Fleet Utilization must not manufacture readiness, risk, or healthy zero-value claims");
 assert.match(compliance, /do not certify regulatory compliance/, "Compliance recommendations must retain the certification boundary");
 assert.doesNotMatch(compliance, /recommendations based on live fleet data|No cross-border issues found/, "Compliance must not overstate record absence or evidence currency");
 assert.match(operatingModule, /No connected production records/, "Unwired operating modules must disclose the absent data source");

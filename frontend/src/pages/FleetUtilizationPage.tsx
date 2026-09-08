@@ -7,7 +7,6 @@ import {
   Clock3,
   Fuel,
   Gauge,
-  ShieldAlert,
   Sparkles,
   Truck,
   Wrench,
@@ -22,17 +21,17 @@ import {
   YAxis,
 } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, exportCsv, LoadingState, StatusBadge } from "@/components/ui";
 import { ClayStat, ConsoleNav, ConsoleRail } from "@/components/console";
 import type { AnyRecord } from "@/types";
 
 type UtilSection = "overview" | "capacity" | "efficiency" | "opportunities";
 
 const SECTIONS: Array<{ key: UtilSection; label: string; description: string }> = [
-  { key: "overview", label: "Overview", description: "Live fleet posture and quick actions" },
-  { key: "capacity", label: "Capacity", description: "Deployable reserve and load coverage" },
-  { key: "efficiency", label: "Efficiency", description: "Idle leakage, fuel drag and output" },
-  { key: "opportunities", label: "Action Queue", description: "Operational moves worth making now" },
+  { key: "overview", label: "Overview", description: "Recorded fleet posture and evidence-qualified cues" },
+  { key: "capacity", label: "Capacity", description: "Recorded status and qualified trip utilization" },
+  { key: "efficiency", label: "Efficiency", description: "Qualified idle, fuel and trip evidence" },
+  { key: "opportunities", label: "Action Queue", description: "Bounded cues supported by available evidence" },
 ];
 
 const RELATED_ENTITIES = [
@@ -60,30 +59,33 @@ const g = (row: AnyRecord, ...keys: string[]) => {
 
 const num = (value: unknown) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 
-function average(rows: AnyRecord[], key: string) {
-  if (!rows.length) return 0;
-  return rows.reduce((sum, row) => sum + num(g(row, key, key.replace(/([A-Z])/g, "_$1").toLowerCase())), 0) / rows.length;
+function optionalNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-function riskTier(row: AnyRecord): "High" | "Medium" | "Low" {
-  const risk = num(g(row, "riskScore", "risk_score"));
-  if (risk >= 70) return "High";
-  if (risk >= 40) return "Medium";
-  return "Low";
+function hasUtilizationEvidence(row: AnyRecord) {
+  return String(g(row, "utilizationBasis", "utilization_basis") ?? "").startsWith("trip_hours_30d");
 }
 
-function deployabilityScore(row: AnyRecord) {
-  const readiness = num(g(row, "readinessScore", "fleetReadinessScore"));
-  const utilization = num(g(row, "utilizationPct"));
-  const risk = num(g(row, "riskScore", "risk_score"));
-  const idle = num(g(row, "idleMinutesToday"));
-  const status = String(g(row, "status") ?? "");
-  const statusLift =
-    /available/i.test(status) ? 18 :
-    /idle/i.test(status) ? 12 :
-    /active|on route|at stop/i.test(status) ? 4 :
-    /maintenance|out of service/i.test(status) ? -20 : 0;
-  return Math.max(0, Math.min(100, Math.round(readiness * 0.5 + (100 - risk) * 0.25 + (100 - Math.min(utilization, 100)) * 0.15 + statusLift - Math.min(idle / 8, 12))));
+function hasQualifiedEvidence(row: AnyRecord, key: "idle" | "fuel") {
+  return String(g(row, `${key}EvidenceStatus`, `${key}_evidence_status`) ?? "") === "qualified";
+}
+
+function percent(value: unknown) {
+  const parsed = optionalNumber(value);
+  return parsed === null ? "—" : `${Math.round(parsed)}%`;
+}
+
+function minutes(value: unknown) {
+  const parsed = optionalNumber(value);
+  return parsed === null ? "—" : `${Math.round(parsed)}m`;
+}
+
+function money(value: unknown) {
+  const parsed = optionalNumber(value);
+  return parsed === null ? "—" : `$${parsed.toLocaleString()}`;
 }
 
 type Opportunity = {
@@ -99,31 +101,36 @@ type Opportunity = {
 };
 
 function buildOpportunities(rows: AnyRecord[]) {
-  const fuelAverage = average(rows, "fuelCostMonth");
+  const qualifiedFuel = rows
+    .filter((row) => hasQualifiedEvidence(row, "fuel"))
+    .map((row) => optionalNumber(g(row, "fuelCostMonth", "fuel_cost_month")))
+    .filter((value): value is number => value !== null);
+  const fuelAverage = qualifiedFuel.length
+    ? qualifiedFuel.reduce((sum, value) => sum + value, 0) / qualifiedFuel.length
+    : null;
   return rows.flatMap<Opportunity>((row) => {
     const vehicleId = String(row.id ?? "");
     const vehicleCode = String(g(row, "vehicleCode", "vehicle_code") ?? `Vehicle ${vehicleId}`);
-    const readiness = num(g(row, "readinessScore", "fleetReadinessScore"));
-    const utilization = num(g(row, "utilizationPct"));
-    const idleMinutes = num(g(row, "idleMinutesToday"));
-    const risk = num(g(row, "riskScore", "risk_score"));
-    const jobs = num(g(row, "activeJobs"));
-    const fuelCost = num(g(row, "fuelCostMonth"));
+    const utilization = optionalNumber(g(row, "utilizationPct", "utilization_pct"));
+    const idleMinutes = optionalNumber(g(row, "idleMinutesToday", "idle_minutes_today"));
+    const fuelCost = optionalNumber(g(row, "fuelCostMonth", "fuel_cost_month"));
     const status = String(g(row, "status") ?? "");
-    const hasUtilizationEvidence = String(g(row, "utilizationBasis", "utilization_basis") ?? "").startsWith("trip_hours_30d");
+    const qualifiedTrips = hasUtilizationEvidence(row);
+    const qualifiedIdle = hasQualifiedEvidence(row, "idle");
+    const qualifiedFuelEvidence = hasQualifiedEvidence(row, "fuel");
     const results: Opportunity[] = [];
 
-    if (idleMinutes >= 45 && readiness >= 75 && /available|idle|at stop/i.test(status)) {
+    if (qualifiedIdle && idleMinutes !== null && idleMinutes >= 45) {
       results.push({
         id: `${vehicleId}-idle`,
         vehicleId,
         vehicleCode,
         severity: idleMinutes >= 90 ? "Critical" : "High",
-        title: "Redeploy idle-ready asset",
-        detail: `${vehicleCode} has been idle ${idleMinutes} minutes today with ${readiness}% readiness and can cover pending work faster than leaving it parked.`,
-        actionLabel: "Open dispatch coverage",
-        actionRoute: "/dispatch",
-        impact: idleMinutes + readiness,
+        title: "Review recorded idle time",
+        detail: `${vehicleCode} has ${Math.round(idleMinutes)} qualified idle minutes recorded today. Review routing, dispatch timing and asset health before taking action.`,
+        actionLabel: "Open efficiency view",
+        actionRoute: "/fleet-utilization/efficiency",
+        impact: idleMinutes,
       });
     }
 
@@ -137,25 +144,11 @@ function buildOpportunities(rows: AnyRecord[]) {
         detail: `${vehicleCode} is unavailable because of maintenance posture, which compresses reserve capacity and increases pressure on the active fleet.`,
         actionLabel: "Open maintenance queue",
         actionRoute: "/maintenance",
-        impact: 180 + (100 - readiness),
+        impact: 180,
       });
     }
 
-    if (jobs > 0 && risk >= 70) {
-      results.push({
-        id: `${vehicleId}-risk`,
-        vehicleId,
-        vehicleCode,
-        severity: "High",
-        title: "Active asset carrying elevated operational risk",
-        detail: `${vehicleCode} is supporting ${jobs} live job(s) with a ${risk} risk score. Dispatch and fleet health should inspect it before the next handoff.`,
-        actionLabel: "Inspect vehicle health",
-        actionRoute: "/vehicles/health",
-        impact: 140 + risk,
-      });
-    }
-
-    if (hasUtilizationEvidence && fuelCost > 0 && fuelCost >= fuelAverage * 1.25 && utilization < 70) {
+    if (qualifiedTrips && qualifiedFuelEvidence && fuelCost !== null && fuelAverage !== null && utilization !== null && fuelCost > 0 && fuelCost >= fuelAverage * 1.25 && utilization < 70) {
       results.push({
         id: `${vehicleId}-fuel`,
         vehicleId,
@@ -165,21 +158,21 @@ function buildOpportunities(rows: AnyRecord[]) {
         detail: `${vehicleCode} is burning more monthly fuel than fleet peers while only delivering ${Math.round(utilization)}% utilization.`,
         actionLabel: "Open efficiency view",
         actionRoute: "/fleet-utilization/efficiency",
-        impact: 70 + fuelCost / Math.max(fuelAverage || 1, 1),
+        impact: 70 + fuelCost / Math.max(fuelAverage, 1),
       });
     }
 
-    if (hasUtilizationEvidence && utilization <= 35 && readiness >= 85 && !/maintenance|out of service/i.test(status)) {
+    if (qualifiedTrips && utilization !== null && utilization <= 35 && /available|idle/i.test(status)) {
       results.push({
         id: `${vehicleId}-reserve`,
         vehicleId,
         vehicleCode,
         severity: "Medium",
-        title: "Healthy asset is under-used",
-        detail: `${vehicleCode} is only at ${Math.round(utilization)}% utilization despite strong readiness, which makes it a candidate for rebalancing or route redesign.`,
+        title: "Available asset has low recorded use",
+        detail: `${vehicleCode} has ${Math.round(utilization)}% qualified trip utilization and an ${status} status. Confirm readiness and demand before rebalancing it.`,
         actionLabel: "Open capacity board",
         actionRoute: "/fleet-utilization/capacity",
-        impact: 60 + readiness - utilization,
+        impact: 60 + (100 - utilization),
       });
     }
 
@@ -241,23 +234,31 @@ export function FleetUtilizationPage() {
     });
   }, [rows, search, statusFilter]);
 
-  const deployableRows = useMemo(
-    () => [...filtered].sort((a, b) => deployabilityScore(b) - deployabilityScore(a)),
+  const capacityRows = useMemo(
+    () => [...filtered].sort((a, b) => {
+      const evidenceOrder = Number(hasUtilizationEvidence(b)) - Number(hasUtilizationEvidence(a));
+      if (evidenceOrder) return evidenceOrder;
+      return (optionalNumber(g(a, "utilizationPct", "utilization_pct")) ?? Number.MAX_SAFE_INTEGER)
+        - (optionalNumber(g(b, "utilizationPct", "utilization_pct")) ?? Number.MAX_SAFE_INTEGER);
+    }),
     [filtered],
   );
   const efficiencyRows = useMemo(
-    () => [...filtered].sort((a, b) => num(g(b, "idleMinutesToday")) - num(g(a, "idleMinutesToday")) || num(g(b, "fuelCostMonth")) - num(g(a, "fuelCostMonth"))),
+    () => [...filtered].sort((a, b) => (optionalNumber(g(b, "idleMinutesToday", "idle_minutes_today")) ?? -1)
+      - (optionalNumber(g(a, "idleMinutesToday", "idle_minutes_today")) ?? -1)
+      || (optionalNumber(g(b, "fuelCostMonth", "fuel_cost_month")) ?? -1)
+      - (optionalNumber(g(a, "fuelCostMonth", "fuel_cost_month")) ?? -1)),
     [filtered],
   );
   const chartData = useMemo(
     () =>
       [...rows]
+        .filter(hasUtilizationEvidence)
         .sort((a, b) => num(g(b, "utilizationPct")) - num(g(a, "utilizationPct")))
         .slice(0, 8)
         .map((row) => ({
           name: String(g(row, "vehicleCode", "vehicle_code") ?? ""),
           utilization: Math.round(num(g(row, "utilizationPct"))),
-          readiness: Math.round(num(g(row, "readinessScore", "fleetReadinessScore"))),
         })),
     [rows],
   );
@@ -266,22 +267,21 @@ export function FleetUtilizationPage() {
   if (listQ.isError) return <ErrorState message={listQ.error instanceof Error ? listQ.error.message : "Unable to load fleet utilization."} />;
   if (summaryQ.isError) return <ErrorState message={summaryQ.error instanceof Error ? summaryQ.error.message : "Unable to load utilization summary."} />;
 
-  const total = num(summary.totalVehicles) || rows.length;
-  const active = num(summary.activeVehicles) || rows.filter((row) => /active|on route/i.test(String(g(row, "status") ?? ""))).length;
-  const available = num(summary.availableVehicles) || rows.filter((row) => /available|idle/i.test(String(g(row, "status") ?? ""))).length;
-  const maintenance = num(summary.maintenanceVehicles) || rows.filter((row) => /maintenance|out of service/i.test(String(g(row, "status") ?? ""))).length;
-  const readiness = Math.round(num(summary.avgReadiness) || average(rows, "readinessScore"));
-  const utilization = Math.round(num(summary.avgUtilizationPct) || average(rows, "utilizationPct"));
-  const idleHours = num(summary.idleHoursToday);
-  const idleCost = num(summary.idleCostToday);
-  const fuelSpend = num(summary.fuelSpendMonth);
-  const atRisk = rows.filter((row) => riskTier(row) === "High").length;
-  const evidenceGaps = rows.filter((row) => String(g(row, "utilizationBasis", "utilization_basis") ?? "") === "no_trip_evidence").length;
+  const total = optionalNumber(g(summary, "totalVehicles", "total_vehicles")) ?? rows.length;
+  const active = optionalNumber(g(summary, "activeVehicles", "active_vehicles")) ?? rows.filter((row) => /active|on route/i.test(String(g(row, "status") ?? ""))).length;
+  const available = optionalNumber(g(summary, "availableVehicles", "available_vehicles")) ?? rows.filter((row) => /available/i.test(String(g(row, "status") ?? ""))).length;
+  const maintenance = optionalNumber(g(summary, "maintenanceVehicles", "maintenance_vehicles")) ?? rows.filter((row) => /maintenance|out of service/i.test(String(g(row, "status") ?? ""))).length;
+  const utilization = optionalNumber(g(summary, "avgUtilizationPct", "avg_utilization_pct"));
+  const utilizationEvidenceVehicles = optionalNumber(g(summary, "utilizationEvidenceVehicles", "utilization_evidence_vehicles"))
+    ?? rows.filter(hasUtilizationEvidence).length;
+  const idleHours = optionalNumber(g(summary, "idleHoursToday", "idle_hours_today"));
+  const idleCost = optionalNumber(g(summary, "idleCostToday", "idle_cost_today"));
+  const evidenceGaps = Math.max(0, total - utilizationEvidenceVehicles);
   const estimatedOpenTrips = rows.reduce((sum, row) => sum + num(g(row, "openTripEstimateCount", "open_trip_estimate_count")), 0);
 
   const exportRows =
     section === "efficiency" ? efficiencyRows :
-    section === "capacity" ? deployableRows :
+    section === "capacity" ? capacityRows :
     section === "opportunities" ? opportunities :
     rows;
 
@@ -295,11 +295,11 @@ export function FleetUtilizationPage() {
           <span className="font-bold text-slate-700 tabular-nums">{total}</span> units tracked ·{" "}
           <span className="font-bold text-emerald-600 tabular-nums">{active}</span> active ·{" "}
           <span className="font-bold text-sky-600 tabular-nums">{available}</span> in reserve ·{" "}
-          <span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> at risk
+          <span className="font-bold text-rose-600 tabular-nums">{maintenance}</span> maintenance status
         </>}
         actions={<>
           <button type="button" onClick={() => exportCsv("fleet-utilization", exportRows as AnyRecord[])} className="btn-ghost h-10">
-            Export live view
+            Export current view
           </button>
           <button type="button" onClick={() => navigate("/dispatch")} className="btn-primary h-10">
             Open dispatch coverage <ArrowRight className="h-4 w-4" />
@@ -310,10 +310,10 @@ export function FleetUtilizationPage() {
       <ConsoleNav sections={SECTIONS} active={section} onSelect={(key) => navigate(`/fleet-utilization/${key}`)} />
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <ClayStat Icon={Gauge}  tone="fc-clay-teal"    iconCls="text-teal-700"    label="30-day utilization" value={`${utilization}%`} caption={evidenceGaps ? `${evidenceGaps} unit(s) lack trip-hour evidence` : estimatedOpenTrips ? `${estimatedOpenTrips} open trip(s) estimated and capped at 24h` : "Active trip hours ÷ 240-hour baseline"} />
-        <ClayStat Icon={Truck}  tone="fc-clay-emerald" iconCls="text-emerald-700" label="Ready reserve" value={available} caption={`${readiness}% average readiness`} />
-        <ClayStat Icon={Wrench} tone="fc-clay-red"     iconCls="text-rose-700"    label="At risk units" value={atRisk} caption={`${maintenance} blocked by maintenance`} alert={atRisk > 0} />
-        <ClayStat Icon={Clock3} tone="fc-clay-amber"   iconCls="text-amber-700"   label="Idle drag today" value={idleCost ? `$${idleCost.toLocaleString()}` : `${idleHours}h`} caption={idleHours ? `${idleHours} idle hours logged` : "No idle drag detected"} alert={idleHours > 0} />
+        <ClayStat Icon={Gauge}  tone="fc-clay-teal"    iconCls="text-teal-700"    label="30-day utilization" value={utilization === null ? "—" : `${Math.round(utilization)}%`} caption={evidenceGaps ? `${utilizationEvidenceVehicles} of ${total} units have qualified trip-hour evidence` : estimatedOpenTrips ? `${estimatedOpenTrips} open trip(s) estimated and capped at 24h` : "Qualified active trip hours ÷ 240-hour baseline"} />
+        <ClayStat Icon={Truck}  tone="fc-clay-emerald" iconCls="text-emerald-700" label="Available status" value={available} caption="Persisted vehicle status; readiness evidence unavailable" />
+        <ClayStat Icon={Wrench} tone="fc-clay-red"     iconCls="text-rose-700"    label="Maintenance status" value={maintenance} caption="Persisted Maintenance or Out of Service status" alert={maintenance > 0} />
+        <ClayStat Icon={Clock3} tone="fc-clay-amber"   iconCls="text-amber-700"   label="Qualified idle evidence" value={idleCost !== null ? `$${idleCost.toLocaleString()}` : idleHours !== null ? `${idleHours}h` : "—"} caption={idleHours === null ? "No qualified idling evidence is available" : idleCost === null ? `${idleHours} recorded hours; cost evidence unavailable` : `${idleHours} qualified idle hours recorded`} alert={idleHours !== null && idleHours > 0} />
       </div>
 
       {section === "overview" && (
@@ -321,7 +321,7 @@ export function FleetUtilizationPage() {
           <div className="grid gap-4 lg:grid-cols-3">
             <ModuleCard
               title="Capacity board"
-              body="Rank units by deployability so dispatch can cover demand without hunting through the roster."
+              body="Compare persisted status and qualified trip utilization. Confirm readiness in its source workflow before dispatching."
               action="Open capacity"
               onClick={() => navigate("/fleet-utilization/capacity")}
               icon={<Truck className="h-5 w-5" />}
@@ -335,7 +335,7 @@ export function FleetUtilizationPage() {
             />
             <ModuleCard
               title="Action queue"
-              body="Rule-based cues computed from current utilization, readiness, maintenance and risk fields."
+              body="Review bounded cues derived from qualified trip, fuel and idle evidence or persisted maintenance status."
               action="Open action queue"
               onClick={() => navigate("/fleet-utilization/opportunities")}
               icon={<Sparkles className="h-5 w-5" />}
@@ -357,13 +357,13 @@ export function FleetUtilizationPage() {
                 icon={<Gauge className="h-4 w-4" />}
                 label="Available coverage"
                 value={`${available} units`}
-                body={`${rows.filter((row) => deployabilityScore(row) >= 70).length} units are immediately deployable based on readiness, risk and current utilization.`}
+                body={`${available} units carry a persisted Available status. Dispatch eligibility and readiness require separate qualified evidence.`}
               />
               <InsightTile
                 icon={<Clock3 className="h-4 w-4" />}
                 label="Idle leakage"
-                value={idleHours ? `${idleHours}h` : "0h"}
-                body={idleCost ? `$${idleCost.toLocaleString()} of today’s idle drag is visible right now.` : "No idle drag recorded today."}
+                value={idleHours === null ? "—" : `${idleHours}h`}
+                body={idleHours === null ? "Qualified idling evidence is unavailable." : idleCost === null ? "Qualified idle duration is available; recorded cost evidence is unavailable." : `$${idleCost.toLocaleString()} of recorded idle cost accompanies the qualified duration evidence.`}
               />
               <InsightTile
                 icon={<Wrench className="h-4 w-4" />}
@@ -378,7 +378,7 @@ export function FleetUtilizationPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Top action queue</h2>
-                <p className="text-sm text-slate-500">The largest capacity or cost items open right now.</p>
+                <p className="text-sm text-slate-500">Items supported by qualified source evidence or persisted maintenance status.</p>
               </div>
               <button type="button" className="btn-ghost h-9" onClick={() => navigate("/fleet-utilization/opportunities")}>Open full queue</button>
             </div>
@@ -400,8 +400,8 @@ export function FleetUtilizationPage() {
                 </button>
               ))}
               {!opportunities.length && (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 text-sm text-emerald-800 xl:col-span-3">
-                  No open utilization actions — capacity, readiness and idle time are all within range.
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 xl:col-span-3">
+                  No evidence-qualified utilization action is available. An empty queue does not prove that capacity, readiness, fuel, or idle performance is within range.
                 </div>
               )}
             </div>
@@ -472,15 +472,15 @@ export function FleetUtilizationPage() {
                     <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.12em] text-slate-400">
                       <th className="px-5 py-3 font-semibold">Vehicle</th>
                       <th className="px-5 py-3 font-semibold">Status</th>
-                      <th className="px-5 py-3 font-semibold">Deployability</th>
-                      <th className="hidden px-5 py-3 font-semibold lg:table-cell">Readiness</th>
+                      <th className="px-5 py-3 font-semibold">Trip utilization</th>
+                      <th className="hidden px-5 py-3 font-semibold lg:table-cell">Evidence</th>
                       <th className="hidden px-5 py-3 font-semibold lg:table-cell">Idle</th>
                       <th className="hidden px-5 py-3 font-semibold xl:table-cell">Jobs</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {deployableRows.map((row) => {
-                      const score = deployabilityScore(row);
+                    {capacityRows.map((row) => {
+                      const utilizationValue = optionalNumber(g(row, "utilizationPct", "utilization_pct"));
                       return (
                         <tr
                           key={String(row.id)}
@@ -493,22 +493,24 @@ export function FleetUtilizationPage() {
                           </td>
                           <td className="px-5 py-3.5"><StatusBadge status={g(row, "status")} /></td>
                           <td className="px-5 py-3.5">
-                            <div className="flex items-center gap-3">
-                              <div className="h-2 flex-1 rounded-full bg-slate-100">
-                                <div className="h-2 rounded-full bg-gradient-to-r from-teal-500 to-sky-500" style={{ width: `${score}%` }} />
+                            {utilizationValue === null ? <span className="text-slate-400">—</span> : (
+                              <div className="flex items-center gap-3">
+                                <div className="h-2 flex-1 rounded-full bg-slate-100">
+                                  <div className="h-2 rounded-full bg-gradient-to-r from-teal-500 to-sky-500" style={{ width: `${Math.min(100, utilizationValue)}%` }} />
+                                </div>
+                                <span className="w-10 text-xs font-semibold text-slate-700">{Math.round(utilizationValue)}%</span>
                               </div>
-                              <span className="w-10 text-xs font-semibold text-slate-700">{score}</span>
-                            </div>
+                            )}
                           </td>
-                          <td className="hidden px-5 py-3.5 text-slate-600 lg:table-cell">{Math.round(num(g(row, "readinessScore", "fleetReadinessScore")))}%</td>
-                          <td className="hidden px-5 py-3.5 text-slate-600 lg:table-cell">{num(g(row, "idleMinutesToday"))}m</td>
+                          <td className="hidden px-5 py-3.5 text-slate-600 lg:table-cell">{hasUtilizationEvidence(row) ? "Qualified trip hours" : "No qualified trip evidence"}</td>
+                          <td className="hidden px-5 py-3.5 text-slate-600 lg:table-cell">{hasQualifiedEvidence(row, "idle") ? minutes(g(row, "idleMinutesToday", "idle_minutes_today")) : "—"}</td>
                           <td className="hidden px-5 py-3.5 text-slate-600 xl:table-cell">{num(g(row, "activeJobs"))}</td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
-                {!deployableRows.length && <EmptyState title="No vehicles match this capacity view" subtitle="Try another status or search term." />}
+                {!capacityRows.length && <EmptyState title="No vehicles match this capacity view" subtitle="Try another status or search term." />}
               </div>
               <VehicleInsightPanel row={selected} section={section} onNavigate={navigate} />
             </div>
@@ -520,11 +522,11 @@ export function FleetUtilizationPage() {
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h2 className="text-lg font-semibold text-slate-900">Top productive units</h2>
-                      <p className="text-sm text-slate-500">Utilization versus readiness to highlight where output is coming from.</p>
+                      <h2 className="text-lg font-semibold text-slate-900">Recorded trip utilization</h2>
+                      <p className="text-sm text-slate-500">Only vehicles with qualified trip-hour evidence appear in this chart.</p>
                     </div>
                     <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                      Live chart
+                      Qualified trip evidence
                     </span>
                   </div>
                   <div className="mt-4 h-72">
@@ -537,7 +539,6 @@ export function FleetUtilizationPage() {
                           contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 12, fontSize: 12 }}
                         />
                         <Bar dataKey="utilization" fill={chart.teal700} radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="readiness" fill={chart.blue400} radius={[6, 6, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -555,12 +556,12 @@ export function FleetUtilizationPage() {
                           <p className="text-sm font-semibold text-slate-900">{String(g(row, "vehicleCode", "vehicle_code") ?? `Vehicle ${row.id}`)}</p>
                           <p className="text-xs text-slate-500">{String(g(row, "status") ?? "Unknown")}</p>
                         </div>
-                        <StatusBadge status={riskTier(row)} />
+                        <StatusBadge status={g(row, "status")} />
                       </div>
                       <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
-                        <MetricMini label="Idle today" value={`${num(g(row, "idleMinutesToday"))}m`} />
-                        <MetricMini label="Fuel month" value={`$${num(g(row, "fuelCostMonth")).toLocaleString()}`} />
-                        <MetricMini label="Utilization" value={`${Math.round(num(g(row, "utilizationPct")))}%`} />
+                        <MetricMini label="Idle today" value={hasQualifiedEvidence(row, "idle") ? minutes(g(row, "idleMinutesToday", "idle_minutes_today")) : "—"} />
+                        <MetricMini label="Fuel month" value={hasQualifiedEvidence(row, "fuel") ? money(g(row, "fuelCostMonth", "fuel_cost_month")) : "—"} />
+                        <MetricMini label="Utilization" value={hasUtilizationEvidence(row) ? percent(g(row, "utilizationPct", "utilization_pct")) : "—"} />
                       </div>
                     </button>
                   ))}
@@ -575,7 +576,7 @@ export function FleetUtilizationPage() {
                       <th className="px-5 py-3 font-semibold">Idle drag</th>
                       <th className="px-5 py-3 font-semibold">Fuel spend</th>
                       <th className="hidden px-5 py-3 font-semibold lg:table-cell">Utilization</th>
-                      <th className="hidden px-5 py-3 font-semibold xl:table-cell">Readiness</th>
+                      <th className="hidden px-5 py-3 font-semibold xl:table-cell">Evidence basis</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -585,10 +586,10 @@ export function FleetUtilizationPage() {
                           <div className="font-semibold text-slate-900">{String(g(row, "vehicleCode", "vehicle_code") ?? `Vehicle ${row.id}`)}</div>
                           <div className="text-xs text-slate-500">{String(g(row, "driverName", "driver_name") ?? "No driver linked")}</div>
                         </td>
-                        <td className="px-5 py-3.5 text-slate-700">{num(g(row, "idleMinutesToday"))}m / {num(g(row, "idleEventsToday"))} events</td>
-                        <td className="px-5 py-3.5 text-slate-700">${num(g(row, "fuelCostMonth")).toLocaleString()}</td>
-                        <td className="hidden px-5 py-3.5 text-slate-700 lg:table-cell">{Math.round(num(g(row, "utilizationPct")))}%</td>
-                        <td className="hidden px-5 py-3.5 text-slate-700 xl:table-cell">{Math.round(num(g(row, "readinessScore", "fleetReadinessScore")))}%</td>
+                        <td className="px-5 py-3.5 text-slate-700">{hasQualifiedEvidence(row, "idle") ? `${minutes(g(row, "idleMinutesToday", "idle_minutes_today"))} / ${num(g(row, "idleEventsToday", "idle_events_today"))} events` : "—"}</td>
+                        <td className="px-5 py-3.5 text-slate-700">{hasQualifiedEvidence(row, "fuel") ? money(g(row, "fuelCostMonth", "fuel_cost_month")) : "—"}</td>
+                        <td className="hidden px-5 py-3.5 text-slate-700 lg:table-cell">{hasUtilizationEvidence(row) ? percent(g(row, "utilizationPct", "utilization_pct")) : "—"}</td>
+                        <td className="hidden px-5 py-3.5 text-slate-700 xl:table-cell">{hasUtilizationEvidence(row) ? "Qualified trip hours" : "Unavailable"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -617,7 +618,7 @@ export function FleetUtilizationPage() {
                     <p className="mt-3 text-sm text-slate-600">{item.detail}</p>
                   </div>
                 )) : (
-                  <EmptyState title="No intervention queue right now" subtitle="No open utilization actions right now." />
+                  <EmptyState title="No evidence-qualified intervention" subtitle="An empty queue does not establish that utilization, readiness, fuel, or idle performance is within range." />
                 )}
               </div>
               <VehicleInsightPanel row={selected} section={section} onNavigate={navigate} />
@@ -698,34 +699,36 @@ function VehicleInsightPanel({
     );
   }
 
-  const readiness = Math.round(num(g(row, "readinessScore", "fleetReadinessScore")));
-  const utilization = Math.round(num(g(row, "utilizationPct")));
-  const fuelCost = num(g(row, "fuelCostMonth"));
-  const idle = num(g(row, "idleMinutesToday"));
-  const risk = num(g(row, "riskScore", "risk_score"));
-  const activeHours = num(g(row, "activeHours30d", "active_hours_30d"));
+  const vehicleCode = String(g(row, "vehicleCode", "vehicle_code") ?? `Vehicle ${row.id}`);
+  const qualifiedTrips = hasUtilizationEvidence(row);
+  const qualifiedFuel = hasQualifiedEvidence(row, "fuel");
+  const qualifiedIdle = hasQualifiedEvidence(row, "idle");
+  const utilization = qualifiedTrips ? percent(g(row, "utilizationPct", "utilization_pct")) : "—";
+  const fuelCost = qualifiedFuel ? money(g(row, "fuelCostMonth", "fuel_cost_month")) : "—";
+  const idle = qualifiedIdle ? minutes(g(row, "idleMinutesToday", "idle_minutes_today")) : "—";
+  const activeHours = qualifiedTrips ? optionalNumber(g(row, "activeHours30d", "active_hours_30d")) : null;
 
   return (
     <aside className="panel p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Selected unit</p>
-          <h3 className="mt-1 text-lg font-semibold text-slate-900">{String(g(row, "vehicleCode", "vehicle_code") ?? `Vehicle ${row.id}`)}</h3>
+          <h3 className="mt-1 text-lg font-semibold text-slate-900">{vehicleCode}</h3>
           <p className="text-sm text-slate-500">{String(g(row, "driverName", "driver_name") ?? "Unassigned driver")}</p>
         </div>
         <StatusBadge status={g(row, "status")} />
       </div>
       <div className="mt-4 grid grid-cols-2 gap-3">
-        <MetricMini label="Readiness" value={`${readiness}%`} />
-        <MetricMini label="30-day utilization" value={`${utilization}%`} />
-        <MetricMini label="Risk" value={`${risk}`} />
-        <MetricMini label="Fuel month" value={`$${fuelCost.toLocaleString()}`} />
+        <MetricMini label="Recorded status" value={String(g(row, "status") ?? "Unavailable")} />
+        <MetricMini label="30-day utilization" value={utilization} />
+        <MetricMini label="Qualified idle today" value={idle} />
+        <MetricMini label="Qualified fuel month" value={fuelCost} />
       </div>
-      <p className="mt-2 text-xs text-slate-500">{activeHours.toFixed(1)} active trip hours in the last 30 days, measured against a 240-hour operating baseline.</p>
+      <p className="mt-2 text-xs text-slate-500">{activeHours === null ? "No qualified trip-hour evidence is available for this unit; utilization remains unavailable." : `${activeHours.toFixed(1)} qualified active trip hours in the last 30 days, measured against a 240-hour operating baseline.`}</p>
       <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-        {section === "capacity" && `${String(g(row, "vehicleCode", "vehicle_code"))} is currently carrying ${num(g(row, "activeJobs"))} active job(s) with ${idle} idle minutes today. Use the roster to rebalance it or open dispatch to cover available demand.`}
-        {section === "efficiency" && `${String(g(row, "vehicleCode", "vehicle_code"))} is showing ${idle} idle minutes and $${fuelCost.toLocaleString()} fuel spend this month. This is where operators decide whether the issue is routing, dispatch timing or asset health.`}
-        {section === "opportunities" && `${String(g(row, "vehicleCode", "vehicle_code"))} is in the action queue — its current utilization, readiness or cost figures leave capacity on the table.`}
+        {section === "capacity" && `${vehicleCode} has ${num(g(row, "activeJobs", "active_jobs"))} persisted active job record(s). Status and trip utilization do not establish dispatch readiness; confirm that in the source workflow.`}
+        {section === "efficiency" && `${vehicleCode} has ${idle === "—" ? "no qualified idle duration" : idle} and ${fuelCost === "—" ? "no qualified fuel spend" : `${fuelCost} qualified fuel spend`} in the current periods.`}
+        {section === "opportunities" && `${vehicleCode} appears only when a bounded rule is supported by qualified trip, fuel, or idle evidence, or by persisted maintenance status.`}
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" className="btn-ghost h-9" onClick={() => onNavigate(routeForVehicle(section))}>Open vehicle module</button>

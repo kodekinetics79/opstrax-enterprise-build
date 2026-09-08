@@ -327,6 +327,7 @@ MIGRATIONS=(
   2026_09_08_expense_workflow_integrity
   2026_09_08_invoice_payment_integrity
   2026_09_08_fleet_health_evidence_integrity
+  2026_09_08_fleet_utilization_evidence_integrity
 )
 
 echo "Pre-check: validated read-only database identity…"

@@ -5142,30 +5142,44 @@ public static partial class EndpointMappings
         var companyId = GetCompanyId(http);
         var (branchClause, branchId) = StrictBranchFilter(http, "v");
         var rows = await db.QueryAsync(
-            @"SELECT v.id, v.vehicle_code, v.type, v.status, v.odometer_miles, v.readiness_score, v.risk_score,
+            $@"SELECT v.id, v.vehicle_code, v.type, v.status, v.odometer_miles,
+                     NULL::numeric readiness_score, NULL::numeric risk_score,
                      COALESCE(d.full_name,'Unassigned') driver_name, d.driver_code,
-                     COALESCE(idle.idle_minutes, 0) idle_minutes_today,
-                     COALESCE(idle.idle_events, 0) idle_events_today,
-                     COALESCE(fuel.fuel_cost_month, 0) fuel_cost_month,
-                     COALESCE(fuel.gallons_month, 0) gallons_month,
+                     idle.idle_minutes idle_minutes_today,
+                     idle.idle_events idle_events_today,
+                     CASE WHEN idle.idle_minutes IS NULL THEN 'unavailable' ELSE 'qualified' END idle_evidence_status,
+                     fuel.fuel_cost_month,
+                     fuel.gallons_month,
+                     CASE WHEN fuel.fuel_cost_month IS NULL THEN 'unavailable' ELSE 'qualified' END fuel_evidence_status,
                      COALESCE(jobs.active_jobs, 0) active_jobs,
                      COALESCE(jobs.completed_today, 0) completed_today,
-                     COALESCE(trips.active_hours_30d, 0) active_hours_30d,
+                     trips.active_hours_30d,
                      COALESCE(trips.open_trip_estimate_count, 0) open_trip_estimate_count,
-                     ROUND(LEAST(100, COALESCE(trips.active_hours_30d, 0) / 240.0 * 100), 1) utilization_pct,
-                     ROUND(LEAST(100, COALESCE(trips.active_hours_30d, 0) / 240.0 * 100), 1) active_hours_pct,
-                     CASE WHEN trips.active_hours_30d IS NULL THEN 'no_trip_evidence'
+                     CASE WHEN trips.active_hours_30d IS NULL THEN NULL
+                          ELSE ROUND(LEAST(100, trips.active_hours_30d / 240.0 * 100), 1) END utilization_pct,
+                     CASE WHEN trips.active_hours_30d IS NULL THEN NULL
+                          ELSE ROUND(LEAST(100, trips.active_hours_30d / 240.0 * 100), 1) END active_hours_pct,
+                     CASE WHEN trips.active_hours_30d IS NULL THEN 'no_qualified_trip_evidence'
                           WHEN trips.open_trip_estimate_count > 0 THEN 'trip_hours_30d_estimated_open'
-                          ELSE 'trip_hours_30d' END utilization_basis
+                          ELSE 'trip_hours_30d_qualified' END utilization_basis,
+                     'unavailable_no_qualified_vehicle_readiness_source' readiness_evidence_status,
+                     'persisted_job_records' job_count_basis
               FROM vehicles v
               LEFT JOIN drivers d ON d.id=v.assigned_driver_id AND d.company_id=v.company_id
+                AND d.deleted_at IS NULL AND {RecordedFleetHealthDriverSql}
               LEFT JOIN (
                 SELECT vehicle_id, ROUND(SUM(duration_minutes),0) idle_minutes, COUNT(*) idle_events
-                FROM idling_events WHERE started_at::date=CURRENT_DATE AND company_id=@cid GROUP BY vehicle_id
+                FROM idling_events ie
+                WHERE started_at::date=CURRENT_DATE AND company_id=@cid AND deleted_at IS NULL
+                  AND {QualifiedUtilizationIdleSql}
+                GROUP BY vehicle_id
               ) idle ON idle.vehicle_id=v.id
               LEFT JOIN (
                 SELECT vehicle_id, ROUND(SUM(total_cost),2) fuel_cost_month, ROUND(SUM(quantity),1) gallons_month
-                FROM fuel_transactions WHERE fuel_date >= DATE_TRUNC('month', CURRENT_DATE)::date AND company_id=@cid GROUP BY vehicle_id
+                FROM fuel_transactions ft
+                WHERE fuel_date >= DATE_TRUNC('month', CURRENT_DATE)::date AND company_id=@cid AND deleted_at IS NULL
+                  AND {QualifiedUtilizationFuelSql}
+                GROUP BY vehicle_id
               ) fuel ON fuel.vehicle_id=v.id
               LEFT JOIN (
                 SELECT assigned_vehicle_id vehicle_id,
@@ -5179,12 +5193,14 @@ public static partial class EndpointMappings
                            LEAST(COALESCE(completed_at, LEAST(NOW(), started_at + INTERVAL '24 hours')),NOW())
                            - GREATEST(started_at,NOW()-INTERVAL '30 days'))) / 3600.0)),1) active_hours_30d,
                        SUM(CASE WHEN completed_at IS NULL THEN 1 ELSE 0 END) open_trip_estimate_count
-                FROM trips
+                FROM trips t
                 WHERE company_id=@cid AND vehicle_id IS NOT NULL AND started_at IS NOT NULL
                   AND started_at < NOW() AND COALESCE(completed_at,NOW()) >= NOW()-INTERVAL '30 days'
+                  AND {QualifiedUtilizationTripSql}
                 GROUP BY vehicle_id
               ) trips ON trips.vehicle_id=v.id
-              WHERE v.company_id=@cid AND v.deleted_at IS NULL" + branchClause + @"
+              WHERE v.company_id=@cid AND v.deleted_at IS NULL
+                AND {RecordedFleetHealthVehicleSql}" + branchClause + @"
               ORDER BY utilization_pct DESC, v.vehicle_code",
             c => { c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(rows));
@@ -5198,36 +5214,47 @@ public static partial class EndpointMappings
         var mainBranch = branchId is null ? "" : " AND v.branch_id=@branchId";
         var eventBranch = branchId is null ? "" : " AND ev.branch_id=@branchId";
         var row = await db.QuerySingleAsync(
-            @"WITH trip_hours AS (
+            $@"WITH trip_hours AS (
                 SELECT vehicle_id,
                        SUM(GREATEST(0, EXTRACT(EPOCH FROM (
                            LEAST(COALESCE(completed_at, LEAST(NOW(), started_at + INTERVAL '24 hours')),NOW())
                            - GREATEST(started_at,NOW()-INTERVAL '30 days'))) / 3600.0)) active_hours,
                        SUM(CASE WHEN completed_at IS NULL THEN 1 ELSE 0 END) open_trip_estimate_count
-                FROM trips
+                FROM trips t
                 WHERE company_id=@cid AND vehicle_id IS NOT NULL AND started_at IS NOT NULL
                   AND started_at < NOW() AND COALESCE(completed_at,NOW()) >= NOW()-INTERVAL '30 days'
+                  AND {QualifiedUtilizationTripSql}
                 GROUP BY vehicle_id
               )
               SELECT COUNT(*) total_vehicles,
                      SUM(CASE WHEN v.status IN ('On Route','At Stop','Idle','Delayed','Active') THEN 1 ELSE 0 END) active_vehicles,
                      SUM(CASE WHEN v.status='Available' THEN 1 ELSE 0 END) available_vehicles,
                      SUM(CASE WHEN v.status IN ('Maintenance','Out of Service') THEN 1 ELSE 0 END) maintenance_vehicles,
-                     ROUND(AVG(v.readiness_score),1) avg_readiness,
-                     ROUND(AVG(LEAST(100, COALESCE(th.active_hours,0) / 240.0 * 100)),1) avg_utilization_pct,
-                     (SELECT COALESCE(ROUND(SUM(ie.duration_minutes)/60,1),0)
+                     NULL::numeric avg_readiness,
+                     ROUND(AVG(LEAST(100, th.active_hours / 240.0 * 100)) FILTER (WHERE th.active_hours IS NOT NULL),1) avg_utilization_pct,
+                     COUNT(th.active_hours) utilization_evidence_vehicles,
+                     (SELECT ROUND(SUM(ie.duration_minutes)/60,1)
                         FROM idling_events ie JOIN vehicles ev ON ev.id=ie.vehicle_id AND ev.company_id=ie.company_id
-                       WHERE ie.started_at::date=CURRENT_DATE AND ie.company_id=@cid" + eventBranch + @") idle_hours_today,
-                     (SELECT COALESCE(ROUND(SUM(ie.estimated_cost),2),0)
+                       WHERE ie.started_at::date=CURRENT_DATE AND ie.company_id=@cid AND ie.deleted_at IS NULL
+                         AND {QualifiedUtilizationIdleSql}
+                         AND {RecordedFleetHealthVehicleSql.Replace("v.", "ev.")}" + eventBranch + $@") idle_hours_today,
+                     (SELECT ROUND(SUM(ie.estimated_cost),2)
                         FROM idling_events ie JOIN vehicles ev ON ev.id=ie.vehicle_id AND ev.company_id=ie.company_id
-                       WHERE ie.started_at::date=CURRENT_DATE AND ie.company_id=@cid" + eventBranch + @") idle_cost_today,
-                     (SELECT COALESCE(ROUND(SUM(ft.total_cost),2),0)
+                       WHERE ie.started_at::date=CURRENT_DATE AND ie.company_id=@cid AND ie.deleted_at IS NULL
+                         AND ie.cost_evidence_status='Recorded estimate' AND {QualifiedUtilizationIdleSql}
+                         AND {RecordedFleetHealthVehicleSql.Replace("v.", "ev.")}" + eventBranch + $@") idle_cost_today,
+                     (SELECT ROUND(SUM(ft.total_cost),2)
                         FROM fuel_transactions ft JOIN vehicles ev ON ev.id=ft.vehicle_id AND ev.company_id=ft.company_id
-                       WHERE ft.fuel_date>=DATE_TRUNC('month', CURRENT_DATE)::date AND ft.company_id=@cid" + eventBranch + @") fuel_spend_month,
-                     CASE WHEN COALESCE(SUM(th.open_trip_estimate_count),0) > 0
-                          THEN 'trip_hours_30d_estimated_open' ELSE 'trip_hours_30d' END utilization_basis
+                       WHERE ft.fuel_date>=DATE_TRUNC('month', CURRENT_DATE)::date AND ft.company_id=@cid AND ft.deleted_at IS NULL
+                         AND {QualifiedUtilizationFuelSql}
+                         AND {RecordedFleetHealthVehicleSql.Replace("v.", "ev.")}" + eventBranch + @") fuel_spend_month,
+                     CASE WHEN COUNT(th.active_hours)=0 THEN 'no_qualified_trip_evidence'
+                          WHEN COALESCE(SUM(th.open_trip_estimate_count),0) > 0 THEN 'trip_hours_30d_estimated_open'
+                          ELSE 'trip_hours_30d_qualified' END utilization_basis,
+                     'unavailable_no_qualified_vehicle_readiness_source' readiness_evidence_status
               FROM vehicles v LEFT JOIN trip_hours th ON th.vehicle_id=v.id
-              WHERE v.company_id=@cid AND v.deleted_at IS NULL" + mainBranch,
+              WHERE v.company_id=@cid AND v.deleted_at IS NULL" + mainBranch + $@"
+                AND {RecordedFleetHealthVehicleSql}",
             c => { c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
@@ -14996,10 +15023,10 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             @"INSERT INTO fuel_transactions
                 (company_id,transaction_number,vehicle_id,driver_id,job_id,route_id,fuel_date,fuel_type,
                  gallons,quantity,unit,unit_price,total_cost,currency,odometer,fuel_station,payment_method,
-                 fuel_card_number,region,anomaly_status,notes,data_origin)
+                 fuel_card_number,region,anomaly_status,notes,data_origin,verification_status)
               VALUES (@companyId,@number,@vehicle,@driver,@job,@route,@date,@fuelType,
                  @qty,@qty,@unit,@price,@total,@currency,@odometer,@station,@payment,@card,@region,
-                 'Not Evaluated',@notes,'manual_entry')",
+                 'Not Evaluated',@notes,'manual_entry','recorded_by_authenticated_actor')",
             c => BindFuelTransaction(c, companyId, input), ct);
         await audit.LogAsync(http, "fuel.transaction.created", "FuelTransaction", id, "origin:manual_entry", ct);
         return Results.Created($"/api/fuel/transactions/{id}", ApiResponse<object>.Ok(new { id, totalCost = input.TotalCost, dataOrigin = "manual_entry" }, "Fuel transaction recorded"));
@@ -15132,10 +15159,11 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         var id = await db.InsertAsync(
             @"INSERT INTO idling_events (company_id, event_number, vehicle_id, driver_id, job_id, route_id,
                 location_description, started_at, ended_at, duration_minutes, estimated_fuel_burn, estimated_cost,
-                currency, threshold_status, risk_score, recommended_action, data_origin, cost_evidence_status)
+                currency, threshold_status, risk_score, recommended_action, data_origin, verification_status, cost_evidence_status)
               VALUES (@companyId, @number, @vehicle, @driver, @job, @route, @location,
                 COALESCE(@start, NOW()), @end, @duration, @fuel, @cost,
-                @currency, @threshold, COALESCE(@risk,20), @action, 'manual_entry', @costEvidence)",
+                @currency, @threshold, COALESCE(@risk,20), @action,
+                'manual_entry','recorded_by_authenticated_actor',@costEvidence)",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -19446,14 +19474,34 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                    OR (dr_defect_source.data_origin='provider_import' AND dr_defect_source.verification_status='provider_verified'))))";
 
     private const string RecordedFleetHealthVehicleSql =
-        @"NOT (v.company_id=1
+        @"NOT EXISTS (SELECT 1 FROM companies demo_company
+                       WHERE demo_company.id=v.company_id
+                         AND (LOWER(demo_company.company_code) LIKE '%demo%'
+                           OR LOWER(demo_company.name) LIKE '%demo%'))
+          AND NOT (v.company_id=1
             AND v.vin ~ '^VINOPSTRAX[0-9]{6}$'
             AND v.vehicle_code ~ '^(TRK|VAN|BOX|REEFER)-1[0-9]{2}$')";
 
     private const string RecordedFleetHealthDriverSql =
-        @"NOT (d.company_id=1
+        @"NOT EXISTS (SELECT 1 FROM companies demo_company
+                       WHERE demo_company.id=d.company_id
+                         AND (LOWER(demo_company.company_code) LIKE '%demo%'
+                           OR LOWER(demo_company.name) LIKE '%demo%'))
+          AND NOT (d.company_id=1
             AND d.driver_code ~ '^DRV-0(0[1-9]|1[0-9]|20)$'
             AND d.email ~ '^driver([1-9]|1[0-9]|20)@opstrax[.]example$')";
+
+    private const string QualifiedUtilizationTripSql =
+        @"t.data_origin='runtime_route_projection'
+          AND t.verification_status='derived_from_recorded_route'";
+
+    private const string QualifiedUtilizationIdleSql =
+        @"((ie.data_origin='manual_entry' AND ie.verification_status='recorded_by_authenticated_actor')
+           OR (ie.data_origin='telematics_event' AND ie.verification_status='derived_from_qualified_telemetry'))";
+
+    private const string QualifiedUtilizationFuelSql =
+        @"((ft.data_origin='manual_entry' AND ft.verification_status='recorded_by_authenticated_actor')
+           OR (ft.data_origin='provider_import' AND ft.verification_status='provider_verified'))";
 
     private const string QualifiedFaultOccurrenceSql =
         @"fo.payload_fingerprint ~ '^[0-9a-f]{64}$'";
