@@ -114,8 +114,8 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
         }
       />
       <div className="grid gap-4 md:grid-cols-4">
-        <KpiCard label="Records" value={records.length} icon={<Icon />} status="Active" />
-        <KpiCard label="Open / Active" value={String(query.data?.summary?.active ?? records.filter((x) => String(x.status).match(/open|active|progress/i)).length)} icon={<ShieldCheck />} status="Healthy" />
+        <KpiCard label="Records" value={records.length} icon={<Icon />} status="Recorded" />
+        <KpiCard label="Open / Active" value={String(query.data?.summary?.active ?? records.filter((x) => String(x.status).match(/open|active|progress/i)).length)} icon={<ShieldCheck />} />
         <KpiCard label="Risk Items" value={String(query.data?.summary?.riskItems ?? records.filter((x) => String(x.riskLevel).match(/high|critical/i)).length)} icon={<Target />} status="Review" />
         <KpiCard label="Recorded Insights" value={query.data?.insights?.length || 0} icon={<Bot />} status="Recorded" />
       </div>

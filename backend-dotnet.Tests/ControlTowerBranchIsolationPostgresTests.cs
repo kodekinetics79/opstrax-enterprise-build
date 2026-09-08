@@ -250,6 +250,14 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.Equal("Unknown", dashboardOnly.GetProperty("entities")[0].GetProperty("deviceStatus").GetString());
             Assert.Equal(JsonValueKind.Null, dashboardOnly.GetProperty("kpis").GetProperty("onlineDevices").ValueKind);
             Assert.Equal(JsonValueKind.Null, dashboardOnly.GetProperty("kpis").GetProperty("onlineCameras").ValueKind);
+
+            await db.ExecuteAsync(
+                "UPDATE vehicles SET out_of_service=TRUE WHERE id=@vehicle AND company_id=@cid",
+                c => { c.Parameters.AddWithValue("@vehicle", unallocatedVehicle); c.Parameters.AddWithValue("@cid", company); });
+            var tenantFleetHealth = Payload(await InvokeFleetHealthSummary(
+                Principal(company, null, "dashboard:view"), db)).GetProperty("data");
+            Assert.Equal(3, tenantFleetHealth.GetProperty("totalVehicles").GetInt64());
+            Assert.Equal(2, tenantFleetHealth.GetProperty("dispatchReadyVehicles").GetInt64());
         }
         finally
         {
@@ -484,6 +492,12 @@ public sealed class ControlTowerBranchIsolationPostgresTests
     private static async Task<IResult> InvokeFleetHealthRisks(DefaultHttpContext http, Database db)
     {
         var method = typeof(EndpointMappings).GetMethod("FleetHealthRisks", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeFleetHealthSummary(DefaultHttpContext http, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("FleetHealthSummary", BindingFlags.NonPublic | BindingFlags.Static)!;
         return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
     }
 

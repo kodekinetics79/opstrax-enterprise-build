@@ -30029,7 +30029,7 @@ LIMIT 100000",
 
     // ── Analytics KPI Endpoints ───────────────────────────────────────────────
 
-    // All analytics endpoints compute from real operational data.
+        // All analytics endpoints compute from persisted operational records.
     // Labeled as "System Analytics Insight" — not presented as AI-generated.
 
     // The current analytics datasets combine tables with incompatible branch ownership
@@ -30091,7 +30091,7 @@ LIMIT 100000",
             driverTotal, jobsTotal, jobsCompleted,
             computedAt = DateTime.UtcNow,
             insightType = "System Analytics Insight",
-        }, "Executive analytics from real fleet data"));
+        }, "Executive analytics from persisted fleet records"));
     }
 
     private static async Task<IResult> AnalyticsOperations(HttpContext http, Database db, CancellationToken ct)
@@ -30165,7 +30165,8 @@ LIMIT 100000",
             @"SELECT d.id, d.driver_code, d.full_name driver_name, d.safety_score,
                      COUNT(se.id) event_count
               FROM drivers d
-              LEFT JOIN safety_events se ON se.driver_id=d.id AND se.event_time >= NOW() - 30 * INTERVAL '1 day'
+              LEFT JOIN safety_events se ON se.driver_id=d.id AND se.company_id=d.company_id
+                AND se.event_time >= NOW() - 30 * INTERVAL '1 day'
               WHERE d.company_id=@c AND d.deleted_at IS NULL
               GROUP BY d.id, d.driver_code, d.full_name, d.safety_score
               ORDER BY event_count DESC, d.safety_score ASC LIMIT 5",
@@ -31346,6 +31347,7 @@ LIMIT 100000",
               (SELECT COUNT(*) FROM vehicles v
                WHERE v.company_id=@cid AND v.deleted_at IS NULL
                  AND v.status='Active'
+                 AND COALESCE(v.out_of_service,FALSE)=FALSE
                  AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
                  AND NOT EXISTS (
                    SELECT 1 FROM dvir_defects dd
@@ -31353,6 +31355,11 @@ LIMIT 100000",
                    WHERE dr.vehicle_id=v.id AND dd.company_id=@cid
                      AND dr.safe_to_operate=FALSE
                      AND dd.status NOT IN ('resolved','Resolved')
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM diagnostic_holds dh
+                   WHERE dh.company_id=v.company_id AND dh.vehicle_id=v.id
+                     AND dh.status IN ('active','acknowledged')
                  )
               ) dispatch_ready_vehicles,
 
@@ -31388,11 +31395,6 @@ LIMIT 100000",
                  AND (@branchId::bigint IS NULL OR EXISTS (
                    SELECT 1 FROM vehicles vb WHERE vb.id=mi.vehicle_id
                      AND vb.company_id=mi.company_id AND vb.branch_id=@branchId))) overdue_pm_vehicles,
-
-              (SELECT COUNT(*) FROM vehicles v
-               WHERE v.company_id=@cid AND v.deleted_at IS NULL
-                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
-                 AND v.device_status='Offline') stale_device_vehicles,
 
               -- AVG ignores NULL readiness rows; an unmeasured fleet yields NULL, never a default
               (SELECT ROUND(AVG(v.readiness_score),1)
@@ -31544,7 +31546,6 @@ LIMIT 100000",
             criticalDefectVehicles    = row.GetValueOrDefault("criticalDefectVehicles"),
             openWoVehicles            = row.GetValueOrDefault("openWoVehicles"),
             overduePmVehicles         = row.GetValueOrDefault("overduePmVehicles"),
-            staleDeviceVehicles       = row.GetValueOrDefault("staleDeviceVehicles"),
             totalActiveDrivers        = row.GetValueOrDefault("totalActiveDrivers"),
             belowSafetyThreshold      = row.GetValueOrDefault("belowSafetyThreshold"),
             openSafetyEventDrivers    = row.GetValueOrDefault("openEventDrivers"),

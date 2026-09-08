@@ -397,7 +397,7 @@ export function CompliancePage() {
             <p className="section-title mb-3 flex items-center gap-2"><Globe className="h-3.5 w-3.5 text-sky-400" />Cross-Border Compliance Watch</p>
             <p className="text-xs text-slate-500 mb-4">Active violations and open items spanning multiple country compliance frameworks.</p>
             <div className="space-y-2">
-              {crossBorder.length === 0 && <p className="text-sm text-slate-500">No cross-border issues found.</p>}
+              {crossBorder.length === 0 && <p className="text-sm text-slate-500">No open cross-border violation records are available in the current scope.</p>}
               {crossBorder.map(v => (
                 <div key={String(v.id)} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
                   <SeverityBadge severity={String(v.severity)} />
@@ -420,8 +420,9 @@ export function CompliancePage() {
         <div className="space-y-3">
           <div className="panel">
             <p className="section-title mb-1 flex items-center gap-2"><Zap className="h-3.5 w-3.5 text-violet-400" />Compliance AI Advisor</p>
-            <p className="text-xs text-slate-500 mb-4">AI-generated compliance recommendations based on live fleet data. Not a substitute for legal counsel.</p>
+            <p className="text-xs text-slate-500 mb-4">Evidence-linked recommendations recorded for the current tenant scope. They do not certify regulatory compliance and are not a substitute for legal counsel.</p>
             <div className="space-y-3">
+              {aiRecs.length === 0 && <p className="text-sm text-slate-500">No grounded compliance recommendation records are available.</p>}
               {aiRecs.map((rec, i) => (
                 <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-1.5">
                   <div className="flex items-start justify-between gap-2">

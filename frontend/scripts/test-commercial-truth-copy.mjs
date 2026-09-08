@@ -21,6 +21,9 @@ const executive = fs.readFileSync(new URL("../src/pages/ExecutivePage.tsx", impo
 const alertRules = fs.readFileSync(new URL("../src/pages/AlertRulesPage.tsx", import.meta.url), "utf8");
 const analytics = fs.readFileSync(new URL("../src/pages/AnalyticsDashboardPage.tsx", import.meta.url), "utf8");
 const fleetIntelligence = fs.readFileSync(new URL("../src/pages/FleetIntelligencePage.tsx", import.meta.url), "utf8");
+const fleetHealth = fs.readFileSync(new URL("../src/pages/FleetHealthPage.tsx", import.meta.url), "utf8");
+const compliance = fs.readFileSync(new URL("../src/pages/CompliancePage.tsx", import.meta.url), "utf8");
+const operatingModule = fs.readFileSync(new URL("../src/pages/OperatingModulePage.tsx", import.meta.url), "utf8");
 const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
 
 assert.doesNotMatch(
@@ -180,6 +183,13 @@ assert.match(analytics, /Missing denominators and unmeasured scores remain unava
 assert.doesNotMatch(analytics, /computed from live fleet data|Live KPIs/, "Persisted analytics must not be marketed as live telemetry");
 assert.match(fleetIntelligence, /Missing measurements remain unavailable/, "Fleet Intelligence must disclose missing measurements");
 assert.doesNotMatch(fleetIntelligence, /OBD \/ J1939 live|Live Telematics Alerts|every figure pulled live|value=\{offline \? "offline" : "online"\}/, "Fleet Intelligence must not infer live connectivity or diagnostic clearance");
+assert.match(fleetHealth, /Missing or unmeasured safety evidence is not treated as a normal result/, "Fleet Health must not interpret missing driver evidence as normal");
+assert.doesNotMatch(fleetHealth, /live operational data|All drivers within normal parameters|All vehicles within normal parameters|metrics\.deviceOffline|safetyScore, 100/, "Fleet Health must not fabricate live, connectivity, normal, or perfect-score evidence");
+assert.match(compliance, /do not certify regulatory compliance/, "Compliance recommendations must retain the certification boundary");
+assert.doesNotMatch(compliance, /recommendations based on live fleet data|No cross-border issues found/, "Compliance must not overstate record absence or evidence currency");
+assert.match(operatingModule, /No connected production records/, "Unwired operating modules must disclose the absent data source");
+assert.match(operatingModule, /value=\{hasConnectedRecords \? kpi\.value : "—"\}/, "Unwired operating modules must suppress fixed KPI values");
+assert.doesNotMatch(operatingModule, /RTE-KSA-018|RTE-US-DC-006|Recommended Matches" value="3"|Dispatch Readiness" value="87%"/, "Operating workspaces must not display fixed route or dispatch evidence");
 assert.doesNotMatch(
   liveMap,
   /kpis\.(?:liveCoverage|connectedUnits|degradedUnits|deviceOfflineUnits|cameraOfflineUnits|connectivityCoverage)/,

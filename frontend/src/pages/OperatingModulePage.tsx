@@ -124,11 +124,7 @@ function ageHours(createdAt?: string) {
   return Math.max(0, (Date.now() - created) / 3_600_000);
 }
 
-const routePlans = [
-  { routeId: "RTE-KSA-018", origin: "Riyadh", destination: "Dammam", distance: "414 km", estimatedDuration: "4h 50m", tollEstimate: "SAR 86", preferredVehicleType: "Dry Van", riskLevel: "Low", active: "Yes", status: "Active" },
-  { routeId: "RTE-KSA-027", origin: "Jeddah", destination: "Riyadh", distance: "949 km", estimatedDuration: "10h 35m", tollEstimate: "SAR 140", preferredVehicleType: "Reefer", riskLevel: "Medium", active: "Yes", status: "Temperature Watch" },
-  { routeId: "RTE-US-DC-006", origin: "Manassas", destination: "Washington DC", distance: "34 mi", estimatedDuration: "1h 05m", tollEstimate: "USD 14", preferredVehicleType: "Box Truck", riskLevel: "High", active: "Yes", status: "Delay Hotspot" },
-];
+const routePlans: AnyRecord[] = [];
 
 const proofOfDelivery = shipments.map((shipment, index) => ({
   podId: `POD-${9200 + index}`,
@@ -1371,14 +1367,20 @@ function PriceSimulationPage() {
 
 function DispatchBoardPage() {
   const unassigned = bookings.filter((booking) => /Awaiting Dispatch|Confirmed/.test(String(booking.status)));
+  const availableVehicles = vehicles.filter((vehicle) => /Active|Available/i.test(String(vehicle.status)));
+  const availableDrivers = drivers.filter((driver) => !/Inactive|Suspended/i.test(String(driver.status)));
+  const recommendedMatches = Math.min(unassigned.length, availableVehicles.length, availableDrivers.length);
+  const dispatchReadiness = vehicles.length > 0
+    ? `${Math.round(availableVehicles.length * 100 / vehicles.length)}%`
+    : "—";
   return (
     <div className="space-y-6">
       <PageHeader eyebrow="Transport Operations" title="Dispatch Board" description="Match confirmed bookings to available vehicles and drivers using vehicle type, location, maintenance, cold chain and safety fit." />
       <div className="grid gap-3 md:grid-cols-4">
         <KpiCard label="Awaiting Dispatch" value={unassigned.length} status="Pending" />
-        <KpiCard label="Recommended Matches" value="3" status="AI" />
+        <KpiCard label="Eligible Matches" value={bookings.length || vehicles.length || drivers.length ? recommendedMatches : "—"} />
         <KpiCard label="Blocked Vehicles" value={vehicles.filter((v) => /Maintenance|Service/.test(String(v.status))).length} status="Risk" />
-        <KpiCard label="Dispatch Readiness" value="87%" status="Healthy" />
+        <KpiCard label="Recorded Vehicle Availability" value={dispatchReadiness} />
       </div>
       <div className="grid gap-5 xl:grid-cols-[1fr_1fr]">
         <div className="panel p-5">
@@ -1479,6 +1481,7 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
       return textMatch && filterMatch;
     });
   }, [definition, filter, search]);
+  const hasConnectedRecords = rows.length > 0;
 
   if (!definition) {
     return (
@@ -1507,7 +1510,7 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
         title={definition.title}
         description={definition.description}
         actions={<>
-          <button className="btn-ghost" type="button" onClick={() => exportCsv(definition.title, rows)}>
+          <button className="btn-ghost" type="button" disabled={!hasConnectedRecords} onClick={() => exportCsv(definition.title, rows)}>
             <Download className="h-4 w-4" />
             Export
           </button>
@@ -1518,13 +1521,17 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
         </>}
       />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {definition.kpis.map((kpi) => <KpiCard key={kpi.label} label={kpi.label} value={kpi.value} status={kpi.status} trend={kpi.trend} />)}
+        {definition.kpis.map((kpi) => <KpiCard key={kpi.label} label={kpi.label} value={hasConnectedRecords ? kpi.value : "—"} status={hasConnectedRecords ? kpi.status : "Unavailable"} trend={hasConnectedRecords ? kpi.trend : undefined} />)}
       </div>
       <ModuleToolbar search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} />
       <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
-        <DataTable rows={rows} columns={definition.columns} onSelect={setSelected} />
+        {hasConnectedRecords
+          ? <DataTable rows={rows} columns={definition.columns} onSelect={setSelected} />
+          : <EmptyState title="No connected production records" subtitle="This workspace has no production data source yet. Fixed example records, percentages, and recommendations are not shown." />}
         <div className="space-y-5">
-          <AiInsightCard insight={{ title: `${definition.title} recommendation`, body: definition.insight, score: 89, moduleKey }} />
+          {hasConnectedRecords
+            ? <AiInsightCard insight={{ title: `${definition.title} recommendation`, body: definition.insight, score: 89, moduleKey }} />
+            : <div className="panel p-5 text-sm text-slate-500">No evidence-linked recommendation is available for this workspace.</div>}
           <div className="panel p-5">
             <p className="section-title">Operating Spine</p>
             <div className="mt-4 space-y-3">

@@ -44,6 +44,9 @@ public sealed class CommandCenterDashboardTruthContractTests
         // SQL-side defaults that turned "unmeasured" into a mid-range score.
         Assert.DoesNotContain("COALESCE(v.readiness_score", method, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("COALESCE(d.safety_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("device_status", method, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("COALESCE(v.out_of_service,FALSE)=FALSE", method, StringComparison.Ordinal);
+        Assert.Contains("FROM diagnostic_holds", method, StringComparison.Ordinal);
 
         // C#-side defaults: the composite must be null unless both inputs are measured
         // (ToDouble(null,50)*0.6 + ToDouble(null,100)*0.4 was a compile-time constant 70).
@@ -92,6 +95,7 @@ public sealed class CommandCenterDashboardTruthContractTests
         Assert.DoesNotContain("otd7  ?? 0", trends, StringComparison.Ordinal);
         Assert.Contains("otd7.HasValue && otd30.HasValue", trends, StringComparison.Ordinal);
         Assert.DoesNotContain("No significant operational alerts at this time", insights, StringComparison.Ordinal);
+        Assert.Contains("se.company_id=d.company_id", safety, StringComparison.Ordinal);
     }
 
     [Fact]
