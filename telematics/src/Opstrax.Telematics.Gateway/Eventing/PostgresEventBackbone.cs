@@ -120,7 +120,9 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
         command.Parameters.AddWithValue("trip_id", (object?)evt.TripId ?? DBNull.Value);
         command.Parameters.AddWithValue("driver_id", (object?)evt.DriverId ?? DBNull.Value);
         command.Parameters.AddWithValue("correlation_id", evt.CorrelationId);
-        command.Parameters.AddWithValue("event_type", evt.Location is null ? "device.heartbeat" : "location.updated");
+        command.Parameters.AddWithValue(
+            "event_type",
+            ClassifyCanonicalEventType(evt));
         command.Parameters.AddWithValue("lat", (object?)evt.Location?.Lat ?? DBNull.Value);
         command.Parameters.AddWithValue("lng", (object?)evt.Location?.Lng ?? DBNull.Value);
         command.Parameters.AddWithValue("speed_mph", evt.Location?.SpeedKph is { } kph ? kph * 0.621371 : DBNull.Value);
@@ -138,6 +140,14 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
         command.Parameters.AddWithValue("event_time", Utc(evt.OccurredAtDeviceUtc));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static string ClassifyCanonicalEventType(CanonicalTelemetryEvent evt)
+    {
+        ArgumentNullException.ThrowIfNull(evt);
+        return evt.Location is not null ? "location.updated" :
+            evt.Signals.Count > 0 ? "vehicle.signal" :
+            "device.heartbeat";
     }
 
     public IEventSubscription<T> Subscribe<T>(string topic, Guid? tenantFilter = null) =>

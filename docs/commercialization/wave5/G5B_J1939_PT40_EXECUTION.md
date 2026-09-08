@@ -64,6 +64,14 @@ The explicit catalog now also admits HOURS PGN 65253 / SPN 247 Engine Total Hour
 
 The numeric decoder now handles reviewed unsigned two- and four-byte little-endian definitions while classifying the indicator range from the most-significant byte before scaling. Focused tests cover real numeric values and every four-byte indicator boundary. The exact ECU/device/adapter/firmware tuple and agreement with trusted physical reference readings remain EXTERNAL HOLD.
 
+## Sixth implementation slice — canonical freshness and durable publication seam
+
+Catalog signals now convert to registry-owned `CanonicalTelemetryEvent` records through an explicit factory. CAN capture completion anchors the timestamp because the admitted PGNs do not carry a device clock. The caller must supply authenticated registry ownership, event/correlation identities, source classification, normalization time, freshness budget, trust and confidence; source address is retained as provenance and never treated as device identity.
+
+Canonical signals carry named `Available`, `Stale`, `ParameterSpecific`, `Error` or `NotAvailable` states. Stale measurements retain their evidence value and set the event stale flag, while nonnumeric indicators store null. Only a fresh available battery reading reaches the typed current battery field.
+
+The gateway publication seam writes the event to the tenant/company/device partition on `telemetry.normalized`, with bounded headers for PGN/SPN, source/destination address, adapter/channel and capture references. The PostgreSQL backbone stores these as `vehicle.signal` events. In-memory integration tests prove partitioning, tenant-filter isolation and rejection of mixed adapter evidence. Starting the physical CAN listener and proving these writes against an exact adapter/device/firmware candidate remain EXTERNAL HOLD.
+
 ## DeviceOps registry integration
 
 Stage 115 provides the shared exact manufacturer/model/hardware revision/firmware and software-SHA candidate identity needed by a later PT40 or OEM certification candidate. It deliberately seeds no PT40, GT06, J1939 adapter or OEM record and its database contract fixes every engineering candidate at `ExternalHold` / `Unverified`. A candidate may be recorded only after the exact physical tuple is observed; tier promotion requires the evidence gates in this document and a separately frozen certification candidate.

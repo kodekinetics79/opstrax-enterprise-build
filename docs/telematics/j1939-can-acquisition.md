@@ -87,8 +87,16 @@ The same most-significant-byte rule is applied to the four-byte engine-hours val
 
 `J1939MessageAcquisition` provides the general routing boundary: incomplete transport traffic, unsupported complete messages, decoded DM1/DM2 diagnostics and decoded catalog signals are distinct outcomes. The signal result retains the original `J1939AcquiredMessage`, including source address, timestamps, adapter/channel and ordered capture references.
 
+## Canonical publication and freshness
+
+`J1939CanonicalEventFactory` accepts a catalog-supported acquired message plus registry-resolved ownership, explicit event/correlation identities, source classification, trust/confidence and a freshness budget. It never derives a tenant, device or vehicle from the CAN source address. Because these PGNs carry no device clock, CAN capture completion anchors both the observation and gateway-receipt time; the separate normalization time determines freshness.
+
+Every decoded SPN becomes a canonical `SignalValue` with a named availability state. Fresh valid data is `Available`. An older valid reading is retained as evidence with `Stale` availability and the event's `IsStale` quality flag, but is not promoted to a typed current-value field. Parameter-specific, error and not-available indicators persist with null values and explicit availability names. This prevents a reserved wire code from appearing as a real customer measurement.
+
+`J1939SignalPublisher` creates the tenant/company/device partition key and publishes the canonical event to `telemetry.normalized`. Its envelope headers retain PGN, SPN, source/destination address, adapter type, CAN channel and the ordered capture references without including raw payload bytes. The production PostgreSQL backbone classifies a non-positional event carrying signals as `vehicle.signal` and stores the full canonical payload and envelope headers. The future physical CAN host must authenticate and resolve the owning device before calling this publisher.
+
 ## Verification
 
-The protocol suite covers direct DM1 decoding, PDU1/PDU2 identifier semantics, input rejection, immutable capture copying, multi-packet DM1/DM2 reconstruction, diagnostic outcome classification, explicit signal routing, little-endian RPM/hours/voltage scaling, two-byte and four-byte indicator ranges, unsupported-PGN behavior, evidence retention, bounded malformed-message failures, bus isolation, concurrent channels, abandoned-path expiry, timestamp regression, invalid transported PGNs and mismatched evidence rejection.
+The protocol suite covers direct DM1 decoding, PDU1/PDU2 identifier semantics, input rejection, immutable capture copying, multi-packet DM1/DM2 reconstruction, diagnostic outcome classification, explicit signal routing, little-endian RPM/hours/voltage scaling, two-byte and four-byte indicator ranges, canonical availability and freshness, tenant-filtered publication, unsupported-PGN behavior, evidence retention, bounded malformed-message failures, bus isolation, concurrent channels, abandoned-path expiry, timestamp regression, invalid transported PGNs and mismatched evidence rejection.
 
 Synthetic tests establish deterministic software behavior only. Capability promotion still requires an exact adapter/device/firmware tuple, physical CAN traffic, trusted comparison values, controlled vehicle testing, recovery and soak evidence, and qualified human acceptance under the commercialization plan.

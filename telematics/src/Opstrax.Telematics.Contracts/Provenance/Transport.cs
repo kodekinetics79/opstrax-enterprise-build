@@ -29,4 +29,7 @@ public enum Transport
 
     /// <summary>Outbound poll of a vendor cloud API on a schedule.</summary>
     VendorPoll = 6,
+
+    /// <summary>Controller Area Network capture, including SAE J1939 traffic.</summary>
+    Can = 7,
 }

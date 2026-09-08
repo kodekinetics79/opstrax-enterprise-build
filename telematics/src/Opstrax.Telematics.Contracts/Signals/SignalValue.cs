@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Opstrax.Telematics.Contracts.Provenance;
 
 namespace Opstrax.Telematics.Contracts.Signals;
@@ -25,12 +26,19 @@ public sealed record SignalValue
     /// <param name="unit">The unit of measure (for example <c>"km"</c>, <c>"kph"</c>, <c>"V"</c>, <c>"degC"</c>, <c>"%"</c>). Use <see cref="string.Empty"/> for unitless/boolean signals.</param>
     /// <param name="source">Provenance of this specific reading; defaults to <see cref="TelemetrySource.DirectDevice"/>.</param>
     /// <param name="confidence">Per-signal confidence in the closed interval [0,1].</param>
-    public SignalValue(object? value, string unit, TelemetrySource source = TelemetrySource.DirectDevice, double confidence = 1.0)
+    /// <param name="availability">Whether consumers may use the scalar as a current measurement.</param>
+    public SignalValue(
+        object? value,
+        string unit,
+        TelemetrySource source = TelemetrySource.DirectDevice,
+        double confidence = 1.0,
+        SignalAvailability availability = SignalAvailability.Available)
     {
         Value = value;
         Unit = unit ?? string.Empty;
         Source = source;
         Confidence = confidence < 0 ? 0 : confidence > 1 ? 1 : confidence;
+        Availability = availability;
     }
 
     /// <summary>The boxed scalar reading. <see langword="null"/> means "explicitly absent" rather than "unknown".</summary>
@@ -44,4 +52,30 @@ public sealed record SignalValue
 
     /// <summary>Confidence for this reading, clamped to the closed interval [0,1].</summary>
     public double Confidence { get; init; }
+
+    /// <summary>
+    /// Whether the scalar is currently usable. Consumers must not treat a stale,
+    /// unavailable, error, or parameter-specific value as a current measurement.
+    /// </summary>
+    public SignalAvailability Availability { get; init; }
+}
+
+/// <summary>Protocol-neutral availability state carried with a canonical signal.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum SignalAvailability
+{
+    /// <summary>The value is a current, valid measurement.</summary>
+    Available,
+
+    /// <summary>The value is valid historical evidence but older than its freshness budget.</summary>
+    Stale,
+
+    /// <summary>The wire value is a protocol-defined parameter-specific indicator not interpreted here.</summary>
+    ParameterSpecific,
+
+    /// <summary>The source reported a protocol-level error indicator.</summary>
+    Error,
+
+    /// <summary>The source explicitly reported that the signal is unavailable.</summary>
+    NotAvailable,
 }

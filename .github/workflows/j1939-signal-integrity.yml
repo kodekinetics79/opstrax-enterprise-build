@@ -4,9 +4,16 @@ on:
   pull_request:
     paths:
       - 'telematics/src/Opstrax.Telematics.Contracts/Signals/VssSignals.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Signals/SignalValue.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Provenance/Transport.cs'
       - 'telematics/src/Opstrax.Telematics.Protocols.J1939/**'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939SignalPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Eventing/PostgresEventBackbone.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Opstrax.Telematics.Gateway.csproj'
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/J1939*Tests.cs'
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/Opstrax.Telematics.Protocols.Tests.csproj'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939SignalPublisherTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj'
       - 'docs/telematics/j1939-can-acquisition.md'
       - 'docs/commercialization/wave5/G5B_J1939_PT40_EXECUTION.md'
       - '.github/workflows/j1939-signal-integrity.yml'
@@ -14,9 +21,16 @@ on:
     branches: [main]
     paths:
       - 'telematics/src/Opstrax.Telematics.Contracts/Signals/VssSignals.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Signals/SignalValue.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Provenance/Transport.cs'
       - 'telematics/src/Opstrax.Telematics.Protocols.J1939/**'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939SignalPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Eventing/PostgresEventBackbone.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Opstrax.Telematics.Gateway.csproj'
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/J1939*Tests.cs'
       - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/Opstrax.Telematics.Protocols.Tests.csproj'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939SignalPublisherTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj'
       - 'docs/telematics/j1939-can-acquisition.md'
       - 'docs/commercialization/wave5/G5B_J1939_PT40_EXECUTION.md'
       - '.github/workflows/j1939-signal-integrity.yml'
@@ -42,4 +56,9 @@ jobs:
         run: >-
           dotnet test telematics/tests/Opstrax.Telematics.Protocols.Tests/Opstrax.Telematics.Protocols.Tests.csproj
           --filter "FullyQualifiedName~J1939"
+          --logger "console;verbosity=minimal"
+      - name: Run J1939 canonical publication tests
+        run: >-
+          dotnet test telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj
+          --filter "FullyQualifiedName~J1939SignalPublisherTests"
           --logger "console;verbosity=minimal"
