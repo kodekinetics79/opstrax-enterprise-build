@@ -17,6 +17,7 @@ const alertsCenter = fs.readFileSync(new URL("../src/pages/AlertsCenterPage.tsx"
 const aiCopilot = fs.readFileSync(new URL("../src/pages/AiCopilotPage.tsx", import.meta.url), "utf8");
 const accountHealth = fs.readFileSync(new URL("../src/pages/AccountHealthPage.tsx", import.meta.url), "utf8");
 const modulePage = fs.readFileSync(new URL("../src/pages/ModulePage.tsx", import.meta.url), "utf8");
+const executive = fs.readFileSync(new URL("../src/pages/ExecutivePage.tsx", import.meta.url), "utf8");
 const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
 
 assert.doesNotMatch(
@@ -167,6 +168,9 @@ assert.match(accountHealth, /does not infer sales opportunities/, "Missing upsel
 assert.match(accountHealth, /Persisted customer health scores, SLA evidence and at-risk status/, "Account health copy must identify its persisted evidence scope");
 assert.doesNotMatch(modulePage, /Operational recommendations will surface as live events/, "Empty module insight panels must not promise live recommendations");
 assert.match(modulePage, /No recorded recommendations are available for this module/, "Empty module insight panels must disclose missing recommendations");
+assert.doesNotMatch(executive, /useExecutiveSnapshots|useExecutiveAiRecs|AI Live Monitoring|emptySummary/, "Executive UI must not present seeded snapshots, recommendations, or missing-data zeros as current evidence");
+assert.match(executive, /Current aggregates from persisted records in the authorized tenant scope/, "Executive UI must disclose the source and authorization scope of its metrics");
+assert.match(executive, /do not certify provider, device, or regulatory evidence/, "Executive record counts must not be presented as certification evidence");
 assert.doesNotMatch(
   liveMap,
   /kpis\.(?:liveCoverage|connectedUnits|degradedUnits|deviceOfflineUnits|cameraOfflineUnits|connectivityCoverage)/,

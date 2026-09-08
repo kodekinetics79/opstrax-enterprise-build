@@ -30059,9 +30059,9 @@ LIMIT 100000",
         var openExcept    = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_exceptions WHERE company_id=@c AND status NOT IN ('resolved','Resolved')", p => p.Parameters.AddWithValue("@c", c), ct);
         var proofCount    = await db.ScalarLongAsync("SELECT COUNT(*) FROM proof_of_delivery WHERE company_id=@c AND captured_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
 
-        decimal fleetUtil  = vehicleTotal > 0 ? Math.Round(vehicleActive * 100m / vehicleTotal, 1) : 0;
-        decimal otdRate    = jobsCompleted > 0 ? Math.Round(jobsOnTime * 100m / jobsCompleted, 1) : 0;
-        decimal safetyAvg  = Math.Round(avgSafety ?? 0, 1);
+        decimal? fleetUtil = vehicleTotal > 0 ? Math.Round(vehicleActive * 100m / vehicleTotal, 1) : null;
+        decimal? otdRate = jobsCompleted > 0 ? Math.Round(jobsOnTime * 100m / jobsCompleted, 1) : null;
+        decimal? safetyAvg = avgSafety.HasValue ? Math.Round(avgSafety.Value, 1) : null;
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
