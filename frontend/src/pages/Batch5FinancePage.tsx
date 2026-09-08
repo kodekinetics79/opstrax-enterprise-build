@@ -18,7 +18,6 @@ import {
 import { carriersApi } from "@/services/carriersApi";
 import { contractsApi } from "@/services/contractsApi";
 import { costLeakageApi } from "@/services/costLeakageApi";
-import { costMarginApi } from "@/services/costMarginApi";
 import { expensesApi } from "@/services/expensesApi";
 import { fuelApi } from "@/services/fuelApi";
 import type { AnyRecord } from "@/types";
@@ -41,7 +40,7 @@ const FILTER_OPTIONS: Record<Kind, string[]> = {
   "expenses":      ["All","Pending","Approved","Rejected","Missing","High"],
   "contracts":     ["All","Active","Expiring Soon","Expired","High","Medium"],
   "carriers":      ["All","Active","Pending","Suspended","Compliant","Non-Compliant","At Risk"],
-  "cost-margin":   ["All","High","Medium","Low"],
+  "cost-margin":   ["All","Calculated","Cost evidence unavailable","Issued revenue unavailable"],
   "cost-leakage":  ["All","Open","Acknowledged","In Progress","Critical","High"],
 };
 
@@ -98,15 +97,15 @@ const configs = {
     ] as [string,string,string[]][],
   },
   "cost-margin": {
-    queryKey: "cost-margin", eyebrow: "Predictive Cost & Margin", title: "Cost and margin intelligence center", icon: <Zap />,
-    description: "Job, route, vehicle and customer cost profiles, margin percent analysis, predictions and AI profitability improvement recommendations.",
+    queryKey: "cost-margin", eyebrow: "Cost & Margin Evidence", title: "Recorded job cost and margin evidence", icon: <Zap />,
+    description: "Job margin calculated from issued invoices and approved, non-demo expenses recorded for the same job and currency.",
     useRows: useCostMarginJobs, useSummary: useCostMarginSummary, useDetail: useCostMarginJobDetail,
     api: { create: null as unknown as (p: AnyRecord) => Promise<AnyRecord>, update: null as unknown as (id: string | number, p: AnyRecord) => Promise<AnyRecord> },
     createLabel: "",
-    kpis: [["Revenue","revenueEstimate"],["Cost","costEstimate"],["Gross Margin","grossMarginEstimate"],["Margin %","marginPct"],["Jobs Below Target","jobsBelowMarginTarget"],["High Cost Vehicles","highCostVehicles"],["Fuel Impact","fuelCostImpact"],["Savings Opp","savingsOpportunity"]],
-    columns: ["entityType","jobCode","customerName","revenueEstimate","totalCost","marginEstimate","marginPercent","fuelCost","delayCost","idleCost","marginRisk"],
+    kpis: [["Jobs With Evidence","jobsWithEvidence"],["Complete Margins","completeMargins"],["Missing Cost Evidence","missingCostEvidence"],["Missing Issued Revenue","missingIssuedRevenue"]],
+    columns: ["entityType","entityLabel","customerName","revenueEstimate","totalCost","marginEstimate","marginPercent","currency","invoiceCount","costRecordCount","status","dataOrigin"],
     fields: [],
-    actions: ["recalculate"],
+    actions: [],
     sections: [] as [string,string,string[]][],
   },
   "cost-leakage": {
@@ -185,7 +184,7 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
     const filterLower = filter.toLowerCase();
     const matchesSearch = !search || 
       String(row.transactionNumber || row.expenseNumber || row.contractNumber || row.carrierNumber || row.leakageNumber || "").toLowerCase().includes(searchLower) ||
-      String(row.vehicleCode || row.driverName || row.customerName || row.vendorName || "").toLowerCase().includes(searchLower);
+      String(row.vehicleCode || row.driverName || row.customerName || row.vendorName || row.entityLabel || row.status || "").toLowerCase().includes(searchLower);
 
     const statusVal = String(row.status ?? row.approvalStatus ?? row.complianceStatus ?? row.severity ?? row.threshold_status ?? "").toLowerCase();
     const matchesFilter = filter === "All" || statusVal.includes(filterLower);
@@ -257,6 +256,22 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
         </div>
       )}
 
+      {kind === "cost-margin" && (
+        <div className="panel p-4 text-sm text-slate-600">
+          <p className="font-semibold text-slate-900">Recorded margin evidence by currency</p>
+          {((summaryData.byCurrency as AnyRecord[] | undefined) ?? []).length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {((summaryData.byCurrency as AnyRecord[]) ?? []).map((total) => (
+                <span key={String(total.currency)} className="badge">
+                  {String(total.currency)} · revenue {Number(total.revenueEstimate ?? 0).toLocaleString()} · approved cost {Number(total.totalCost ?? 0).toLocaleString()} · {String(total.completeMarginCount ?? 0)} complete margins
+                </span>
+              ))}
+            </div>
+          ) : <p className="mt-2">No jobs have issued-invoice or approved-expense evidence yet.</p>}
+          <p className="mt-2 text-xs text-slate-500">Margins remain unavailable when either evidence side is missing. Currencies are never combined.</p>
+        </div>
+      )}
+
       {act.isError && (
         <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {apiErrorMessage(act.error, "The expense workflow action was rejected. Reload the record and try again.")}
@@ -269,7 +284,9 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
           className="field xl:max-w-md"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder={`Search ${config.eyebrow.toLowerCase()} by vehicle, driver, status…`}
+          placeholder={kind === "cost-margin"
+            ? "Search evidence by job, customer or status…"
+            : `Search ${config.eyebrow.toLowerCase()} by vehicle, driver, status…`}
         />
         <select className="field xl:max-w-[200px]" value={filter} onChange={(e) => setFilter(e.target.value)}>
           {FILTER_OPTIONS[kind].map((opt) => <option key={opt}>{opt}</option>)}
@@ -396,14 +413,17 @@ function ModuleChart({ kind, rows, vehicleSummary }: {
   }
 
   if (kind === "cost-margin") {
-    const data = rows.slice(0, 12).map((r) => ({
-      name: String(r.jobCode ?? r.job_code ?? r.entityLabel ?? r.entity_label ?? `#${r.id}`).slice(0, 10),
-      margin: Number(r.marginPercent ?? r.margin_percent ?? 0),
-    }));
+    const data = rows
+      .filter((r) => r.marginPercent != null || r.margin_percent != null)
+      .slice(0, 12)
+      .map((r) => ({
+        name: String(r.entityLabel ?? r.entity_label ?? `#${r.id}`).slice(0, 10),
+        margin: Number(r.marginPercent ?? r.margin_percent),
+      }));
     if (!data.length) return null;
     return (
       <div className="panel p-5">
-        <p className="section-title mb-4">Margin % by Job (Lowest First)</p>
+        <p className="section-title mb-4">Recorded margin % by job</p>
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
@@ -411,13 +431,11 @@ function ModuleChart({ kind, rows, vehicleSummary }: {
             <YAxis tick={{ fill: chart.slate500, fontSize: 11 }} axisLine={false} tickLine={false} width={40} unit="%" />
             <ChartTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: unknown) => [`${Number(v ?? 0).toFixed(1)}%`, "Margin"]} />
             <Bar dataKey="margin" radius={[3, 3, 0, 0]}>
-              {data.map((d, i) => (
-                <Cell key={i} fill={d.margin < 10 ? "rgba(248,113,113,.8)" : d.margin < 20 ? "rgba(251,191,36,.75)" : "rgba(52,211,153,.7)"} />
-              ))}
+              {data.map((_, i) => <Cell key={i} fill="rgba(45,212,191,.75)" />)}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-        <p className="mt-2 text-[11px] text-slate-500">Red &lt;10% · Amber 10–20% · Green &gt;20% margin.</p>
+        <p className="mt-2 text-[11px] text-slate-500">Only jobs with both issued-revenue and approved-cost evidence appear.</p>
       </div>
     );
   }
@@ -475,6 +493,7 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
     record.entityLabel ?? record.entity_label ?? `Record ${record.id}`
   );
   const isExpense = config.queryKey === "expenses";
+  const isCostMargin = config.queryKey === "cost-margin";
   const expensePending = String(record.approvalStatus ?? "").toLowerCase() === "pending";
 
   return (
@@ -493,8 +512,8 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           {/* Status badges + actions */}
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={record.status ?? record.approvalStatus ?? record.complianceStatus} />
-            {!isExpense && <RiskBadge risk={record.severity ?? record.marginRisk ?? record.riskScore ?? record.anomalyStatus} />}
-            <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : "OpsTrax Finance Intelligence"}</span>
+            {!isExpense && !isCostMargin && <RiskBadge risk={record.severity ?? record.marginRisk ?? record.riskScore ?? record.anomalyStatus} />}
+            <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : isCostMargin ? "Recorded financial evidence" : "OpsTrax Finance Intelligence"}</span>
           </div>
 
           <div className="flex flex-wrap gap-3">
@@ -514,7 +533,15 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           {/* Info grid */}
           <div className="grid gap-4 lg:grid-cols-3">
             <Info title="Primary Details" record={record} keys={Object.keys(record).slice(0, 10)} />
-            <Info title={isExpense ? "Financial / Approval" : "Financial / Risk"} record={record} keys={isExpense ? ["amount","currency","approvalStatus","receiptStatus","recordOrigin","recordAttention"] : ["totalCost","amount","baseRate","estimatedLoss","marginPercent","marginRisk","riskScore","anomalyStatus","complianceStatus","approvalStatus"]} />
+            <Info
+              title={isExpense ? "Financial / Approval" : isCostMargin ? "Financial Evidence" : "Financial / Risk"}
+              record={record}
+              keys={isExpense
+                ? ["amount","currency","approvalStatus","receiptStatus","recordOrigin","recordAttention"]
+                : isCostMargin
+                  ? ["revenueEstimate","totalCost","marginEstimate","marginPercent","currency","invoiceCount","costRecordCount","dataOrigin"]
+                  : ["totalCost","amount","baseRate","estimatedLoss","marginPercent","marginRisk","riskScore","anomalyStatus","complianceStatus","approvalStatus"]}
+            />
             <Info title="Recommended Action" record={record} keys={["recommendedAction","thresholdStatus","source","ownerRole","notes"]} />
           </div>
 
@@ -675,7 +702,6 @@ async function runAction(kind: Kind, type: string, row: AnyRecord): Promise<AnyR
   if (kind === "expenses")     return type === "approve" ? expensesApi.approve(id) : expensesApi.reject(id);
   if (kind === "contracts")    return type === "activate" ? contractsApi.activate(id) : contractsApi.expire(id);
   if (kind === "carriers")     return carriersApi.setStatus(id, { status: "Active" });
-  if (kind === "cost-margin")  return costMarginApi.recalculate();
   return type === "acknowledge"
     ? costLeakageApi.acknowledge(id)
     : costLeakageApi.createAction(id, { actionTitle: "Cost recovery action", estimatedSavings: 500 });

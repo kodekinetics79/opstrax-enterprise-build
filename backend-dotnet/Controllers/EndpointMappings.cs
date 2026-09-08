@@ -783,18 +783,30 @@ public static partial class EndpointMappings
             var rows = await svc.ListProfitabilityEvidenceAsync(GetCompanyId(http), ct);
             return Results.Ok(ApiResponse<object>.Ok(rows));
         });
-        app.MapGet("/api/profitability/summary", async (HttpContext http, Database db, CancellationToken ct) =>
+        app.MapGet("/api/profitability/summary", async (HttpContext http, RevenueReadinessService svc, CancellationToken ct) =>
         {
             if (RequirePermission(http, "finance:view") is { } denied) return denied;
-            var row = await db.QuerySingleAsync(
-            @"SELECT COALESCE(SUM(revenue_estimate),0) total_revenue,
-                     COALESCE(SUM(total_cost),0) total_cost,
-                     COALESCE(SUM(gross_margin),0) total_margin,
-                     COALESCE(AVG(gross_margin_percent),0) avg_margin_pct,
-                     COUNT(*) total_records
-              FROM cost_margin_records WHERE company_id=@cid",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
-            return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
+            var rows = await svc.ListProfitabilityEvidenceAsync(GetCompanyId(http), ct);
+            var byCurrency = rows.GroupBy(row => row.Currency, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new
+                {
+                    currency = group.Key,
+                    revenue = group.Sum(row => row.RevenueEstimate),
+                    approvedCost = group.Sum(row => row.TotalCost),
+                    margin = group.All(row => row.GrossMargin.HasValue)
+                        ? group.Sum(row => row.GrossMargin!.Value)
+                        : (decimal?)null,
+                    customerCount = group.Select(row => row.EntityId).Distinct().LongCount(),
+                    completeMarginCount = group.LongCount(row => row.GrossMargin.HasValue)
+                }).ToList();
+            return Results.Ok(ApiResponse<object>.Ok(new
+            {
+                totalRecords = rows.Count,
+                byCurrency,
+                dataOrigin = "issued_invoices+approved_expenses",
+                calculationPolicy = "Currencies remain separate and margin is unavailable when approved cost evidence is missing."
+            }));
         });
 
         // ── Carbon Emissions ──
@@ -1654,38 +1666,32 @@ public static partial class EndpointMappings
         });
 
         // ===== BATCH 5: PREDICTIVE COST & MARGIN ================================
-        // TENANT LEAK FIX: every one of these read the whole cost_margin_records /
-        // cost_margin_predictions table with NO company_id predicate, so any tenant saw every
-        // other tenant's revenue, cost, margin — and (via the joins) their customer names,
-        // job codes, routes and vehicles. All statements are now scoped by GetCompanyId(http),
-        // including the joined rows (a child row whose company_id drifted must not leak a
-        // foreign customer's name either).
+        // Read-through evidence only: issued invoices supply realized revenue and approved,
+        // non-demo expenses supply cost. Historical generated projection rows and unproven
+        // prediction records are never presented as customer financial truth.
         app.MapGet("/api/cost-margin/summary", CostMarginSummary);
         app.MapGet("/api/cost-margin/jobs", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT cm.*, COALESCE(j.job_code,CONCAT('Job-',cm.entity_id)) job_code, c.name customer_name FROM cost_margin_records cm LEFT JOIN jobs j ON j.id=cm.job_id AND j.company_id=cm.company_id LEFT JOIN customers c ON c.id=cm.customer_id AND c.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='job' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return CostMarginJobs(http, db, ct);
         });
         app.MapGet("/api/cost-margin/routes", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT cm.*, r.route_code, COALESCE(r.route_name,r.name) route_name FROM cost_margin_records cm LEFT JOIN routes r ON r.id=cm.route_id AND r.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='route' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return CostMarginEntityCosts(http, db, "route", ct);
         });
         app.MapGet("/api/cost-margin/vehicles", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT cm.*, v.vehicle_code, v.type vehicle_type FROM cost_margin_records cm LEFT JOIN vehicles v ON v.id=cm.vehicle_id AND v.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='vehicle' ORDER BY cm.total_cost DESC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return CostMarginEntityCosts(http, db, "vehicle", ct);
         });
-        app.MapGet("/api/cost-margin/customers", (HttpContext http, Database db, CancellationToken ct) =>
+        app.MapGet("/api/cost-margin/customers", async (HttpContext http, RevenueReadinessService svc, CancellationToken ct) =>
         {
-            if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT cm.*, c.name customer_name, c.sla_tier FROM cost_margin_records cm LEFT JOIN customers c ON c.id=cm.customer_id AND c.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='customer' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            if (RequirePermission(http, "finance:view") is { } denied) return denied;
+            var rows = await svc.ListProfitabilityEvidenceAsync(GetCompanyId(http), ct);
+            return Results.Ok(ApiResponse<object>.Ok(rows));
         });
-        app.MapGet("/api/cost-margin/predictions", (HttpContext http, Database db, CancellationToken ct) =>
-        {
-            if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM cost_margin_predictions WHERE company_id=@cid ORDER BY risk_level DESC, created_at DESC LIMIT 30", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
-        });
+        app.MapGet("/api/cost-margin/predictions", CostMarginPredictions);
 
         // ── Predictive Analytics (Fleet Intelligence) ──────────────────────────
         // Same leak class: module_records was read across all tenants.
@@ -1818,7 +1824,7 @@ public static partial class EndpointMappings
             return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='predictive-margin'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
         app.MapPost("/api/cost-margin/recalculate", CostMarginRecalculate);
-        app.MapPost("/api/cost-margin/jobs/{jobId:long}/recalculate", (HttpContext http, long jobId, Database db, AuditService audit, CancellationToken ct) => CostMarginRecalculateJob(http, jobId, db, audit, ct));
+        app.MapPost("/api/cost-margin/jobs/{jobId:long}/recalculate", (HttpContext http, long jobId, Database db, CancellationToken ct) => CostMarginRecalculateJob(http, jobId, db, ct));
 
         // ===== BATCH 5: COST LEAKAGE INTELLIGENCE ================================
         app.MapGet("/api/cost-leakage/summary", CostLeakageSummary);
@@ -15857,59 +15863,50 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     // BATCH 5 HANDLERS — PREDICTIVE COST & MARGIN
     // =====================================================================
 
-    // Was summing cost_margin_records across EVERY tenant (no company_id predicate, including
-    // the two correlated sub-selects) — so each tenant's "revenue / cost / margin" tiles were
-    // the whole platform's numbers. Scoped.
     private static async Task<IResult> CostMarginSummary(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "finance:view") is { } denied) return denied;
-        var row = await db.QuerySingleAsync(
-            @"SELECT
-                CONCAT('$', TO_CHAR((COALESCE(SUM(revenue_estimate),0))::numeric, 'FM9,999,999,999')) revenue_estimate,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(total_cost),0))::numeric, 'FM9,999,999,999')) cost_estimate,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(margin_estimate),0))::numeric, 'FM9,999,999,999')) gross_margin_estimate,
-                CONCAT(ROUND(COALESCE(AVG(margin_percent),0),1),'%') margin_pct,
-                SUM(CASE WHEN margin_percent < 15 THEN 1 ELSE 0 END) jobs_below_margin_target,
-                SUM(CASE WHEN margin_risk='High' THEN 1 ELSE 0 END) routes_below_margin_target,
-                (SELECT COUNT(DISTINCT vehicle_id) FROM cost_margin_records WHERE company_id=@cid AND entity_type='vehicle' AND total_cost > 400) high_cost_vehicles,
-                (SELECT COUNT(DISTINCT driver_id) FROM cost_margin_records WHERE company_id=@cid AND driver_id IS NOT NULL AND total_cost > 300) high_cost_drivers,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(fuel_cost),0))::numeric, 'FM9,999,999,999')) fuel_cost_impact,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(maintenance_cost),0))::numeric, 'FM9,999,999,999')) maintenance_cost_impact,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(delay_cost),0))::numeric, 'FM9,999,999,999')) delay_cost_impact,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(idle_cost),0))::numeric, 'FM9,999,999,999')) savings_opportunity
-              FROM cost_margin_records WHERE company_id=@cid",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
-        return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
+        var summary = await new CostMarginEvidenceService(db).SummaryAsync(GetCompanyId(http), ct);
+        return Results.Ok(ApiResponse<object>.Ok(summary));
     }
 
-    private static async Task<IResult> CostMarginRecalculate(HttpContext http, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> CostMarginJobs(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
-        await audit.LogAsync(http, "cost.margin.recalculate.run", "CostMargin", null, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new
-        {
-            recalculated = true,
-            jobsUpdated = 12,
-            routesUpdated = 6,
-            vehiclesUpdated = 8,
-            message = "Cost margin recalculation simulation complete."
-        }, "Cost margin recalculated"));
+        var rows = await new CostMarginEvidenceService(db).ListJobsAsync(GetCompanyId(http), ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
-    private static async Task<IResult> CostMarginRecalculateJob(HttpContext http, long jobId, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> CostMarginEntityCosts(HttpContext http, Database db, string entityType, CancellationToken ct)
+    {
+        var rows = await new CostMarginEvidenceService(db).ListApprovedCostsByEntityAsync(GetCompanyId(http), entityType, ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows));
+    }
+
+    private static IResult CostMarginPredictions(HttpContext http)
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
+        return Results.Ok(ApiResponse<object>.Ok(Array.Empty<object>(),
+            "No persisted model prediction evidence is available."));
+    }
+
+    private static Task<IResult> CostMarginRecalculate(HttpContext http)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return Task.FromResult(denied);
+        return Task.FromResult<IResult>(Results.Json(
+            ApiResponse<object>.Fail("Recalculation is unavailable", "Cost and margin are calculated directly from issued invoices and approved expenses; no persisted projection writer is configured."),
+            statusCode: StatusCodes.Status501NotImplemented));
+    }
+
+    private static async Task<IResult> CostMarginRecalculateJob(HttpContext http, long jobId, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "finance:manage") is { } denied) return denied;
-        var job = await db.QuerySingleAsync("SELECT revenue_estimate, cost_estimate, margin_estimate FROM jobs WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", jobId); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
-        await audit.LogAsync(http, "cost.margin.job.recalculated", "Job", jobId, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new
-        {
-            jobId,
-            revenueEstimate = job?["revenueEstimate"] ?? 600,
-            costEstimate = job?["costEstimate"] ?? 320,
-            marginEstimate = job?["marginEstimate"] ?? 280,
-            recalculated = true,
-            message = "Job margin recalculated from cost records."
-        }, "Job margin recalculated"));
+        var exists = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM jobs WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", jobId); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
+        if (exists == 0) return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
+        return Results.Json(
+            ApiResponse<object>.Fail("Recalculation is unavailable", "This job's margin is calculated on read from issued invoices and approved expenses."),
+            statusCode: StatusCodes.Status501NotImplemented);
     }
 
     // =====================================================================

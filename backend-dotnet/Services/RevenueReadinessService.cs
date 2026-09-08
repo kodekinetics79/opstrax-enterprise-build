@@ -146,7 +146,7 @@ public sealed record InvoicePaymentViewRecord(
     DateTimeOffset CreatedAt);
 
 public sealed record ProfitabilityEvidenceRecord(
-    long Id,
+    string Id,
     string EntityType,
     long EntityId,
     string EntityName,
@@ -1184,14 +1184,18 @@ public sealed class RevenueReadinessService(
                   FULL OUTER JOIN approved_costs x
                     ON x.company_id=r.company_id AND x.customer_id=r.customer_id AND x.currency=r.currency
               )
-              SELECT e.customer_id id, 'customer' entity_type, e.customer_id entity_id,
+              SELECT 'customer:' || e.customer_id || ':' || e.currency id,
+                     'customer' entity_type, e.customer_id entity_id,
                      c.name entity_name, e.revenue_total revenue_estimate,
                      e.cost_total total_cost,
-                     CASE WHEN e.cost_record_count > 0 THEN e.revenue_total-e.cost_total END gross_margin,
-                     CASE WHEN e.cost_record_count > 0 AND e.revenue_total <> 0
+                     CASE WHEN e.invoice_count > 0 AND e.cost_record_count > 0
+                          THEN e.revenue_total-e.cost_total END gross_margin,
+                     CASE WHEN e.invoice_count > 0 AND e.cost_record_count > 0 AND e.revenue_total <> 0
                           THEN ROUND(((e.revenue_total-e.cost_total)/e.revenue_total)*100, 2) END gross_margin_percent,
                      e.currency, e.invoice_count, e.cost_record_count,
-                     CASE WHEN e.cost_record_count > 0 THEN 'Calculated' ELSE 'Cost evidence unavailable' END status,
+                     CASE WHEN e.invoice_count=0 THEN 'Issued revenue unavailable'
+                          WHEN e.cost_record_count=0 THEN 'Cost evidence unavailable'
+                          ELSE 'Calculated' END status,
                      'issued_invoices+approved_expenses' data_origin
               FROM evidence e
               JOIN customers c ON c.id=e.customer_id AND c.company_id=e.company_id AND c.deleted_at IS NULL
@@ -1200,7 +1204,7 @@ public sealed class RevenueReadinessService(
             ct);
 
         return rows.Select(row => new ProfitabilityEvidenceRecord(
-            L(row, "id"),
+            S(row, "id") ?? string.Empty,
             S(row, "entityType") ?? "customer",
             L(row, "entityId"),
             S(row, "entityName") ?? string.Empty,
