@@ -2,7 +2,7 @@ import { apiClient, unwrap } from "@/services/apiClient";
 import { sessionBoundRequest, SessionChangedBeforeRequestError } from "@/auth/requestSessionGuard";
 import type { AnyRecord, UserSession } from "@/types";
 
-export const CAMERA_NOTICE = "Stored metadata only. Media, provider and automated assessments are not provided or verified by this view.";
+export const CAMERA_NOTICE = "Provider intake and manual metadata are shown separately. Provider authenticity, media access, automated assessments, privacy acceptance, and certification remain unverified until the exact frozen candidate passes its evidence gates.";
 export const CAMERA_FIELDS = ["eventType", "title", "severity", "safetyEventId", "driverId", "vehicleId", "jobId", "routeId", "locationDescription", "occurredAt"] as const;
 const references = new Set(["safetyEventId", "driverId", "vehicleId", "jobId", "routeId"]);
 const severities = new Set(["Low", "Medium", "High", "Critical"]);

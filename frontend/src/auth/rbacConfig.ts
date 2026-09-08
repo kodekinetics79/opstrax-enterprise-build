@@ -201,7 +201,9 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.SAFETY_CREATE]: ["safety.manage", "safety:manage"],
   [P.SAFETY_UPDATE]: ["safety.manage", "safety:manage"],
   [P.SAFETY_REVIEW]: ["safety.manage", "safety:manage"],
-  [P.SAFETY_EVIDENCE_VIEW]: ["safety.view", "safety:view", "dashcam.view", "dashcam:view"],
+  // Mirrors the server's evidence tier. A broad safety:view grant can read the
+  // safety center, but it must not silently acquire camera/evidence access.
+  [P.SAFETY_EVIDENCE_VIEW]: ["dashcam.view", "dashcam:view"],
   [P.SAFETY_EVIDENCE_EXPORT]: ["safety.manage", "safety:manage", "dashcam.manage", "dashcam:manage"],
 
   [P.MAINTENANCE_VIEW]: ["maintenance.view", "maintenance:view"],

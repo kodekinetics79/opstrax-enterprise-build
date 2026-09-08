@@ -118,6 +118,8 @@ for (const forbidden of ["audit:view", "users:view", "roles:view", "settings:vie
 
 // ── 3. The measured poisonous-alias witnesses stay dead ──
 assert.equal(hasPermission(["alerts:view"], "dashboard:view"), false, "alerts:view must NOT satisfy dashboard:view");
+assert.equal(hasPermission(["safety:view"], "safety:evidence:view"), false, "safety:view must NOT silently grant camera evidence access");
+assert.equal(hasPermission(["dashcam:view"], "safety:evidence:view"), true, "legacy dashcam:view must satisfy the canonical camera evidence read tier");
 assert.equal(hasPermission(["shipments:view"], "telemetry.devices.read"), false, "shipments:view must NOT satisfy telemetry.devices.read (DEF-006)");
 assert.equal(hasPermission(["reports:view"], "audit:view"), false, "reports:view must NOT satisfy audit:view (DEF-025 enabler)");
 assert.equal(hasPermission(["reports:view"], "dashboard:view"), false, "reports:view must NOT satisfy dashboard:view");

@@ -160,9 +160,9 @@ const configs = {
     sections: [["Dashcam Events","dashcamEvents",["eventNumber","eventType","severity","reviewStatus","evidenceStatus"]],["Coaching Queue","coachingTasks",["taskNumber","coachingType","priority","status","dueAt"]],["Incident Watch","incidents",["incidentNumber","incidentType","severity","status"]]],
   },
   dashcam: {
-    queryKey: "dashcam", eyebrow: "Camera Metadata", title: "Stored camera metadata", icon: <FileVideo />,
+    queryKey: "dashcam", eyebrow: "Camera Safety", title: "Camera safety evidence readiness", icon: <FileVideo />,
     description: CAMERA_NOTICE,
-    useRows: useDashcamEvents, useSummary: useDashcamSummary, useDetail: useDashcamEventDetail, api: dashcamApi, createLabel: "Record Event Metadata",
+    useRows: useDashcamEvents, useSummary: useDashcamSummary, useDetail: useDashcamEventDetail, api: dashcamApi, createLabel: "Record Manual Metadata",
     kpis: [["Stored event records","storedEventRecords"]],
     columns: ["eventNumber","eventType","title","recordedLevel","driverName","vehicleCode","jobNumber","routeCode","locationDescription","occurredAt"],
     fields: [],
@@ -314,6 +314,22 @@ export function CameraProviderPendingEventsPanel({ rows }: { rows: readonly Came
         </tr>)}</tbody>
       </table>
     </div>
+  </section>;
+}
+
+export function CameraProviderUnavailablePanel({ scope, retrying, onRetry }: {
+  scope: "status" | "events";
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  const status = scope === "status";
+  return <section className="rounded-2xl border border-red-300 bg-red-50 p-5" role="alert">
+    <p className="text-xs font-bold uppercase tracking-[0.16em] text-red-700">Live camera provider data unavailable</p>
+    <h2 className="mt-1 text-lg font-semibold text-slate-900">{status ? "Provider intake status could not be confirmed" : "Provider intake queue could not be confirmed"}</h2>
+    <p className="mt-2 max-w-4xl text-sm text-slate-700">
+      No empty, connected, healthy, media-ready, or certified state has been inferred. Stored manual metadata remains available below as a separate unverified record set.
+    </p>
+    <button type="button" className="btn-secondary mt-3" disabled={retrying} onClick={onRetry}>{retrying ? "Retrying live provider data…" : "Retry live provider data"}</button>
   </section>;
 }
 
@@ -689,8 +705,8 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     }
   }} onClose={() => closeSafetyCoaching(safetyCoachingDialog.session)} onSubmit={() => submitSafetyCoaching(safetyCoachingDialog.session, safetyCoachingDraftRevision, safetyCoachingDescription)} /> : null;
   const safetyCoachingFeedback = <>{safetyCoachingReceipt}{safetyCoachingInput}</>;
-  if (rowsQuery.isLoading || summary.isLoading || (kind === "dashcam" && (providerStatus.isLoading || providerEvents.isLoading))) return kind === "safety" ? <>{safetyCoachingFeedback}<LoadingState /></> : <LoadingState />;
-  if (rowsQuery.isError || summary.isError || (kind === "dashcam" && (providerStatus.isError || providerEvents.isError || !providerStatus.data || !providerEvents.data || !Array.isArray(rowsQuery.data)))) {
+  if (rowsQuery.isLoading || summary.isLoading) return kind === "safety" ? <>{safetyCoachingFeedback}<LoadingState /></> : <LoadingState />;
+  if (rowsQuery.isError || summary.isError || (kind === "dashcam" && !Array.isArray(rowsQuery.data))) {
     const unavailable = <div>{cameraNotice}<EmptyState
       title={`${config.eyebrow} unavailable`}
       subtitle="Unable to load live records right now. No empty or healthy state has been inferred."
@@ -726,11 +742,20 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
         </>
       }
     />
-    {kind === "dashcam" ? <CameraProviderStatusPanel status={providerStatus.data!} /> : null}
-    {kind === "dashcam" ? <CameraProviderPendingEventsPanel rows={providerEvents.data!} /> : null}
+    {kind === "dashcam" ? providerStatus.isLoading
+      ? <LoadingState />
+      : providerStatus.isError || !providerStatus.data
+        ? <CameraProviderUnavailablePanel scope="status" retrying={providerStatus.isFetching} onRetry={() => { void providerStatus.refetch(); }} />
+        : <CameraProviderStatusPanel status={providerStatus.data} /> : null}
+    {kind === "dashcam" ? providerEvents.isLoading
+      ? <LoadingState />
+      : providerEvents.isError || !providerEvents.data
+        ? <CameraProviderUnavailablePanel scope="events" retrying={providerEvents.isFetching} onRetry={() => { void providerEvents.refetch(); }} />
+        : <CameraProviderPendingEventsPanel rows={providerEvents.data} /> : null}
     {cameraNotice}
     {operationError && kind !== "dashcam" ? <div role="alert" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{operationError instanceof Error ? operationError.message : "The incident action could not be completed."}</div> : null}
     {kind === "dashcam" && Array.isArray(rowsQuery.data) && rowsQuery.data.some((row) => !cameraProjection(row)) ? <p role="alert">Some stored metadata is unavailable because its identity or fields cannot be interpreted safely. It cannot be edited or exported.</p> : null}
+    {kind === "dashcam" ? <section className="pt-2" aria-labelledby="stored-camera-metadata-title"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Manual records</p><h2 id="stored-camera-metadata-title" className="mt-1 text-lg font-semibold text-slate-900">Stored camera metadata</h2><p className="mt-1 text-sm text-slate-600">These records are unverified notes and are never treated as provider media or certification evidence.</p></section> : null}
     <div className="grid gap-6 sm:grid-cols-3 xl:grid-cols-5">{config.kpis.slice(0, 5).map(([label,key]) => <KpiCard key={key} label={label} value={kind === "dashcam" ? (typeof s[key] === "number" && Number.isSafeInteger(s[key]) && Number(s[key]) >= 0 ? String(s[key]) : "Unavailable") : String(s[key] ?? 0)} status={/critical|overdue|missing|rejected/i.test(label) ? "Critical" : undefined} />)}</div>
     <div className="flex flex-col gap-3 xl:flex-row xl:items-center"><input className="field xl:max-w-md" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by driver, vehicle, route, event, status...`} /><select className="field xl:max-w-[180px]" value={filter} onChange={(e) => setFilter(e.target.value)}><option>All</option><option>Critical</option><option>High</option><option>Pending</option><option>Reviewed</option><option>Open</option><option>Closed</option><option>Locked</option></select></div>
     {!rows.length ? (

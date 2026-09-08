@@ -246,6 +246,23 @@ test("camera provider queue renders only safe unverified fields and no customer 
   } finally { f.cleanup(); }
 });
 
+test("camera page keeps stored records visible when live provider status is unavailable", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    const page = f.renderPage("dashcam", {
+      providerStatus: { ...f.view.providerStatus, data: undefined, isError: true },
+    });
+    assert.ok(component(page, "PageHeader"));
+    assert.ok(component(page, "DataTable"));
+    const unavailable = component(page, "CameraProviderUnavailablePanel");
+    assert.ok(unavailable);
+    const html = renderToStaticMarkup(unavailable);
+    assert.match(html, /Provider intake status could not be confirmed/);
+    assert.match(html, /No empty, connected, healthy, media-ready, or certified state has been inferred/);
+    assert.match(html, /Stored manual metadata remains available below/);
+  } finally { f.cleanup(); }
+});
+
 test("actual camera page treats malformed list as unavailable, never empty/healthy or exportable", async () => {
   const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
   try {
@@ -266,7 +283,7 @@ test("actual camera page uses direct manage grant, current detail admission and 
     try {
       f.activateList();
       const page = f.renderPage("dashcam", { session: { ...f.session, permissions: [permission] } });
-      const create = button(component(page, "PageHeader").props.actions, "Record Event Metadata");
+      const create = button(component(page, "PageHeader").props.actions, "Record Manual Metadata");
       const allowed = ["dashcam:manage", "dashcam.manage", "*"].includes(permission);
       assert.equal(create.props.disabled, !allowed); create.props.onClick();
       assert.equal(Boolean(component(f.renderPage(), "CameraMetadataDialog")), allowed);
@@ -683,7 +700,7 @@ test("actual camera page retains acknowledgement on a subsequent read-error path
   const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
   try {
     f.activateList();
-    let page = f.renderPage(); button(component(page, "PageHeader").props.actions, "Record Event Metadata").props.onClick();
+    let page = f.renderPage(); button(component(page, "PageHeader").props.actions, "Record Manual Metadata").props.onClick();
     for (const [key, value] of Object.entries(input())) {
       const form = component(f.renderPage(), "CameraMetadataDialog"); form.props.onChange(form.props.editor, key, value);
     }
@@ -733,7 +750,7 @@ test("actual shared CSV sink sees only neutral whitelisted current fields and fo
     h.exportCurrent("list"); h.exportCurrent("detail");
     assert.equal(f.blobs.length, 2); assert.equal(f.downloads.length, 2);
     for (const blob of f.blobs) {
-      const csv = await blob.text(); assert.match(csv, /'=SUM/); assert.doesNotMatch(csv, /private|rowVersion|sourceAuthority|deletedAt|recordedLevel/); assert.match(csv, /not provided or verified/);
+      const csv = await blob.text(); assert.match(csv, /'=SUM/); assert.doesNotMatch(csv, /private|rowVersion|sourceAuthority|deletedAt|recordedLevel/); assert.match(csv, /remain unverified until the exact frozen candidate passes its evidence gates/);
     }
     for (const patch of [{ canExport: false }, { rows: { ...f.view.rows, data: {} } }, { rows: { ...f.view.rows, isError: true } }, { rows: { ...f.view.rows, fetchStatus: "paused" } }]) {
       h = f.render(patch); h.exportCurrent("list"); assert.equal(f.blobs.length, 2);
