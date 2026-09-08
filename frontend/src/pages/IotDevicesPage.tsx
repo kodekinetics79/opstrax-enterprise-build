@@ -53,9 +53,12 @@ import {
   type DeviceRemoteCommandInput,
   type DeviceIdentityQuarantineRecord,
   type DeviceInstallationInput,
+  type DeviceInstallationArtifactReferenceInput,
+  type DeviceInstallationChecklistObservationInput,
   type DeviceInstallationIntent,
   type DeviceInstallationReceipt,
   type DeviceInstallationRemovalInput,
+  type DeviceInstallationWorkPackageInput,
   type DeviceProvisionResult,
 } from "@/services/telematicsService";
 import type { AnyRecord } from "@/types";
@@ -140,6 +143,22 @@ type ConnectivityProfileFormState = {
   idempotencyKey: string;
 };
 
+type InstallationWorkPackageFormState = Omit<DeviceInstallationWorkPackageInput, "appointmentStart" | "appointmentEnd"> & {
+  vehicleId: string;
+  appointmentStart: string;
+  appointmentEnd: string;
+};
+
+type InstallationChecklistFormState = Omit<DeviceInstallationChecklistObservationInput, "observedAt"> & {
+  workPackageId: string;
+  observedAt: string;
+};
+
+type InstallationArtifactFormState = Omit<DeviceInstallationArtifactReferenceInput, "capturedAt"> & {
+  workPackageId: string;
+  capturedAt: string;
+};
+
 function newConnectivityProfileForm(): ConnectivityProfileFormState {
   return {
     profileKind: "PhysicalSIM",
@@ -151,6 +170,27 @@ function newConnectivityProfileForm(): ConnectivityProfileFormState {
     changeReason: "",
     sourceReference: "",
     idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+function newInstallationWorkPackageForm(vehicleId = ""): InstallationWorkPackageFormState {
+  return {
+    vehicleId, workOrderReference: "", appointmentStart: localMinuteAfter(24), appointmentEnd: localMinuteAfter(26),
+    serviceLocation: "", workScope: "", idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+function newInstallationChecklistForm(workPackageId = ""): InstallationChecklistFormState {
+  return {
+    workPackageId, checklistItem: "DeviceIdentity", observedResult: "NotObserved", evidenceReference: "",
+    observationNotes: "", observedAt: currentLocalMinute(), idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+function newInstallationArtifactForm(workPackageId = ""): InstallationArtifactFormState {
+  return {
+    workPackageId, artifactType: "InstallationPhoto", objectKey: "", sha256: "",
+    capturedAt: currentLocalMinute(), idempotencyKey: crypto.randomUUID(),
   };
 }
 
@@ -1819,6 +1859,7 @@ export function IotDevicesPage() {
 	            ) : (
 	              <DeviceDetailDrawer
 	                detail={detailQ.data}
+	                vehicleOptions={vehicleOptions}
 	                canManageConnectivity={canManageDeviceLifecycle}
 	                canPlanFirmware={canPlanFirmware}
 	                canManageRma={canManageRma}
@@ -2049,6 +2090,7 @@ export function IotDevicesPage() {
 
 function DeviceDetailDrawer({
   detail,
+  vehicleOptions,
   canManageConnectivity,
   canPlanFirmware,
   canManageRma,
@@ -2058,6 +2100,7 @@ function DeviceDetailDrawer({
   onDismissLifecycleError,
 }: {
   detail: DeviceDetailRecord;
+  vehicleOptions: AnyRecord[];
   canManageConnectivity: boolean;
   canPlanFirmware: boolean;
   canManageRma: boolean;
@@ -2068,6 +2111,94 @@ function DeviceDetailDrawer({
 }) {
   const { device } = detail;
   const queryClient = useQueryClient();
+  const [workPackageOpen, setWorkPackageOpen] = useState(false);
+  const [workPackageForm, setWorkPackageForm] = useState<InstallationWorkPackageFormState>(() =>
+    newInstallationWorkPackageForm(detail.currentInstallation?.vehicleId ?? ""));
+  const [checklistForm, setChecklistForm] = useState<InstallationChecklistFormState | null>(null);
+  const [artifactForm, setArtifactForm] = useState<InstallationArtifactFormState | null>(null);
+  const [installationEvidenceError, setInstallationEvidenceError] = useState<string | null>(null);
+  const [installationEvidenceNotice, setInstallationEvidenceNotice] = useState<string | null>(null);
+  const installationEvidenceSubmitting = useRef(false);
+  const refreshInstallationEvidence = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+  };
+  const workPackageMut = useMutation({
+    mutationFn: (input: DeviceInstallationWorkPackageInput) => telematicsService.createInstallationWorkPackage(device.id, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setWorkPackageForm(newInstallationWorkPackageForm(detail.currentInstallation?.vehicleId ?? ""));
+      setWorkPackageOpen(false); setInstallationEvidenceError(null); setInstallationEvidenceNotice(result.note);
+      await refreshInstallationEvidence();
+    },
+    onError: (error) => setInstallationEvidenceError(apiErrorMessage(error, "The installation work package was not recorded.")),
+    onSettled: () => { installationEvidenceSubmitting.current = false; },
+  });
+  const checklistMut = useMutation({
+    mutationFn: ({ workPackageId, input }: { workPackageId: string; input: DeviceInstallationChecklistObservationInput }) =>
+      telematicsService.recordInstallationChecklistObservation(device.id, workPackageId, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setChecklistForm(null); setInstallationEvidenceError(null); setInstallationEvidenceNotice(result.note);
+      await refreshInstallationEvidence();
+    },
+    onError: (error) => setInstallationEvidenceError(apiErrorMessage(error, "The checklist observation was not recorded.")),
+    onSettled: () => { installationEvidenceSubmitting.current = false; },
+  });
+  const artifactMut = useMutation({
+    mutationFn: ({ workPackageId, input }: { workPackageId: string; input: DeviceInstallationArtifactReferenceInput }) =>
+      telematicsService.recordInstallationArtifactReference(device.id, workPackageId, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setArtifactForm(null); setInstallationEvidenceError(null); setInstallationEvidenceNotice(result.note);
+      await refreshInstallationEvidence();
+    },
+    onError: (error) => setInstallationEvidenceError(apiErrorMessage(error, "The artifact reference was not recorded.")),
+    onSettled: () => { installationEvidenceSubmitting.current = false; },
+  });
+  const installationEvidenceBusy = workPackageMut.isPending || checklistMut.isPending || artifactMut.isPending;
+  const submitWorkPackage = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageConnectivity || installationEvidenceSubmitting.current || installationEvidenceBusy) return;
+    setInstallationEvidenceError(null);
+    try {
+      installationEvidenceSubmitting.current = true;
+      workPackageMut.mutate({
+        ...workPackageForm,
+        vehicleId: workPackageForm.vehicleId,
+        appointmentStart: toUtcIso(workPackageForm.appointmentStart, "appointment start"),
+        appointmentEnd: toUtcIso(workPackageForm.appointmentEnd, "appointment end"),
+      });
+    } catch (error) {
+      installationEvidenceSubmitting.current = false;
+      setInstallationEvidenceError(error instanceof Error ? error.message : "Installation work-package validation failed.");
+    }
+  };
+  const submitChecklistObservation = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageConnectivity || !checklistForm || installationEvidenceSubmitting.current || installationEvidenceBusy) return;
+    setInstallationEvidenceError(null);
+    try {
+      installationEvidenceSubmitting.current = true;
+      const { workPackageId, ...form } = checklistForm;
+      checklistMut.mutate({ workPackageId, input: { ...form, observedAt: toUtcIso(form.observedAt, "checklist observation time") } });
+    } catch (error) {
+      installationEvidenceSubmitting.current = false;
+      setInstallationEvidenceError(error instanceof Error ? error.message : "Checklist validation failed.");
+    }
+  };
+  const submitArtifactReference = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageConnectivity || !artifactForm || installationEvidenceSubmitting.current || installationEvidenceBusy) return;
+    setInstallationEvidenceError(null);
+    try {
+      installationEvidenceSubmitting.current = true;
+      const { workPackageId, ...form } = artifactForm;
+      artifactMut.mutate({ workPackageId, input: { ...form, capturedAt: toUtcIso(form.capturedAt, "artifact capture time") } });
+    } catch (error) {
+      installationEvidenceSubmitting.current = false;
+      setInstallationEvidenceError(error instanceof Error ? error.message : "Artifact-reference validation failed.");
+    }
+  };
   const [connectivityOpen, setConnectivityOpen] = useState(false);
   const [connectivityForm, setConnectivityForm] = useState<ConnectivityProfileFormState>(newConnectivityProfileForm);
   const [connectivityError, setConnectivityError] = useState<string | null>(null);
@@ -2787,6 +2918,98 @@ function DeviceDetailDrawer({
                 <div className="mt-4"><TimelineList rows={rmaCase.events.map(rmaEvent => ({ id: rmaEvent.id, title: `${rmaEvent.sequenceNumber}. ${rmaEvent.eventType}`, subtitle: `${rmaEvent.caseStatusAfter} · Evidence ${rmaEvent.evidenceStatus} · ${rmaEvent.evidenceReference}${rmaEvent.custodyLocation ? ` · ${rmaEvent.custodyLocation}` : ""}`, meta: rmaEvent.occurredAt }))} emptyText="No RMA events recorded." /></div>
               </div>
             ))}
+          </div>
+        </PanelSection>
+        <PanelSection title="Installer work packages">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-white">Appointment, checklist, and artifact references</p>
+              <p className="mt-1 text-xs text-slate-400">Every result is an operator-recorded assertion. Attendance, artifact content, physical work, and certification remain unverified until independent evidence review.</p>
+            </div>
+            {canManageConnectivity ? (
+              <button type="button" className="btn-secondary shrink-0" disabled={installationEvidenceBusy} onClick={() => {
+                setInstallationEvidenceError(null); setInstallationEvidenceNotice(null);
+                setWorkPackageForm(newInstallationWorkPackageForm(detail.currentInstallation?.vehicleId ?? ""));
+                setWorkPackageOpen(true);
+              }}>Schedule work</button>
+            ) : null}
+          </div>
+          {installationEvidenceNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-300/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{installationEvidenceNotice}</p> : null}
+          {installationEvidenceError ? <p role="alert" className="mt-3 rounded-lg border border-red-300/30 bg-red-500/10 p-3 text-sm text-red-100">{installationEvidenceError}</p> : null}
+
+          {workPackageOpen && canManageConnectivity ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitWorkPackage}>
+              <p className="text-xs text-amber-200">The signed-in operator is recorded as the assigned installer. Scheduling does not claim that the appointment occurred.</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <FormField label="Vehicle">
+                  <select className="field w-full" required value={workPackageForm.vehicleId} onChange={event => setWorkPackageForm(form => ({ ...form, vehicleId: event.target.value }))} disabled={installationEvidenceBusy}>
+                    <option value="">Select a vehicle</option>
+                    {vehicleOptions.map(vehicle => <option key={String(vehicle.id ?? vehicle.vehicleId)} value={String(vehicle.id ?? vehicle.vehicleId)}>{String(vehicle.vehicleCode ?? vehicle.vehicleId)}</option>)}
+                  </select>
+                </FormField>
+                <FormField label="Work-order reference"><input className="field w-full" required minLength={2} maxLength={120} value={workPackageForm.workOrderReference} onChange={event => setWorkPackageForm(form => ({ ...form, workOrderReference: event.target.value }))} disabled={installationEvidenceBusy} /></FormField>
+                <FormField label="Appointment start"><input className="field w-full" required type="datetime-local" value={workPackageForm.appointmentStart} onChange={event => setWorkPackageForm(form => ({ ...form, appointmentStart: event.target.value }))} disabled={installationEvidenceBusy} /></FormField>
+                <FormField label="Appointment end"><input className="field w-full" required type="datetime-local" value={workPackageForm.appointmentEnd} onChange={event => setWorkPackageForm(form => ({ ...form, appointmentEnd: event.target.value }))} disabled={installationEvidenceBusy} /></FormField>
+                <FormField label="Service location"><input className="field w-full" required minLength={2} maxLength={160} value={workPackageForm.serviceLocation} onChange={event => setWorkPackageForm(form => ({ ...form, serviceLocation: event.target.value }))} disabled={installationEvidenceBusy} /></FormField>
+                <FormField label="Work scope"><input className="field w-full" required minLength={5} maxLength={1000} value={workPackageForm.workScope} onChange={event => setWorkPackageForm(form => ({ ...form, workScope: event.target.value }))} disabled={installationEvidenceBusy} /></FormField>
+              </div>
+              <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" onClick={() => setWorkPackageOpen(false)} disabled={installationEvidenceBusy}>Cancel</button><button type="submit" className="btn-primary" disabled={installationEvidenceBusy}>{workPackageMut.isPending ? "Recording…" : "Record appointment plan"}</button></div>
+            </form>
+          ) : null}
+
+          <div className="mt-4 space-y-4">
+            {detail.installationWorkPackages.length === 0 ? <p className="text-sm text-slate-400">No installer work package has been recorded for this device.</p> : null}
+            {detail.installationWorkPackages.map(workPackage => {
+              const observed = new Map(workPackage.latestChecklist.map(row => [row.checklistItem, row]));
+              return (
+                <div key={workPackage.id} className="rounded-xl border border-white/[0.08] bg-black/10 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div><p className="font-semibold text-white">{workPackage.workOrderReference}</p><p className="mt-1 text-xs text-slate-400">{workPackage.vehicleCode || `Vehicle ${workPackage.vehicleId}`} · Installer {workPackage.installerName || `User ${workPackage.assignedInstallerUserId}`}</p></div>
+                    <StatusBadge status={workPackage.readinessStatus.replace(/([a-z])([A-Z])/g, "$1 $2")} />
+                  </div>
+                  <div className="mt-3"><MiniGrid rows={[
+                    ["Appointment plan", `${new Date(workPackage.appointmentStart).toLocaleString()} → ${new Date(workPackage.appointmentEnd).toLocaleString()}`],
+                    ["Service location", workPackage.serviceLocation], ["Scope", workPackage.workScope],
+                    ["Physical attendance", "Unverified"], ["Physical work", "Unverified"], ["Certification", "Not claimed"],
+                  ]} /></div>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                    {workPackage.requiredChecklistItems.map(item => {
+                      const observation = observed.get(item);
+                      return <div key={item} className="rounded-lg border border-white/[0.07] bg-black/10 p-2 text-xs"><div className="flex items-center justify-between gap-2"><span className="font-medium text-slate-200">{item.replace(/([a-z])([A-Z])/g, "$1 $2")}</span><span className="text-slate-400">{observation?.observedResult ?? "Not recorded"}</span></div>{observation ? <p className="mt-1 text-slate-500">{observation.evidenceReference} · {observation.assuranceStatus}</p> : null}</div>;
+                    })}
+                  </div>
+                  {workPackage.artifactReferences.length ? <div className="mt-4"><TimelineList rows={workPackage.artifactReferences.map(artifact => ({ id: artifact.id, title: artifact.artifactType.replace(/([a-z])([A-Z])/g, "$1 $2"), subtitle: `${artifact.objectKey} · SHA-256 ${artifact.sha256.slice(0, 12)}… · ${artifact.contentVerificationStatus}`, meta: artifact.capturedAt }))} emptyText="No artifact references recorded." /></div> : null}
+                  {canManageConnectivity ? <div className="mt-4 flex flex-wrap gap-2"><button type="button" className="btn-secondary" disabled={installationEvidenceBusy} onClick={() => { setInstallationEvidenceError(null); setChecklistForm(newInstallationChecklistForm(workPackage.id)); setArtifactForm(null); }}>Record checklist observation</button><button type="button" className="btn-secondary" disabled={installationEvidenceBusy} onClick={() => { setInstallationEvidenceError(null); setArtifactForm(newInstallationArtifactForm(workPackage.id)); setChecklistForm(null); }}>Record artifact reference</button></div> : null}
+
+                  {checklistForm?.workPackageId === workPackage.id ? (
+                    <form className="mt-4 space-y-3 rounded-lg border border-white/[0.08] bg-black/10 p-3" onSubmit={submitChecklistObservation}>
+                      <p className="text-xs text-amber-200">Choose only the result actually observed. This record stays unverified and cannot certify the installation.</p>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <FormField label="Checklist item"><select className="field w-full" value={checklistForm.checklistItem} onChange={event => setChecklistForm(form => form ? ({ ...form, checklistItem: event.target.value as DeviceInstallationChecklistObservationInput["checklistItem"] }) : form)} disabled={installationEvidenceBusy}>{["DeviceIdentity","VehicleIdentity","Mounting","PrimaryPower","Ground","Ignition","GNSSAntenna","CellularAntenna","Harness","CANBus","CameraAlignment","SensorPlacement"].map(item => <option key={item} value={item}>{item.replace(/([a-z])([A-Z])/g, "$1 $2")}</option>)}</select></FormField>
+                        <FormField label="Observed result"><select className="field w-full" value={checklistForm.observedResult} onChange={event => setChecklistForm(form => form ? ({ ...form, observedResult: event.target.value as DeviceInstallationChecklistObservationInput["observedResult"] }) : form)} disabled={installationEvidenceBusy}><option value="NotObserved">Not observed</option><option value="Fail">Fail</option><option value="Pass">Pass</option><option value="NotApplicable">Not applicable</option></select></FormField>
+                        <FormField label="Observation time"><input className="field w-full" required type="datetime-local" max={currentLocalMinute()} value={checklistForm.observedAt} onChange={event => setChecklistForm(form => form ? ({ ...form, observedAt: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                        <FormField label="Evidence reference"><input className="field w-full" required minLength={3} maxLength={240} placeholder="Work note, meter reading, or artifact key" value={checklistForm.evidenceReference} onChange={event => setChecklistForm(form => form ? ({ ...form, evidenceReference: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                        <FormField label="Observation notes"><input className="field w-full" required minLength={3} maxLength={1000} value={checklistForm.observationNotes} onChange={event => setChecklistForm(form => form ? ({ ...form, observationNotes: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                      </div>
+                      <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" onClick={() => setChecklistForm(null)} disabled={installationEvidenceBusy}>Cancel</button><button type="submit" className="btn-primary" disabled={installationEvidenceBusy}>{checklistMut.isPending ? "Recording…" : "Record unverified observation"}</button></div>
+                    </form>
+                  ) : null}
+
+                  {artifactForm?.workPackageId === workPackage.id ? (
+                    <form className="mt-4 space-y-3 rounded-lg border border-white/[0.08] bg-black/10 p-3" onSubmit={submitArtifactReference}>
+                      <p className="text-xs text-amber-200">Record a key from governed storage and its independently calculated SHA-256. OpsTrax stores the reference, not an upload or verification claim.</p>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <FormField label="Artifact type"><select className="field w-full" value={artifactForm.artifactType} onChange={event => setArtifactForm(form => form ? ({ ...form, artifactType: event.target.value as DeviceInstallationArtifactReferenceInput["artifactType"] }) : form)} disabled={installationEvidenceBusy}>{["InstallationPhoto","SerialLabel","WiringPhoto","PowerReading","TechnicianChecklist","CommissioningReport","RemovalPhoto","OtherDocument"].map(type => <option key={type} value={type}>{type.replace(/([a-z])([A-Z])/g, "$1 $2")}</option>)}</select></FormField>
+                        <FormField label="Capture time"><input className="field w-full" required type="datetime-local" max={currentLocalMinute()} value={artifactForm.capturedAt} onChange={event => setArtifactForm(form => form ? ({ ...form, capturedAt: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                        <FormField label="Governed-storage object key"><input className="field w-full" required maxLength={1024} placeholder="installations/work-order/photo.jpg" value={artifactForm.objectKey} onChange={event => setArtifactForm(form => form ? ({ ...form, objectKey: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                        <FormField label="SHA-256"><input className="field w-full font-mono" required minLength={64} maxLength={64} pattern="[0-9a-fA-F]{64}" value={artifactForm.sha256} onChange={event => setArtifactForm(form => form ? ({ ...form, sha256: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                      </div>
+                      <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" onClick={() => setArtifactForm(null)} disabled={installationEvidenceBusy}>Cancel</button><button type="submit" className="btn-primary" disabled={installationEvidenceBusy}>{artifactMut.isPending ? "Recording…" : "Record unverified reference"}</button></div>
+                    </form>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </PanelSection>
         <PanelSection title="Installation History">

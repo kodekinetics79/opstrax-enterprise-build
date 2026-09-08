@@ -468,6 +468,61 @@ public sealed class TelemetrySchemaService(Database db)
             CONSTRAINT ck_stage120_observation_no_physical_claim CHECK (physical_connectivity_claim=FALSE),
             CONSTRAINT ck_stage120_observation_no_certification_claim CHECK (certification_claim=FALSE)
         )",
+
+        @"CREATE TABLE IF NOT EXISTS device_installation_work_packages (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            vehicle_id BIGINT NOT NULL, assigned_installer_user_id BIGINT NOT NULL,
+            work_order_reference VARCHAR(120) NOT NULL, appointment_start TIMESTAMPTZ NOT NULL,
+            appointment_end TIMESTAMPTZ NOT NULL, service_location VARCHAR(160) NOT NULL,
+            work_scope VARCHAR(1000) NOT NULL, idempotency_key VARCHAR(120) NOT NULL,
+            physical_appointment_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            physical_work_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            created_by BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage121_appointment_window CHECK (appointment_end>appointment_start),
+            CONSTRAINT ck_stage121_no_appointment_claim CHECK (physical_appointment_claim=FALSE),
+            CONSTRAINT ck_stage121_no_work_claim CHECK (physical_work_claim=FALSE),
+            CONSTRAINT ck_stage121_no_certification_claim CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,work_order_reference), UNIQUE(company_id,idempotency_key),
+            UNIQUE(company_id,id,device_id)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_installation_checklist_observations (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            work_package_id BIGINT NOT NULL, checklist_item VARCHAR(40) NOT NULL,
+            observed_result VARCHAR(24) NOT NULL, evidence_reference VARCHAR(240) NOT NULL,
+            observation_notes VARCHAR(1000) NOT NULL, observed_at TIMESTAMPTZ NOT NULL,
+            assurance_status VARCHAR(24) NOT NULL DEFAULT 'Unverified',
+            physical_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            idempotency_key VARCHAR(120) NOT NULL, recorded_by BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage121_checklist_result CHECK (observed_result IN ('Pass','Fail','NotObserved','NotApplicable')),
+            CONSTRAINT ck_stage121_checklist_assurance CHECK (assurance_status='Unverified'),
+            CONSTRAINT ck_stage121_checklist_no_physical_claim CHECK (physical_evidence_claim=FALSE),
+            CONSTRAINT ck_stage121_checklist_no_certification_claim CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,work_package_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_installation_artifact_references (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            work_package_id BIGINT NOT NULL, artifact_type VARCHAR(40) NOT NULL,
+            object_key TEXT NOT NULL, sha256 VARCHAR(64) NOT NULL, captured_at TIMESTAMPTZ NOT NULL,
+            content_verification_status VARCHAR(24) NOT NULL DEFAULT 'Unverified',
+            physical_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            idempotency_key VARCHAR(120) NOT NULL, recorded_by BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage121_artifact_sha CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+            CONSTRAINT ck_stage121_artifact_assurance CHECK (content_verification_status='Unverified'),
+            CONSTRAINT ck_stage121_artifact_no_physical_claim CHECK (physical_evidence_claim=FALSE),
+            CONSTRAINT ck_stage121_artifact_no_certification_claim CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,work_package_id,idempotency_key),
+            UNIQUE(company_id,work_package_id,artifact_type,sha256)
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -536,6 +591,12 @@ public sealed class TelemetrySchemaService(Database db)
           ON device_connectivity_observations(company_id,device_id,observed_at DESC,id DESC)",
         @"CREATE INDEX IF NOT EXISTS ix_stage120_observations_profile_recent
           ON device_connectivity_observations(company_id,connectivity_profile_id,observed_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage121_work_device_schedule
+          ON device_installation_work_packages(company_id,device_id,appointment_start DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage121_checklist_work_latest
+          ON device_installation_checklist_observations(company_id,work_package_id,checklist_item,observed_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage121_artifact_work_recent
+          ON device_installation_artifact_references(company_id,work_package_id,captured_at DESC,id DESC)",
     ];
 
     private static readonly string[] Seeds =

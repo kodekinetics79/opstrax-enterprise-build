@@ -93,6 +93,7 @@ reapply_late_control_boundaries() {
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage118_device_rma_replacement.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage119_device_remote_command_governance.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage120_device_connectivity_observations.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage121_device_installation_work_packages.sql
 }
 
 MIGRATIONS=(
@@ -281,6 +282,8 @@ MIGRATIONS=(
   2026_09_07_stage119_device_remote_command_governance
   # Authenticated provider responses bound to exact current SIM/eSIM profiles; no RF or certification claim.
   2026_09_07_stage120_device_connectivity_observations
+  # Installer appointment, checklist and artifact references; physical work and certification remain unverified.
+  2026_09_07_stage121_device_installation_work_packages
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -376,7 +379,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_09_07_stage117_device_firmware_campaign_planning|\
     2026_09_07_stage118_device_rma_replacement|\
     2026_09_07_stage119_device_remote_command_governance|\
-    2026_09_07_stage120_device_connectivity_observations) repair_migration=true ;;
+    2026_09_07_stage120_device_connectivity_observations|\
+    2026_09_07_stage121_device_installation_work_packages) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -451,7 +455,8 @@ BEGIN
       ('2026_09_07_stage117_device_firmware_campaign_planning'),
       ('2026_09_07_stage118_device_rma_replacement'),
       ('2026_09_07_stage119_device_remote_command_governance'),
-      ('2026_09_07_stage120_device_connectivity_observations')) required(version)
+      ('2026_09_07_stage120_device_connectivity_observations'),
+      ('2026_09_07_stage121_device_installation_work_packages')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -623,6 +628,40 @@ BEGIN
        OR has_column_privilege('opstrax_app','device_connectivity_observations','source_observation_bidx','SELECT')
        OR has_column_privilege('opstrax_app','device_connectivity_observations','payload_sha256','SELECT')) THEN
     RAISE EXCEPTION 'Stage120 app role can mutate observations or read protected provider identity';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM (VALUES
+      ('device_installation_work_packages'),
+      ('device_installation_checklist_observations'),
+      ('device_installation_artifact_references')
+    ) governed(table_name)
+    LEFT JOIN pg_class c ON c.oid=to_regclass('public.'||governed.table_name)
+    WHERE c.oid IS NULL OR NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+       OR has_table_privilege('opstrax_app',governed.table_name,'UPDATE,DELETE')
+       OR (EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') AND (
+             NOT has_table_privilege('opstrax_system',governed.table_name,'SELECT')
+          OR NOT has_table_privilege('opstrax_system',governed.table_name,'INSERT')
+          OR has_table_privilege('opstrax_system',governed.table_name,'UPDATE,DELETE')))
+  ) OR EXISTS (SELECT 1 FROM pg_policies p
+                WHERE p.schemaname='public'
+                  AND p.tablename IN ('device_installation_work_packages','device_installation_checklist_observations','device_installation_artifact_references')
+                  AND p.roles='{public}'::name[])
+     OR to_regprocedure('stage121_guard_work_package()') IS NULL
+     OR to_regprocedure('stage121_guard_work_evidence()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_installation_work_packages')
+          AND tgname='trg_stage121_guard_work_package' AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_installation_checklist_observations')
+          AND tgname='trg_stage121_guard_checklist' AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_installation_artifact_references')
+          AND tgname='trg_stage121_guard_artifact' AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_installation_work_packages
+                 WHERE physical_appointment_claim OR physical_work_claim OR certification_claim)
+     OR EXISTS (SELECT 1 FROM device_installation_checklist_observations
+                 WHERE assurance_status<>'Unverified' OR physical_evidence_claim OR certification_claim)
+     OR EXISTS (SELECT 1 FROM device_installation_artifact_references
+                 WHERE content_verification_status<>'Unverified' OR physical_evidence_claim OR certification_claim) THEN
+    RAISE EXCEPTION 'Stage121 installation work-package boundary is missing or invalid';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -1720,7 +1759,22 @@ BEGIN
      OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
                         FROM pg_class c WHERE c.oid=to_regclass('public.device_connectivity_observations')),false)
      OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_connectivity_observations')
-          AND tgname='trg_stage120_guard_connectivity_observation' AND NOT tgisinternal AND tgenabled<>'D') THEN
+          AND tgname='trg_stage120_guard_connectivity_observation' AND NOT tgisinternal AND tgenabled<>'D')
+     OR to_regclass('public.device_installation_work_packages') IS NULL
+     OR NOT has_table_privilege('opstrax_app','device_installation_work_packages','SELECT,INSERT')
+     OR has_table_privilege('opstrax_app','device_installation_work_packages','UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_installation_work_packages','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_installation_work_packages','UPDATE,DELETE')
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_installation_work_packages')),false)
+     OR to_regclass('public.device_installation_checklist_observations') IS NULL
+     OR NOT has_table_privilege('opstrax_app','device_installation_checklist_observations','SELECT,INSERT')
+     OR has_table_privilege('opstrax_app','device_installation_checklist_observations','UPDATE,DELETE')
+     OR to_regclass('public.device_installation_artifact_references') IS NULL
+     OR NOT has_table_privilege('opstrax_app','device_installation_artifact_references','SELECT,INSERT')
+     OR has_table_privilege('opstrax_app','device_installation_artifact_references','UPDATE,DELETE')
+     OR to_regprocedure('stage121_guard_work_package()') IS NULL
+     OR to_regprocedure('stage121_guard_work_evidence()') IS NULL THEN
     RAISE EXCEPTION 'Stage76 is not the effective terminal telemetry boundary';
   END IF;
   IF EXISTS (

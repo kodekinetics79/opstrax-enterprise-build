@@ -267,6 +267,10 @@ public static partial class EndpointMappings
         app.MapPost("/api/telemetry/devices/{id:long}/installations/{installationId:long}/commission", DeviceInstallationCommission);
         app.MapPost("/api/telemetry/devices/{id:long}/installations/{installationId:long}/remove", DeviceInstallationRemove);
         app.MapPost("/api/telemetry/devices/{id:long}/installations/transfer", DeviceInstallationTransfer);
+        app.MapGet("/api/telemetry/devices/{id:long}/installation-work-packages", DeviceInstallationWorkPackageList);
+        app.MapPost("/api/telemetry/devices/{id:long}/installation-work-packages", DeviceInstallationWorkPackageCreate);
+        app.MapPost("/api/telemetry/devices/{id:long}/installation-work-packages/{workPackageId:long}/checklist-observations", DeviceInstallationChecklistObservationCreate);
+        app.MapPost("/api/telemetry/devices/{id:long}/installation-work-packages/{workPackageId:long}/artifact-references", DeviceInstallationArtifactReferenceCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/connectivity-profiles", DeviceConnectivityProfileReplace);
         app.MapPost("/api/telemetry/firmware-campaigns", DeviceFirmwareCampaignCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/rma-cases", DeviceRmaCaseCreate);
@@ -20756,6 +20760,8 @@ LIMIT 100000",
                  AND (@branchId::BIGINT IS NULL OR i.branch_id=@branchId)
                ORDER BY e.captured_at DESC,e.id DESC",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var (installationWorkPackages, installationChecklistObservations, installationArtifactReferences) =
+            await LoadInstallationWorkPackagesAsync(db, companyId, branchId, id, ct);
         var connectivityProfiles = await db.QueryAsync(
             @"SELECT id,device_id,profile_kind,carrier_name,iccid_last4,msisdn_last4,
                      apn_configured,assignment_status,effective_from,effective_to,
@@ -20893,6 +20899,9 @@ LIMIT 100000",
             currentInstallation = current,
             installationHistory = history,
             installationEvidence,
+            installationWorkPackages,
+            installationChecklistObservations,
+            installationArtifactReferences,
             currentConnectivityProfile = connectivityProfiles.FirstOrDefault(row =>
                 row.GetValueOrDefault("effectiveTo") is null or DBNull &&
                 row.GetValueOrDefault("assignmentStatus")?.ToString() == "Assigned"),

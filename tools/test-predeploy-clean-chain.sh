@@ -809,6 +809,33 @@ BEGIN
     RAISE EXCEPTION 'Clean-chain Stage120 connectivity observation boundary failed';
   END IF;
 
+  IF EXISTS (
+    SELECT 1
+    FROM (VALUES
+      ('device_installation_work_packages'),
+      ('device_installation_checklist_observations'),
+      ('device_installation_artifact_references')
+    ) governed(table_name)
+    LEFT JOIN pg_class c ON c.oid=to_regclass('public.'||governed.table_name)
+    WHERE c.oid IS NULL OR NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+       OR NOT has_table_privilege('opstrax_app',governed.table_name,'SELECT,INSERT')
+       OR has_table_privilege('opstrax_app',governed.table_name,'UPDATE,DELETE')
+       OR NOT has_table_privilege('opstrax_system',governed.table_name,'SELECT,INSERT')
+       OR has_table_privilege('opstrax_system',governed.table_name,'UPDATE,DELETE')
+       OR (SELECT count(*) FROM pg_policies p
+             WHERE p.schemaname='public' AND p.tablename=governed.table_name
+               AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+  ) OR to_regprocedure('stage121_guard_work_package()') IS NULL
+     OR to_regprocedure('stage121_guard_work_evidence()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_installation_work_packages')
+          AND tgname='trg_stage121_guard_work_package' AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_installation_checklist_observations')
+          AND tgname='trg_stage121_guard_checklist' AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_installation_artifact_references')
+          AND tgname='trg_stage121_guard_artifact' AND NOT tgisinternal AND tgenabled<>'D') THEN
+    RAISE EXCEPTION 'Clean-chain Stage121 installation work-package boundary failed';
+  END IF;
+
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])
      OR EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
         AND (COALESCE(qual,'') LIKE '%app.current_tenant_id%'

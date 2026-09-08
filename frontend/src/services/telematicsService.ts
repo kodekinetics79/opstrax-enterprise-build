@@ -187,6 +187,89 @@ export type TelematicsInstallationSeedRecord = {
   checklist: Array<{ item: string; status: string }>;
 };
 
+export type DeviceInstallationChecklistObservationRecord = {
+  id: string;
+  workPackageId: string;
+  checklistItem: DeviceInstallationChecklistItem;
+  observedResult: DeviceInstallationChecklistResult;
+  evidenceReference: string;
+  observationNotes: string;
+  observedAt: string;
+  assuranceStatus: "Unverified";
+  physicalEvidenceClaim: false;
+  certificationClaim: false;
+  recordedByName: string;
+};
+
+export type DeviceInstallationArtifactReferenceRecord = {
+  id: string;
+  workPackageId: string;
+  artifactType: DeviceInstallationArtifactType;
+  objectKey: string;
+  sha256: string;
+  capturedAt: string;
+  contentVerificationStatus: "Unverified";
+  physicalEvidenceClaim: false;
+  certificationClaim: false;
+  recordedByName: string;
+};
+
+export type DeviceInstallationWorkPackageRecord = {
+  id: string;
+  deviceId: string;
+  vehicleId: string;
+  vehicleCode: string;
+  assignedInstallerUserId: string;
+  installerName: string;
+  workOrderReference: string;
+  appointmentStart: string;
+  appointmentEnd: string;
+  serviceLocation: string;
+  workScope: string;
+  readinessStatus: "AwaitingChecklist" | "BlockedByFailedCheck" | "ChecklistRecordedAwaitingArtifacts" | "RecordedAwaitingIndependentVerification";
+  requiredChecklistItems: DeviceInstallationChecklistItem[];
+  latestChecklist: DeviceInstallationChecklistObservationRecord[];
+  artifactReferences: DeviceInstallationArtifactReferenceRecord[];
+  physicalAppointmentClaim: false;
+  physicalWorkClaim: false;
+  certificationClaim: false;
+};
+
+export type DeviceInstallationChecklistItem =
+  | "DeviceIdentity" | "VehicleIdentity" | "Mounting" | "PrimaryPower" | "Ground" | "Ignition"
+  | "GNSSAntenna" | "CellularAntenna" | "Harness" | "CANBus" | "CameraAlignment" | "SensorPlacement";
+export type DeviceInstallationChecklistResult = "Pass" | "Fail" | "NotObserved" | "NotApplicable";
+export type DeviceInstallationArtifactType =
+  | "InstallationPhoto" | "SerialLabel" | "WiringPhoto" | "PowerReading" | "TechnicianChecklist"
+  | "CommissioningReport" | "RemovalPhoto" | "OtherDocument";
+
+export type DeviceInstallationWorkPackageInput = {
+  vehicleId: string | number;
+  workOrderReference: string;
+  appointmentStart: string;
+  appointmentEnd: string;
+  serviceLocation: string;
+  workScope: string;
+  idempotencyKey: string;
+};
+
+export type DeviceInstallationChecklistObservationInput = {
+  checklistItem: DeviceInstallationChecklistItem;
+  observedResult: DeviceInstallationChecklistResult;
+  evidenceReference: string;
+  observationNotes: string;
+  observedAt: string;
+  idempotencyKey: string;
+};
+
+export type DeviceInstallationArtifactReferenceInput = {
+  artifactType: DeviceInstallationArtifactType;
+  objectKey: string;
+  sha256: string;
+  capturedAt: string;
+  idempotencyKey: string;
+};
+
 export type TelematicsSensorSeedRecord = {
   id: string;
   deviceId: string | number;
@@ -491,6 +574,7 @@ export type DeviceDetailRecord = {
   diagnostics: TelematicsDiagnosticSeedRecord[];
   currentInstallation: TelematicsInstallationSeedRecord | null;
   installations: TelematicsInstallationSeedRecord[];
+  installationWorkPackages: DeviceInstallationWorkPackageRecord[];
   sensorReadings: TelematicsSensorSeedRecord[];
   providers: TelematicsProviderSeedRecord[];
   auditLog: AnyRecord[];
@@ -1446,6 +1530,118 @@ function mapInstallationRow(rawRow: AnyRecord, tenantId: number): TelematicsInst
   };
 }
 
+const installationChecklistItems: DeviceInstallationChecklistItem[] = [
+  "DeviceIdentity", "VehicleIdentity", "Mounting", "PrimaryPower", "Ground", "Ignition",
+  "GNSSAntenna", "CellularAntenna", "Harness", "CANBus", "CameraAlignment", "SensorPlacement",
+];
+const installationChecklistResults: DeviceInstallationChecklistResult[] = ["Pass", "Fail", "NotObserved", "NotApplicable"];
+const installationArtifactTypes: DeviceInstallationArtifactType[] = [
+  "InstallationPhoto", "SerialLabel", "WiringPhoto", "PowerReading", "TechnicianChecklist",
+  "CommissioningReport", "RemovalPhoto", "OtherDocument",
+];
+
+function requiredInstallationChecklistItems(category: string): DeviceInstallationChecklistItem[] {
+  const required: DeviceInstallationChecklistItem[] = [
+    "DeviceIdentity", "VehicleIdentity", "Mounting", "PrimaryPower", "Ground", "Ignition", "Harness",
+  ];
+  if (/gps|eld|telematics/i.test(category)) required.push("GNSSAntenna", "CellularAntenna");
+  if (/j1939|can|obd/i.test(category)) required.push("CANBus");
+  if (/camera|dashcam|video/i.test(category)) required.push("CameraAlignment");
+  if (/temperature|fuel|tire|sensor/i.test(category)) required.push("SensorPlacement");
+  return required;
+}
+
+function mapInstallationChecklistObservation(raw: AnyRecord): DeviceInstallationChecklistObservationRecord | null {
+  const row = normalizeKeys(raw);
+  const checklistItem = installationChecklistItems.find(value => value === row.checklist_item);
+  const observedResult = installationChecklistResults.find(value => value === row.observed_result);
+  if (!checklistItem || !observedResult || row.assurance_status !== "Unverified" ||
+      row.physical_evidence_claim !== false || row.certification_claim !== false) return null;
+  const id = canonicalDeviceLifecycleId(row.id);
+  const workPackageId = canonicalDeviceLifecycleId(row.work_package_id);
+  const observedAt = typeof row.observed_at === "string" ? row.observed_at : "";
+  if (!id || !workPackageId || installationEffectiveInstant(observedAt) === null ||
+      typeof row.evidence_reference !== "string" || row.evidence_reference.trim().length < 3 ||
+      typeof row.observation_notes !== "string" || row.observation_notes.trim().length < 3) return null;
+  return {
+    id, workPackageId, checklistItem, observedResult,
+    evidenceReference: String(row.evidence_reference ?? ""),
+    observationNotes: String(row.observation_notes ?? ""),
+    observedAt,
+    assuranceStatus: "Unverified", physicalEvidenceClaim: false, certificationClaim: false,
+    recordedByName: String(row.recorded_by_name ?? ""),
+  };
+}
+
+function mapInstallationArtifactReference(raw: AnyRecord): DeviceInstallationArtifactReferenceRecord | null {
+  const row = normalizeKeys(raw);
+  const artifactType = installationArtifactTypes.find(value => value === row.artifact_type);
+  if (!artifactType || row.content_verification_status !== "Unverified" ||
+      row.physical_evidence_claim !== false || row.certification_claim !== false) return null;
+  const id = canonicalDeviceLifecycleId(row.id);
+  const workPackageId = canonicalDeviceLifecycleId(row.work_package_id);
+  const capturedAt = typeof row.captured_at === "string" ? row.captured_at : "";
+  const objectKey = typeof row.object_key === "string" ? row.object_key : "";
+  if (!id || !workPackageId || installationEffectiveInstant(capturedAt) === null ||
+      !objectKey.trim() || objectKey.startsWith("/") || objectKey.includes("\\") ||
+      objectKey.includes("..") || /%2e/i.test(objectKey) || /^[a-z][a-z0-9+.-]*:/i.test(objectKey) ||
+      typeof row.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(row.sha256)) return null;
+  return {
+    id, workPackageId, artifactType,
+    objectKey, sha256: row.sha256, capturedAt,
+    contentVerificationStatus: "Unverified", physicalEvidenceClaim: false, certificationClaim: false,
+    recordedByName: String(row.recorded_by_name ?? ""),
+  };
+}
+
+function mapInstallationWorkPackage(
+  raw: AnyRecord,
+  checklistRows: DeviceInstallationChecklistObservationRecord[],
+  artifactRows: DeviceInstallationArtifactReferenceRecord[],
+  deviceCategory: string,
+): DeviceInstallationWorkPackageRecord | null {
+  const row = normalizeKeys(raw);
+  if (row.physical_appointment_claim !== false || row.physical_work_claim !== false || row.certification_claim !== false)
+    return null;
+  const id = canonicalDeviceLifecycleId(row.id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  const vehicleId = canonicalDeviceLifecycleId(row.vehicle_id);
+  const installerId = canonicalDeviceLifecycleId(row.assigned_installer_user_id);
+  const appointmentStartText = typeof row.appointment_start === "string" ? row.appointment_start : "";
+  const appointmentEndText = typeof row.appointment_end === "string" ? row.appointment_end : "";
+  const appointmentStart = installationEffectiveInstant(appointmentStartText);
+  const appointmentEnd = installationEffectiveInstant(appointmentEndText);
+  if (!id || !deviceId || !vehicleId || !installerId || appointmentStart === null || appointmentEnd === null ||
+      appointmentEnd <= appointmentStart || typeof row.work_order_reference !== "string" || !row.work_order_reference.trim() ||
+      typeof row.service_location !== "string" || !row.service_location.trim() ||
+      typeof row.work_scope !== "string" || row.work_scope.trim().length < 5)
+    return null;
+  const observations = checklistRows.filter(observation => observation.workPackageId === id);
+  const latest = new Map<DeviceInstallationChecklistItem, DeviceInstallationChecklistObservationRecord>();
+  for (const observation of observations) if (!latest.has(observation.checklistItem)) latest.set(observation.checklistItem, observation);
+  const latestChecklist = [...latest.values()];
+  const requiredChecklistItems = requiredInstallationChecklistItems(deviceCategory);
+  const requiredResults = requiredChecklistItems.map(item => latest.get(item));
+  const hasFailure = requiredResults.some(observation => observation?.observedResult === "Fail");
+  const allRecorded = requiredResults.every(observation => observation && ["Pass", "NotApplicable"].includes(observation.observedResult));
+  const artifactReferences = artifactRows.filter(artifact => artifact.workPackageId === id);
+  const readinessStatus: DeviceInstallationWorkPackageRecord["readinessStatus"] = hasFailure
+    ? "BlockedByFailedCheck"
+    : !allRecorded
+      ? "AwaitingChecklist"
+      : artifactReferences.length === 0
+        ? "ChecklistRecordedAwaitingArtifacts"
+        : "RecordedAwaitingIndependentVerification";
+  return {
+    id, deviceId, vehicleId, vehicleCode: String(row.vehicle_code ?? ""),
+    assignedInstallerUserId: installerId, installerName: String(row.installer_name ?? ""),
+    workOrderReference: row.work_order_reference, appointmentStart: appointmentStartText,
+    appointmentEnd: appointmentEndText, serviceLocation: row.service_location,
+    workScope: String(row.work_scope ?? ""), readinessStatus, requiredChecklistItems, latestChecklist,
+    artifactReferences, physicalAppointmentClaim: false, physicalWorkClaim: false, certificationClaim: false,
+  };
+}
+
 function installationMutationKey(deviceId: string | number) {
   const uuid = globalThis.crypto?.randomUUID?.();
   return uuid ? `device-${deviceId}-${uuid}` : `device-${deviceId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -2196,6 +2392,19 @@ export const telematicsService = {
     const [scoped] = scopeDevicesForSession([device], session);
     if (!scoped) throw new Error("Device not found");
 
+    const installationChecklist = (Array.isArray(detail.installation_checklist_observations)
+      ? detail.installation_checklist_observations as AnyRecord[] : [])
+      .map(mapInstallationChecklistObservation)
+      .filter((row): row is DeviceInstallationChecklistObservationRecord => row !== null);
+    const installationArtifacts = (Array.isArray(detail.installation_artifact_references)
+      ? detail.installation_artifact_references as AnyRecord[] : [])
+      .map(mapInstallationArtifactReference)
+      .filter((row): row is DeviceInstallationArtifactReferenceRecord => row !== null);
+    const installationWorkPackages = (Array.isArray(detail.installation_work_packages)
+      ? detail.installation_work_packages as AnyRecord[] : [])
+      .map(row => mapInstallationWorkPackage(row, installationChecklist, installationArtifacts, scoped.deviceCategory))
+      .filter((row): row is DeviceInstallationWorkPackageRecord => row !== null);
+
     const serial = scoped.serialNumber;
     const deviceFaults = faults.filter((fault) => String(fault.device_id ?? "") === serial);
     const deviceAlerts = alerts.filter((alert) => String(alert.device_serial ?? "") === serial);
@@ -2328,6 +2537,7 @@ export const telematicsService = {
       remoteCommandHistory,
       currentInstallation,
       installations,
+      installationWorkPackages,
       sensorReadings: [], // no standalone sensor-reading endpoint
       providers: await buildProviderAuditForDevice(scoped, session),
       auditLog: [], // no device audit-log endpoint
@@ -2335,6 +2545,84 @@ export const telematicsService = {
         ? (detail.assignment_history as AnyRecord[]).map(normalizeKeys)
         : [],
     };
+  },
+
+  async createInstallationWorkPackage(deviceId: string | number, input: DeviceInstallationWorkPackageInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = installationBodyId(deviceId);
+    const vehicleId = installationBodyId(input.vehicleId);
+    const start = Date.parse(input.appointmentStart);
+    const end = Date.parse(input.appointmentEnd);
+    if (requestedId === null || vehicleId === null) throw new Error("Select a valid device and vehicle.");
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
+      throw new Error("Enter an appointment end after the appointment start.");
+    if (input.workOrderReference.trim().length < 2 || input.workOrderReference.trim().length > 120 ||
+        input.serviceLocation.trim().length < 2 || input.serviceLocation.trim().length > 160 ||
+        input.workScope.trim().length < 5 || input.workScope.trim().length > 1000)
+      throw new Error("Enter a work-order reference, service location, and work scope within the supported lengths.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The installation work-package form session is invalid. Close and reopen it.");
+    const row = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/installation-work-packages`, {
+        ...input, vehicleId, workOrderReference: input.workOrderReference.trim(),
+        serviceLocation: input.serviceLocation.trim(), workScope: input.workScope.trim(),
+      })));
+    if (row.physical_appointment_claim !== false || row.physical_work_claim !== false || row.certification_claim !== false)
+      throw new Error("The server did not preserve the unverified installation-work boundary.");
+    return { id: String(row.id ?? ""), note: "Installation work package recorded. Attendance and physical work remain unverified." };
+  },
+
+  async recordInstallationChecklistObservation(
+    deviceId: string | number, workPackageId: string | number,
+    input: DeviceInstallationChecklistObservationInput,
+  ) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = installationBodyId(deviceId);
+    const packageId = installationBodyId(workPackageId);
+    if (requestedId === null || packageId === null) throw new Error("A valid device and work package are required.");
+    if (!installationChecklistItems.includes(input.checklistItem) || !installationChecklistResults.includes(input.observedResult))
+      throw new Error("Select the checklist item and the result actually observed.");
+    if (input.evidenceReference.trim().length < 3 || input.evidenceReference.trim().length > 240 ||
+        input.observationNotes.trim().length < 3 || input.observationNotes.trim().length > 1000)
+      throw new Error("Enter an evidence reference and observation notes within the supported lengths.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The checklist form session is invalid. Close and reopen it.");
+    const row = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/installation-work-packages/${packageId}/checklist-observations`, {
+        ...input, evidenceReference: input.evidenceReference.trim(), observationNotes: input.observationNotes.trim(),
+      })));
+    if (row.assurance_status !== "Unverified" || row.physical_evidence_claim !== false || row.certification_claim !== false)
+      throw new Error("The server did not preserve the unverified checklist boundary.");
+    return { id: String(row.id ?? ""), note: "Operator checklist observation recorded. Independent physical verification remains outstanding." };
+  },
+
+  async recordInstallationArtifactReference(
+    deviceId: string | number, workPackageId: string | number,
+    input: DeviceInstallationArtifactReferenceInput,
+  ) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = installationBodyId(deviceId);
+    const packageId = installationBodyId(workPackageId);
+    const objectKey = input.objectKey.trim();
+    const sha256 = input.sha256.trim().toLowerCase();
+    if (requestedId === null || packageId === null) throw new Error("A valid device and work package are required.");
+    if (!installationArtifactTypes.includes(input.artifactType)) throw new Error("Select a supported artifact type.");
+    if (!objectKey || objectKey.length > 1024 || objectKey.startsWith("/") || objectKey.includes("\\") ||
+        objectKey.includes("..") || /%2e/i.test(objectKey) || /^[a-z][a-z0-9+.-]*:/i.test(objectKey))
+      throw new Error("Enter a relative governed-storage key.");
+    if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error("SHA-256 must contain exactly 64 hexadecimal characters.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The artifact-reference form session is invalid. Close and reopen it.");
+    const row = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/installation-work-packages/${packageId}/artifact-references`, {
+        ...input, objectKey, sha256,
+      })));
+    if (row.content_verification_status !== "Unverified" || row.physical_evidence_claim !== false || row.certification_claim !== false)
+      throw new Error("The server did not preserve the unverified artifact boundary.");
+    return { id: String(row.id ?? ""), note: "Artifact reference recorded. Content and physical work remain unverified." };
   },
 
   async replaceDeviceConnectivityProfile(deviceId: string | number, input: DeviceConnectivityProfileInput) {
