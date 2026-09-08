@@ -31,7 +31,7 @@ const POSTURE: Record<string, string> = {
 };
 
 /* Hero KPI slots — routes into the owning workflow page per slot. */
-const KPI_ROUTES = ["/jobs", "/alerts", "/dispatch", "/vehicles", "/incidents"];
+const KPI_ROUTES = ["/jobs", "/control-tower", "/dispatch", "/vehicles", "/incidents"];
 
 const FLEET_CFG = [
   { key: "driving",   label: "On Road", color: chart.teal600 },
@@ -125,13 +125,13 @@ export function CommandCenterPage() {
           </span>
         )}
         {critCount > 0 && (
-          <button type="button" onClick={() => navigate("/alerts")}
+          <button type="button" onClick={() => navigate("/control-tower")}
             className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-[11px] font-semibold text-red-700 hover:border-red-300">
             <AlertOctagon className="h-3 w-3" /> {critCount} critical
           </button>
         )}
         {warnCount > 0 && (
-          <button type="button" onClick={() => navigate("/alerts")}
+          <button type="button" onClick={() => navigate("/control-tower")}
             className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 hover:border-amber-300">
             <AlertTriangle className="h-3 w-3" /> {warnCount} warning{warnCount === 1 ? "" : "s"}
           </button>
@@ -144,8 +144,8 @@ export function CommandCenterPage() {
         <div className="ml-auto flex items-center gap-2">
           {isFetching && <RefreshCw className="h-3 w-3 animate-spin text-teal-600" />}
           {asOf && <span className="text-[11px] font-medium text-slate-500">as of {asOf} · refreshes every 15s</span>}
-          <button type="button" onClick={() => navigate("/alerts")} className="btn-primary h-8 gap-1.5 px-3 text-xs">
-            Open Alerts
+          <button type="button" onClick={() => navigate("/control-tower")} className="btn-primary h-8 gap-1.5 px-3 text-xs">
+            Open Control Tower
           </button>
           <button type="button" onClick={() => exportCsv("dashboard", kpis)} title="Export KPIs as CSV"
             className="btn-ghost h-8 w-8 items-center justify-center px-0" aria-label="Export KPIs as CSV">
@@ -192,7 +192,7 @@ export function CommandCenterPage() {
             <AlertOctagon className="h-4 w-4 shrink-0 text-red-500" />
             <p className="text-sm font-bold text-slate-900">Current Exception Queue</p>
             <p className="hidden text-[11px] text-slate-400 sm:block">severity-first · act top-down</p>
-            <button type="button" onClick={() => navigate("/alerts")} className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-semibold text-teal-700 hover:underline">
+            <button type="button" onClick={() => navigate("/control-tower")} className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-semibold text-teal-700 hover:underline">
               All <ArrowRight className="h-3 w-3" />
             </button>
           </div>

@@ -33,6 +33,8 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             await Location(db, company, ownVehicle, 71);
             await Location(db, company, foreignVehicle, 72);
             await Location(db, company, unallocatedVehicle, 73);
+            await TelemetryAlert(db, company, ownVehicle, $"Own telemetry alert {suffix}");
+            await TelemetryAlert(db, company, foreignVehicle, $"Foreign telemetry alert {suffix}");
 
             await Geofence(db, company, branchA, $"Own yard {suffix}");
             await Geofence(db, company, branchB, $"Foreign yard {suffix}");
@@ -119,6 +121,11 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.Equal(100, commandCenter.GetProperty("readinessPct").GetInt32());
             Assert.Contains("1 vehicle on active routes", commandCenter.GetProperty("briefItems")[0].GetString());
             Assert.DoesNotContain("device", commandCenter.GetProperty("briefItems")[0].GetString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(JsonValueKind.Null, commandCenter.GetProperty("kpis")[1].GetProperty("value").ValueKind);
+            var commandCenterWithAlerts = Payload(await InvokeCommandCenter(
+                Principal(company, branchA, "dashboard:view", "alerts:view"), db)).GetProperty("data");
+            Assert.Equal("Open Telemetry Alerts", commandCenterWithAlerts.GetProperty("kpis")[1].GetProperty("label").GetString());
+            Assert.Equal(1, commandCenterWithAlerts.GetProperty("kpis")[1].GetProperty("value").GetInt64());
 
             var tenantPayload = Payload(await Invoke(Principal(company, null, "dashboard:view", "dashcam:view", "telematics:devices:view"), db));
             var tenantData = tenantPayload.GetProperty("data");
@@ -146,6 +153,7 @@ public sealed class ControlTowerBranchIsolationPostgresTests
         finally
         {
             await db.ExecuteAsync("DELETE FROM operational_events WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
+            await db.ExecuteAsync("DELETE FROM telemetry_alerts WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM location_events WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM geofences WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM dashcam_events WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
@@ -194,6 +202,10 @@ public sealed class ControlTowerBranchIsolationPostgresTests
     private static Task Location(Database db, long company, long vehicle, int speed) => db.ExecuteAsync(
         "INSERT INTO location_events(company_id,vehicle_id,lat,lng,speed_mph,event_type,event_time) VALUES (@cid,@vehicle,43,-79,@speed,'position',NOW())",
         c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@vehicle", vehicle); c.Parameters.AddWithValue("@speed", speed); });
+
+    private static Task TelemetryAlert(Database db, long company, long vehicle, string message) => db.ExecuteAsync(
+        "INSERT INTO telemetry_alerts(company_id,vehicle_id,alert_type,severity,message,status) VALUES (@cid,@vehicle,'branch.test','Warning',@message,'Open')",
+        c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@vehicle", vehicle); c.Parameters.AddWithValue("@message", message); });
 
     private static Task Geofence(Database db, long company, long? branch, string name) => db.ExecuteAsync(
         "INSERT INTO geofences(company_id,branch_id,name,geofence_type,center_lat,center_lng,radius_meters,status) VALUES (@cid,@branch,@name,'Circle',43,-79,500,'Active')",

@@ -94,6 +94,9 @@ public sealed class CommandCenterDashboardTruthContractTests
 
         Assert.DoesNotContain("device_status", method, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("offline device", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ai_insights", method, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("telemetry_alerts", method, StringComparison.Ordinal);
+        Assert.Contains("RequirePermission(http, \"telemetry.alerts.read\")", method, StringComparison.Ordinal);
         Assert.Contains("out_of_service OR status IN ('Maintenance','Out of Service')", method, StringComparison.Ordinal);
         Assert.Contains("No vehicle is currently marked for maintenance or out of service", method, StringComparison.Ordinal);
     }

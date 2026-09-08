@@ -138,6 +138,7 @@ assert.match(controlTower, /summarizeControlTowerStatus/, "Aggregate status must
 assert.match(commandCenter, /Current Exception Queue/, "Command Center must describe persisted exceptions without a live-data claim");
 assert.match(commandCenter, /Fleet status evidence unavailable/, "Missing fleet snapshot evidence must remain visibly unavailable");
 assert.match(commandCenter, /Needs Service/, "The vehicle-state slice must describe service attention rather than inferred device connectivity");
+assert.match(commandCenter, /Open Control Tower/, "The dashboard alert action must lead to the current telemetry evidence surface");
 assert.doesNotMatch(commandCenter, /Live Exception Queue|live fleet status|ready to respond|key: "offline"/, "Command Center must not imply live device or readiness evidence from vehicle defaults");
 assert.doesNotMatch(
   liveMap,

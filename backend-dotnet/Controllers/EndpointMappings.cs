@@ -4337,7 +4337,7 @@ public static partial class EndpointMappings
             c.Parameters.AddWithValue("@cid", cid);
             c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
         }
-        // For tables with no branch_id column (ai_insights, expenses): company scope only.
+        // For tables with no branch_id column (expenses): company scope only.
         void BindCid(NpgsqlCommand c) => c.Parameters.AddWithValue("@cid", cid);
         // jobs, vehicles, and safety_events all carry branch_id
         const string BranchScope = " AND (@branchId::bigint IS NULL OR branch_id=@branchId)";
@@ -4351,7 +4351,24 @@ public static partial class EndpointMappings
         var safety24h     = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@cid AND deleted_at IS NULL AND COALESCE(occurred_at,event_time,created_at) > NOW()-INTERVAL '24 hours'" + BranchScope, Bind, ct);
         var maintCount    = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL AND (out_of_service OR status='Maintenance')" + BranchScope, Bind, ct);
         var totalFleet    = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL" + BranchScope, Bind, ct);
-        var openAlerts    = await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_insights WHERE company_id=@cid AND status='Open'", BindCid, ct);
+        long? openAlerts = null;
+        if (RequirePermission(http, "telemetry.alerts.read") is null)
+            openAlerts = await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM telemetry_alerts ta
+                  WHERE ta.company_id=@cid AND ta.status='Open'
+                    AND (@branchId::bigint IS NULL
+                      OR (ta.vehicle_id IS NOT NULL AND EXISTS (
+                          SELECT 1 FROM vehicles v WHERE v.id=ta.vehicle_id AND v.company_id=ta.company_id
+                            AND v.branch_id=@branchId AND v.deleted_at IS NULL))
+                      OR (ta.driver_id IS NOT NULL AND EXISTS (
+                          SELECT 1 FROM drivers d WHERE d.id=ta.driver_id AND d.company_id=ta.company_id
+                            AND d.branch_id=@branchId AND d.deleted_at IS NULL))
+                      OR (ta.device_id IS NOT NULL AND EXISTS (
+                          SELECT 1 FROM eld_devices e
+                          LEFT JOIN device_installations i ON i.device_id=e.id AND i.company_id=e.company_id
+                            AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
+                          WHERE e.id=ta.device_id AND e.company_id=ta.company_id
+                            AND COALESCE(i.branch_id,e.branch_id)=@branchId)))", Bind, ct);
         var activeAssignments = await db.ScalarLongAsync(
             @"SELECT COUNT(*) FROM dispatch_assignments da
               WHERE da.company_id=@cid AND da.assignment_status NOT IN ('delivered','cancelled')
@@ -4363,7 +4380,7 @@ public static partial class EndpointMappings
         var kpis = new object[]
         {
             new { label = "Active Jobs",          value = activeJobs,        valueText = activeJobs.ToString(),        status = activeJobs        > 0 ? "Active"    : "Idle" },
-            new { label = "Open Alerts",          value = openAlerts,        valueText = openAlerts.ToString(),        status = openAlerts        > 0 ? "Attention" : "Clear" },
+            new { label = "Open Telemetry Alerts", value = openAlerts,       valueText = openAlerts?.ToString(),       status = openAlerts        > 0 ? "Attention" : openAlerts is null ? "Unavailable" : "Clear" },
             new { label = "Dispatch Assignments", value = activeAssignments, valueText = activeAssignments.ToString(), status = activeAssignments > 0 ? "Active"    : "Idle" },
             new { label = "Vehicles in Fleet",    value = totalFleet,        valueText = totalFleet.ToString(),        status = "" },
             new { label = "Open Incidents",       value = openIncidents,     valueText = openIncidents.ToString(),     status = openIncidents     > 0 ? "Review"    : "Clear" },
