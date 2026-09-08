@@ -165,7 +165,7 @@ export function ControlTowerPage() {
           </Panel>
           <Panel title={`Telemetry Alerts${(alerts.data?.length ?? 0) > 0 ? ` (${alerts.data!.length})` : ""}`}>
             {(!alerts.data || alerts.data.length === 0)
-              ? <p className="text-sm text-slate-500">No open alerts.</p>
+              ? <p className="text-sm text-slate-500">No open alert records in the current result.</p>
               : <div className="space-y-3">{alerts.data.slice(0, 6).map((alert) => <TelemetryAlertRow key={String(alert["id"])} alert={alert} onAck={() => ackAlert.mutate(Number(alert["id"]))} onResolve={() => resolveAlert.mutate(Number(alert["id"]))} />)}</div>
             }
           </Panel>

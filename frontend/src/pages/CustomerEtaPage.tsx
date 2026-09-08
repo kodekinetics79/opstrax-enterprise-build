@@ -177,7 +177,7 @@ export function CustomerEtaPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Customer ETA Portal</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Real-time delivery visibility, proactive communication and customer experience management</p>
+          <p className="text-sm text-slate-500 mt-0.5">Recorded delivery visibility, persisted communications and customer experience records</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -219,7 +219,7 @@ export function CustomerEtaPage() {
       {/* ETA Wow Signals */}
       <div className="panel flex flex-wrap gap-2 items-center p-4">
         <span className="text-xs font-semibold text-slate-600 mr-2">ETA differentiators:</span>
-        {["Branded tracking link", "ETA confidence level", "SLA risk explanation", "Real-time driver location", "POD preview", "Customer satisfaction rating"].map((x) => (
+        {["Branded tracking link", "ETA confidence level", "SLA risk explanation", "Recorded driver location", "POD preview", "Recorded customer feedback"].map((x) => (
           <span key={x} className="text-xs px-2.5 py-1 rounded-full bg-teal-50 border border-teal-200 text-teal-700 font-medium">{x}</span>
         ))}
       </div>

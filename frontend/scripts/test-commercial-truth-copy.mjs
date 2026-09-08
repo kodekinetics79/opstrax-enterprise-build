@@ -24,6 +24,11 @@ const fleetIntelligence = fs.readFileSync(new URL("../src/pages/FleetIntelligenc
 const fleetHealth = fs.readFileSync(new URL("../src/pages/FleetHealthPage.tsx", import.meta.url), "utf8");
 const compliance = fs.readFileSync(new URL("../src/pages/CompliancePage.tsx", import.meta.url), "utf8");
 const operatingModule = fs.readFileSync(new URL("../src/pages/OperatingModulePage.tsx", import.meta.url), "utf8");
+const fleetOverview = fs.readFileSync(new URL("../src/pages/FleetOverviewPage.tsx", import.meta.url), "utf8");
+const reports = fs.readFileSync(new URL("../src/pages/ReportsPage.tsx", import.meta.url), "utf8");
+const notificationCenter = fs.readFileSync(new URL("../src/pages/NotificationCenterPage.tsx", import.meta.url), "utf8");
+const customerVisibility = fs.readFileSync(new URL("../src/pages/CustomerVisibilityPage.tsx", import.meta.url), "utf8");
+const customerEta = fs.readFileSync(new URL("../src/pages/CustomerEtaPage.tsx", import.meta.url), "utf8");
 const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
 
 assert.doesNotMatch(
@@ -189,7 +194,22 @@ assert.match(compliance, /do not certify regulatory compliance/, "Compliance rec
 assert.doesNotMatch(compliance, /recommendations based on live fleet data|No cross-border issues found/, "Compliance must not overstate record absence or evidence currency");
 assert.match(operatingModule, /No connected production records/, "Unwired operating modules must disclose the absent data source");
 assert.match(operatingModule, /value=\{hasConnectedRecords \? kpi\.value : "—"\}/, "Unwired operating modules must suppress fixed KPI values");
-assert.doesNotMatch(operatingModule, /RTE-KSA-018|RTE-US-DC-006|Recommended Matches" value="3"|Dispatch Readiness" value="87%"/, "Operating workspaces must not display fixed route or dispatch evidence");
+assert.match(operatingModule, /Operational feeds not connected/, "Operations dashboard must disclose its unavailable production feeds");
+assert.match(operatingModule, /Pricing source not connected/, "Price simulation must remain unavailable without persisted pricing inputs");
+assert.match(operatingModule, /Dispatch source not connected/, "Dispatch recommendations must remain unavailable without persisted eligibility inputs");
+assert.doesNotMatch(
+  operatingModule,
+  /RTE-KSA-018|RTE-US-DC-006|KSA-REEFER-214|On-Time Delivery %", "94\.6%|Recommended Matches" value="3"|Dispatch Readiness" value="87%"|Convert to Quotation|function MapPreview/,
+  "Operating workspaces must not display simulated route, vehicle, service-level, pricing, or dispatch evidence",
+);
+assert.doesNotMatch(fleetOverview, /No open alerts — all clear/, "An empty alert result must not be presented as proof that the fleet is clear");
+assert.match(fleetOverview, /No open alert records in the current result/, "Fleet overview must describe an empty alert query without an all-clear claim");
+assert.match(reports, /reports from persisted fleet records/, "Reports must describe their persisted data source");
+assert.match(notificationCenter, /Persisted notifications, escalations and acknowledgements/, "Notification Center must describe persisted records");
+assert.doesNotMatch(customerVisibility, /real-time ETA/i, "Customer Visibility must not claim real-time ETA without freshness evidence");
+assert.match(customerVisibility, /recorded ETA evidence from available dispatch and telemetry sources/, "Customer Visibility must state its ETA evidence boundary");
+assert.doesNotMatch(customerEta, /Real-time delivery visibility|Real-time driver location/, "Customer ETA must not claim real-time records without freshness evidence");
+assert.match(customerEta, /Recorded driver location/, "Customer ETA must label driver location as recorded evidence");
 assert.doesNotMatch(
   liveMap,
   /kpis\.(?:liveCoverage|connectedUnits|degradedUnits|deviceOfflineUnits|cameraOfflineUnits|connectivityCoverage)/,

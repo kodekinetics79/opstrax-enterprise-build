@@ -381,7 +381,7 @@ export function FleetIntelligencePage() {
               ) : telemetryAlerts.isError ? (
                 <ErrorState message="Telemetry alert feed unavailable." onRetry={() => telemetryAlerts.refetch()} />
               ) : alerts.length === 0 ? (
-                <EmptyState title="No open alerts" subtitle="No telematics alerts are currently open across the fleet." />
+                <EmptyState title="No open alert records" subtitle="The current authorized result contains no open telematics alert records." />
               ) : (
                 alerts.slice(0, 8).map((a, i) => <AlertRow key={String(a.id ?? i)} alert={a} />)
               )}

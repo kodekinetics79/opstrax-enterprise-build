@@ -39,7 +39,7 @@ function serviceStatus(state: string | undefined, isError: boolean): { label: st
   if (isError || !state || state === "Unavailable" || state === "Disconnected")
     return { label: "Status unavailable", dot: "bg-slate-300", text: "text-slate-600" };
   if (state === "Live" || state === "Staging")
-    return { label: "All systems operational", dot: "bg-emerald-500", text: "text-emerald-700" };
+    return { label: "Service check passed", dot: "bg-emerald-500", text: "text-emerald-700" };
   if (state === "Starting")
     return { label: "Services are starting up", dot: "bg-amber-400", text: "text-amber-700" };
   if (state === "Demo Data")

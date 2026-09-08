@@ -215,7 +215,7 @@ export function CustomerVisibilityPage() {
       <PageHeader
         eyebrow="Customer Visibility"
         title="Shipment Tracking & ETA Risk Engine"
-        description="Customer-safe tracking tokens, real-time ETA from dispatch and telemetry, SLA risk, and proof of delivery visibility."
+        description="Customer-safe tracking tokens, recorded ETA evidence from available dispatch and telemetry sources, SLA risk, and proof of delivery visibility."
         actions={
           <button
             type="button"

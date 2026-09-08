@@ -2,27 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  BarChart3,
   Building2,
   Calculator,
   CheckCircle2,
   ClipboardCheck,
   DollarSign,
   Download,
-  FileText,
   MapPinned,
   PackageCheck,
   Radar,
-  Route,
   Search,
   Send,
   Sparkles,
   X,
-  Truck,
   Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   AiInsightCard,
   DataTable,
@@ -37,7 +32,7 @@ import {
 import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
-import { calculateCustomerHealth, calculateProfitability, calculateShipmentDelay, formatCurrency, formatDate } from "@/utils/formatters";
+import { calculateCustomerHealth, calculateProfitability, formatCurrency, formatDate } from "@/utils/formatters";
 import { useNavigate } from "react-router";
 
 // This generic shell has no executable backend contract. It must remain empty in
@@ -495,41 +490,6 @@ function enrichRows(rows: AnyRecord[]) {
   });
 }
 
-const vehiclePositions: Record<string, { left: string; top: string; heading: string; speed: string; lat: number; lng: number }> = {
-  "KSA-REEFER-214": { left: "72%", top: "58%", heading: "E", speed: "82 km/h", lat: 24.7136, lng: 46.6753 },
-  "KSA-REEFER-119": { left: "46%", top: "31%", heading: "NE", speed: "0 km/h", lat: 21.4858, lng: 39.1925 },
-  "DXB-VAN-045": { left: "24%", top: "71%", heading: "SW", speed: "0 km/h", lat: 25.2048, lng: 55.2708 },
-  "BOX-106": { left: "77%", top: "59%", heading: "NE", speed: "18 mph", lat: 38.9072, lng: -77.0369 },
-};
-
-function vehicleMonitor(vehicle: AnyRecord) {
-  const vehicleId = String(vehicle.vehicleId);
-  const shipment = shipments.find((item) => item.vehicle === vehicleId);
-  const driver = drivers.find((item) => item.name === vehicle.assignedDriver || item.assignedVehicle === vehicleId);
-  const device = devices.find((item) => item.linkedVehicleTrailer === vehicleId || item.deviceId === vehicle.assignedDevice);
-  const position = vehiclePositions[vehicleId] ?? { left: "50%", top: "50%", heading: "N", speed: "0", lat: 0, lng: 0 };
-  const monitorStatus = shipment?.currentStatus ?? vehicle.status;
-  const risk = /Critical|Maintenance|Delayed|Review/i.test(`${vehicle.maintenanceStatus} ${vehicle.status} ${shipment?.delayRisk ?? ""}`) ? "High" : /Due|Medium|Watch/i.test(`${vehicle.maintenanceStatus} ${shipment?.slaRisk ?? ""}`) ? "Medium" : "Low";
-  const violations = [
-    ...(shipment?.delayRisk === "High" ? ["SLA delay risk", "Late delivery exception"] : []),
-    ...(String(vehicle.maintenanceStatus).match(/Critical|Due/i) ? ["Maintenance dispatch block"] : []),
-    ...(device && !String(device.status).match(/Online/i) ? [`Device visibility issue: ${device.status}`] : []),
-    ...(String(driver?.hosStatus ?? "").match(/Risk/i) ? ["Driver HOS risk"] : []),
-    ...(shipment?.slaRisk === "Temperature Watch" ? ["Temperature compliance watch"] : []),
-  ];
-  const stops = shipment
-    ? [
-        { stop: "Pickup", location: shipment.origin, window: "08:00-09:30", status: shipment.currentStatus === "At Pickup" ? "Active" : "Completed" },
-        { stop: "Checkpoint", location: shipment.origin === "Jeddah" ? "Taif corridor" : shipment.origin === "Manassas" ? "I-395 corridor" : "Route midpoint", window: "Live", status: shipment.currentStatus === "In Transit" || shipment.currentStatus === "Delayed" ? "Active" : "Pending" },
-        { stop: "Delivery", location: shipment.destination, window: shipment.eta, status: shipment.currentStatus === "Delivered" ? "Completed" : "Pending" },
-      ]
-    : [
-        { stop: "Current yard", location: String(vehicle.currentLocation), window: "Now", status: "Idle" },
-        { stop: "Next assignment", location: "Unassigned", window: "Pending", status: "Pending" },
-      ];
-  return { vehicle, shipment, driver, device, position, monitorStatus, risk, violations, stops };
-}
-
 function ModuleToolbar({ search, setSearch, filter, setFilter }: { search: string; setSearch: (value: string) => void; filter: string; setFilter: (value: string) => void }) {
   return (
     <div className="panel flex flex-col gap-3 p-3.5 lg:flex-row lg:items-center lg:justify-between">
@@ -548,407 +508,68 @@ function ModuleToolbar({ search, setSearch, filter, setFilter }: { search: strin
   );
 }
 
-function RevenueSnapshot() {
-  const revenue = valueSum(shipments, "revenue");
-  const cost = valueSum(shipments, "cost");
-  const profit = calculateProfitability(revenue, cost);
-  const chartData = customers.slice(0, 5).map((customer) => ({ name: String(customer.companyName).split(" ")[0], revenue: Number(customer.revenueMtd) / 1000 }));
-  return (
-    <div className="panel p-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="section-title">Revenue / Cost Snapshot</p>
-          <h2 className="mt-2 text-lg font-bold text-slate-900">Margin protection view</h2>
-        </div>
-        <StatusBadge status={profit.status} />
-      </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-          <p className="text-xs text-slate-500">Revenue MTD</p>
-          <p className="mt-1 text-xl font-bold text-slate-900">{formatCurrency(revenue, "SAR")}</p>
-        </div>
-        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-          <p className="text-xs text-slate-500">Cost MTD</p>
-          <p className="mt-1 text-xl font-bold text-slate-900">{formatCurrency(cost, "SAR")}</p>
-        </div>
-        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-          <p className="text-xs text-slate-500">Gross Margin</p>
-          <p className="mt-1 text-xl font-bold text-slate-900">{profit.marginText}</p>
-        </div>
-      </div>
-      <div className="mt-4 h-44">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData}>
-            <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} />
-            <YAxis fontSize={11} tickLine={false} axisLine={false} />
-            <Tooltip formatter={(value) => [`${value}k`, "Revenue"]} />
-            <Bar dataKey="revenue" fill="#2563eb" radius={[8, 8, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="mt-3 grid gap-2 text-sm text-slate-600 md:grid-cols-2">
-        <p><span className="font-semibold text-slate-900">Top customer:</span> Saudi FMCG Supply Co.</p>
-        <p><span className="font-semibold text-slate-900">Worst margin lane:</span> Manassas → Washington DC</p>
-      </div>
-    </div>
-  );
-}
-
-function MapPreview() {
-  return (
-    <div className="map-surface min-h-[320px] p-5">
-      <svg className="absolute inset-0 h-full w-full" viewBox="0 0 900 420" preserveAspectRatio="none">
-        <path d="M72 300 C210 190 285 230 405 130 S650 95 810 250" fill="none" stroke="#2563eb" strokeWidth="4" strokeDasharray="10 10" opacity=".75" />
-        <path d="M90 105 C250 150 315 260 505 230 S660 320 820 150" fill="none" stroke="#0d9488" strokeWidth="4" opacity=".65" />
-        <circle cx="420" cy="134" r="42" fill="#f59e0b" opacity=".12" stroke="#f59e0b" />
-        <circle cx="705" cy="244" r="58" fill="#ef4444" opacity=".10" stroke="#ef4444" />
-      </svg>
-      {[
-        ["KSA-REEFER-214", "72%", "58%", "Active"],
-        ["KSA-REEFER-119", "46%", "31%", "Temp Watch"],
-        ["BOX-106", "77%", "59%", "Delayed"],
-        ["DXB-VAN-045", "24%", "71%", "Delivered"],
-      ].map(([label, left, top, status]) => (
-        <div key={label} className="absolute" style={{ left, top }}>
-          <div className="rounded-full border border-white bg-blue-600 p-2 shadow-lg">
-            <Truck className="h-4 w-4 text-white" />
-          </div>
-          <div className="mt-2 rounded-lg border border-slate-200 bg-white/95 px-2 py-1 text-xs font-semibold text-slate-700 shadow-sm">
-            {label} · {status}
-          </div>
-        </div>
-      ))}
-      <div className="relative z-10 max-w-sm rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm">
-        <p className="section-title text-blue-700">Map-ready architecture</p>
-        <h3 className="mt-2 text-lg font-bold text-slate-900">Live routing without paid map dependency</h3>
-        <p className="mt-2 text-sm leading-6 text-slate-600">Route lines, vehicle pins, geofence zones, SLA hotspots and exceptions are structured so a real provider can be dropped in later.</p>
-      </div>
-    </div>
-  );
-}
-
-function Fleet360MapPage() {
-  const monitors = vehicles.map(vehicleMonitor);
-  const [selectedId, setSelectedId] = useState(String(monitors[0]?.vehicle.vehicleId ?? ""));
-  const [mode, setMode] = useState("All");
-  const selected = monitors.find((item) => String(item.vehicle.vehicleId) === selectedId) ?? monitors[0];
-  const filteredMonitors = monitors.filter((item) => {
-    if (mode === "All") return true;
-    if (mode === "On Job") return Boolean(item.shipment && item.shipment.currentStatus !== "Delivered");
-    if (mode === "Violations") return item.violations.length > 0;
-    if (mode === "Device Risk") return Boolean(item.device && !String(item.device.status).match(/Online/i));
-    if (mode === "Maintenance Risk") return /Critical|Due|Maintenance/i.test(String(item.vehicle.maintenanceStatus));
-    return true;
-  });
-
-  return (
-    <div className="alerts-command-room space-y-5">
-      <PageHeader
-        eyebrow="Control Tower"
-        title="Map View"
-        description="360-degree fleet monitoring from total fleet posture down to individual vehicle job, stops, violations, telemetry, device health and dispatch action."
-        actions={
-          <>
-            <button
-              className="btn-ghost"
-              onClick={() => exportCsv("vehicle-trail", filteredMonitors.map((item) => ({
-                vehicleId: item.vehicle.vehicleId,
-                driver: item.driver?.name ?? item.vehicle.assignedDriver,
-                location: item.vehicle.currentLocation,
-                speed: item.position.speed,
-                heading: item.position.heading,
-                risk: item.risk,
-                shipmentId: item.shipment?.shipmentId ?? "",
-              })))}
-            >
-              <Download className="h-4 w-4" /> Export Vehicle Trail
-            </button>
-            <button className="btn-primary" onClick={() => setMode("Violations")}>
-              <Sparkles className="h-4 w-4" /> Run Fleet AI Scan
-            </button>
-          </>
-        }
-      />
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <KpiCard label="Fleet Monitored" value={vehicles.length} status="Active" />
-        <KpiCard label="Vehicles On Job" value={monitors.filter((item) => item.shipment && item.shipment.currentStatus !== "Delivered").length} status="Active" />
-        <KpiCard label="Open Violations" value={monitors.reduce((sum, item) => sum + item.violations.length, 0)} status="Risk" />
-        <KpiCard label="Device Blind Spots" value={monitors.filter((item) => item.device && !String(item.device.status).match(/Online/i)).length} status="Risk" />
-        <KpiCard label="Dispatch Blocks" value={monitors.filter((item) => /High/.test(item.risk)).length} status="Critical" />
-      </div>
-
-      <div className="panel flex flex-wrap gap-2 p-3">
-        {["All", "On Job", "Violations", "Device Risk", "Maintenance Risk"].map((item) => (
-          <button key={item} className={mode === item ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => setMode(item)}>
-            {item}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid gap-5 2xl:grid-cols-[280px_1fr_420px]">
-        <div className="panel overflow-hidden">
-          <div className="border-b border-slate-100 p-4">
-            <p className="section-title">Fleet Roster</p>
-            <p className="mt-1 text-sm text-slate-500">Click any unit for granular monitoring.</p>
-          </div>
-          <div className="max-h-[620px] overflow-y-auto p-3">
-            {filteredMonitors.map((item) => (
-              <button
-                key={String(item.vehicle.vehicleId)}
-                className={`mb-2 w-full rounded-xl border p-3 text-left transition ${selectedId === item.vehicle.vehicleId ? "border-blue-300 bg-blue-50" : "border-slate-100 bg-white hover:bg-slate-50"}`}
-                onClick={() => setSelectedId(String(item.vehicle.vehicleId))}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-bold text-slate-900">{String(item.vehicle.vehicleId)}</p>
-                    <p className="mt-1 text-xs text-slate-500">{String(item.vehicle.vehicleType)} · {String(item.vehicle.currentLocation)}</p>
-                  </div>
-                  <RiskBadge risk={item.risk} />
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  <StatusBadge status={item.monitorStatus} />
-                  {item.shipment && <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">{String(item.shipment.shipmentId)}</span>}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="map-surface min-h-[660px] p-5">
-          <svg className="absolute inset-0 h-full w-full" viewBox="0 0 1100 700" preserveAspectRatio="none">
-            <path d="M65 520 C220 360 335 440 480 260 S785 145 1010 390" fill="none" stroke="#2563eb" strokeWidth="5" strokeDasharray="12 12" opacity=".75" />
-            <path d="M130 160 C310 190 410 390 620 360 S820 515 1015 180" fill="none" stroke="#0d9488" strokeWidth="5" opacity=".65" />
-            <path d="M180 575 C330 510 395 560 520 490 S760 430 910 545" fill="none" stroke="#7c3aed" strokeWidth="4" opacity=".45" />
-            <circle cx="505" cy="238" r="70" fill="#f59e0b" opacity=".12" stroke="#f59e0b" strokeWidth="2" />
-            <circle cx="846" cy="395" r="86" fill="#ef4444" opacity=".10" stroke="#ef4444" strokeWidth="2" />
-            <circle cx="292" cy="505" r="58" fill="#0d9488" opacity=".10" stroke="#0d9488" strokeWidth="2" />
-          </svg>
-          <div className="relative z-10 flex flex-wrap items-center gap-2">
-            {["Route line", "Geofence", "Delay zone", "Violation zone", "Cold chain"].map((item) => (
-              <span key={item} className="rounded-full border border-white/80 bg-white/90 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm">{item}</span>
-            ))}
-          </div>
-          {monitors.map((item) => {
-            const isSelected = selectedId === item.vehicle.vehicleId;
-            const isRisk = item.risk === "High";
-            return (
-              <button
-                key={String(item.vehicle.vehicleId)}
-                className="absolute text-left"
-                style={{ left: item.position.left, top: item.position.top }}
-                onClick={() => setSelectedId(String(item.vehicle.vehicleId))}
-              >
-                <div className={`rounded-full border-2 border-white p-2 shadow-xl ${isSelected ? "bg-blue-700 ring-4 ring-blue-200" : isRisk ? "bg-red-600" : "bg-teal-600"}`}>
-                  <Truck className="h-5 w-5 text-white" />
-                </div>
-                <div className={`mt-2 min-w-[170px] rounded-xl border bg-white/95 px-3 py-2 shadow-lg ${isSelected ? "border-blue-300" : "border-slate-200"}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-extrabold text-slate-900">{String(item.vehicle.vehicleId)}</p>
-                    <span className={`h-2 w-2 rounded-full ${item.risk === "High" ? "bg-red-500" : item.risk === "Medium" ? "bg-amber-400" : "bg-emerald-500"}`} />
-                  </div>
-                  <p className="mt-1 text-[11px] text-slate-500">{String(item.monitorStatus)} · {item.position.speed}</p>
-                </div>
-              </button>
-            );
-          })}
-          <div className="absolute bottom-5 left-5 right-5 grid gap-3 lg:grid-cols-3">
-            {alerts.slice(0, 3).map((alert) => (
-              <div key={String(alert.alertId)} className="rounded-xl border border-white/80 bg-white/95 p-3 shadow-sm">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm font-bold text-slate-900">{alert.type}</p>
-                  <RiskBadge risk={alert.severity} />
-                </div>
-                <p className="mt-1 text-xs text-slate-500">{alert.entity ?? "Unmapped entity"} · {alert.location ?? "Live backend"}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {selected && (
-          <div className="space-y-5">
-            <div className="panel p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="section-title">Selected Vehicle</p>
-                  <h2 className="mt-2 text-2xl font-bold text-slate-900">{String(selected.vehicle.vehicleId)}</h2>
-                  <p className="mt-1 text-sm text-slate-500">{String(selected.vehicle.makeModel)} · {String(selected.vehicle.plateNumber)}</p>
-                </div>
-                <RiskBadge risk={selected.risk} />
-              </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                {[
-                  ["Status", selected.monitorStatus],
-                  ["Driver", selected.driver?.name ?? selected.vehicle.assignedDriver],
-                  ["Location", selected.vehicle.currentLocation],
-                  ["Speed / Heading", `${selected.position.speed} · ${selected.position.heading}`],
-                  ["Lat / Lng", `${selected.position.lat}, ${selected.position.lng}`],
-                  ["Odometer", Number(selected.vehicle.odometer).toLocaleString()],
-                  ["Device", selected.device?.deviceId ?? selected.vehicle.assignedDevice],
-                  ["Device Health", selected.device?.status ?? "Unknown"],
-                ].map(([label, value]) => (
-                  <div key={String(label)} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                    <p className="text-xs text-slate-500">{String(label)}</p>
-                    <p className="mt-1 font-bold text-slate-900">{String(value)}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="panel p-5">
-              <p className="section-title">Active Job</p>
-              {selected.shipment ? (
-                <div className="mt-4 space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-lg font-bold text-slate-900">{String(selected.shipment.shipmentId)}</p>
-                      <p className="text-sm text-slate-500">{String(selected.shipment.customer)}</p>
-                    </div>
-                    <StatusBadge status={selected.shipment.currentStatus} />
-                  </div>
-                  <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
-                    {String(selected.shipment.origin)} → {String(selected.shipment.destination)} · ETA {String(selected.shipment.eta)}
-                  </div>
-                  <div className="grid gap-2 text-sm sm:grid-cols-2">
-                    <p><span className="font-semibold text-slate-900">Cargo:</span> {String(selected.shipment.cargoType)}</p>
-                    <p><span className="font-semibold text-slate-900">SLA:</span> {String(selected.shipment.slaRisk)}</p>
-                    <p><span className="font-semibold text-slate-900">POD:</span> {String(selected.shipment.podStatus)}</p>
-                    <p><span className="font-semibold text-slate-900">Invoice:</span> {String(selected.shipment.invoiceStatus)}</p>
-                  </div>
-                </div>
-              ) : (
-                <EmptyState title="No active job" subtitle="This unit is available for planning or staging." />
-              )}
-            </div>
-
-            <div className="panel p-5">
-              <p className="section-title">Stops & Timeline</p>
-              <div className="mt-4 space-y-3">
-                {selected.stops.map((stop) => (
-                  <div key={`${stop.stop}-${stop.location}`} className="flex gap-3 rounded-xl border border-slate-100 bg-white p-3">
-                    <div className="mt-1 h-3 w-3 rounded-full bg-blue-600" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold text-slate-900">{stop.stop}</p>
-                        <StatusBadge status={stop.status} />
-                      </div>
-                      <p className="mt-1 text-sm text-slate-500">{stop.location} · {stop.window}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="panel p-5">
-              <p className="section-title">Violations & Exceptions</p>
-              <div className="mt-4 space-y-2">
-                {selected.violations.length ? selected.violations.map((violation) => (
-                  <div key={violation} className="flex items-center gap-2 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
-                    <AlertTriangle className="h-4 w-4" />
-                    {violation}
-                  </div>
-                )) : (
-                  <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">No active violations for this unit.</div>
-                )}
-              </div>
-            </div>
-
-            <AiInsightCard insight={{ title: "Fleet monitoring recommendation", body: selected.risk === "High" ? "Do not assign additional work to this vehicle until maintenance/device exceptions are resolved. Send ETA update if customer-facing SLA is affected." : "Vehicle is suitable for dispatch. Continue monitoring device heartbeat and next stop ETA.", score: selected.risk === "High" ? 94 : 87, moduleKey: "map-view" }} />
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function LiveDashboardPage() {
-  const activeShipments = shipments.filter((s) => s.currentStatus !== "Delivered");
-  const delayed = shipments.filter((s) => calculateShipmentDelay(s).risk === "High");
   const alertsQuery = useQuery({
     queryKey: ["alerts"],
     queryFn: () => alertsApi.list(),
     staleTime: 15_000,
     refetchInterval: 15_000,
   });
-  const liveAlerts = useMemo(
+  const alertRows = useMemo(
     () => (Array.isArray(alertsQuery.data) ? (alertsQuery.data as AnyRecord[]).map((alert) => normalizeAlert(alert)) : []),
     [alertsQuery.data],
   );
-  const criticalAlerts = liveAlerts.filter((alert) => alert.severity === "Critical");
-  const topAlerts = liveAlerts.slice(0, 4);
+  const openAlerts = alertRows.filter((alert) => !/closed/i.test(String(alert.status)));
+  const criticalAlerts = openAlerts.filter((alert) => /critical/i.test(String(alert.severity)));
+  const acknowledgedAlerts = openAlerts.filter((alert) => /acknowledged/i.test(String(alert.status)));
+  const topAlerts = openAlerts.slice(0, 6);
+
+  if (alertsQuery.isLoading) return <LoadingState />;
+  if (alertsQuery.isError) {
+    return <EmptyState title="Operations dashboard unavailable" subtitle="The persisted alert register could not be loaded. No operating status is inferred while the source is unavailable." />;
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Control Tower"
-        title="Live Dashboard"
-        description="A real operating cockpit for shipments, fleet availability, exceptions, customer risk, revenue and margin."
+        title="Operations Dashboard"
+        description="Current tenant alert records. Shipment, dispatch, fleet position, revenue, cost and service-level feeds are shown only after their production sources are connected."
         actions={
-          <>
-            <button className="btn-ghost" onClick={() => exportCsv("watchlist", activeShipments)}>
-              <Download className="h-4 w-4" /> Export Watchlist
-            </button>
-            <button className="btn-primary" onClick={() => window.location.assign("/reports")}>
-              <Sparkles className="h-4 w-4" /> Generate Operations Brief
-            </button>
-          </>
+          <button className="btn-ghost" disabled={!openAlerts.length} onClick={() => exportCsv("open-alerts", openAlerts)}>
+            <Download className="h-4 w-4" /> Export Open Alerts
+          </button>
         }
       />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          ["Active Shipments", activeShipments.length, "Active"],
-          ["Pending Load Bookings", bookings.filter((b) => /Draft|Submitted|Quoted/.test(String(b.status))).length, "Pending"],
-          ["Loads Awaiting Dispatch", bookings.filter((b) => b.status === "Awaiting Dispatch").length, "Pending"],
-          ["Available Vehicles", vehicles.filter((v) => /Active|Idle/.test(String(v.status))).length, "Healthy"],
-          ["Available Drivers", drivers.filter((d) => /Available|Idle/.test(String(d.availability))).length, "Healthy"],
-          ["Delayed Shipments", delayed.length, "Risk"],
-          ["Critical Alerts", criticalAlerts.length, "Critical"],
-          ["Temperature Breaches", incidents.filter((i) => String(i.incidentType).includes("Temperature")).length, "Critical"],
-          ["Safety Events", incidents.length, "Review"],
-          ["Revenue This Month", formatCurrency(valueSum(customers, "revenueMtd"), "SAR"), "Healthy"],
-          ["Cost This Month", formatCurrency(valueSum(shipments, "cost"), "SAR"), "Watch"],
-          ["On-Time Delivery %", "94.6%", "Healthy"],
-        ].map(([label, value, status]) => <KpiCard key={label} label={String(label)} value={String(value)} status={String(status)} />)}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <KpiCard label="Open Alert Records" value={openAlerts.length} status="Open" />
+        <KpiCard label="Critical Alert Records" value={criticalAlerts.length} status={criticalAlerts.length ? "Critical" : undefined} />
+        <KpiCard label="Acknowledged Open Records" value={acknowledgedAlerts.length} status="Recorded" />
       </div>
-      <div className="grid gap-5 xl:grid-cols-[1.25fr_.75fr]">
-        <DataTable rows={enrichRows(shipments)} columns={["shipmentId", "customer", "origin", "destination", "currentStatus", "vehicle", "driver", "eta", "slaRisk"]} />
-        <div className="space-y-5">
-          <div className="panel p-5">
-            <p className="section-title">Critical Alerts</p>
-            <div className="mt-4 space-y-3">
-              {topAlerts.length ? topAlerts.map((alert) => (
-                <div key={String(alert.id)} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-semibold text-slate-900">{alert.title}</p>
-                      <p className="mt-1 text-xs text-slate-500">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
-                    </div>
-                    <RiskBadge risk={alert.severity} />
+      <div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
+        <div className="panel p-5">
+          <p className="section-title">Open Alert Register</p>
+          <div className="mt-4 space-y-3">
+            {topAlerts.length ? topAlerts.map((alert) => (
+              <div key={alert.alertId} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-900">{alert.title}</p>
+                    <p className="mt-1 text-xs text-slate-500">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
                   </div>
-                  <p className="mt-2 text-xs text-slate-600">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
+                  <RiskBadge risk={alert.severity} />
                 </div>
-              )) : (
-                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
-                  No open alerts are currently returned by the live backend.
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="panel p-5">
-            <p className="section-title">Fleet Availability</p>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              {["Active", "Idle", "In Maintenance", "Out of Service", "Unassigned"].map((status) => (
-                <div key={status} className="rounded-xl border border-slate-100 bg-white p-3">
-                  <p className="text-xl font-bold text-slate-900">{vehicles.filter((v) => String(v.status).includes(status)).length}</p>
-                  <p className="text-xs text-slate-500">{status}</p>
-                </div>
-              ))}
-            </div>
+                <p className="mt-2 text-xs text-slate-600">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
+              </div>
+            )) : (
+              <EmptyState title="No open alert records" subtitle="The current query returned no open records. This does not establish that every operation or service is healthy." />
+            )}
           </div>
         </div>
-      </div>
-      <div className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]">
-        <RevenueSnapshot />
-        <MapPreview />
+        <EmptyState
+          title="Operational feeds not connected"
+          subtitle="Shipment, booking, vehicle position, driver availability, revenue, cost, temperature, safety and on-time delivery values remain unavailable on this page until backed by tenant-scoped production records."
+        />
       </div>
     </div>
   );
@@ -1049,7 +670,7 @@ function AlertsPage() {
         count: laneAlerts.length,
         openCount: laneAlerts.filter((alert) => !/closed/i.test(String(alert.status))).length,
         criticalCount: laneAlerts.filter((alert) => String(alert.severity) === "Critical").length,
-        topAction: laneAlerts[0]?.recommendedAction || laneAlerts[0]?.body || "Waiting for live data",
+        topAction: laneAlerts[0]?.recommendedAction || laneAlerts[0]?.body || "No action recorded",
       };
     }).filter((lane) => lane.count > 0 || lane.openCount > 0);
   }, [alertRows]);
@@ -1070,7 +691,7 @@ function AlertsPage() {
       <PageHeader
         eyebrow="Control Tower"
         title="Alerts"
-        description="A live alert register backed by the backend ai_insights table. The queue, details, and actions all come from tenant data rather than a fixed demo feed."
+        description="Tenant-scoped alert records returned by the operations service. Missing records and unavailable sources remain explicit."
         actions={
           <>
             <button
@@ -1088,7 +709,7 @@ function AlertsPage() {
                 void qc.invalidateQueries({ queryKey: ["alerts", "summary"] });
               }}
             >
-              <Sparkles className="h-4 w-4" /> Refresh Live Queue
+              <Sparkles className="h-4 w-4" /> Refresh Alert Records
             </button>
           </>
         }
@@ -1098,7 +719,7 @@ function AlertsPage() {
         <KpiCard label="Open Alerts" value={summary.open} status="Open" />
         <KpiCard label="Critical Alerts" value={summary.critical} status="Critical" />
         <KpiCard label="Acknowledged" value={summary.acknowledged} status="Review" />
-        <KpiCard label="Closed" value={summary.closed} status="Healthy" />
+        <KpiCard label="Closed" value={summary.closed} status="Recorded" />
       </div>
 
       <div className="panel flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -1131,11 +752,11 @@ function AlertsPage() {
                     <RiskBadge risk={alert.severity} />
                     <StatusBadge status={alert.status} />
                     <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-500">{alert.category}</span>
-                    <span className="text-xs font-semibold text-slate-400">{alert.age ?? "Live"}</span>
+                    <span className="text-xs font-semibold text-slate-400">{alert.age ?? "Age unavailable"}</span>
                   </div>
                   <h2 className="mt-2 text-[1.02rem] font-bold text-slate-900">{alert.title}</h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    {alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.customer ?? "Tenant scoped"} · {alert.location ?? "Live backend"}
+                    {alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.customer ?? "Customer unavailable"} · {alert.location ?? "Location unavailable"}
                   </p>
                   <div className="mt-2 rounded-xl border border-amber-100 bg-[#fff6ea] px-3 py-2 text-sm text-amber-900">
                     <span className="font-bold">Recommended action:</span> {alert.recommendedAction || alert.body || "No recommended action recorded."}
@@ -1164,18 +785,18 @@ function AlertsPage() {
               </div>
             </div>
           ))}
-          {!visibleAlerts.length && <EmptyState title="No alerts in this lane" subtitle="Try another tab, clear the search, or wait for the live backend to surface new rows." />}
+          {!visibleAlerts.length && <EmptyState title="No alerts in this lane" subtitle="Try another tab or clear the search. The current persisted result contains no matching records." />}
         </div>
 
         <div className="space-y-4 xl:sticky xl:top-4 xl:self-start">
           <div className="panel p-4">
-            <p className="section-title">Live triage guidance</p>
+            <p className="section-title">Recorded Alert Triage</p>
             <div className="mt-3 space-y-2.5">
               <div className="rounded-xl border border-red-100 bg-gradient-to-br from-red-50 to-rose-50 px-3 py-2 text-sm text-red-800 shadow-inner">
                 <span className="font-bold">Criticals:</span> {summary.critical} open alert{summary.critical === 1 ? "" : "s"} need immediate review.
               </div>
               <div className="rounded-xl border border-amber-100 bg-gradient-to-br from-amber-50 to-orange-50 px-3 py-2 text-sm text-amber-800 shadow-inner">
-                <span className="font-bold">Queue depth:</span> {summary.total} total live alert{summary.total === 1 ? "" : "s"} are visible for this tenant.
+                <span className="font-bold">Queue depth:</span> {summary.total} total persisted alert{summary.total === 1 ? "" : "s"} are visible for this tenant.
               </div>
               <div className="rounded-xl border border-slate-100 bg-gradient-to-br from-white to-stone-50 px-3 py-2 text-sm text-slate-700 shadow-inner">
                 <span className="font-bold">Next move:</span> clear the top critical item, then work down by age and category.
@@ -1184,7 +805,7 @@ function AlertsPage() {
           </div>
 
           <div className="panel p-4">
-            <p className="section-title">Recent Live Signals</p>
+            <p className="section-title">Recent Recorded Alerts</p>
             <div className="mt-3 space-y-2.5">
               {recentSignals.length ? recentSignals.map((alert) => (
                 <div key={String(alert.id)} className="rounded-xl border border-slate-100 bg-gradient-to-br from-[#fffdf8] to-[#f7efe2] p-3 shadow-sm">
@@ -1192,14 +813,14 @@ function AlertsPage() {
                     <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
                       {String(alert.category)} · {String(alert.severity)}
                     </p>
-                    <span className="text-xs text-slate-400">{alert.age ?? "Live"}</span>
+                    <span className="text-xs text-slate-400">{alert.age ?? "Age unavailable"}</span>
                   </div>
                   <p className="mt-1 text-sm font-semibold text-slate-900">{alert.title}</p>
                   <p className="mt-1 text-sm text-slate-700">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
                 </div>
               )) : (
                 <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                  No live alert activity is available yet.
+                  The current result contains no alert records. This does not establish an all-clear state.
                 </div>
               )}
             </div>
@@ -1280,166 +901,33 @@ function exportCsv(name: string, rows: AnyRecord[]) {
 }
 
 function PriceSimulationPage() {
-  const [urgency, setUrgency] = useState("Standard");
-  const [vehicleType, setVehicleType] = useState("Reefer");
-  const base = vehicleType === "Reefer" ? 4200 : 2900;
-  const urgencyFee = urgency === "Express" ? 850 : 0;
-  const fuel = Math.round(base * 0.12);
-  const toll = 135;
-  const waiting = 220;
-  const internalCost = Math.round((base + urgencyFee) * 0.72 + fuel + toll);
-  const finalQuote = base + urgencyFee + fuel + toll + waiting;
-  const profit = calculateProfitability(finalQuote, internalCost);
-
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Commercial" title="Price Simulation" description="Simulate lane pricing from contract, cargo, vehicle requirement, temperature control, urgency, fuel and margin." />
-      <div className="grid gap-5 lg:grid-cols-[.85fr_1.15fr]">
-        <div className="panel p-5">
-          <p className="section-title">Quote Inputs</p>
-          <div className="mt-4 grid gap-3">
-            {[
-              ["Customer", "Al Noor Pharma Distribution"],
-              ["Contract", "CON-1002"],
-              ["Origin", "Jeddah Pharma Hub"],
-              ["Destination", "Riyadh Hospital Network"],
-              ["Cargo Type", "Temperature-controlled vaccines"],
-              ["Weight", "4,200 kg"],
-            ].map(([label, value]) => (
-              <label key={label} className="text-sm font-semibold text-slate-700">
-                {label}
-                <input className="field mt-1.5" defaultValue={value} />
-              </label>
-            ))}
-            <label className="text-sm font-semibold text-slate-700">
-              Vehicle Type
-              <select className="field mt-1.5" value={vehicleType} onChange={(event) => setVehicleType(event.target.value)}>
-                <option>Reefer</option>
-                <option>Dry Van</option>
-                <option>Flatbed</option>
-                <option>Last-mile Van</option>
-              </select>
-            </label>
-            <label className="text-sm font-semibold text-slate-700">
-              Urgency
-              <select className="field mt-1.5" value={urgency} onChange={(event) => setUrgency(event.target.value)}>
-                <option>Standard</option>
-                <option>Express</option>
-              </select>
-            </label>
-          </div>
-        </div>
-        <div className="panel p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="section-title">Calculated Quote</p>
-              <h2 className="mt-2 text-2xl font-bold text-slate-900">{formatCurrency(finalQuote, "SAR")}</h2>
-            </div>
-            <StatusBadge status={profit.status} />
-          </div>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {[
-              ["Estimated distance", "949 km"],
-              ["Base rate", formatCurrency(base, "SAR")],
-              ["Fuel surcharge", formatCurrency(fuel, "SAR")],
-              ["Toll estimate", formatCurrency(toll, "SAR")],
-              ["Waiting/loading", formatCurrency(waiting, "SAR")],
-              ["Internal cost", formatCurrency(internalCost, "SAR")],
-              ["Gross margin", profit.marginText],
-              ["VAT/tax", formatCurrency(Math.round(finalQuote * 0.15), "SAR")],
-            ].map(([label, value]) => (
-              <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                <p className="text-xs text-slate-500">{label}</p>
-                <p className="mt-1 font-bold text-slate-900">{value}</p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-5 flex flex-wrap gap-2">
-            <button className="btn-primary" onClick={() => window.location.assign("/quotations")}><FileText className="h-4 w-4" /> Convert to Quotation</button>
-            <button className="btn-ghost" onClick={() => window.location.assign("/load-bookings")}><PackageCheck className="h-4 w-4" /> Convert to Load Booking</button>
-          </div>
-          <AiInsightCard insight={{ title: "Margin guardrail", body: "The reefer lane remains profitable only if waiting time stays under 90 minutes. Add detention terms to the quote.", score: 91 }} />
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Commercial"
+        title="Price Simulation"
+        description="A production quote requires persisted customer, contract, lane, rate-card, fuel, toll, tax and cost inputs."
+      />
+      <EmptyState
+        title="Pricing source not connected"
+        subtitle="No quote is calculated or convertible until those tenant-scoped production inputs and a persisted quote workflow are available."
+      />
     </div>
   );
 }
 
 function DispatchBoardPage() {
-  const unassigned = bookings.filter((booking) => /Awaiting Dispatch|Confirmed/.test(String(booking.status)));
-  const availableVehicles = vehicles.filter((vehicle) => /Active|Available/i.test(String(vehicle.status)));
-  const availableDrivers = drivers.filter((driver) => !/Inactive|Suspended/i.test(String(driver.status)));
-  const recommendedMatches = Math.min(unassigned.length, availableVehicles.length, availableDrivers.length);
-  const dispatchReadiness = vehicles.length > 0
-    ? `${Math.round(availableVehicles.length * 100 / vehicles.length)}%`
-    : "—";
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Transport Operations" title="Dispatch Board" description="Match confirmed bookings to available vehicles and drivers using vehicle type, location, maintenance, cold chain and safety fit." />
-      <div className="grid gap-3 md:grid-cols-4">
-        <KpiCard label="Awaiting Dispatch" value={unassigned.length} status="Pending" />
-        <KpiCard label="Eligible Matches" value={bookings.length || vehicles.length || drivers.length ? recommendedMatches : "—"} />
-        <KpiCard label="Blocked Vehicles" value={vehicles.filter((v) => /Maintenance|Service/.test(String(v.status))).length} status="Risk" />
-        <KpiCard label="Recorded Vehicle Availability" value={dispatchReadiness} />
-      </div>
-      <div className="grid gap-5 xl:grid-cols-[1fr_1fr]">
-        <div className="panel p-5">
-          <p className="section-title">Unassigned confirmed bookings</p>
-          <div className="mt-4 space-y-3">
-            {unassigned.map((booking) => (
-              <div key={booking.bookingId} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-bold text-slate-900">{booking.bookingId} · {booking.customer}</p>
-                    <p className="mt-1 text-sm text-slate-500">{booking.pickup} → {booking.dropoff}</p>
-                  </div>
-                  <StatusBadge status={booking.status} />
-                </div>
-                <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
-                  <span>Vehicle: {booking.vehicleRequired}</span>
-                  <span>Pickup: {booking.pickupDateTime}</span>
-                  <span>Deadline: {booking.deliveryDeadline}</span>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button className="btn-primary py-2 text-xs" onClick={() => window.location.assign("/jobs")}><CheckCircle2 className="h-3.5 w-3.5" /> Assign recommended</button>
-                  <button className="btn-ghost py-2 text-xs" onClick={() => window.location.assign("/vehicles")}>Override</button>
-                  <button className="btn-ghost py-2 text-xs" onClick={() => window.location.assign("/route-planning")}>View route</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="space-y-5">
-          <div className="panel p-5">
-            <p className="section-title">Available vehicles</p>
-            <div className="mt-4 grid gap-3">
-              {vehicles.map((vehicle) => (
-                <div key={vehicle.vehicleId} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                  <div className="flex items-center justify-between">
-                    <p className="font-semibold text-slate-900">{vehicle.vehicleId} · {vehicle.vehicleType}</p>
-                    <StatusBadge status={vehicle.status} />
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">{vehicle.currentLocation} · {vehicle.maintenanceStatus} · Device {vehicle.assignedDevice}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="panel p-5">
-            <p className="section-title">Recommended driver match</p>
-            <div className="mt-4 space-y-3">
-              {drivers.slice(0, 3).map((driver, index) => (
-                <div key={driver.driverId} className="flex items-center justify-between rounded-xl border border-slate-100 bg-white p-3">
-                  <div>
-                    <p className="font-semibold text-slate-900">{driver.name}</p>
-                    <p className="text-xs text-slate-500">{driver.currentCity} · HOS {driver.hosStatus} · Safety {driver.safetyScore}</p>
-                  </div>
-                  <RiskBadge risk={index === 0 ? "Low" : index === 1 ? "Medium" : "High"} />
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Transport Operations"
+        title="Dispatch Board"
+        description="Dispatch recommendations require persisted bookings plus verified vehicle, driver, maintenance, cold-chain and safety eligibility records."
+      />
+      <EmptyState
+        title="Dispatch source not connected"
+        subtitle="No booking count, availability rate, eligibility match or dispatch recommendation is shown until the required tenant-scoped production records are connected."
+      />
     </div>
   );
 }

@@ -622,7 +622,7 @@ export function ReportsPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-800">Reports</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Build, save, and export reports from live fleet data. All queries are validated server-side against a whitelisted dataset registry.
+            Build, save, and export reports from persisted fleet records. All queries are validated server-side against a whitelisted dataset registry.
           </p>
         </div>
       </div>
