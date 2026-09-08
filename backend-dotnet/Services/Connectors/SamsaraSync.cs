@@ -8,7 +8,7 @@ namespace Opstrax.Api.Services.Connectors;
 // The Samsara → OpsTrax data pipeline. Pulls the vehicle stats feed and writes GPS
 // into the live-position tables the map reads. Kept separate from the connector so
 // it is unit-focused: one public RunAsync that does fetch → match → write → refresh.
-public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFactory, ILogger logger)
+public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFactory, ILogger logger, bool allowPartialGpsMeasurements = false)
 {
     public sealed record SyncSummary(
         int VehiclesSeen,
@@ -21,7 +21,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
 
     private sealed record ParsedFeed(List<SamsaraGps> Readings, int Rejected);
 
-    private sealed record SamsaraGps(string VehicleId, string? Name, double Lat, double Lng, double SpeedMph, int Heading, DateTime EventTime, double? OdometerMiles, string? EngineState);
+    private sealed record SamsaraGps(string VehicleId, string? Name, double Lat, double Lng, double? SpeedMph, int? Heading, DateTime EventTime, double? OdometerMiles, string? EngineState);
 
     public async Task<SyncSummary> RunAsync(
         ConnectorOperationContext operation,
@@ -33,9 +33,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         var url = "/fleet/vehicles/stats/feed?types=gps,engineStates,obdOdometerMeters";
         if (!string.IsNullOrWhiteSpace(afterCursor)) url += $"&after={Uri.EscapeDataString(afterCursor!)}";
 
-        using var resp = await GetWithRetryAsync(url, ct);
-        resp.EnsureSuccessStatusCode();
-        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        using var doc = await GetWithRetryAsync(url, ct);
 
         var parsed = ParseFeed(doc.RootElement);
         var readings = parsed.Readings;
@@ -44,11 +42,14 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         if (readings.Count == 0)
             return new SyncSummary(0, 0, 0, 0, parsed.Rejected, nextCursor, hasNext);
 
-        // 2/3. Match + write inside one system transaction (cross-tenant background write
-        //      under RLS), then refresh the live-asset projection so the map/SSE update.
+        var hasPartialGps = readings.Any(r => r.SpeedMph is null || r.Heading is null);
+        if (hasPartialGps && !allowPartialGpsMeasurements)
+            throw new InvalidDataException("Partial GPS is paused until NULL-compatible readers and schema are verified and Samsara:AllowPartialGpsMeasurements is enabled; the page was not consumed.");
+
+        // 2/3. Match, write and refresh the database live-asset projection in one
+        //      system transaction. Transport/browser delivery is a separate boundary.
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Database>();
-        var telemetry = scope.ServiceProvider.GetService<TelemetryLiveStateService>();
 
         // Additive provenance: partner/vendor API pull (Samsara). Stamp source/
         // provider/protocol/device_fix_time/normalized_at ONLY when the columns exist
@@ -73,6 +74,18 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
             // effect. If this transaction won, disconnect waits and returns only after
             // the committed data has been followed by connector invalidation.
             await ConnectorOperationLease.AssertCurrentForWriteAsync(db, operation, ct);
+            if (hasPartialGps)
+            {
+                // Never consume partial GPS against an old schema or silently replace
+                // missing measurements with defaults. The owner migration is required;
+                // a runtime writer must not repair schema or assume it was deployed.
+                var nullableColumns = await db.ScalarLongAsync(@"SELECT COUNT(*) FROM information_schema.columns
+                    WHERE table_schema='public'
+                      AND table_name IN ('location_events','latest_vehicle_positions','telemetry_live_asset_states')
+                      AND column_name IN ('speed_mph','heading') AND is_nullable='YES'", ct: ct);
+                if (nullableColumns != 6)
+                    throw new InvalidDataException("Partial GPS requires the optional-measurement schema migration; the page was not consumed.");
+            }
             foreach (var r in readings)
             {
                 var (telemetryStatus, riskLevel) =
@@ -114,17 +127,24 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                         c.Parameters.AddWithValue("@driverId", (object?)identity?.DriverId ?? DBNull.Value);
                         c.Parameters.AddWithValue("@lat", (decimal)r.Lat);
                         c.Parameters.AddWithValue("@lng", (decimal)r.Lng);
-                        c.Parameters.AddWithValue("@spd", (decimal)r.SpeedMph);
-                        c.Parameters.AddWithValue("@hdg", (short)Math.Clamp(r.Heading, 0, 359));
+                        c.Parameters.AddWithValue("@spd", r.SpeedMph is { } spd ? (object)(decimal)spd : DBNull.Value);
+                        c.Parameters.AddWithValue("@hdg", r.Heading is { } hdg ? (object)(short)hdg : DBNull.Value);
                         c.Parameters.AddWithValue("@eng", (object?)r.EngineState ?? DBNull.Value);
                         c.Parameters.AddWithValue("@odo", (object?)(r.OdometerMiles is { } o ? (decimal)o : (object?)null) ?? DBNull.Value);
                         c.Parameters.AddWithValue("@idem", $"samsara:{r.VehicleId}:{r.EventTime.Ticks}");
                         c.Parameters.AddWithValue("@etime", r.EventTime);
                     }, ct);
 
-                // A repeated cursor page/provider retry is a true no-op. In particular,
-                // do not increment latest_vehicle_positions.event_count or re-open alerts.
-                if (eventId == 0) continue;
+                // Replays never increment event_count or re-open alerts. A current
+                // mapping may still need its derived live row repaired after an older
+                // build's interrupted refresh. Refresh from canonical latest state,
+                // never from the replayed (possibly older) provider measurement.
+                if (eventId == 0)
+                {
+                    if (identity is { IsCurrentInstallation: true })
+                        touchedVehicles.Add(identity.VehicleId);
+                    continue;
+                }
                 if (identity is null) { unmatched++; continue; }
                 if (!identity.IsCurrentInstallation) { historicalOnly++; continue; }
 
@@ -160,9 +180,11 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                         c.Parameters.AddWithValue("@driverId", (object?)identity.DriverId ?? DBNull.Value);
                         c.Parameters.AddWithValue("@lat", (decimal)r.Lat);
                         c.Parameters.AddWithValue("@lng", (decimal)r.Lng);
-                        c.Parameters.AddWithValue("@spd", (decimal)r.SpeedMph);
-                        c.Parameters.AddWithValue("@hdg", (short)Math.Clamp(r.Heading, 0, 359));
-                        c.Parameters.AddWithValue("@eng", (object?)r.EngineState ?? "Running");
+                        c.Parameters.AddWithValue("@spd", r.SpeedMph is { } spd ? (object)(decimal)spd : DBNull.Value);
+                        c.Parameters.AddWithValue("@hdg", r.Heading is { } hdg ? (object)(short)hdg : DBNull.Value);
+                        // Missing engine evidence must agree with history; a GPS fix
+                        // alone cannot establish that the engine is running.
+                        c.Parameters.AddWithValue("@eng", (object?)r.EngineState ?? DBNull.Value);
                         c.Parameters.AddWithValue("@odo", (object?)(r.OdometerMiles is { } o ? (decimal)o : (object?)null) ?? DBNull.Value);
                         c.Parameters.AddWithValue("@etime", r.EventTime);
                         c.Parameters.AddWithValue("@telemetryStatus", telemetryStatus);
@@ -202,21 +224,31 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                     c.Parameters.AddWithValue("@generation", operation.Generation);
                     c.Parameters.AddWithValue("@token", operation.LeaseToken);
                 }, ct);
+            // The live row is part of the same fenced page commit. This DB-only
+            // service shares Database's ambient transaction; no nested transaction
+            // or provider I/O belongs here. Any refresh failure rolls back the page,
+            // so its cursor cannot advance while the operator-facing state is stale.
+            if (touchedVehicles.Count > 0)
+            {
+                var telemetry = scope.ServiceProvider.GetRequiredService<TelemetryLiveStateService>();
+                foreach (var vid in touchedVehicles.Order())
+                {
+                    // A duplicate skipped the UPSERT and therefore may not own the
+                    // latest-row lock. Serialize its canonical read against another
+                    // device/provider before rebuilding the derived projection.
+                    var current = await db.QuerySingleAsync(
+                        "SELECT vehicle_id FROM latest_vehicle_positions WHERE company_id=@cid AND vehicle_id=@vid FOR UPDATE",
+                        c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vid", vid); }, ct);
+                    if (current is null) continue; // No canonical position to repair.
+                    await telemetry.RefreshVehicleAsync(companyId, vid, ct);
+                }
+            }
             return true;
         }, ct);
 
-        // 4. Refresh the live-asset projection + push SSE so the map reflects Samsara data.
-        if (telemetry is not null)
-        {
-            try
-            {
-                foreach (var vid in touchedVehicles)
-                    await telemetry.RefreshVehicleAsync(companyId, vid, ct);
-            }
-            catch (Exception ex) { logger.LogWarning(ex, "Samsara live-state refresh failed for company {Company}", companyId); }
-        }
-
-        return new SyncSummary(readings.Count, written, unmatched, historicalOnly, parsed.Rejected, nextCursor, hasNext);
+        logger.LogDebug("Samsara page committed with {PositionsWritten} new mapped positions", written);
+        return new SyncSummary(readings.Select(r => r.VehicleId).Distinct(StringComparer.Ordinal).Count(),
+            written, unmatched, historicalOnly, parsed.Rejected, nextCursor, hasNext);
     }
 
     internal static (string EndCursor, bool HasNextPage) ReadPagination(JsonElement root)
@@ -254,7 +286,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         var speedThreshold = await db.ScalarDecimalAsync(
             "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1",
             c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 65m;
-        if ((decimal)reading.SpeedMph > speedThreshold)
+        if (reading.SpeedMph is { } observedSpeed && (decimal)observedSpeed > speedThreshold)
         {
             await db.ExecuteAsync(
                 @"INSERT INTO telemetry_alerts
@@ -313,14 +345,25 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
             }, ct);
     }
 
-    private async Task<HttpResponseMessage> GetWithRetryAsync(string url, CancellationToken ct)
+    private async Task<JsonDocument> GetWithRetryAsync(string url, CancellationToken ct)
     {
         for (var attempt = 0; ; attempt++)
         {
-            var response = await client.GetAsync(url, ct);
-            if ((int)response.StatusCode is not (429 or >= 500) || attempt >= 4) return response;
-            var retryAfter = ResolveRetryDelay(response.Headers.RetryAfter, attempt, DateTimeOffset.UtcNow);
-            response.Dispose();
+            TimeSpan retryAfter;
+            // Keep the deadline alive through body reads: headers-only completion
+            // stops HttpClient's own timeout before the content has arrived.
+            using (var requestCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                requestCts.CancelAfter(SamsaraResponseReader.RequestTimeout);
+                using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, requestCts.Token);
+                if ((int)response.StatusCode is not (429 or >= 500) || attempt >= 4)
+                {
+                    response.EnsureSuccessStatusCode();
+                    return await SamsaraResponseReader.ReadJsonAsync(response.Content, requestCts.Token);
+                }
+                retryAfter = ResolveRetryDelay(response.Headers.RetryAfter, attempt, DateTimeOffset.UtcNow);
+            }
+            // Retriable error bodies are never read; disposal precedes the delay.
             await Task.Delay(retryAfter, ct);
         }
     }
@@ -398,9 +441,9 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         return deviceId;
     }
 
-    // Parse the Samsara stats-feed response into flat GPS readings. Shape:
-    // { data: [ { id, name, gps:{time,latitude,longitude,headingDegrees,speedMilesPerHour},
-    //             engineStates:{value|time}, obdOdometerMeters:{value} } ] }
+    // Canonical /stats/feed uses data[].gps[] even for its initial last-known page.
+    // Sibling engine/odometer arrays have independent timestamps: never zip them or
+    // borrow their latest values. Only decorations on this GPS event are associated.
     private static ParsedFeed ParseFeed(JsonElement root)
     {
         var list = new List<SamsaraGps>();
@@ -409,40 +452,80 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
             throw new InvalidDataException("the required data array is missing.");
         foreach (var v in data.EnumerateArray())
         {
-            var id = v.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+            if (v.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("each data entry must be a vehicle object.");
+            var id = v.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String ? idEl.GetString() : null;
             if (string.IsNullOrWhiteSpace(id)) { rejected++; continue; }
-            var name = v.TryGetProperty("name", out var nEl) ? nEl.GetString() : null;
-            if (!v.TryGetProperty("gps", out var gps) || gps.ValueKind != JsonValueKind.Object) { rejected++; continue; }
+            var name = v.TryGetProperty("name", out var nEl) && nEl.ValueKind == JsonValueKind.String ? nEl.GetString() : null;
+            // An engine/odometer-only update legitimately has no GPS event.
+            if (!v.TryGetProperty("gps", out var gpsEvents)) continue;
+            if (gpsEvents.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("gps must be an array of timestamped events; the page was not consumed.");
 
-            double lat = gps.TryGetProperty("latitude", out var la) && la.TryGetDouble(out var laV) ? laV : double.NaN;
-            double lng = gps.TryGetProperty("longitude", out var lo) && lo.TryGetDouble(out var loV) ? loV : double.NaN;
-            if (double.IsNaN(lat) || double.IsNaN(lng) || lat is < -90 or > 90 || lng is < -180 or > 180 || (lat == 0 && lng == 0))
-            { rejected++; continue; } // no valid physical fix -> counted rejection, never fabricate
+            foreach (var gps in gpsEvents.EnumerateArray())
+            {
+                if (gps.ValueKind != JsonValueKind.Object)
+                    throw new InvalidDataException("each gps event must be an object; the page was not consumed.");
+                var lat = Number(gps, "latitude") ?? double.NaN;
+                var lng = Number(gps, "longitude") ?? double.NaN;
+                if (!double.IsFinite(lat) || !double.IsFinite(lng) || lat is < -90 or > 90 || lng is < -180 or > 180 || (lat == 0 && lng == 0))
+                { rejected++; continue; }
+                if (!gps.TryGetProperty("time", out var tm) || tm.ValueKind != JsonValueKind.String ||
+                    !DateTimeOffset.TryParse(tm.GetString(), out var parsedTime)) { rejected++; continue; }
+                var time = parsedTime.UtcDateTime;
+                // Keep genuine backfill; existing monotonic projection protects live state.
+                if (time < new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc) || time > DateTime.UtcNow.AddMinutes(5))
+                { rejected++; continue; }
 
-            double speed = gps.TryGetProperty("speedMilesPerHour", out var sp) && sp.TryGetDouble(out var spV) ? spV : 0;
-            if (speed is < 0 or > 200) { rejected++; continue; }
-            int heading = gps.TryGetProperty("headingDegrees", out var hd) && hd.TryGetInt32(out var hdV) ? hdV : 0;
-            if (!gps.TryGetProperty("time", out var tm) || tm.ValueKind != JsonValueKind.String ||
-                !DateTimeOffset.TryParse(tm.GetString(), out var parsedTime)) { rejected++; continue; }
-            var time = parsedTime.UtcDateTime;
-            var now = DateTime.UtcNow;
-            // Valid provider backfill is retained without an arbitrary seven-day loss
-            // window. Monotonic projection below prevents an old fix from replacing live
-            // state or creating current alerts. Implausible/future timestamps are counted.
-            if (time < new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc) || time > now.AddMinutes(5))
-            { rejected++; continue; }
+                // Valid GPS does not require these optional measurements. Preserve
+                // absence explicitly; malformed provided values are not "unknown".
+                var speed = OptionalNumber(gps, "speedMilesPerHour");
+                var bearing = OptionalNumber(gps, "headingDegrees");
+                if (speed is { } s && (!double.IsFinite(s) || s is < 0 or > 200)
+                    || bearing is { } b && (!double.IsFinite(b) || b is < 0 or > 360))
+                { rejected++; continue; }
+                int? heading = bearing is { } degrees ? (int)Math.Floor(degrees % 360) : null;
 
-            double? odoMiles = null;
-            if (v.TryGetProperty("obdOdometerMeters", out var odo) && odo.TryGetProperty("value", out var ov) && ov.TryGetDouble(out var meters))
-                odoMiles = meters / 1609.344; // meters → miles
-
-            string? engine = null;
-            if (v.TryGetProperty("engineStates", out var es))
-                engine = es.ValueKind == JsonValueKind.Object && es.TryGetProperty("value", out var ev) ? ev.GetString()
-                       : es.ValueKind == JsonValueKind.String ? es.GetString() : null;
-
-            list.Add(new SamsaraGps(id!, name, lat, lng, speed, heading, time, odoMiles, engine));
+                var decorations = gps.TryGetProperty("decorations", out var dec) ? dec : default;
+                if (decorations.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Object))
+                    throw new InvalidDataException("gps decorations must be an object.");
+                var engineValue = DecorationValue(decorations, "engineStates");
+                if (engineValue.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.String))
+                    throw new InvalidDataException("gps engineStates decoration value must be a string.");
+                var engine = engineValue.ValueKind == JsonValueKind.String ? engineValue.GetString() : null;
+                if (string.IsNullOrWhiteSpace(engine)) engine = null;
+                var odoValue = DecorationValue(decorations, "obdOdometerMeters");
+                double? odoMiles = null;
+                if (odoValue.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
+                {
+                    if (odoValue.ValueKind != JsonValueKind.Number || !odoValue.TryGetInt64(out var meters) || meters < 0)
+                        throw new InvalidDataException("gps obdOdometerMeters decoration must contain nonnegative integer meters.");
+                    odoMiles = meters / 1609.344;
+                }
+                list.Add(new SamsaraGps(id!, name, lat, lng, speed, heading, time, odoMiles, engine));
+            }
         }
         return new ParsedFeed(list, rejected);
+    }
+
+    private static double? Number(JsonElement value, string property) =>
+        value.TryGetProperty(property, out var number) && number.ValueKind == JsonValueKind.Number && number.TryGetDouble(out var result)
+            ? result : null;
+
+    private static double? OptionalNumber(JsonElement gps, string field)
+    {
+        if (!gps.TryGetProperty(field, out var value) || value.ValueKind == JsonValueKind.Null) return null;
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var number))
+            throw new InvalidDataException($"GPS {field} must be a number when supplied; the page was not consumed.");
+        return number;
+    }
+
+    private static JsonElement DecorationValue(JsonElement decorations, string property)
+    {
+        if (decorations.ValueKind != JsonValueKind.Object || !decorations.TryGetProperty(property, out var value)
+            || value.ValueKind == JsonValueKind.Null) return default;
+        if (value.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException($"gps {property} decoration must be an object.");
+        return value.TryGetProperty("value", out var reading) ? reading : default;
     }
 }

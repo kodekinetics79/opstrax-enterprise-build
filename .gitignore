@@ -19,6 +19,7 @@ obj/
 .DS_Store
 npm-debug.log*
 *.log
+~$*
 __pycache__/
 *.py[cod]
 .vercel
@@ -55,3 +56,19 @@ tools/telematics/captures/
 /telemetry-plan*.json
 /telemetry-execution*.jsonl
 /telemetry-execution*.stderr
+
+# Working docs, task notes, and generated audit reports (not part of the shipped app)
+/AUDIT_REPORT.md
+/Driver Module Task.md
+/Driver-Module-Test-Report.md
+/Example Report.md
+/Fleet-PreQA-Analysis.md
+/OpsTrax Codebase Issues findings.xlsx
+/OpsTrax_Audit_Findings.xlsx
+/Task.md
+/Vehicle Module Task.md
+/Vehicle-Module-Test-Report.md
+
+# Standalone Playwright UX audit tool: own package.json/lockfile plus generated
+# screenshots, captured fixtures, and console-error dumps — not part of the app.
+/opstrax-test/

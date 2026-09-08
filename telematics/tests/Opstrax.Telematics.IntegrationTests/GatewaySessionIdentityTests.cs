@@ -518,6 +518,11 @@ public class GatewaySessionIdentityTests
         await stream.WriteAsync(heartbeat);
 
         Assert.Equal(AckForFrame(heartbeat), await ReadExactlyAsync(stream, 10));
+
+        // NetworkStream can expose the ACK to the client before the gateway thread advances
+        // its process-local counters. Synchronize on the completed write so loaded CI runners
+        // cannot observe the preceding AcksSent value here.
+        await WaitUntilAsync(() => gw.Metrics.AcksSent == 2, SocketTimeout);
         Assert.Equal(1, gw.Metrics.HeartbeatPackets);
         Assert.Equal(2, gw.Metrics.AcksSent);
     }

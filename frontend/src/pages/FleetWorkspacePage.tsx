@@ -19,6 +19,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useHasPermission } from '@/hooks/usePermission';
 import { ShipmentLifecycleDrawer } from '../components/fleet/ShipmentLifecycleDrawer';
 import type { AnyRecord } from '@/types';
+import { formatTelemetrySpeed, optionalTelemetrySpeed, telemetrySpeedSummary } from '@/utils/telemetryMeasurements';
 
 type FleetMode = 'command' | 'shipments' | 'vehicles' | 'tracking' | 'maintenance' | 'fuel' | 'carriers';
 
@@ -212,9 +213,12 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
         ];
       case 'tracking':
         return [
-          { label: 'Moving', value: String(tracking.filter((p) => p.status === 'In Transit').length) },
+          { label: 'Moving samples', value: String(tracking.filter((p) => {
+            const speed = optionalTelemetrySpeed(p.speedKph);
+            return speed != null && speed > 3 * 1.609344;
+          }).length) },
           { label: 'With alerts', value: String(tracking.filter((p) => p.alertType).length) },
-          { label: 'Top speed', value: tracking.length ? `${fmt0(Math.max(0, ...tracking.map((p) => num(p.speedKph))))} km/h` : '—' },
+          { label: 'Top reported speed', value: formatTelemetrySpeed(telemetrySpeedSummary(tracking.map((p) => p.speedKph)).peak, 'km/h') },
         ];
       case 'maintenance':
         return [
@@ -732,7 +736,7 @@ function TrackingCard({ point, onOpen, canOpen }: { point: FleetTrackingPoint; o
     <BoardCard>
       <CardHead title={point.shipmentNumber} subtitle={`${point.locationLabel} · ${point.geofenceName}`}
         chip={<CardChip text={point.status} tone={statusTone(point.status)} />} />
-      <CardMeta items={[point.vehicleNumber, `${fmt0(point.speedKph)} km/h`, point.alertType || 'No alert']} />
+      <CardMeta items={[point.vehicleNumber, formatTelemetrySpeed(point.speedKph, 'km/h'), point.alertType || 'No alert']} />
       <p className={`text-[11px] font-semibold ${point.isLive ? 'text-emerald-700' : 'text-slate-500'}`}>
         {trackingProvenance(point)}
       </p>

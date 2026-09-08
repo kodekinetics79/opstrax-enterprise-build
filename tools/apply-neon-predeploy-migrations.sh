@@ -236,6 +236,20 @@ MIGRATIONS=(
   # Catalog entries are opportunities, not evidence. Reset never-verified built-in
   # rows to an honest disconnected/pending state without deleting tenant config.
   2026_09_02_stage97_integration_catalog_truth
+  # Explicit unknown GPS measurements; preserve old producer defaults and rows.
+  2026_09_02_stage98_optional_gps_measurements
+  # HOS legal-time values fail closed unless an authoritative source is persisted.
+  2026_09_03_stage99_hos_clock_source_truth
+  # Dashcam/provider media remains fail-closed until authentic provider evidence exists.
+  2026_09_03_stage100_dashcam_provider_media_truth
+  # Native Driver/Fleet/Customer Expo push token lifecycle; FORCE-RLS and user scoped.
+  2026_09_05_stage101_mobile_push_tokens
+  # Retire only recognized demo camera rows that still imply provider/video/AI evidence.
+  2026_09_06_stage104_camera_demo_truth_cleanup
+  # Separate operator observations from authenticated sensor/gateway measurements.
+  2026_09_06_stage105_cold_chain_measurement_authority
+  # Alerts and compliance reports retain the authority of their source readings.
+  2026_09_06_stage106_cold_chain_alert_report_authority
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -387,9 +401,53 @@ BEGIN
       ('2026_08_12_stage77_protected_role_bootstrap'),
       ('2026_08_13_stage78_country_profiles_runtime_contract'),
       ('2026_08_13_stage79_tenant_provisioning_runtime_contract'),
-      ('2026_08_14_stage80_fleet_identity_backbone')) required(version)
+      ('2026_08_14_stage80_fleet_identity_backbone'),
+      ('2026_09_06_stage104_camera_demo_truth_cleanup'),
+      ('2026_09_06_stage105_cold_chain_measurement_authority'),
+      ('2026_09_06_stage106_cold_chain_alert_report_authority')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM dashcam_events de
+    JOIN companies c ON c.id=de.company_id
+    WHERE de.deleted_at IS NULL
+      AND de.source_authority IN ('LegacyUnverified','ProviderPending')
+      AND de.title ~ '^AI dashcam (review|event) [0-9]+$'
+      AND (de.event_number ~ '^VID-[0-9]{5}$' OR de.event_number ~ '^VID-B4-[0-9]{4}$')
+      AND (LOWER(c.name) LIKE '%demo%' OR LOWER(c.company_code) LIKE '%demo%')
+  ) THEN
+    RAISE EXCEPTION 'Stage104 camera demo truth cleanup is incomplete';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='fleet_tms_temperature_readings'
+      AND column_name='measurement_authority'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='fleet_tms_temperature_devices'
+      AND column_name='last_measurement_source'
+  ) THEN
+    RAISE EXCEPTION 'Stage105 cold-chain measurement authority columns are missing';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM fleet_tms_temperature_devices
+    WHERE last_measurement_source IS NOT NULL
+      AND last_measurement_source NOT IN ('Sensor','Gateway')
+  ) THEN
+    RAISE EXCEPTION 'Stage105 device state contains a non-device measurement source';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='fleet_tms_temperature_alerts'
+      AND column_name='measurement_authority'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='fleet_tms_cold_chain_reports'
+      AND column_name='evidence_authority'
+  ) THEN
+    RAISE EXCEPTION 'Stage106 cold-chain alert/report authority columns are missing';
+  END IF;
   IF to_regclass('public.uq_ftms_dorders_company_number') IS NULL
      OR to_regclass('public.telemetry_gateways') IS NULL
      OR to_regclass('public.uq_ftms_route_progress_key') IS NULL

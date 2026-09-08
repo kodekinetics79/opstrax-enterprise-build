@@ -9,28 +9,79 @@
       "distribution": "internal",
       "environment": "development",
       "env": {
-        "EXPO_PUBLIC_STAGE": "development"
+        "EXPO_PUBLIC_STAGE": "development",
+        "EXPO_PUBLIC_APP_VARIANT": "unified"
       },
       "android": {
         "buildType": "apk"
       }
     },
-    "preview": {
+    "preview-driver": {
       "node": "20.19.4",
       "distribution": "internal",
       "environment": "preview",
       "env": {
-        "EXPO_PUBLIC_STAGE": "preview"
+        "EXPO_PUBLIC_STAGE": "preview",
+        "EXPO_PUBLIC_APP_VARIANT": "driver"
       },
       "android": {
         "buildType": "apk"
       }
     },
-    "production": {
+    "preview-fleet": {
+      "node": "20.19.4",
+      "distribution": "internal",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_STAGE": "preview",
+        "EXPO_PUBLIC_APP_VARIANT": "fleet"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "preview-customer": {
+      "node": "20.19.4",
+      "distribution": "internal",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_STAGE": "preview",
+        "EXPO_PUBLIC_APP_VARIANT": "customer"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production-driver": {
       "node": "20.19.4",
       "environment": "production",
       "env": {
-        "EXPO_PUBLIC_STAGE": "production"
+        "EXPO_PUBLIC_STAGE": "production",
+        "EXPO_PUBLIC_APP_VARIANT": "driver"
+      },
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      }
+    },
+    "production-fleet": {
+      "node": "20.19.4",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_STAGE": "production",
+        "EXPO_PUBLIC_APP_VARIANT": "fleet"
+      },
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      }
+    },
+    "production-customer": {
+      "node": "20.19.4",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_STAGE": "production",
+        "EXPO_PUBLIC_APP_VARIANT": "customer"
       },
       "autoIncrement": true,
       "android": {
@@ -39,6 +90,8 @@
     }
   },
   "submit": {
-    "production": {}
+    "production-driver": {},
+    "production-fleet": {},
+    "production-customer": {}
   }
 }

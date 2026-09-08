@@ -113,7 +113,10 @@ public static partial class EndpointMappings
             record,
             notes = await db.QueryAsync("SELECT * FROM coaching_notes WHERE coaching_task_id=@id AND company_id=@cid ORDER BY created_at DESC", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
             relatedSafetyEvents = await db.QueryAsync("SELECT * FROM safety_events WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", record["safetyEventId"] ?? DBNull.Value); c.Parameters.AddWithValue("@cid", companyId); }, ct),
-            relatedDashcamEvents = await db.QueryAsync("SELECT * FROM dashcam_events WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", record["dashcamEventId"] ?? DBNull.Value); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            relatedDashcamEvents = await db.QueryAsync(
+                $"SELECT {DashcamMetadataColumns} FROM dashcam_events WHERE id=@id AND company_id=@cid" +
+                (GetBranchId(http) is null ? string.Empty : " AND branch_id=@branchId"),
+                c => { c.Parameters.AddWithValue("@id", record["dashcamEventId"] ?? DBNull.Value); BindTenantAndBranch(c, http); }, ct),
             // Recommendations currently have tenant ownership but no branch ownership metadata.
             // Do not expose tenant-wide narrative content to a branch-scoped principal.
             recommendations = GetBranchId(http) is null
@@ -257,12 +260,18 @@ public static partial class EndpointMappings
         return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
         {
         var current = await db.QuerySingleAsync(
-            "SELECT ct.status,ct.branch_id FROM coaching_tasks ct WHERE ct.id=@id AND ct.company_id=@cid AND ct.deleted_at IS NULL" + CoachingBranchScope(http) + " FOR UPDATE",
+            "SELECT ct.status,ct.branch_id,ct.driver_acknowledged,ct.acknowledged_at FROM coaching_tasks ct WHERE ct.id=@id AND ct.company_id=@cid AND ct.deleted_at IS NULL" + CoachingBranchScope(http) + " FOR UPDATE",
             c => { c.Parameters.AddWithValue("@id", id); BindTenantAndBranch(c, http); }, ct);
         if (current is null) return Results.NotFound(ApiResponse<object>.Fail("Coaching task not found"));
         var currentStatus = current["status"]?.ToString() ?? string.Empty;
         if (!AllowedCoachingTransition(currentStatus, target))
             return Results.Conflict(ApiResponse<object>.Fail($"Cannot move coaching task from {currentStatus} to {target}."));
+
+        // Escalation preserves workflow topology, but cannot substitute for the
+        // driver's recorded acknowledgement before supervisor completion.
+        if (string.Equals(target, "Completed", StringComparison.OrdinalIgnoreCase) &&
+            (current["driverAcknowledged"] is not true || current["acknowledgedAt"] is null or DBNull))
+            return Results.Conflict(ApiResponse<object>.Fail("A recorded driver acknowledgement is required before completion."));
 
         var affected = await db.ExecuteAsync(
             @"UPDATE coaching_tasks ct SET status=@target,driver_acknowledged=CASE WHEN @target='Driver Acknowledged' THEN TRUE ELSE driver_acknowledged END,

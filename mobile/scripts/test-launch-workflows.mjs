@@ -75,12 +75,13 @@ test("mobile screens consume the actual nested API contracts", async () => {
 });
 
 test("mobile navigation, login, and persisted state are tenant and identity scoped", async () => {
-  const [navigation, login, workflow] = await Promise.all([
+  const [navigation, login, workflow, productAccess] = await Promise.all([
     source("src/navigation/RootNavigator.tsx"),
     source("src/screens/LoginScreen.tsx"),
     source("src/workflow/WorkflowContext.tsx"),
+    source("src/auth/productAccess.ts"),
   ]);
-  assert.match(navigation, /directPermissions\.has\("driver:self"\)/);
+  assert.match(productAccess, /directPermissions\.has\("driver:self"\)/);
   assert.match(login, /Organization code/);
   assert.match(login, /login\(email, password, companyCode\)/);
   assert.match(navigation, /canProof \? <Tabs\.Screen/);
@@ -110,12 +111,17 @@ test("mobile build exposes no inbound URL-to-navigation surface while the review
   const forbiddenInboundApis = /Linking\.(?:getInitialURL|addEventListener)|\b(?:getStateFromPath|getPathFromState|useLinkTo|useLinkProps)\b|<Link\b|\blinking\s*=/;
   for (const [path, content] of sources) {
     assert.doesNotMatch(content, forbiddenInboundApis, `${path} must not expose inbound URL-to-navigation APIs`);
-    if (path !== "screens/DriverTripScreen.tsx") {
+    if (path !== "screens/DriverTripScreen.tsx" && path !== "screens/SettingsScreen.tsx") {
       assert.doesNotMatch(content, /\bLinking\./, `${path} must not use React Native Linking`);
     }
   }
   assert.equal((trip.match(/Linking\.canOpenURL/g) || []).length, 1);
   assert.equal((trip.match(/Linking\.openURL/g) || []).length, 1);
+
+  const settings = sources.find(([path]) => path === "screens/SettingsScreen.tsx")?.[1] ?? "";
+  assert.match(settings, /Linking\.canOpenURL\(url\)/);
+  assert.match(settings, /Linking\.openURL\(url\)/);
+  assert.doesNotMatch(settings, /Linking\.getInitialURL|Linking\.addEventListener/);
 });
 
 test("manual object identifiers and fake offline success are not exposed", async () => {

@@ -1,6 +1,18 @@
 import { useMemo } from "react";
 import { Alert, View } from "react-native";
-import { ActionButton, EmptyState, ErrorState, Field, LoadingState, Panel, Pill, Row, Screen, SectionHeader } from "@/components/ui";
+import {
+  ActionButton,
+  EmptyState,
+  ErrorState,
+  Field,
+  HeroPanel,
+  LoadingState,
+  Panel,
+  Pill,
+  Row,
+  Screen,
+  SectionHeader,
+} from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useWorkflow } from "@/workflow/WorkflowContext";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
@@ -74,21 +86,30 @@ export function WorkflowScreen() {
 
   return (
     <Screen>
-      <Panel>
-        <SectionHeader eyebrow="Operational workflow" title="Smart assignment to proof" description="This tab shows the live operational spine for the selected job. Every action is permission-gated." />
+      <HeroPanel tone="violet">
+        <SectionHeader
+          eyebrow="Operational workflow"
+          title={selectedJobId ? `Work item #${selectedJobId}` : "Smart assignment to proof"}
+          description="A mobile view of the selected job’s operational spine. Every read and mutation stays permission-gated."
+          right={<Pill label={selectedJobId ? "Loaded" : "Select work"} tone={selectedJobId ? "teal" : "amber"} />}
+        />
         <Row>
-          <Pill label={hasPermission("dispatch.smart_assign.read") ? "Assignment readable" : "Assignment hidden"} tone={hasPermission("dispatch.smart_assign.read") ? "teal" : "amber"} />
-          <Pill label={hasPermission("operations.proof.submit") ? "Proof submit enabled" : "Proof submit read-only"} tone={hasPermission("operations.proof.submit") ? "teal" : "amber"} />
+          <Pill label={canReadRecommendations ? "Assignment readable" : "Assignment hidden"} tone={canReadRecommendations ? "teal" : "amber"} />
+          <Pill label={hasPermission("operations.proof.submit") ? "Proof submit enabled" : "Proof submit read-only"} tone={hasPermission("operations.proof.submit") ? "green" : "amber"} />
         </Row>
         <ActionButton label="Refresh workflow data" onPress={refreshAll} variant="secondary" />
-      </Panel>
+      </HeroPanel>
 
       {selectedJobId == null ? (
-        <EmptyState title="No job loaded" body="Return to the dashboard and select a live job id. The app will then load the operational workflow from the backend." />
+        <EmptyState title="No job loaded" body="Return to the dashboard and select a live job. OpsTrax does not allow free-form database ID entry in the mobile workflow." />
       ) : (
         <>
-          <Panel>
-            <SectionHeader eyebrow="Smart assignment" title="Recommendation and acceptance state" description="AI remains recommendation-only. Accept/reject is only available when the backend permission exists." />
+          <Panel variant="elevated" tone="violet">
+            <SectionHeader
+              eyebrow="Smart assignment"
+              title="Recommendation and acceptance state"
+              description="AI remains recommendation-only. Accept or reject is available only when the backend grants the action."
+            />
             {!canReadRecommendations ? (
               <EmptyState title="Recommendations not available" body="This authenticated session does not grant smart-assignment read access." />
             ) : recommendations.loading ? (
@@ -97,8 +118,10 @@ export function WorkflowScreen() {
               <ErrorState title="Recommendation error" body={recommendations.error} onRetry={recommendations.refresh} />
             ) : latestRecommendation ? (
               <View style={{ gap: 10 }}>
-                <Field label="Recommendation score" value={textOf(latestRecommendation.score ?? latestRecommendation.recommendation_score)} />
-                <Field label="Confidence" value={textOf(latestRecommendation.confidence ?? latestRecommendation.confidence_score)} />
+                <Row>
+                  <View style={{ flex: 1 }}><Field label="Recommendation score" value={textOf(latestRecommendation.score ?? latestRecommendation.recommendation_score)} /></View>
+                  <View style={{ flex: 1 }}><Field label="Confidence" value={textOf(latestRecommendation.confidence ?? latestRecommendation.confidence_score)} /></View>
+                </Row>
                 <Field label="Risk level" value={textOf(latestRecommendation.risk_level ?? latestRecommendation.risk)} />
                 <Field label="Status" value={textOf(latestRecommendation.status)} />
                 <Field label="Recommended driver" value={textOf(latestRecommendation.driverName ?? latestRecommendation.recommended_driver_name ?? latestRecommendation.recommendedDriverId)} />
@@ -111,14 +134,14 @@ export function WorkflowScreen() {
             )}
             {hasPermission("dispatch.smart_assign.accept") || hasPermission("dispatch.smart_assign.reject") ? (
               <Row>
-                {hasPermission("dispatch.smart_assign.accept") ? <ActionButton label={latestRecommendation ? "Accept" : "Accept (no recommendation)"} onPress={() => decideRecommendation("accept")} disabled={!latestRecommendation} /> : null}
-                {hasPermission("dispatch.smart_assign.reject") ? <ActionButton label={latestRecommendation ? "Reject" : "Reject (no recommendation)"} onPress={() => decideRecommendation("reject")} disabled={!latestRecommendation} variant="secondary" /> : null}
+                {hasPermission("dispatch.smart_assign.accept") ? <ActionButton label={latestRecommendation ? "Accept recommendation" : "Accept unavailable"} onPress={() => decideRecommendation("accept")} disabled={!latestRecommendation} /> : null}
+                {hasPermission("dispatch.smart_assign.reject") ? <ActionButton label={latestRecommendation ? "Reject recommendation" : "Reject unavailable"} onPress={() => decideRecommendation("reject")} disabled={!latestRecommendation} variant="danger" /> : null}
               </Row>
             ) : null}
           </Panel>
 
-          <Panel>
-            <SectionHeader eyebrow="Site access" title="Gate pass, NOC, and access controls" description="This view keeps access blockers visible before validation or proof completion." />
+          <Panel variant="elevated" tone="amber">
+            <SectionHeader eyebrow="Site access" title="Gate pass, NOC, and access controls" description="Access blockers stay visible before validation or proof completion." />
             {!canReadSiteAccess ? (
               <EmptyState title="Site access not available" body="This authenticated session does not grant site-access read access." />
             ) : siteAccess.loading ? (
@@ -138,7 +161,7 @@ export function WorkflowScreen() {
             )}
           </Panel>
 
-          <Panel>
+          <Panel variant="elevated" tone="blue">
             <SectionHeader eyebrow="Pickup authorization" title="Third-party handoff control" description="Pickup authorization remains explicit and tenant-scoped." />
             {!canReadPickup ? (
               <EmptyState title="Pickup authorization not available" body="This authenticated session does not grant pickup-authorization read access." />
@@ -159,7 +182,7 @@ export function WorkflowScreen() {
             )}
           </Panel>
 
-          <Panel>
+          <Panel variant="elevated" tone="teal">
             <SectionHeader eyebrow="Warehouse handover" title="Inbound / outbound handover state" description="Warehouse completion is visible here without introducing a full warehouse portal." />
             {!canReadHandovers ? (
               <EmptyState title="Warehouse handover not available" body="This authenticated session does not grant warehouse-handover read access." />
@@ -180,8 +203,8 @@ export function WorkflowScreen() {
             )}
           </Panel>
 
-          <Panel>
-            <SectionHeader eyebrow="Proof package" title="POD / proof of delivery" description="The mobile shell shows proof package state without auto-validating or issuing anything." />
+          <Panel variant="elevated" tone="green">
+            <SectionHeader eyebrow="Proof package" title="POD / proof of delivery" description="The mobile shell shows proof state without auto-validating or issuing anything." />
             {!canReadProof ? (
               <EmptyState title="Proof package not available" body="This authenticated session does not grant proof-package read access." />
             ) : proofPackages.loading ? (
@@ -204,7 +227,7 @@ export function WorkflowScreen() {
             )}
           </Panel>
 
-          <Panel>
+          <Panel variant="quiet" tone="blue">
             <SectionHeader eyebrow="Billing confidence" title="Trust signal for finance" description="This is a confidence preview only. The mobile app does not issue invoices or change finance state." />
             <Field label="Billing confidence" value={textOf(latestProofPackage?.billing_confidence ?? latestProofPackage?.billingConfidence)} />
             <Field label="Open blockers" value={textOf(latestProofPackage?.blockers ?? latestProofPackage?.missing_data)} />

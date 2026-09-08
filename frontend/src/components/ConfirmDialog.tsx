@@ -124,14 +124,14 @@ export function ConfirmDialog({
 
   return (
     <div className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4" role="presentation">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={messageId} className="panel w-full max-w-md p-6">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={messageId} className="panel max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto p-4">
         <div className="flex items-start justify-between gap-3">
-          <h2 id={titleId} className="text-xl font-semibold text-slate-900">{title}</h2>
+          <h2 id={titleId} className="min-w-0 break-words text-xl font-semibold text-slate-900">{title}</h2>
           <button type="button" className="icon-btn" aria-label={`Close ${title}`} disabled={busy} onClick={onCancel}><X className="h-4 w-4" /></button>
         </div>
         <div id={messageId} className="mt-3 text-sm text-slate-600">{message}</div>
         {error ? <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
-        <div className="mt-6 flex justify-end gap-3">
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
           <button
             ref={cancelButton}
             type="button"
@@ -141,7 +141,7 @@ export function ConfirmDialog({
           >
             {cancelLabel}
           </button>
-          <button type="button" className={variant === "danger" ? "btn-danger" : "btn-primary"} disabled={busy} onClick={onConfirm}>
+          <button type="button" className={variant === "danger" ? "btn-danger btn-cta" : "btn-primary btn-cta"} disabled={busy} onClick={onConfirm}>
             {busy ? "Working..." : confirmLabel}
           </button>
         </div>

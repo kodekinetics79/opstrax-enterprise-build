@@ -18,8 +18,12 @@ into this session and act on them.
   API clients in `frontend/src/services`. Dispatch board lives in
   `DispatchCommandPage.tsx` (route `/dispatch`).
 - **Primary backend**: `.NET` `Opstrax.Api` (`backend-dotnet/`), the real API.
-  Local `:8088`, deployed on Render (`opstrax-enterprise-build-*.onrender.com`).
-  Most endpoints are mapped in `backend-dotnet/Controllers/EndpointMappings.cs`.
+  Local `:8088`, deployed on Render at **`https://osptrax-fleet-management.onrender.com`**.
+  The `osptrax` transposition is the ACTUAL spelling on Render — not a typo, do not
+  "fix" it. Any `opstrax-enterprise-build-*.onrender.com` host is DECOMMISSIONED: it
+  still completes the TCP/TLS handshake but never answers, so callers hang until they
+  time out instead of failing fast. Verify with `/health/live` before assuming a host
+  is live. Most endpoints are mapped in `backend-dotnet/Controllers/EndpointMappings.cs`.
 - **Side service**: Node backend (`backend/`, `:8090`) — auth/integrations/telemetry only.
 - **DB**: Neon Postgres (connection in `.env` / `backend-dotnet/appsettings.json`).
 - **Multi-tenant**: 4 real companies; reads must be scoped by `company_id`.

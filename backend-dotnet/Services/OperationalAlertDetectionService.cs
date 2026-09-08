@@ -73,8 +73,7 @@ public sealed class OperationalAlertDetectionService(
         {
             await SweepAsync(db, "maintenance_due", MaintenanceDueSql, ct);
             await SweepAsync(db, "sla_breach", SlaBreachSql, ct);
-            await SweepAsync(db, "hos_violation", HosRecordsSql, ct);
-            await SweepAsync(db, "hos_violation(clocks)", HosClocksSql, ct);
+            await SweepAsync(db, "hos_violation(authoritative_clocks)", HosClocksSql, ct);
             await SweepAsync(db, "fuel_anomaly", FuelAnomalySql, ct);
             await SweepAsync(db, "idling", IdlingSql, ct);
         }, ct);
@@ -149,32 +148,11 @@ public sealed class OperationalAlertDetectionService(
                             AND ta.created_at > NOW() - INTERVAL '24 hours')
         """;
 
-    // Latest hos_records row per driver (today/yesterday): out of drive hours or an
-    // explicit violation status. hos_records is the canonical store dispatch already
-    // gates on; it fires as soon as real ELD data (or the seeder) populates it.
-    private const string HosRecordsSql = """
-        INSERT INTO telemetry_alerts (company_id, driver_id, alert_type, severity, message, status, source_channel)
-        SELECT r.company_id, r.driver_id, 'hos_violation', 'High',
-               'HOS violation — driver #' || r.driver_id || ': ' ||
-               CASE WHEN COALESCE(r.remaining_drive_hours, 99) <= 0 THEN 'no drive hours remaining'
-                    ELSE 'status ' || COALESCE(r.hos_status, 'violation') END,
-               'Open', 'detector'
-        FROM (
-          SELECT DISTINCT ON (company_id, driver_id) company_id, driver_id, remaining_drive_hours, hos_status
-          FROM hos_records
-          WHERE company_id IS NOT NULL AND shift_date >= CURRENT_DATE - 1
-          ORDER BY company_id, driver_id, shift_date DESC, id DESC
-        ) r
-        WHERE (COALESCE(r.remaining_drive_hours, 99) <= 0
-               OR LOWER(COALESCE(r.hos_status,'')) IN ('violation','out_of_hours','out of hours'))
-          AND NOT EXISTS (SELECT 1 FROM telemetry_alerts ta
-                          WHERE ta.company_id = r.company_id AND ta.driver_id = r.driver_id
-                            AND ta.alert_type = 'hos_violation'
-                            AND ta.created_at > NOW() - INTERVAL '24 hours')
-        """;
-
-    // Companion source: hos_clocks carries an explicit status ('Violation'|'Warning'|'OK')
-    // and remaining drive minutes. Only clocks touched in the last 24h count as live.
+    // HOS alerting is a compliance/safety claim, not a convenience signal. The legacy
+    // hos_records table can contain demo/manual values and has no certified-source
+    // provenance contract, so it is deliberately NOT consumed here. Stage99 makes
+    // hos_clocks fail closed and permits actionable values only for rows explicitly
+    // marked Authoritative with persisted source identity and observation time.
     private const string HosClocksSql = """
         INSERT INTO telemetry_alerts (company_id, driver_id, alert_type, severity, message, status, source_channel)
         SELECT c.company_id, c.driver_id, 'hos_violation', 'High',
@@ -183,7 +161,10 @@ public sealed class OperationalAlertDetectionService(
                'Open', 'detector'
         FROM hos_clocks c
         WHERE c.company_id IS NOT NULL AND c.driver_id IS NOT NULL
-          AND c.updated_at > NOW() - INTERVAL '24 hours'
+          AND c.source_authority = 'Authoritative'
+          AND c.clock_source IS NOT NULL AND BTRIM(c.clock_source) <> ''
+          AND c.source_observed_at IS NOT NULL
+          AND c.source_observed_at > NOW() - INTERVAL '24 hours'
           AND (c.status = 'Violation' OR c.drive_time_remaining_minutes <= 0)
           AND NOT EXISTS (SELECT 1 FROM telemetry_alerts ta
                           WHERE ta.company_id = c.company_id AND ta.driver_id = c.driver_id
@@ -222,16 +203,18 @@ public sealed class OperationalAlertDetectionService(
                             AND ta.created_at > NOW() - INTERVAL '6 hours')
         """;
 
-    // Sustained zero speed while the device keeps reporting. engine_status is
-    // vendor free text on real ingest paths, so it is used only to EXCLUDE clearly
-    // switched-off vehicles (parked ≠ idling); the load-bearing signal is
-    // speed ≈ 0 across a window of fresh fixes covering ≥80% of the configured
-    // 'idling' minutes (default 15).
+    // A candidate idling window needs explicit low speed AND affirmative engine
+    // evidence at every observed sample. NULLs must break evidence coverage, not
+    // be removed by a WHERE predicate or ignored by MAX/BOOL_AND. Legacy Running
+    // defaults are not engine-on proof. Sparse samples do not prove continuity:
+    // the message reports a possible condition, not continuous idling duration.
     private const string IdlingSql = """
         WITH win AS (
           SELECT le.company_id, le.vehicle_id,
                  COALESCE(MAX(t.threshold_value), 15) AS threshold_minutes,
                  COUNT(*) AS fixes,
+                 COUNT(CASE WHEN le.speed_mph >= 0 AND le.speed_mph < 1
+                   AND LOWER(TRIM(COALESCE(le.engine_status,''))) IN ('on','idle') THEN 1 END) AS affirmative_fixes,
                  MAX(le.speed_mph) AS max_speed,
                  MIN(le.event_time) AS first_seen,
                  MAX(le.event_time) AS last_seen,
@@ -247,15 +230,15 @@ public sealed class OperationalAlertDetectionService(
         SELECT w.company_id, w.vehicle_id, 'idling',
                COALESCE((SELECT tr.severity FROM telemetry_rules tr
                          WHERE tr.company_id = w.company_id AND tr.rule_type = 'idling' AND tr.enabled = TRUE LIMIT 1), 'Warning'),
-               'Excessive idling: stationary for ' ||
-               GREATEST(1, ROUND(EXTRACT(EPOCH FROM (w.last_seen - w.first_seen)) / 60))::int || ' min with engine on',
+               'Possible idling: low-speed engine-on samples observed over ' ||
+               GREATEST(1, ROUND(EXTRACT(EPOCH FROM (w.last_seen - w.first_seen)) / 60))::int || ' min; continuous idling not established',
                'Open', 'detector'
         FROM win w
         WHERE w.fixes >= 3
+          AND w.affirmative_fixes = w.fixes
           AND w.max_speed < 1
           AND w.last_seen > NOW() - INTERVAL '5 minutes'
           AND EXTRACT(EPOCH FROM (w.last_seen - w.first_seen)) / 60 >= w.threshold_minutes * 0.8
-          AND LOWER(COALESCE(w.last_engine, '')) NOT IN ('off','stopped','parked','ignition off','ignition_off','engine off','engineoff')
           AND NOT EXISTS (SELECT 1 FROM telemetry_alerts ta
                           WHERE ta.company_id = w.company_id AND ta.vehicle_id = w.vehicle_id
                             AND ta.alert_type = 'idling'

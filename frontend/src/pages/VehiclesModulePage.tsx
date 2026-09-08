@@ -157,9 +157,9 @@ export function VehiclesModulePage() {
               <Plus className="h-4 w-4" /> New vehicle
             </button>
           ) : null}
-          <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary h-10">
+          {section !== "roster" && <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary h-10">
             Open roster <ArrowRight className="h-4 w-4" />
-          </button>
+          </button>}
         </div>
       </div>
     </header>
@@ -170,18 +170,19 @@ export function VehiclesModulePage() {
       {shellBanner}
 
       <nav className="fc-neumo sticky top-4 z-20 p-2">
-        <div className="grid gap-1 sm:grid-cols-5">
+        <div className="grid grid-cols-2 gap-1 min-[420px]:grid-cols-3 sm:grid-cols-5">
           {SECTIONS.map((item) => (
             <button
               key={item.key}
               type="button"
+              aria-current={section === item.key ? "page" : undefined}
               onClick={() => navigate(`/vehicles/${item.key}`)}
-              className={`rounded-xl px-3 py-2.5 text-left transition ${
+              className={`min-h-11 min-w-0 rounded-xl px-3 py-2.5 text-left transition ${
                 section === item.key ? "fc-seg-btn-active rounded-xl" : "hover:bg-white/60"
               }`}
             >
               <div className={`text-xs font-bold uppercase tracking-[0.14em] ${section === item.key ? "text-teal-800" : "text-slate-700"}`}>{item.label}</div>
-              <div className="mt-0.5 text-[11px] text-slate-500">{item.description}</div>
+              <div className="mt-0.5 hidden text-[11px] text-slate-500 lg:block">{item.description}</div>
             </button>
           ))}
         </div>
@@ -251,7 +252,7 @@ export function VehiclesModulePage() {
         </div>
       )}
 
-      {section === "roster" && <VehiclesRosterPage />}
+      {section === "roster" && <VehiclesRosterPage embedded />}
 
       {section === "planning" && <PlanningView rows={rows} planning={planning.data as AnyRecord} onNavigate={navigate} />}
       {section === "health" && <HealthView rows={rows} onNavigate={navigate} />}

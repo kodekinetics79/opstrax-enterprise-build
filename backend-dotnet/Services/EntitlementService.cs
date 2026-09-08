@@ -102,15 +102,36 @@ public sealed class EntitlementService(Database db)
             c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@m", meterKey); c.Parameters.AddWithValue("@p", period); }, ct) ?? 0m;
     }
 
-    // Records a usage event and bumps the rolled-up counter for the period. Never
-    // throws into the caller's request path — metering must not break a tenant action.
+    // Records raw usage evidence and updates the rolled-up counter as ONE PostgreSQL
+    // statement. PostgreSQL statement atomicity means an execution can no longer
+    // persist the event while losing the counter update (or vice versa).
+    //
+    // This closes the partial-write half of G6B-BILL-001 only. Replay/idempotency is
+    // intentionally a separate contract because the current human-readable reference
+    // field is not a universally safe event identity for every meter.
     public async Task RecordAsync(long companyId, string meterKey, decimal quantity = 1, string? reference = null, string? actor = null, CancellationToken ct = default)
     {
         try
         {
             var period = await MeterPeriodKeyAsync(meterKey, ct);
             await db.ExecuteAsync(
-                "INSERT INTO usage_events (company_id, meter_key, quantity, reference, actor, period_key) VALUES (@c,@m,@q,@r,@a,@p)",
+                """
+                WITH accepted_event AS (
+                    INSERT INTO usage_events
+                        (company_id, meter_key, quantity, reference, actor, period_key)
+                    VALUES
+                        (@c, @m, @q, @r, @a, @p)
+                    RETURNING quantity
+                )
+                INSERT INTO usage_counters
+                    (company_id, meter_key, period_key, value, updated_at)
+                SELECT @c, @m, @p, quantity, NOW()
+                  FROM accepted_event
+                ON CONFLICT (company_id, meter_key, period_key)
+                DO UPDATE SET
+                    value = usage_counters.value + EXCLUDED.value,
+                    updated_at = NOW()
+                """,
                 c =>
                 {
                     c.Parameters.AddWithValue("@c", companyId);
@@ -120,21 +141,14 @@ public sealed class EntitlementService(Database db)
                     c.Parameters.AddWithValue("@a", (object?)actor ?? DBNull.Value);
                     c.Parameters.AddWithValue("@p", period);
                 }, ct);
-            await db.ExecuteAsync("""
-                INSERT INTO usage_counters (company_id, meter_key, period_key, value, updated_at)
-                VALUES (@c,@m,@p,@q,NOW())
-                ON CONFLICT (company_id, meter_key, period_key)
-                DO UPDATE SET value = usage_counters.value + EXCLUDED.value, updated_at = NOW()
-                """,
-                c =>
-                {
-                    c.Parameters.AddWithValue("@c", companyId);
-                    c.Parameters.AddWithValue("@m", meterKey);
-                    c.Parameters.AddWithValue("@p", period);
-                    c.Parameters.AddWithValue("@q", quantity);
-                }, ct);
         }
-        catch { /* metering is best-effort; never fail the tenant's action */ }
+        catch
+        {
+            // Metering remains decoupled from the tenant action at this stage. Because
+            // event+counter are now one SQL statement, a failed metering execution has
+            // no partial billing effect. Durable retry/observability is tracked by
+            // G6B-BILL-001 and must close before commercial billing certification.
+        }
     }
 
     private async Task<string> MeterPeriodKeyAsync(string meterKey, CancellationToken ct)

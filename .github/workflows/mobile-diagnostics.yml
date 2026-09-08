@@ -1,0 +1,42 @@
+name: Mobile Diagnostics
+
+on:
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-diagnostics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck-diagnostics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.2'
+      - name: Install mobile dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: mobile
+      - name: Capture TypeScript diagnostics
+        id: typecheck
+        shell: bash
+        run: |
+          set +e
+          npm run typecheck > "$RUNNER_TEMP/mobile-typecheck.log" 2>&1
+          status=$?
+          cat "$RUNNER_TEMP/mobile-typecheck.log"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+        working-directory: mobile
+      - name: Upload TypeScript diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mobile-typecheck-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/mobile-typecheck.log
+          if-no-files-found: error
+          retention-days: 7

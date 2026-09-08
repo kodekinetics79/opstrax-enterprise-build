@@ -9,7 +9,11 @@ services:
     # reachable AND critical config is valid; returns 503 until then. See
     # /health/ready in Program.cs.
     healthCheckPath: /health/ready
-    # Release candidates are promoted only after exact-SHA evidence and approval.
+    # Release candidates are promoted only after the owner migration chain and
+    # exact-SHA evidence have passed. Keep both fields while existing services
+    # migrate from Render's legacy Blueprint key; autoDeployTrigger takes
+    # precedence and prevents a merge from racing ahead of its database.
+    autoDeployTrigger: off
     autoDeploy: false
     envVars:
       - key: ASPNETCORE_ENVIRONMENT

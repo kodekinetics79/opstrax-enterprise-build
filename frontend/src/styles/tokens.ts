@@ -40,9 +40,13 @@ export const tokens = {
 
   // Radii
   rCard: "18px",
-  rBtn: "12px",
-  rField: "12px",
+  rBtn: "8px",
+  rField: "8px",
   rClay: "20px",
+  controlStandard: "34px",
+  controlCompact: "32px",
+  controlCta: "38px",
+  controlTouch: "44px",
 
   // v5.0 blur scale (mirror of --blur-*)
   blurXs: "4px",

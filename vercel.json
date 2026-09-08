@@ -1,9 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "cd frontend && npm ci --no-audit --no-fund",
-  "buildCommand": "cd frontend && node -e \"if (!process.env.VITE_API_BASE_URL && !process.env.VITE_DOTNET_API_URL) { console.error('VITE_API_BASE_URL is required for the Vercel production build'); process.exit(1) }\" && npm run build",
+  "buildCommand": "cd frontend && node scripts/check-api-base-url.mjs && npm run build",
   "outputDirectory": "frontend/dist",
   "routes": [
+    {
+      "src": "/deployment.json",
+      "headers": {
+        "Cache-Control": "public, max-age=0, must-revalidate"
+      },
+      "continue": true
+    },
     {
       "src": "/.*",
       "headers": {

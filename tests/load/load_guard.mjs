@@ -9,6 +9,18 @@ export const PROFILE_LIMITS = Object.freeze({
   stress: Object.freeze({ iterationsPerSecond: 10, durationSeconds: 600, maxVus: 50 }),
 });
 
+// Dataset size is a different axis from request intensity. A 50K-fleet acceptance
+// run means the isolated staging tenant contains at least 50,000 vehicles/assets in
+// the declared evidence population; it does NOT authorize 50,000 VUs or unbounded RPS.
+export const DATASET_TIERS = Object.freeze({
+  "1k": 1_000,
+  "2_5k": 2_500,
+  "5k": 5_000,
+  "10k": 10_000,
+  "25k": 25_000,
+  "50k": 50_000,
+});
+
 function splitHosts(value) {
   return new Set(String(value || "").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean));
 }
@@ -82,6 +94,18 @@ export function resolveLoadConfig(env = process.env) {
   const maxVus = boundedInteger("LOAD_MAX_VUS", env.LOAD_MAX_VUS || limits.maxVus, limits.maxVus);
   if (maxVus > 50 || durationSeconds > 600 || iterationsPerSecond > 10) throw new Error("Load hard cap exceeded");
 
+  const datasetTier = String(env.LOAD_DATASET_TIER || "1k").toLowerCase();
+  const minimumVehicles = DATASET_TIERS[datasetTier];
+  if (!minimumVehicles) throw new Error("LOAD_DATASET_TIER must be one of 1k, 2_5k, 5k, 10k, 25k, 50k");
+  const datasetVehicleCount = boundedInteger(
+    "LOAD_DATASET_VEHICLE_COUNT",
+    env.LOAD_DATASET_VEHICLE_COUNT || minimumVehicles,
+    250_000,
+  );
+  if (datasetVehicleCount < minimumVehicles) {
+    throw new Error(`LOAD_DATASET_VEHICLE_COUNT is below the ${datasetTier} tier minimum of ${minimumVehicles}`);
+  }
+
   return Object.freeze({
     profile,
     apiBaseUrl: `${url.origin}${url.pathname.replace(/\/$/, "")}`,
@@ -93,6 +117,9 @@ export function resolveLoadConfig(env = process.env) {
     maximumRequestsPerSecond: iterationsPerSecond * 2,
     durationSeconds,
     maxVus,
+    datasetTier,
+    datasetMinimumVehicles: minimumVehicles,
+    datasetVehicleCount,
   });
 }
 
@@ -106,6 +133,9 @@ export function sanitizedConfig(config) {
     maximumRequestsPerSecond: config.maximumRequestsPerSecond,
     durationSeconds: config.durationSeconds,
     maxVus: config.maxVus,
+    datasetTier: config.datasetTier,
+    datasetMinimumVehicles: config.datasetMinimumVehicles,
+    datasetVehicleCount: config.datasetVehicleCount,
     methods: ["GET"],
   });
 }

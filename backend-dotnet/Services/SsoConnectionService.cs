@@ -5,18 +5,19 @@ namespace Opstrax.Api.Services;
 // ─────────────────────────────────────────────────────────────────────────────
 // SsoConnectionService — Scoped
 //
-// Manages SSO/OIDC/SAML readiness connection configurations.
+// Manages enterprise SSO connection configuration.
 //
-// SECURITY DESIGN:
+// SECURITY / PRODUCT-TRUTH DESIGN:
 //   - client_secret is NEVER stored here. client_secret_ref holds a vault key name
 //     or secret-manager reference (e.g. "vault://opstrax/tenant-42/oidc-secret").
 //   - client_secret_ref is NEVER returned in API reads — only presence is indicated.
 //   - Callers must configure the actual secret in their vault / secrets manager
 //     and pass only the reference string here.
-//
-// This is a readiness model: it configures what providers are supported,
-// but does not implement full OIDC/SAML login flows. Those require
-// provider-specific integration work and are clearly labeled.
+//   - OIDC has a real authorization-code + PKCE login implementation via
+//     OidcLoginService and the /api/auth/sso/start + callback endpoints.
+//   - SAML is representable as future configuration only. Until a real SAML
+//     AuthnRequest/ACS/assertion-signature flow exists and is independently verified,
+//     SAML connections MUST remain disabled and cannot be presented as usable SSO.
 // ─────────────────────────────────────────────────────────────────────────────
 
 public sealed class SsoConnectionService(Database db, AuditService audit, SecurityEventService secEvent)
@@ -160,6 +161,14 @@ public sealed class SsoConnectionService(Database db, AuditService audit, Securi
             throw new ArgumentException("issuer_or_entity_id is required");
         if (string.IsNullOrWhiteSpace(dto.ClientId))
             throw new ArgumentException("client_id is required");
+
+        // Product-truth boundary: the application has a real OIDC login flow but no
+        // SAML AuthnRequest/ACS/assertion-validation implementation yet. Preserve SAML
+        // configuration for future implementation, but never allow it to become an
+        // enabled/advertised authentication path merely because a row exists.
+        if (dto.ProviderType == "saml" && dto.Enabled)
+            throw new ArgumentException(
+                "SAML SSO is not yet an implemented authentication path; save the connection disabled until SAML login is implemented and verified.");
     }
 }
 

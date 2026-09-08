@@ -288,7 +288,7 @@ export function FleetOverviewPage() {
   }
 
   return (
-    <div className="ops-deck flex h-full min-h-0 flex-col gap-3">
+    <div className="ops-deck flex min-h-full shrink-0 flex-col gap-3">
 
       {/* ── Console rail: title, live meta, clock, primary action ─────────── */}
       <header className="deck-rail relative shrink-0 px-5 py-3.5 pl-7 pr-7">
@@ -332,10 +332,10 @@ export function FleetOverviewPage() {
       </p>
 
       {/* ── Main deck: roster console + instrument rail ───────────────────── */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_324px]">
+      <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
 
         {/* Roster console — neumorphic chassis with an inset bezel screen */}
-        <section className="deck-neumo flex min-h-[480px] flex-col overflow-hidden xl:min-h-0">
+        <section className="deck-neumo flex min-w-0 flex-col overflow-hidden">
           <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pb-3 pt-3.5">
             <div className="deck-seg flex flex-wrap items-center gap-1 p-1">
               {STATUS_TABS.map((t) => (
@@ -398,13 +398,13 @@ export function FleetOverviewPage() {
             </button>
           </div>
 
-          <div className="deck-bezel mx-3 flex min-h-0 flex-1 flex-col">
+          <div className="deck-bezel mx-3 flex min-w-0 flex-col">
             <div
               id="fleet-roster"
-              className="deck-screen min-h-0 flex-1 overflow-auto"
+              className="deck-screen h-[min(52dvh,560px)] min-h-[280px] overflow-auto"
               aria-busy={isFleetSettling || vehiclesQ.isFetching}
             >
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[1040px] text-sm">
                 <thead className="sticky top-0 z-10 bg-[#fcfdff]">
                   <tr className="border-b border-slate-200/80">
                     <th className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Vehicle</th>
@@ -470,7 +470,7 @@ export function FleetOverviewPage() {
                           </div>
                         </td>
                         <td className="px-3 py-3">
-                          <button type="button" className="btn-ghost h-7 gap-1 px-3 text-xs" onClick={() => navigate(`/vehicles/${v.vehicleId}/live`)}>
+                          <button type="button" className="btn-ghost btn-compact h-8 gap-1 px-3 text-xs" onClick={() => navigate(`/vehicles/${v.vehicleId}/live`)}>
                             Live detail
                             <ChevronRight className="h-3 w-3" />
                           </button>
@@ -524,7 +524,7 @@ export function FleetOverviewPage() {
             <nav className="ml-auto inline-flex items-center gap-2" aria-label="Fleet pages">
               <button
                 type="button"
-                className="btn-ghost h-8 px-3 text-xs"
+                className="btn-ghost btn-compact h-8 px-3 text-xs"
                 disabled={displayPage <= 1 || vehiclesQ.isFetching || isFleetSettling}
                 onClick={() => setPage(Math.max(1, displayPage - 1))}
                 aria-label="Previous fleet page"
@@ -536,7 +536,7 @@ export function FleetOverviewPage() {
               </span>
               <button
                 type="button"
-                className="btn-ghost h-8 px-3 text-xs"
+                className="btn-ghost btn-compact h-8 px-3 text-xs"
                 disabled={pageCount === 0 || displayPage >= pageCount || vehiclesQ.isFetching || isFleetSettling}
                 onClick={() => setPage(Math.min(pageCount, displayPage + 1))}
                 aria-label="Next fleet page"
@@ -607,20 +607,18 @@ function ClayKpi({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`deck-clay ${tone} ${active ? "deck-clay-pressed" : ""} flex flex-col gap-2.5 p-4 text-left`}
+      className={`deck-clay ${tone} ${active ? "deck-clay-pressed" : ""} flex min-w-0 flex-col gap-2 p-3 text-left`}
     >
       <div className="flex items-center gap-3">
         <span className="deck-blob">
           <Icon className={`h-4.5 w-4.5 ${icon}`} />
         </span>
-        <div className="min-w-0">
-          <p className="text-[22px] font-black leading-none tabular-nums text-slate-900">{count}</p>
-          <p className="mt-1 flex items-center gap-1.5 text-[11px] font-bold text-slate-600">
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
-            <span className="truncate">{label}</span>
-          </p>
-        </div>
+        <p className="min-w-0 text-[22px] font-black leading-none tabular-nums text-slate-900">{count}</p>
       </div>
+      <p className="flex min-h-[2.5em] items-start gap-1.5 text-[11px] font-bold leading-tight text-slate-600">
+        <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+        <span>{label}</span>
+      </p>
       <div className="flex items-center gap-2">
         <div className="deck-track flex-1">
           <div className={`deck-fill ${fill}`} style={{ width: `${pct}%` }} />

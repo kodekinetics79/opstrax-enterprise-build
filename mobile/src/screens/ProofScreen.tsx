@@ -1,5 +1,19 @@
 import { Alert, Text, View } from "react-native";
-import { ActionButton, EmptyState, ErrorState, Field, LoadingState, Panel, Row, Screen, SectionHeader } from "@/components/ui";
+import {
+  ActionButton,
+  EmptyState,
+  ErrorState,
+  Field,
+  HeroPanel,
+  LoadingState,
+  Panel,
+  Pill,
+  Row,
+  Screen,
+  SectionHeader,
+  colors,
+  toneForStatus,
+} from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useWorkflow } from "@/workflow/WorkflowContext";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
@@ -25,7 +39,6 @@ export function ProofScreen() {
 
   const proofPackages = useAsyncResource(async () => (selectedJobId && canReadProof ? api.proofPackages(selectedJobId) : null), [api, selectedJobId, canReadProof, refreshKey]);
   const latestProof = asArray(proofPackages.data)[0] ?? null;
-
   const proofArtifacts = useAsyncResource(async () => (latestProof?.id && canReadArtifacts ? api.proofArtifacts(latestProof.id as number | string) : null), [api, latestProof?.id, canReadArtifacts, refreshKey]);
   const billingConfidence = useAsyncResource(async () => (latestProof?.id && canReadProof ? api.billingConfidence(latestProof.id as number | string) : null), [api, latestProof?.id, canReadProof, refreshKey]);
   const artifacts = asArray(proofArtifacts.data);
@@ -58,19 +71,21 @@ export function ProofScreen() {
 
   return (
     <Screen>
-      <Panel>
-        <SectionHeader eyebrow="Proof center" title="Evidence, submit, validate" description="This screen focuses on proof package life cycle and evidence artifacts." />
-        <Row>
-          <Text style={{ color: "white" }}>{hasPermission("operations.proof.submit") ? "Submit enabled" : "Read-only proof"}</Text>
-        </Row>
+      <HeroPanel tone="green">
+        <SectionHeader
+          eyebrow="Proof center"
+          title={selectedJobId ? `Evidence for work #${selectedJobId}` : "Evidence, submit, validate"}
+          description="Proof lifecycle, evidence metadata, validation, and billing confidence stay tied to the selected authorized job."
+          right={<Pill label={hasPermission("operations.proof.submit") ? "Submit enabled" : "Read only"} tone={hasPermission("operations.proof.submit") ? "green" : "amber"} />}
+        />
         <ActionButton label="Refresh proof data" onPress={bumpRefreshKey} variant="secondary" />
-      </Panel>
+      </HeroPanel>
 
       {selectedJobId == null ? (
         <EmptyState title="No job loaded" body="Select a job from the dashboard to see proof package and evidence records." />
       ) : (
         <>
-          <Panel>
+          <Panel variant="elevated" tone={latestProof ? toneForStatus(String(latestProof.status ?? "")) : "blue"}>
             <SectionHeader eyebrow="Proof package" title="Current package" description="The app renders the package exactly as the backend returned it." />
             {!canReadProof ? (
               <EmptyState title="Proof not available" body="This authenticated session does not grant proof-package access." />
@@ -80,8 +95,10 @@ export function ProofScreen() {
               <ErrorState title="Proof packages unavailable" body={proofPackages.error} onRetry={proofPackages.refresh} />
             ) : latestProof ? (
               <View style={{ gap: 10 }}>
-                <Field label="Proof type" value={textOf(latestProof.proof_type ?? latestProof.proofType)} />
-                <Field label="Status" value={textOf(latestProof.status)} />
+                <Row>
+                  <View style={{ flex: 1 }}><Field label="Proof type" value={textOf(latestProof.proof_type ?? latestProof.proofType)} /></View>
+                  <View style={{ flex: 1 }}><Field label="Status" value={textOf(latestProof.status)} /></View>
+                </Row>
                 <Field label="Validation status" value={textOf(latestProof.validation_status ?? latestProof.validationStatus)} />
                 <Field label="Receiver name" value={textOf(latestProof.receiver_name ?? latestProof.receiverName)} />
                 <Field label="Receiver phone" value={textOf(latestProof.receiver_phone ?? latestProof.receiverPhone)} />
@@ -93,17 +110,17 @@ export function ProofScreen() {
             )}
           </Panel>
 
-          <Panel>
-            <SectionHeader eyebrow="Proof actions" title="Submit and validate" description="Action buttons are visible only when the session has the corresponding permission." />
+          <Panel variant="solid" tone="teal">
+            <SectionHeader eyebrow="Proof actions" title="Submit and validate" description="Actions are visible only when the authenticated session has the corresponding permission and state gate." />
             <Row>
-              {hasPermission("operations.proof.submit") ? <ActionButton label={canSubmitState ? "Submit" : !latestProof ? "Submit (no package)" : artifacts.length === 0 ? "Submit (evidence required)" : "Submit (draft or rejected only)"} onPress={() => runProofAction("submit")} disabled={!canSubmitState} /> : null}
-              {hasPermission("operations.proof.validate") ? <ActionButton label={canValidateState ? "Validate" : !latestProof ? "Validate (no package)" : "Validate (submitted only)"} onPress={() => runProofAction("validate")} disabled={!canValidateState} variant="secondary" /> : null}
+              {hasPermission("operations.proof.submit") ? <ActionButton label={canSubmitState ? "Submit proof package" : !latestProof ? "Submit unavailable" : artifacts.length === 0 ? "Evidence required" : "Draft or rejected only"} onPress={() => runProofAction("submit")} disabled={!canSubmitState} /> : null}
+              {hasPermission("operations.proof.validate") ? <ActionButton label={canValidateState ? "Validate proof package" : !latestProof ? "Validate unavailable" : "Submitted packages only"} onPress={() => runProofAction("validate")} disabled={!canValidateState} variant="secondary" /> : null}
             </Row>
-            <Text style={{ color: "white" }}>AI and the mobile client never execute business actions automatically.</Text>
+            <Text style={{ color: colors.muted, lineHeight: 19 }}>AI and the mobile client never submit or validate business evidence automatically.</Text>
           </Panel>
 
-          <Panel>
-            <SectionHeader eyebrow="Evidence artifacts" title="Uploaded or captured proof metadata" description="The app does not fake file uploads. If the file service is not ready, the gap stays visible." />
+          <Panel variant="elevated" tone="blue">
+            <SectionHeader eyebrow="Evidence artifacts" title="Captured proof metadata" description="No fake file cards are created. Missing evidence remains visible as a real gap." />
             {!canReadArtifacts ? (
               <EmptyState title="Artifacts not available" body="This authenticated session does not grant proof-artifact access." />
             ) : proofArtifacts.loading ? (
@@ -113,21 +130,23 @@ export function ProofScreen() {
             ) : artifacts.length === 0 ? (
               <EmptyState title="No evidence artifacts" body="No proof artifacts were returned for the selected proof package." />
             ) : (
-              artifacts.map((artifact, index) => (
-                <View key={String(artifact.id ?? index)} style={{ gap: 10 }}>
-                  <Field label="Artifact type" value={textOf(artifact.artifact_type ?? artifact.artifactType)} />
-                  <Field label="File reference" value={textOf(artifact.file_ref ?? artifact.fileReference)} />
-                  <Field label="Captured at" value={textOf(artifact.captured_at ?? artifact.capturedAt)} />
-                  <Field label="Uploaded at" value={textOf(artifact.uploaded_at ?? artifact.uploadedAt)} />
-                  <Field label="Captured by" value={textOf(artifact.captured_by ?? artifact.capturedBy)} />
-                  <Field label="Device id" value={textOf(artifact.device_id ?? artifact.deviceId)} />
-                  <Field label="Geo data" value={textOf(artifact.geo_data ?? artifact.geoData)} />
-                </View>
-              ))
+              <View style={{ gap: 12 }}>
+                {artifacts.map((artifact, index) => (
+                  <Panel key={String(artifact.id ?? index)} variant="quiet" tone="blue">
+                    <Field label="Artifact type" value={textOf(artifact.artifact_type ?? artifact.artifactType)} />
+                    <Field label="File reference" value={textOf(artifact.file_ref ?? artifact.fileReference)} />
+                    <Field label="Captured at" value={textOf(artifact.captured_at ?? artifact.capturedAt)} />
+                    <Field label="Uploaded at" value={textOf(artifact.uploaded_at ?? artifact.uploadedAt)} />
+                    <Field label="Captured by" value={textOf(artifact.captured_by ?? artifact.capturedBy)} />
+                    <Field label="Device id" value={textOf(artifact.device_id ?? artifact.deviceId)} />
+                    <Field label="Geo data" value={textOf(artifact.geo_data ?? artifact.geoData)} />
+                  </Panel>
+                ))}
+              </View>
             )}
           </Panel>
 
-          <Panel>
+          <Panel variant="elevated" tone="violet">
             <SectionHeader eyebrow="Billing confidence" title="Finance trust preview" description="This is a read-only confidence signal. It never issues invoices." />
             {!canReadProof ? (
               <EmptyState title="Billing confidence not available" body="Proof read access is required for this signal." />

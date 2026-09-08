@@ -232,13 +232,6 @@ SELECT 1, ((n-1)%20)+1, ((n-1)%20)+1,
   (ARRAY['Open','Reviewing','Coaching Assigned'])[(n%3)+1]
 FROM seq;
 
-INSERT INTO dashcam_events (company_id, safety_event_id, title, severity, coaching_status)
-WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 8)
-SELECT 1, n, 'AI dashcam review ' || n,
-  (ARRAY['Low','Medium','High','Critical'])[(n%4)+1],
-  (ARRAY['Needs Review','Coach Driver','Resolved'])[(n%3)+1]
-FROM seq;
-
 INSERT INTO compliance_documents (company_id, related_entity_type, related_entity_id, document_type, document_name, expiry_date, status)
 WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10)
 SELECT 1, (ARRAY['Vehicle','Driver'])[(n%2)+1], n,

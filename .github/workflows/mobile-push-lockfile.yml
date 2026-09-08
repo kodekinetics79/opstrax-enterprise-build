@@ -1,0 +1,42 @@
+name: Mobile Push Lockfile
+
+on:
+  push:
+    branches:
+      - feat/mobile-native-push-v1
+    paths:
+      - .github/workflows/mobile-push-lockfile.yml
+      - mobile/package.json
+
+permissions:
+  contents: read
+
+jobs:
+  generate-lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 20.19.4
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: Generate SDK 56 notification dependency lock
+        working-directory: mobile
+        run: npm install expo-notifications@~56.0.25 --save --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Install generated dependency graph
+        working-directory: mobile
+        run: npm ci --no-audit --no-fund
+      - name: Validate with repo-local Expo SDK 56 CLI
+        working-directory: mobile
+        run: npx --no-install expo install --check
+      - name: Upload generated manifests
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mobile-push-generated-manifests
+          path: |
+            mobile/package.json
+            mobile/package-lock.json
+          if-no-files-found: error
+          retention-days: 3

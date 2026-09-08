@@ -122,7 +122,7 @@ export interface FleetTrackingPoint {
   alertType: string;
   latitude: number;
   longitude: number;
-  speedKph: number;
+  speedKph: number | null;
   recordedAtUtc: string;
   estimatedArrivalUtc?: string;
   notes: string;
@@ -475,9 +475,17 @@ export interface TemperatureDevice {
   shipmentNumber?: string | null;
   vehicleNumber: string;
   status: string;
-  lastReportedTemperatureCelsius: number;
-  batteryPercent: number;
+  sensorType: string;
+  measurementUnit: string;
+  calibrationStatus: string;
+  calibratedAtUtc?: string | null;
+  calibrationDueAtUtc?: string | null;
+  calibrationReference?: string | null;
+  lastReportedTemperatureCelsius?: number | null;
+  batteryPercent?: number | null;
   lastPingAtUtc?: string | null;
+  lastMeasurementSource?: string | null;
+  lastMeasurementObservedAtUtc?: string | null;
   notes: string;
   createdAtUtc?: string;
   updatedAtUtc?: string | null;
@@ -499,9 +507,11 @@ export interface TemperatureReading {
   latitude?: number | null;
   longitude?: number | null;
   source: string;
+  measurementAuthority: string;
   status: string;
   notes: string;
   recordedAtUtc: string;
+  receivedAtUtc: string;
   createdAtUtc: string;
 }
 
@@ -518,6 +528,7 @@ export interface TemperatureAlert {
   thresholdMin: number;
   thresholdMax: number;
   measuredTemperature: number;
+  measurementAuthority: "DeviceReported" | "GatewayReported" | "OperatorObserved";
   triggeredAtUtc: string;
   resolvedAtUtc?: string | null;
   resolvedBy: string;
@@ -531,6 +542,7 @@ export interface ColdChainReport {
   shipmentNumber: string;
   generatedAtUtc: string;
   compliancePercent: number;
+  evidenceAuthority: "AuthenticatedDevice";
   minTemperatureCelsius: number;
   maxTemperatureCelsius: number;
   totalReadings: number;
@@ -695,8 +707,9 @@ export interface ColdChainSummaryResponse {
     eventLogCount?: number;
     totalReadings: number;
     breachReadings: number;
-    avgTemperatureCelsius: number;
-    compliancePercent: number;
+    avgTemperatureCelsius: number | null;
+    compliancePercent: number | null;
+    evidenceBasis: "NoAuthenticatedMeasurements" | "AuthenticatedDeviceMeasurements";
   };
   zones: TemperatureZone[];
   devices: Array<Pick<TemperatureDevice, "id" | "deviceCode" | "name" | "vehicleNumber" | "status" | "lastReportedTemperatureCelsius" | "batteryPercent" | "lastPingAtUtc" | "notes"> & {
@@ -738,6 +751,7 @@ export const fleetColdChainApi = {
     correlationId?: string;
     causationId?: string;
     metadataJson?: string;
+    observedAtUtc?: string;
   }) => unwrap<TemperatureReading>(apiClient.post("/api/fleet-tms/cold-chain/readings", body)),
   alerts: (status?: string) => unwrap<{ items: TemperatureAlert[] }>(apiClient.get("/api/fleet-tms/cold-chain/alerts", { params: status ? { status } : undefined })),
   resolveAlert: (id: string, body: { resolutionNotes?: string } = {}) =>

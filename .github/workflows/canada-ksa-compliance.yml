@@ -1,0 +1,127 @@
+name: Canada KSA Compliance Gate
+
+on:
+  pull_request:
+    paths:
+      - 'database/migrations/2026_09_03_stage101_canada_ksa_compliance_baseline.sql'
+      - 'docs/commercialization/compliance/**'
+      - 'backend-dotnet.Tests/CanadaKsaComplianceBaselineMigrationTests.cs'
+      - 'tools/apply-canada-ksa-compliance-predeploy.sh'
+      - 'tools/launch/test_production_render_release_contract.mjs'
+      - '.github/workflows/production-render-release.yml'
+      - '.github/workflows/canada-ksa-compliance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  stage101-postgres:
+    name: Stage101 real Postgres + release-contract gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17@sha256:a426e44bac0b759c95894d68e1a0ac03ecc20b619f498a91aae373bf06d8508d
+        env:
+          POSTGRES_USER: zayra
+          POSTGRES_PASSWORD: zayra
+          POSTGRES_DB: opstrax_compliance
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U zayra -d opstrax_compliance"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.2'
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Verify production release ordering contract
+        run: node --test tools/launch/test_production_render_release_contract.mjs
+
+      - name: Apply canonical chain plus Stage101 to disposable Postgres
+        env:
+          NEON_PG_URI: postgresql://zayra:zayra@127.0.0.1:5433/opstrax_compliance?sslmode=disable
+        run: bash ./tools/apply-canada-ksa-compliance-predeploy.sh
+
+      - name: Prove Stage101 is idempotent
+        env:
+          NEON_PG_URI: postgresql://zayra:zayra@127.0.0.1:5433/opstrax_compliance?sslmode=disable
+        run: |
+          set -euo pipefail
+          python3 tools/psql-neon-env.py -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_09_03_stage101_canada_ksa_compliance_baseline.sql
+          count=$(python3 tools/psql-neon-env.py -tA -c \
+            "SELECT COUNT(*) FROM schema_migrations WHERE version='2026_09_03_stage101_canada_ksa_compliance_baseline'")
+          test "$count" = "1"
+
+      - name: Verify Canada and KSA reference truth
+        env:
+          PGPASSWORD: zayra
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_compliance -v ON_ERROR_STOP=1 <<'SQL'
+          DO $verify$
+          BEGIN
+            IF EXISTS (
+              SELECT 1 FROM countries WHERE code='SA' AND hos_ruleset ILIKE '%SASO%'
+            ) THEN RAISE EXCEPTION 'Saudi ruleset still misattributes HOS to SASO'; END IF;
+
+            IF EXISTS (
+              SELECT 1 FROM compliance_rules
+              WHERE is_active AND rule_code IN ('SA-HOS-10H','TC-NSC-CARRIER')
+            ) THEN RAISE EXCEPTION 'Obsolete active compliance rule remains'; END IF;
+
+            IF NOT EXISTS (
+              SELECT 1 FROM compliance_profiles
+              WHERE country_code='CA' AND profile_name='Canada Federal HOS - South of 60N'
+                AND max_driving_hours=13 AND max_duty_hours=14 AND rest_requirement_hours=10
+            ) THEN RAISE EXCEPTION 'Canada south profile missing or wrong'; END IF;
+
+            IF NOT EXISTS (
+              SELECT 1 FROM compliance_profiles
+              WHERE country_code='CA' AND profile_name='Canada Federal HOS - North of 60N'
+                AND max_driving_hours=15 AND max_duty_hours=18
+            ) THEN RAISE EXCEPTION 'Canada north profile missing or wrong'; END IF;
+
+            IF NOT EXISTS (
+              SELECT 1 FROM compliance_profiles
+              WHERE country_code='SA' AND profile_name='Saudi TGA Goods Transport HOS'
+                AND authority='Transport General Authority (TGA)'
+                AND max_driving_hours=9 AND rest_requirement_hours=11
+            ) THEN RAISE EXCEPTION 'Saudi TGA profile missing or wrong'; END IF;
+
+            IF (SELECT COUNT(*) FROM compliance_rules WHERE is_active AND rule_code IN (
+              'CA-S60-HOS-13H-DRIVE','CA-S60-HOS-14H-DUTY','CA-S60-HOS-16H-ELAPSED',
+              'CA-S60-HOS-10H-OFFDUTY','CA-S60-HOS-24H-OFF-14D',
+              'CA-S60-HOS-C1-70H-7D','CA-S60-HOS-C2-120H-14D',
+              'CA-S60-HOS-C2-70H-24H-OFF','CA-S60-HOS-C1-RESET-36H','CA-S60-HOS-C2-RESET-72H',
+              'CA-N60-HOS-15H-DRIVE','CA-N60-HOS-18H-DUTY','CA-N60-HOS-20H-ELAPSED',
+              'CA-N60-HOS-C1-80H-7D','CA-N60-HOS-C2-120H-14D',
+              'CA-N60-HOS-C2-80H-24H-OFF','CA-N60-HOS-C1-RESET-36H','CA-N60-HOS-C2-RESET-72H',
+              'SA-TGA-HOS-9H-DRIVE','SA-TGA-HOS-10H-EXT-2X','SA-TGA-HOS-56H-7D',
+              'SA-TGA-HOS-90H-14D','SA-TGA-HOS-BREAK-4_5H','SA-TGA-HOS-DAILY-REST-11H',
+              'SA-TGA-HOS-WEEKLY-REST-48H','SA-TGA-HOS-MAX-6D','SA-TGA-TRACKING-PROVIDER'
+            )) <> 27 THEN
+              RAISE EXCEPTION 'Expected Canada/KSA compliance-rule set incomplete';
+            END IF;
+          END
+          $verify$;
+          SQL
+
+      - name: Record gate boundary
+        run: |
+          echo "Stage101 SQL + release ordering passed on disposable Postgres."
+          echo "This does NOT satisfy external ELD certification, TGA provider qualification, real hardware, privacy, or field-evidence gates."

@@ -18,18 +18,32 @@ const queryClient = new QueryClient({
   },
 });
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <I18nProvider>
-        <BrowserRouter>
-          <ErrorBoundary>
-            <AuthProvider>
-              <App />
-            </AuthProvider>
-          </ErrorBoundary>
-        </BrowserRouter>
-      </I18nProvider>
-    </QueryClientProvider>
-  </React.StrictMode>,
-);
+function render() {
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <I18nProvider>
+          <BrowserRouter>
+            <ErrorBoundary>
+              <AuthProvider>
+                <App />
+              </AuthProvider>
+            </ErrorBoundary>
+          </BrowserRouter>
+        </I18nProvider>
+      </QueryClientProvider>
+    </React.StrictMode>,
+  );
+}
+
+// Dev-only offline mode (VITE_MOCK_DATA=true in .env.local): serve captured live-site
+// fixtures instead of a real backend. The dynamic import means this code and its fixture
+// data (src/mocks/fixtures.ts) are never bundled into a production build.
+if (import.meta.env.DEV && import.meta.env.VITE_MOCK_DATA === "true") {
+  import("@/mocks/mockAdapter").then(({ installMockAdapter }) => {
+    installMockAdapter();
+    render();
+  });
+} else {
+  render();
+}

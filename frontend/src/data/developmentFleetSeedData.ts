@@ -810,21 +810,12 @@ export function getSafetyEvents() {
 
 export function getDashcamSummary() {
   return {
-    dashcamEventsToday: 4, criticalVideoEvents: 1, pendingReview: 3,
-    reviewedEvents: 8, falsePositives: 1, coachingCreated: 2,
-    evidencePackages: 1, collisionNearMiss: 0,
-    distractedDrivingEvents: 2, tailgatingEvents: 1,
-    speedingVideoEvents: 3, driverExonerations: 0,
+    storedEventRecords: 0,
   };
 }
 
 export function getDashcamEvents() {
-  return [
-    { id: 1, eventNumber: "CAM-2201", eventType: "Distracted Driving", severity: "High", driverName: "Salman Qureshi", vehicleCode: "KSA-REEFER-214", jobNumber: "JOB-0517", routeCode: "RTE-8101", locationDescription: "Jubail Industrial Gate 3", occurredAt: "2026-06-21T14:22:00Z", videoProvider: "Samsara", aiConfidence: "94%", reviewStatus: "Reviewed", evidenceStatus: "Collected", recommendedAction: "Coaching task created — clip saved" },
-    { id: 2, eventNumber: "CAM-2202", eventType: "Harsh Braking", severity: "High", driverName: "Yusuf Al-Qahtani", vehicleCode: "VAN-211", jobNumber: "JOB-0512", routeCode: "RTE-8102", locationDescription: "Jeddah Ring Road Exit 12", occurredAt: "2026-06-22T07:14:00Z", videoProvider: "Motive", aiConfidence: "88%", reviewStatus: "Pending Review", evidenceStatus: "Pending", recommendedAction: "Review clip and assign coaching" },
-    { id: 3, eventNumber: "CAM-2203", eventType: "Speeding", severity: "Critical", driverName: "Bilal Ansari", vehicleCode: "KSA-REEFER-119", jobNumber: "JOB-0514", routeCode: "RTE-8102", locationDescription: "Riyadh–Dammam Expressway KM 142", occurredAt: "2026-06-22T09:30:00Z", videoProvider: "Samsara", aiConfidence: "97%", reviewStatus: "Pending Review", evidenceStatus: "Pending", recommendedAction: "Escalate to safety manager — critical speed violation" },
-    { id: 4, eventNumber: "CAM-2204", eventType: "Tailgating", severity: "Medium", driverName: "Nasser Al-Shehri", vehicleCode: "TRK-114", jobNumber: "JOB-0516", routeCode: "RTE-8103", locationDescription: "Dubai–Abu Dhabi Highway E11", occurredAt: "2026-06-22T08:55:00Z", videoProvider: "Lytx", aiConfidence: "79%", reviewStatus: "Pending Review", evidenceStatus: "Pending", recommendedAction: "Review clip — possible false positive" },
-  ];
+  return [];
 }
 
 export function getCoachingSummary() {

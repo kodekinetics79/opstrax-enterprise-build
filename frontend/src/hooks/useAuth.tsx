@@ -14,6 +14,11 @@ import { clearGlobalCsrfToken, setGlobalCsrfToken } from "@/auth/csrfTokenStore"
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
 
+// Dev-only offline mode (VITE_MOCK_DATA=true in .env.local). `import.meta.env.DEV` is
+// statically `false` in a production build, so Vite dead-code-eliminates this branch (and
+// the dynamic import below) entirely -- none of this reaches a real build.
+const MOCK_MODE = import.meta.env.DEV && import.meta.env.VITE_MOCK_DATA === "true";
+
 type StoredSession = { session: UserSession; expiresAt: number };
 
 function loadSession(): UserSession | null {
@@ -55,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // rendering: /me returns a fresh session (same bearer token + CURRENT permissions/role). We block on
   // it once, so the app only ever renders from server-current permissions. No stored session → nothing
   // to revalidate (the login screen renders immediately).
-  const [revalidating, setRevalidating] = useState<boolean>(initialRef.current != null);
+  const [revalidating, setRevalidating] = useState<boolean>(MOCK_MODE || initialRef.current != null);
   const didRevalidate = useRef(false);
 
   const setSession = (next: UserSession | null) => {
@@ -77,6 +82,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (didRevalidate.current) return;
     didRevalidate.current = true;
+
+    if (MOCK_MODE) {
+      // No `cancelled` guard here (unlike the real path below): under dev StrictMode,
+      // React mounts this effect, runs its cleanup, then remounts -- but `didRevalidate`
+      // (a ref, so it survives that cycle) blocks the second mount from ever re-running,
+      // while the FIRST mount's own cleanup would have already flipped a `cancelled` flag
+      // before its import() resolves, permanently skipping setSession. A static, synchronous
+      // mock session has no staleness/race to guard against, so it just always applies.
+      import("@/mocks/fixtures").then(({ FIXTURES }) => {
+        const mockSession = (FIXTURES["/api/auth/me"].body as { data: UserSession }).data;
+        setSession(mockSession);
+        setRevalidating(false);
+      });
+      return;
+    }
+
     if (!initialRef.current) { setRevalidating(false); return; }
     let cancelled = false;
     authApi.me()

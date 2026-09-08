@@ -33,6 +33,21 @@ export default defineConfig(({ mode }) => {
         "@": "/src",
       },
     },
+    // Local-only: when VITE_DEV_PROXY_TARGET is set (.env.local, gitignored), proxy /api
+    // server-side to a real backend so `npm run dev` can render real data without CORS
+    // friction. Only affects `vite dev`/`vite preview`; never used by `vite build`.
+    server: env.VITE_DEV_PROXY_TARGET
+      ? {
+          proxy: {
+            "/api": {
+              target: env.VITE_DEV_PROXY_TARGET,
+              changeOrigin: true,
+              secure: true,
+              headers: { Origin: env.VITE_DEV_PROXY_TARGET },
+            },
+          },
+        }
+      : undefined,
     build: {
       rollupOptions: {
         output: {

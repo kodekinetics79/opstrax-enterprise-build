@@ -382,6 +382,8 @@ public sealed class FleetProductionReadinessService
           ('fleet_tms_temperature_alerts','measured_humidity','numeric(6,2)',false,'',''),
           ('fleet_tms_temperature_alerts','humidity_threshold_min','numeric(6,2)',false,'',''),
           ('fleet_tms_temperature_alerts','humidity_threshold_max','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_alerts','measurement_authority','character varying(40)',true,'''LegacyUnverified''::character varying',''),
+          ('fleet_tms_cold_chain_reports','evidence_authority','character varying(40)',true,'''LegacyUnverified''::character varying',''),
           ('customers','sla_health_score','numeric(6,2)',false,'',''),
           ('customers','delivery_experience_score','numeric(6,2)',false,'',''),
           ('customers','risk_score','numeric(6,2)',false,'',''),
@@ -497,7 +499,7 @@ public sealed class FleetProductionReadinessService
           ,('maintenance_items','created_at','timestamp with time zone',true,'now()','')
           ,('maintenance_items','due_engine_hours','integer',false,'','')
           ,('maintenance_items','due_odometer','integer',false,'','')
-          ,('dashcam_events','ai_confidence','numeric(6,2)',true,'84','')
+          ,('dashcam_events','ai_confidence','numeric(6,2)',false,'','')
           ,('dashcam_events','ai_summary','text',false,'','')
           ,('dashcam_events','created_at','timestamp with time zone',true,'now()','')
           ,('dashcam_events','deleted_at','timestamp with time zone',false,'','')

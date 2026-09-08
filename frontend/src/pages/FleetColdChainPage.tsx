@@ -38,6 +38,11 @@ export function FleetColdChainPage() {
     deviceCode: '',
     name: '',
     vehicleNumber: '',
+    sensorType: 'Temperature',
+    measurementUnit: 'Celsius',
+    calibrationStatus: 'NotReported',
+    calibrationDueAtUtc: '',
+    calibrationReference: '',
     temperature: '',
     humidityPercent: '',
     notes: '',
@@ -113,11 +118,12 @@ export function FleetColdChainPage() {
 
   const metrics = useMemo(() => {
     if (!summary) return [];
+    const compliance = summary.summary.compliancePercent;
     return [
-      { label: 'Active devices', value: summary.summary.activeDevices, icon: Thermometer },
-      { label: 'Readings today', value: summary.summary.readingsToday, icon: Gauge },
+      { label: 'Active device registrations', value: summary.summary.activeDevices, icon: Thermometer },
+      { label: 'Authenticated readings today', value: summary.summary.readingsToday, icon: Gauge },
       { label: 'Open alerts', value: summary.summary.openAlerts, icon: BellRing },
-      { label: 'Compliance', value: `${summary.summary.compliancePercent}%`, icon: Layers3 },
+      { label: 'Authenticated compliance', value: compliance == null ? 'Not measured' : `${compliance}%`, icon: Layers3 },
     ];
   }, [summary]);
 
@@ -136,9 +142,14 @@ export function FleetColdChainPage() {
         zoneId: selectedZoneId ? Number(selectedZoneId) : undefined,
         shipmentId: selectedShipmentId ? Number(selectedShipmentId) : undefined,
         vehicleNumber: form.vehicleNumber,
+        sensorType: form.sensorType,
+        measurementUnit: form.measurementUnit,
+        calibrationStatus: form.calibrationStatus,
+        calibrationDueAtUtc: form.calibrationDueAtUtc ? new Date(form.calibrationDueAtUtc).toISOString() : undefined,
+        calibrationReference: form.calibrationReference.trim() || undefined,
         notes: form.notes.trim() || undefined,
       });
-      setForm((current) => ({ ...current, deviceCode: '', name: '', vehicleNumber: '', notes: '' }));
+      setForm((current) => ({ ...current, deviceCode: '', name: '', vehicleNumber: '', calibrationDueAtUtc: '', calibrationReference: '', notes: '' }));
       setNotice('Cold-chain device registered. No reading was inferred during registration.');
       await refresh();
     } catch (err) {
@@ -169,6 +180,7 @@ export function FleetColdChainPage() {
         humidityPercent: humidity,
         source: 'Manual',
         sourceChannel: 'Operator console',
+        observedAtUtc: new Date().toISOString(),
         notes: form.readingNotes.trim() || undefined,
       });
       setForm((current) => ({ ...current, temperature: '', humidityPercent: '', readingNotes: '' }));
@@ -266,7 +278,7 @@ export function FleetColdChainPage() {
           meta={<>
             <span className="font-bold text-slate-700 tabular-nums">{devices.length}</span> temperature devices ·{" "}
             <span className="font-bold text-rose-600 tabular-nums">{alerts.length}</span> open alerts ·{" "}
-            <span className="font-bold text-emerald-600 tabular-nums">{summary ? `${summary.summary.compliancePercent}%` : "—"}</span> compliance
+            <span className="font-bold text-emerald-600 tabular-nums">{summary?.summary.compliancePercent == null ? "Not measured" : `${summary.summary.compliancePercent}%`}</span> authenticated compliance
           </>}
           actions={
             <div className="flex flex-wrap gap-2">
@@ -312,7 +324,8 @@ export function FleetColdChainPage() {
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white p-4">
                   <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Breach rate</p>
-                  <p className="mt-2 text-2xl font-black text-slate-950">{summary.summary.totalReadings === 0 ? '0%' : `${Math.round((summary.summary.breachReadings / summary.summary.totalReadings) * 100)}%`}</p>
+                  <p className="mt-2 text-2xl font-black text-slate-950">{summary.summary.totalReadings === 0 ? 'Not measured' : `${Math.round((summary.summary.breachReadings / summary.summary.totalReadings) * 100)}%`}</p>
+                  <p className="mt-1 text-xs text-slate-500">Authenticated sensor or gateway readings only</p>
                 </div>
               </div>
               <div className="mt-4 space-y-3">
@@ -370,20 +383,23 @@ export function FleetColdChainPage() {
                       <div className="mt-3 grid grid-cols-2 gap-3 text-sm text-slate-600 sm:grid-cols-4">
                         <div>
                           <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Temp</p>
-                          <p className="font-bold text-slate-900">{formatMeasurement(device.lastReportedTemperatureCelsius, 1, '°C', 'No reading')}</p>
+                          <p className="font-bold text-slate-900">{/^(Sensor|Gateway)$/i.test(device.lastMeasurementSource || '') ? formatMeasurement(device.lastReportedTemperatureCelsius, 1, '°C', 'No reading') : 'No authenticated reading'}</p>
                         </div>
                         <div>
                           <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Battery</p>
-                          <p className="font-bold text-slate-900">{formatMeasurement(device.batteryPercent, 0, '%', 'Not reported')}</p>
+                          <p className="font-bold text-slate-900">{/^(Sensor|Gateway)$/i.test(device.lastMeasurementSource || '') ? formatMeasurement(device.batteryPercent, 0, '%', 'Not reported') : 'Not authenticated'}</p>
                         </div>
-                        <div><p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Last report</p><p className="font-bold text-slate-900">{device.lastPingAtUtc ? new Date(device.lastPingAtUtc).toLocaleString() : 'Never reported'}</p></div>
+                        <div><p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Last report</p><p className="font-bold text-slate-900">{/^(Sensor|Gateway)$/i.test(device.lastMeasurementSource || '') && device.lastPingAtUtc ? new Date(device.lastPingAtUtc).toLocaleString() : 'Never authenticated'}</p></div>
                         <button onClick={() => setSelectedReadingDeviceId(String(device.id))} disabled={!canManageFleet} title={canManageFleet ? 'Select this device for an operator-entered reading' : 'Requires fleet manage permission'} className="rounded-full bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                           {selectedReadingDeviceId === String(device.id) ? 'Selected' : 'Record manually'}
                         </button>
                       </div>
                       <dl className="mt-3 grid gap-2 border-t border-slate-100 pt-3 text-xs text-slate-600 sm:grid-cols-2">
                         <div><dt className="font-semibold text-slate-500">Shipment</dt><dd>{device.shipmentNumber || 'Not linked'}</dd></div>
-                        <div><dt className="font-semibold text-slate-500">Source channel</dt><dd>{device.sourceChannel || 'Not reported'}</dd></div>
+                        <div><dt className="font-semibold text-slate-500">Sensor / unit</dt><dd>{device.sensorType || 'Not reported'} · {device.measurementUnit || 'Not reported'}</dd></div>
+                        <div><dt className="font-semibold text-slate-500">Measurement authority</dt><dd>{device.lastMeasurementSource || 'No authenticated measurement'}</dd></div>
+                        <div><dt className="font-semibold text-slate-500">Source channel</dt><dd>{/^(Sensor|Gateway)$/i.test(device.lastMeasurementSource || '') ? device.sourceChannel || 'Not reported' : 'Unverified'}</dd></div>
+                        <div><dt className="font-semibold text-slate-500">Reported calibration</dt><dd>{device.calibrationStatus || 'NotReported'}{device.calibrationDueAtUtc ? ` · due ${new Date(device.calibrationDueAtUtc).toLocaleDateString()}` : ''}</dd></div>
                         <div><dt className="font-semibold text-slate-500">Created</dt><dd>{device.createdAtUtc ? new Date(device.createdAtUtc).toLocaleString() : 'Unavailable'}</dd></div>
                         <div><dt className="font-semibold text-slate-500">Updated</dt><dd>{device.updatedAtUtc ? new Date(device.updatedAtUtc).toLocaleString() : 'Unavailable'}</dd></div>
                       </dl>
@@ -398,6 +414,8 @@ export function FleetColdChainPage() {
                           <div><dt className="font-semibold">Correlation</dt><dd>{device.correlationId || 'Not reported'}</dd></div>
                           <div><dt className="font-semibold">Causation</dt><dd>{device.causationId || 'Not reported'}</dd></div>
                           <div><dt className="font-semibold">Idempotency</dt><dd>{device.idempotencyKey || 'Not reported'}</dd></div>
+                          <div><dt className="font-semibold">Calibration reference</dt><dd>{device.calibrationReference || 'Not reported'}</dd></div>
+                          <div><dt className="font-semibold">Measurement observed</dt><dd>{device.lastMeasurementObservedAtUtc ? new Date(device.lastMeasurementObservedAtUtc).toLocaleString() : 'No authenticated measurement'}</dd></div>
                           <div><dt className="font-semibold">Metadata</dt><dd className="break-all">{device.metadataJson || 'Not reported'}</dd></div>
                         </dl>
                       </details>
@@ -409,6 +427,7 @@ export function FleetColdChainPage() {
               <section className="rounded-[28px] border border-white/75 bg-white/75 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Control inputs</p>
                 <h2 className="mt-2 text-2xl font-black text-slate-950">Register a device</h2>
+                <p className="mt-2 text-sm text-slate-600">Registration and calibration fields are operator-reported metadata. Live measurements require authenticated sensor or gateway ingest.</p>
                 <div className="mt-5 space-y-4">
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="text-sm font-semibold text-slate-700">Device code<input value={form.deviceCode} onChange={(e) => setForm((current) => ({ ...current, deviceCode: e.target.value }))} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" required /></label>
@@ -418,6 +437,17 @@ export function FleetColdChainPage() {
                       <option value="">Select a zone</option>
                       {summary.zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}
                     </select></label>
+                    <label className="text-sm font-semibold text-slate-700">Sensor type<select value={form.sensorType} onChange={(e) => setForm((current) => ({ ...current, sensorType: e.target.value }))} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      {['Temperature', 'Humidity', 'Door', 'Fuel', 'Tire', 'MultiSensor', 'Other'].map((value) => <option key={value} value={value}>{value}</option>)}
+                    </select></label>
+                    <label className="text-sm font-semibold text-slate-700">Measurement unit<select value={form.measurementUnit} onChange={(e) => setForm((current) => ({ ...current, measurementUnit: e.target.value }))} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      {['Celsius', 'Fahrenheit', 'Percent', 'Boolean', 'PSI', 'Liters', 'Other'].map((value) => <option key={value} value={value}>{value}</option>)}
+                    </select></label>
+                    <label className="text-sm font-semibold text-slate-700">Reported calibration status<select value={form.calibrationStatus} onChange={(e) => setForm((current) => ({ ...current, calibrationStatus: e.target.value }))} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      {['NotReported', 'Current', 'Due', 'Expired', 'NotRequired'].map((value) => <option key={value} value={value}>{value}</option>)}
+                    </select></label>
+                    <label className="text-sm font-semibold text-slate-700">Calibration due (optional)<input type="datetime-local" value={form.calibrationDueAtUtc} onChange={(e) => setForm((current) => ({ ...current, calibrationDueAtUtc: e.target.value }))} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3" /></label>
+                    <label className="text-sm font-semibold text-slate-700 sm:col-span-2">Calibration reference (optional)<input value={form.calibrationReference} onChange={(e) => setForm((current) => ({ ...current, calibrationReference: e.target.value }))} placeholder="Certificate, lab, or service reference" className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3" /></label>
                   </div>
                   <textarea value={form.notes} onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))} rows={3} placeholder="Device notes" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" />
                   <button disabled={!canManageFleet || saving} onClick={createDevice} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-3 font-bold text-white shadow-lg transition hover:from-cyan-500 hover:to-blue-500 disabled:opacity-60">
@@ -483,7 +513,8 @@ export function FleetColdChainPage() {
                       </div>
                       <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-bold text-rose-700">{alert.severity}</span>
                     </div>
-                    <p className="mt-2 text-sm text-slate-600">Measured {formatMeasurement(alert.measuredTemperature, 1, '°C', 'temperature unavailable')} against {formatMeasurement(alert.thresholdMin, 1, '°C', 'no minimum')} to {formatMeasurement(alert.thresholdMax, 1, '°C', 'no maximum')}.</p>
+                    <p className="mt-2 text-sm text-slate-600">{alert.measurementAuthority === 'OperatorObserved' ? 'Operator observed' : alert.measurementAuthority === 'GatewayReported' ? 'Gateway reported' : 'Device reported'} {formatMeasurement(alert.measuredTemperature, 1, '°C', 'temperature unavailable')} against {formatMeasurement(alert.thresholdMin, 1, '°C', 'no minimum')} to {formatMeasurement(alert.thresholdMax, 1, '°C', 'no maximum')}.</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">Evidence authority: {alert.measurementAuthority}</p>
                     <p className="mt-1 text-xs text-slate-500">Triggered {alert.triggeredAtUtc ? new Date(alert.triggeredAtUtc).toLocaleString() : 'at an unavailable time'} · {alert.status}</p>
                     {alert.notes ? <p className="mt-2 text-sm text-slate-500">{alert.notes}</p> : null}
                     <p className="mt-1 text-xs text-slate-500">Reading reference {alert.readingId || 'Unavailable'}</p>

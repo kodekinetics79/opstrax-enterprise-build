@@ -9,6 +9,102 @@ import type { AnyRecord, UserSession } from "@/types";
 
 type DeviceMutationPayload = Record<string, unknown>;
 
+export type DeviceSuspensionReceipt = {
+  id: string;
+  status: "Suspended";
+  deviceState: "Suspended";
+  rowVersion: number;
+};
+
+export class DeviceSuspensionOutcomeError extends Error {
+  constructor(public readonly outcome: "rejected" | "unconfirmed") {
+    super(outcome === "rejected"
+      ? "The suspension request was rejected. Refresh the device record before retrying."
+      : "The suspension outcome could not be confirmed. Refresh the device record before trying again.");
+    this.name = "DeviceSuspensionOutcomeError";
+  }
+}
+
+export type DeviceActivationReceipt = {
+  id: string;
+  status: "Active";
+  deviceState: "Registered" | "Installed" | "Verified" | null;
+  rowVersion: number;
+  idempotentReplay: boolean;
+};
+
+export class DeviceActivationOutcomeError extends Error {
+  constructor(public readonly outcome: "rejected" | "unconfirmed") {
+    super(outcome === "rejected"
+      ? "The activation request was rejected. Refresh the device record before retrying."
+      : "The activation outcome could not be confirmed. Refresh the device record before trying again.");
+    this.name = "DeviceActivationOutcomeError";
+  }
+}
+
+export type DeviceCommissioningReceipt = {
+  /** Installation identity, not device identity. This acknowledges a recorded observation only. */
+  id: string;
+  commissioningResult: "Passed" | "Failed";
+  status: "Verified" | "Failed";
+  rowVersion: number;
+};
+
+export class DeviceCommissioningOutcomeError extends Error {
+  constructor(public readonly outcome: "rejected" | "unconfirmed") {
+    super(outcome === "rejected"
+      ? "The commissioning request was rejected. Refresh the installation record before retrying."
+      : "The commissioning recording outcome could not be confirmed. Check the installation record before trying again.");
+    this.name = "DeviceCommissioningOutcomeError";
+  }
+}
+
+export type DeviceRemovalReceipt = {
+  /** Installation-record acknowledgement only, not proof of physical removal. */
+  id: string;
+  status: "Removed";
+  effectiveTo: string;
+};
+
+export class DeviceRemovalOutcomeError extends Error {
+  constructor(public readonly outcome: "rejected" | "unconfirmed") {
+    super(outcome === "rejected"
+      ? "The removal request was rejected. Inspect the current installation and history before submitting again."
+      : "The removal recording outcome could not be confirmed. Inspect the current installation and history before any new manual submission.");
+    this.name = "DeviceRemovalOutcomeError";
+  }
+}
+
+// Removal's existing form supplies milliseconds. Refuse finer precision instead
+// of rounding distinct request/receipt instants together; no persistence claim follows.
+function removalEffectiveInstant(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,7}))?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!parts) return null;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fraction, offset] = parts;
+  const [year, month, day, hour, minute, second] = [yearText, monthText, dayText, hourText, minuteText, secondText].map(Number);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthDays = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > monthDays[month - 1]
+    || hour > 23 || minute > 59 || second > 59 || /[1-9]/.test((fraction ?? "").slice(3))) return null;
+  if (offset !== "Z") {
+    const hours = Number(offset.slice(1, 3));
+    const minutes = Number(offset.slice(4, 6));
+    if (offset === "-00:00" || hours > 14 || minutes > 59 || (hours === 14 && minutes !== 0)) return null;
+  }
+  const instant = Date.parse(value);
+  const utcYear = new Date(instant).getUTCFullYear();
+  return Number.isFinite(instant) && utcYear >= 1 && utcYear <= 9999 ? instant : null;
+}
+
+function canonicalDeviceLifecycleId(value: unknown): string | null {
+  const text = typeof value === "number"
+    ? Number.isSafeInteger(value) && value > 0 ? String(value) : ""
+    : typeof value === "string" ? value : "";
+  if (!/^[1-9]\d{0,18}$/.test(text) || (text.length === 19 && text > "9223372036854775807")) return null;
+  return text;
+}
+
 // ── Exported record shapes (names/fields preserved — pages depend on them) ──────────
 // These used to be inferred from seed fixtures. They are now defined explicitly so the
 // telematics layer imports nothing from @/data/*. The field names match exactly what
@@ -258,6 +354,77 @@ function deviceRowFromDetail(payload: AnyRecord): AnyRecord {
   return normalizeKeys((detail.device ?? detail.record ?? detail) as AnyRecord);
 }
 
+function plainCheckInCarrier(value: unknown): value is AnyRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+}
+
+function strictCheckInEnvelopePayload(value: unknown): unknown {
+  if (!plainCheckInCarrier(value)) throw new Error("Device check-in response was invalid.");
+  if (Object.keys(value).some((key) => {
+    const normalized = key.replace(/_/g, "").toLowerCase();
+    return (normalized === "success" && key !== "success") || (normalized === "data" && key !== "data");
+  })) throw new Error("Device check-in response was invalid.");
+  if (!Object.hasOwn(value, "success") || value.success !== true || !Object.hasOwn(value, "data")) {
+    throw new Error("Device check-in response was invalid.");
+  }
+  return value.data;
+}
+
+// This inspection boundary consumes only JSON-object-shaped own fields.
+function checkInDeviceRowFromDetail(payload: unknown): AnyRecord {
+  const ownRecord = (value: unknown): AnyRecord | null => plainCheckInCarrier(value) ? value : null;
+  const detail = ownRecord(payload);
+  if (detail === null) return Object.create(null) as AnyRecord;
+  if (Object.keys(detail).some((key) => {
+    const normalized = key.replace(/_/g, "").toLowerCase();
+    return (normalized === "device" && key !== "device") || (normalized === "record" && key !== "record");
+  })) return Object.create(null) as AnyRecord;
+  const hasDevice = Object.hasOwn(detail, "device");
+  const hasRecord = Object.hasOwn(detail, "record");
+  if (hasDevice && hasRecord) return Object.create(null) as AnyRecord;
+  const nested = hasDevice
+    ? detail.device
+    : hasRecord
+      ? detail.record
+      : detail;
+  return ownRecord(nested) ?? Object.create(null) as AnyRecord;
+}
+
+function exactCheckInField(row: AnyRecord, camel: string, snake: string): { valid: boolean; present: boolean; value: unknown } {
+  const normalizedName = camel.replace(/_/g, "").toLowerCase();
+  if (Object.keys(row).some((key) => key.replace(/_/g, "").toLowerCase() === normalizedName && key !== camel && key !== snake)) {
+    return { valid: false, present: false, value: undefined };
+  }
+  const hasCamel = Object.hasOwn(row, camel);
+  const hasSnake = Object.hasOwn(row, snake);
+  if (camel !== snake && hasCamel && hasSnake && row[camel] !== row[snake]) return { valid: false, present: false, value: undefined };
+  return { valid: true, present: hasCamel || hasSnake, value: hasSnake ? row[snake] : hasCamel ? row[camel] : undefined };
+}
+
+// This timestamp proves only that a check-in was recorded. It can originate
+// from a provider or a legacy record, not necessarily an authenticated device.
+function recordedDeviceCheckIn(value: unknown, observedAt: number): string | null {
+  if (typeof value !== "string") return null;
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,7}))?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!parts) return null;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fraction, offset] = parts;
+  const [year, month, day, hour, minute, second] = [yearText, monthText, dayText, hourText, minuteText, secondText].map(Number);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthDays = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > monthDays[month - 1] || hour > 23 || minute > 59 || second > 59) return null;
+  if (offset !== "Z") {
+    const offsetHours = Number(offset.slice(1, 3));
+    const offsetMinutes = Number(offset.slice(4, 6));
+    if (offset === "-00:00" || offsetHours > 14 || offsetMinutes > 59 || (offsetHours === 14 && offsetMinutes !== 0)) return null;
+  }
+  const timestamp = Date.parse(value);
+  // JavaScript truncates sub-millisecond precision. Round up only for the
+  // comparison so a fraction after the observation time cannot be accepted.
+  const comparisonTime = timestamp + (Number((fraction ?? "").slice(3)) > 0 ? 1 : 0);
+  return Number.isFinite(timestamp) && comparisonTime <= observedAt ? value : null;
+}
+
 function parseRowVersion(value: unknown): number | undefined {
   if (value == null) return undefined;
   const numeric = Number(value);
@@ -331,6 +498,8 @@ export type DeviceProvisionResult = {
 };
 
 export type DeviceInstallationInput = {
+  /** Captured UI intent only; never sent as a backend payload field. */
+  intent: DeviceInstallationIntent;
   vehicleId: string | number;
   deviceRole: string;
   isPrimary: boolean;
@@ -341,6 +510,91 @@ export type DeviceInstallationInput = {
   assignmentReason: string;
   removalReason?: string;
 };
+
+export type DeviceInstallationIntent = { kind: "create" } | {
+  kind: "transfer";
+  currentInstallationId: string;
+  expectedRowVersion: number;
+  priorVehicleId: string;
+};
+
+export type DeviceInstallationReceipt = {
+  operation: "create" | "transfer";
+  acknowledgement: "recorded" | "already-recorded";
+  installationId: string;
+  vehicleId: string;
+  priorInstallationId: string | null;
+  recordedStatus: string | null;
+  effectiveFrom: string | null;
+};
+
+export class DeviceInstallationOutcomeError extends Error {
+  constructor(public readonly outcome: "rejected" | "unconfirmed") {
+    super(outcome === "rejected"
+      ? "The installation request was rejected. Inspect the current installation and history before submitting again."
+      : "The installation recording outcome could not be confirmed. Inspect the current installation and history before any new manual submission.");
+    this.name = "DeviceInstallationOutcomeError";
+  }
+}
+
+// This assignment-only boundary preserves the actual numeric JSON long contract.
+function installationBodyId(value: unknown): number | null {
+  const canonical = canonicalDeviceLifecycleId(value);
+  if (canonical === null) return null;
+  const number = Number(canonical);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+function installationVersion(value: unknown, maximum: number): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= maximum;
+}
+function installationObject(value: unknown): value is AnyRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+}
+function exactLifecycleEnvelope(value: unknown): value is AnyRecord {
+  if (!installationObject(value)) return false;
+  return !Object.keys(value).some((key) => {
+    const normalized = key.replace(/_/g, "").toLowerCase();
+    return (normalized === "success" && key !== "success") || (normalized === "data" && key !== "data");
+  });
+}
+function hasExactReceiptField(receipt: AnyRecord, camel: string, snake: string): boolean {
+  return Object.hasOwn(receipt, camel) || Object.hasOwn(receipt, snake);
+}
+
+/** Capture an internally consistent opened target, not a guessed assignment mode. */
+export function getInstallationIntent(target: Pick<DeviceCommandRecord, "id" | "currentInstallationId" | "currentInstallationRowVersion" | "assignedVehicleId">): DeviceInstallationIntent | null {
+  if (canonicalDeviceLifecycleId(target.id) === null) return null;
+  if (target.currentInstallationId == null && target.currentInstallationRowVersion == null && target.assignedVehicleId === "") return { kind: "create" };
+  const priorId = installationBodyId(target.currentInstallationId);
+  const priorVehicleId = canonicalDeviceLifecycleId(target.assignedVehicleId);
+  if (priorId === null || priorVehicleId === null || !installationVersion(target.currentInstallationRowVersion, 2147483646)) return null;
+  return { kind: "transfer", currentInstallationId: String(priorId), expectedRowVersion: target.currentInstallationRowVersion, priorVehicleId };
+}
+
+// The installation form supplies milliseconds. Never round finer request or
+// DB-read replay times into equality; this is not a persistence precision claim.
+function installationEffectiveInstant(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,7}))?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!match) return null;
+  const [, y, m, d, h, min, sec, fraction, offset] = match;
+  const [year, month, day, hour, minute, second] = [y, m, d, h, min, sec].map(Number);
+  const days = [31, year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > days[month - 1] || hour > 23 || minute > 59 || second > 59
+    || /[1-9]/.test((fraction ?? "").slice(3))) return null;
+  if (offset !== "Z") {
+    const hours = Number(offset.slice(1, 3));
+    const minutes = Number(offset.slice(4, 6));
+    if (offset === "-00:00" || hours > 14 || minutes > 59 || (hours === 14 && minutes !== 0)) return null;
+  }
+  const instant = Date.parse(value);
+  const utcYear = new Date(instant).getUTCFullYear();
+  return Number.isFinite(instant) && utcYear >= 1 && utcYear <= 9999 ? instant : null;
+}
+
+const installationRoles = ["GPS", "ELD", "Dashcam", "OBD-II", "J1939/CAN", "Temperature", "Fuel", "Tire", "BLE Gateway", "Other"];
+const recordedInstallationStates = ["Provisioned", "Installed", "Verified", "Removed", "Failed", "Quarantined"];
 
 export type DeviceInstallationRemovalInput = {
   effectiveTo: string;
@@ -435,7 +689,12 @@ function getSession(): UserSession | null {
   const raw = readRawSession();
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as UserSession;
+    // Stored value is { session: UserSession, expiresAt } (see useAuth.tsx's StoredSession) --
+    // not the UserSession itself. Parsing it directly as UserSession left every field here
+    // (role, company, permissions...) undefined, silently mis-scoping every telematics query.
+    const parsed = JSON.parse(raw) as { session?: UserSession; expiresAt?: number };
+    if (parsed.expiresAt != null && Date.now() > parsed.expiresAt) return null;
+    return parsed.session ?? null;
   } catch {
     return null;
   }
@@ -640,7 +899,7 @@ function mapDeviceRow(
 function mapInstallationRow(rawRow: AnyRecord, tenantId: number): TelematicsInstallationSeedRecord {
   const row = normalizeKeys(rawRow);
   return {
-    id: String(row.id ?? row.installation_id ?? ""),
+    id: canonicalDeviceLifecycleId(row.id ?? row.installation_id) ?? "",
     deviceId: (row.device_id as string | number | undefined) ?? "",
     tenantId,
     installStatus: String(row.status ?? row.installation_status ?? "Unknown"),
@@ -659,7 +918,8 @@ function mapInstallationRow(rawRow: AnyRecord, tenantId: number): TelematicsInst
     vehicleCode: String(row.vehicle_code ?? ""),
     deviceRole: String(row.device_role ?? ""),
     isPrimary: Boolean(row.is_primary),
-    rowVersion: parseRowVersion(row.row_version),
+    rowVersion: typeof row.row_version === "number" || typeof row.row_version === "string"
+      ? parseRowVersion(row.row_version) : undefined,
     activationVerifiedAt: row.activation_verified_at == null ? null : String(row.activation_verified_at),
     installationLocation: String(row.installation_location ?? ""),
     odometerAtInstallation: row.odometer_at_installation == null ? "" : String(row.odometer_at_installation),
@@ -1101,11 +1361,16 @@ function toColdChainClusterRecord(
   const deviceAlerts = alerts.filter((alert) =>
     String(alert.deviceId) === String(device.id) && !/resolved/i.test(String(alert.status)),
   );
+  const measurementSource = String(device.lastMeasurementSource ?? "");
+  const hasAuthoritativeMeasurement = /^(Sensor|Gateway)$/i.test(measurementSource);
   const temperature = device.lastReportedTemperatureCelsius;
-  const hasTemperature = temperature !== null && temperature !== undefined && Number.isFinite(Number(temperature));
+  const hasTemperature = hasAuthoritativeMeasurement && temperature !== null && temperature !== undefined && Number.isFinite(Number(temperature));
   const battery = device.batteryPercent;
-  const hasBattery = battery !== null && battery !== undefined && Number.isFinite(Number(battery));
-  const lastPingAt = device.lastPingAtUtc ? String(device.lastPingAtUtc) : "";
+  const hasBattery = hasAuthoritativeMeasurement && battery !== null && battery !== undefined && Number.isFinite(Number(battery));
+  const lastPingAt = hasAuthoritativeMeasurement && device.lastPingAtUtc ? String(device.lastPingAtUtc) : "";
+  const measurementObservedAt = hasAuthoritativeMeasurement && device.lastMeasurementObservedAtUtc
+    ? String(device.lastMeasurementObservedAtUtc)
+    : "";
   const lastPingMs = lastPingAt ? new Date(lastPingAt).getTime() : Number.NaN;
   const stale = !Number.isFinite(lastPingMs) || Date.now() - lastPingMs > 15 * 60 * 1000;
   const inactive = !/active|online/i.test(String(device.status));
@@ -1124,7 +1389,7 @@ function toColdChainClusterRecord(
     deviceName: device.name || device.deviceCode,
     serialNumber: device.deviceCode,
     deviceType: "Cold-chain sensor",
-    provider: device.sourceChannel ? String(device.sourceChannel) : "Cold-chain service",
+    provider: hasAuthoritativeMeasurement && device.sourceChannel ? String(device.sourceChannel) : "Unverified",
     vehicleId: "",
     vehicleCode: device.vehicleNumber || "Unassigned",
     driverId: "",
@@ -1145,8 +1410,8 @@ function toColdChainClusterRecord(
     deviceHealthAvailable: false,
     protocolType: "SENSOR",
     positionAvailable: false,
-    positionSource: lastPingAt ? "Cold-chain reading" : "No reading evidence",
-    positionProvider: device.sourceChannel ? String(device.sourceChannel) : "Cold-chain service",
+    positionSource: measurementObservedAt ? `${measurementSource} measurement` : "No authenticated measurement evidence",
+    positionProvider: hasAuthoritativeMeasurement && device.sourceChannel ? String(device.sourceChannel) : "Unverified",
     positionAccuracy: "Not reported",
     positionConfidence: "Not reported",
     deviceFixAt: "—",
@@ -1167,9 +1432,11 @@ function toColdChainClusterRecord(
     sensorStatus,
     powerStatus: hasBattery ? `${Math.round(Number(battery))}% battery` : "Not reported",
     signalStrength: "Not reported",
-    calibrationStatus: "Not reported",
+    calibrationStatus: device.calibrationStatus ? `Reported: ${device.calibrationStatus}` : "Not reported",
     alertStatus: alerting ? "Open" : "Clear",
-    recommendedAction: offlineWarning
+    recommendedAction: !hasAuthoritativeMeasurement
+      ? "No authenticated sensor or gateway measurement is available; keep the device out of automated cold-chain decisions."
+      : offlineWarning
       ? "Restore the device heartbeat before relying on this shipment's temperature posture."
       : alerting
         ? `Investigate the active breach against ${expectedRange}.`
@@ -1595,60 +1862,131 @@ export const telematicsService = {
     return (await this.provisionDevice(payload)).device;
   },
 
-  // Poll whether a freshly provisioned device has streamed its first heartbeat yet
-  // (last_seen_at set / a live position exists). Drives the "Waiting for first
-  // heartbeat…" → "Connected" pairing state in the connect dialog.
-  async getDeviceConnectionState(deviceId: string | number): Promise<{ connected: boolean; lastSeenAt: string | null; status: string }> {
-    const row = deviceRowFromDetail(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
-    const lastSeenAt = row.last_seen_at ? String(row.last_seen_at) : null;
-    const status = String(row.status ?? "Unknown");
-    // Connected once the device has checked in at least once and is not revoked/suspended.
-    const connected = Boolean(lastSeenAt) && !/revoked|suspended/i.test(status);
-    return { connected, lastSeenAt, status };
+  // Inspect the stored check-in record. Neither this read nor a valid timestamp
+  // establishes current connectivity, device authentication, or physical pairing.
+  async getDeviceConnectionState(deviceId: string | number): Promise<{ hasRecordedCheckIn: boolean; lastSeenAt: string | null; status: string; deviceState: string; lifecycleBlocked: boolean }> {
+    const response = await apiClient.get(`/api/telemetry/devices/${deviceId}`);
+    const row = checkInDeviceRowFromDetail(strictCheckInEnvelopePayload(response.data));
+    const checkInField = exactCheckInField(row, "lastSeenAt", "last_seen_at");
+    const statusField = exactCheckInField(row, "status", "status");
+    const stateField = exactCheckInField(row, "deviceState", "device_state");
+    const revokedField = exactCheckInField(row, "revokedAt", "revoked_at");
+    const lastSeenAt = recordedDeviceCheckIn(checkInField.valid && checkInField.present ? checkInField.value : undefined, Date.now());
+    const status = statusField.valid && typeof statusField.value === "string" && statusField.value.trim() ? statusField.value.trim() : "Unknown";
+    const deviceState = stateField.valid && typeof stateField.value === "string" && stateField.value.trim() ? stateField.value.trim() : "Unknown";
+    const restrictedLifecycle = /^(revoked|retired|suspended|quarantined|decommissioned)$/i;
+    const lifecycleBlocked = !statusField.valid || !stateField.valid || !revokedField.valid
+      || (revokedField.present && revokedField.value != null) || restrictedLifecycle.test(status)
+      || restrictedLifecycle.test(deviceState);
+    return { hasRecordedCheckIn: lastSeenAt !== null, lastSeenAt, status, deviceState, lifecycleBlocked };
   },
 
-  async assignDeviceToVehicle(deviceId: string | number, input: DeviceInstallationInput): Promise<DeviceCommandRecord> {
+  async assignDeviceToVehicle(deviceId: string | number, input: DeviceInstallationInput): Promise<DeviceInstallationReceipt> {
     const session = getSession();
     ensureManagementAccess(session);
-    const numericVehicleId = toNumericId(input.vehicleId);
-    if (numericVehicleId == null) throw new Error("Select a valid vehicle to assign this device.");
-    const effectiveAt = String(input.effectiveAt ?? "").trim();
-    if (!effectiveAt || Number.isNaN(Date.parse(effectiveAt))) throw new Error("Enter a valid installation effective time.");
-    if (!String(input.deviceRole ?? "").trim()) throw new Error("Select the device role for this installation.");
-    if (!String(input.assignmentReason ?? "").trim()) throw new Error("Enter the assignment reason.");
-    const detail = await this.getDeviceById(deviceId);
+    const requestedId = canonicalDeviceLifecycleId(deviceId);
+    const vehicleId = installationBodyId(input.vehicleId);
+    const effectiveAt = typeof input.effectiveAt === "string" ? input.effectiveAt.trim() : "";
+    const instant = installationEffectiveInstant(effectiveAt);
+    const deviceRole = typeof input.deviceRole === "string" ? installationRoles.find(role => role.toLowerCase() === input.deviceRole.trim().toLowerCase()) : undefined;
+    const isPrimary = input.isPrimary;
+    const assignmentReason = typeof input.assignmentReason === "string" ? input.assignmentReason.trim() : "";
+    const removalReason = typeof input.removalReason === "string" ? input.removalReason.trim() : "";
+    const installationLocation = typeof input.installationLocation === "string" ? input.installationLocation.trim() : undefined;
+    const commissioningMethod = typeof input.commissioningMethod === "string" ? input.commissioningMethod.trim() : undefined;
+    const odometerAtInstallation = input.odometerAtInstallation;
+    const intent = input.intent;
+    const operation = installationObject(intent) ? intent.kind : undefined;
+    const priorId = operation === "transfer" ? installationBodyId((intent as AnyRecord).currentInstallationId) : null;
+    const priorVehicleId = operation === "transfer" ? canonicalDeviceLifecycleId((intent as AnyRecord).priorVehicleId) : null;
+    const version = operation === "transfer" ? (intent as AnyRecord).expectedRowVersion : null;
+    if (requestedId === null || vehicleId === null) throw new Error("Select valid device and vehicle identities before submitting the installation.");
+    if (instant === null || instant > Date.now()) throw new Error("Enter a valid, non-future installation time with an explicit time zone and millisecond precision.");
+    if (!deviceRole || typeof isPrimary !== "boolean" || assignmentReason.length < 4 || assignmentReason.length > 500
+      || installationLocation === undefined || installationLocation.length > 160 || commissioningMethod === undefined || commissioningMethod.length > 80
+      || (odometerAtInstallation !== null && (typeof odometerAtInstallation !== "number" || !Number.isFinite(odometerAtInstallation) || odometerAtInstallation < 0 || odometerAtInstallation > 9999999999.99))) {
+      throw new Error("Enter a supported role, primary designation and valid installation metadata before submitting.");
+    }
+    if ((operation !== "create" && operation !== "transfer")
+      || (operation === "create" && ["currentInstallationId", "expectedRowVersion", "priorVehicleId"].some(key => Object.hasOwn(intent, key)))
+      || (operation === "transfer" && (priorId === null || priorVehicleId === null || !installationVersion(version, 2147483646) || removalReason.length < 4 || removalReason.length > 500))) {
+      throw new Error("Installation intent is unavailable or inconsistent. Refresh the device before submitting; this attempt was not submitted.");
+    }
+    let detail: DeviceDetailRecord;
+    try { detail = await this.getDeviceById(requestedId); }
+    catch { throw new Error("Unable to read the installation before submitting. Refresh the device; this attempt was not submitted."); }
     const current = detail.currentInstallation;
-    if (current?.vehicleId === String(numericVehicleId)) {
-      throw new Error("Select a different vehicle to transfer this installation.");
+    if (canonicalDeviceLifecycleId(detail.device.id) !== requestedId || (operation === "create" && current !== null)
+      || (operation === "transfer" && (!current || installationBodyId(current.id) !== priorId
+        || canonicalDeviceLifecycleId(current.deviceId) !== requestedId || canonicalDeviceLifecycleId(current.vehicleId) !== priorVehicleId
+        || !installationVersion(current.rowVersion, 2147483646) || current.rowVersion !== version))) {
+      throw new Error("Installation identity or version changed. Refresh the device and history; this attempt was not submitted.");
     }
-
+    if (operation === "transfer" && priorVehicleId === String(vehicleId)) throw new Error("Select a different vehicle to transfer this installation; this attempt was not submitted.");
     const installation = {
-      vehicleId: numericVehicleId,
-      deviceRole: input.deviceRole.trim(),
-      isPrimary: input.isPrimary,
-      installationLocation: input.installationLocation.trim() || null,
-      odometerAtInstallation: input.odometerAtInstallation,
-      commissioningMethod: input.commissioningMethod.trim() || null,
-      assignmentReason: input.assignmentReason.trim(),
-      idempotencyKey: installationMutationKey(deviceId),
+      vehicleId, deviceRole, isPrimary, installationLocation: installationLocation || null,
+      odometerAtInstallation, commissioningMethod: commissioningMethod || null, assignmentReason,
+      idempotencyKey: installationMutationKey(requestedId),
     };
-    if (current) {
-      if (current.rowVersion == null) throw new Error("Unable to transfer device: installation row version is not available.");
-      if (!String(input.removalReason ?? "").trim()) throw new Error("Enter the reason for removing the prior installation.");
-      await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/installations/transfer`, {
-        ...installation,
-        effectiveAt,
-        currentInstallationId: toNumericId(current.id),
-        expectedRowVersion: current.rowVersion,
-        removalReason: input.removalReason!.trim(),
-      }));
-    } else {
-      await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/installations`, {
-        ...installation,
-        effectiveFrom: effectiveAt,
-      }));
+    let response: { status: number; data: unknown };
+    try {
+      response = operation === "transfer"
+        ? await apiClient.post(`/api/telemetry/devices/${requestedId}/installations/transfer`, { ...installation, effectiveAt, currentInstallationId: priorId, expectedRowVersion: version, removalReason })
+        : await apiClient.post(`/api/telemetry/devices/${requestedId}/installations`, { ...installation, effectiveFrom: effectiveAt });
+    } catch (error) {
+      const rejected = error && typeof error === "object" ? (error as { response?: { status?: number; data?: unknown } }).response : undefined;
+      if (exactLifecycleEnvelope(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
+        && [400, 401, 403, 404, 409, 422].includes(rejected.status ?? 0)) throw new DeviceInstallationOutcomeError("rejected");
+      throw new DeviceInstallationOutcomeError("unconfirmed");
     }
-    return (await this.getDeviceById(deviceId)).device;
+    if (!exactLifecycleEnvelope(response?.data) || !Object.hasOwn(response.data, "success")) throw new DeviceInstallationOutcomeError("unconfirmed");
+    const { success, data } = response.data;
+    if (success === false) throw new DeviceInstallationOutcomeError("rejected");
+    if (success !== true || !Object.hasOwn(response.data, "data") || !installationObject(data)) throw new DeviceInstallationOutcomeError("unconfirmed");
+    const receiptAliases = [["id", "id"], ["status", "status"], ["deviceId", "device_id"], ["vehicleId", "vehicle_id"], ["rowVersion", "row_version"], ["effectiveFrom", "effective_from"],
+      ["deviceRole", "device_role"], ["isPrimary", "is_primary"], ["priorInstallationId", "prior_installation_id"], ["replacedInstallationId", "replaced_installation_id"]];
+    for (const [camel, snake] of receiptAliases) {
+      // Only the actual camel/snake spellings may provide a contract field.
+      // Other casing must not hide a contradictory identity or discriminant.
+      if (Object.keys(data).some(key => key.replace(/_/g, "").toLowerCase() === camel.toLowerCase() && key !== camel && key !== snake)) throw new DeviceInstallationOutcomeError("unconfirmed");
+      if (Object.hasOwn(data, camel) && Object.hasOwn(data, snake) && data[camel] !== data[snake]) throw new DeviceInstallationOutcomeError("unconfirmed");
+    }
+    const receipt = normalizeKeys(data);
+    const id = canonicalDeviceLifecycleId(receipt.id);
+    const returnedVehicleId = canonicalDeviceLifecycleId(receipt.vehicle_id);
+    const has = (key: string) => Object.hasOwn(receipt, key);
+    const all = (...keys: string[]) => keys.every(has);
+    const none = (...keys: string[]) => keys.every(key => !has(key));
+    const receiptTime = typeof receipt.effective_from === "string" ? receipt.effective_from : null;
+    const matchingTime = receiptTime !== null && installationEffectiveInstant(receiptTime) === instant;
+    const matchingDevice = canonicalDeviceLifecycleId(receipt.device_id) === requestedId;
+    const existingStatus = typeof receipt.status === "string" && receipt.status.trim().length > 0;
+    const existingVersion = installationVersion(receipt.row_version, 2147483647);
+    let acknowledgement: DeviceInstallationReceipt["acknowledgement"];
+    let returnedPriorId: string | null = null;
+    let returnedTime: string | null = null;
+    if (!all("id", "vehicle_id", "status") || id === null || returnedVehicleId !== String(vehicleId)) throw new DeviceInstallationOutcomeError("unconfirmed");
+    if (operation === "create" && response.status === 201 && matchingDevice && receipt.status === "Installed" && receipt.row_version === 1 && matchingTime
+      && all("device_id", "row_version", "effective_from")
+      && none("device_role", "is_primary", "prior_installation_id", "replaced_installation_id")) {
+      acknowledgement = "recorded"; returnedTime = receiptTime;
+    } else if (operation === "create" && response.status === 200 && matchingDevice && receipt.device_role === deviceRole && receipt.is_primary === isPrimary
+      && all("device_id", "device_role", "is_primary", "row_version")
+      && existingVersion && existingStatus && none("effective_from", "prior_installation_id", "replaced_installation_id")) {
+      acknowledgement = "already-recorded";
+    } else if (operation === "transfer" && response.status === 200 && id !== String(priorId) && has("prior_installation_id")
+      && has("effective_from")
+      && canonicalDeviceLifecycleId(receipt.prior_installation_id) === String(priorId) && receipt.status === "Installed" && matchingTime
+      && none("replaced_installation_id", "device_id", "row_version", "device_role", "is_primary")) {
+      acknowledgement = "recorded"; returnedPriorId = canonicalDeviceLifecycleId(receipt.prior_installation_id); returnedTime = receiptTime;
+    } else if (operation === "transfer" && response.status === 200 && id !== String(priorId) && has("replaced_installation_id")
+      && all("device_id", "effective_from", "row_version")
+      && canonicalDeviceLifecycleId(receipt.replaced_installation_id) === String(priorId) && matchingDevice && matchingTime && existingVersion && existingStatus
+      && none("prior_installation_id", "device_role", "is_primary")) {
+      acknowledgement = "already-recorded"; returnedPriorId = canonicalDeviceLifecycleId(receipt.replaced_installation_id); returnedTime = receiptTime;
+    } else { throw new DeviceInstallationOutcomeError("unconfirmed"); }
+    return { operation, acknowledgement, installationId: id, vehicleId: returnedVehicleId, priorInstallationId: returnedPriorId,
+      recordedStatus: typeof receipt.status === "string" && recordedInstallationStates.includes(receipt.status) ? receipt.status : null, effectiveFrom: returnedTime };
   },
 
   async markDeviceAttention(
@@ -1697,60 +2035,258 @@ export const telematicsService = {
     return { success: true };
   },
 
-  async unassignDevice(deviceId: string | number, input: DeviceInstallationRemovalInput) {
+  async unassignDevice(deviceId: string | number, input: DeviceInstallationRemovalInput): Promise<DeviceRemovalReceipt> {
     const session = getSession();
     ensureManagementAccess(session);
-    const effectiveTo = String(input.effectiveTo ?? "").trim();
-    const removalReason = String(input.removalReason ?? "").trim();
-    if (!effectiveTo || Number.isNaN(Date.parse(effectiveTo))) throw new Error("Enter a valid removal effective time.");
-    if (!removalReason) throw new Error("Enter the installation removal reason.");
-    const detail = await this.getDeviceById(deviceId);
+    const requestedId = canonicalDeviceLifecycleId(deviceId);
+    if (requestedId === null) throw new Error("A valid device identifier is required before removal.");
+    const effectiveTo = typeof input.effectiveTo === "string" ? input.effectiveTo.trim() : "";
+    const requestedInstant = removalEffectiveInstant(effectiveTo);
+    const removalReason = typeof input.removalReason === "string" ? input.removalReason.trim() : "";
+    if (requestedInstant === null || requestedInstant > Date.now()) {
+      throw new Error("Enter a valid, non-future removal time with an explicit time zone and millisecond precision.");
+    }
+    if (removalReason.length < 4 || removalReason.length > 500) throw new Error("Enter an installation removal reason of 4 to 500 characters.");
+    let detail: DeviceDetailRecord;
+    try {
+      detail = await this.getDeviceById(requestedId);
+    } catch {
+      throw new Error("Unable to read the installation before removal. Refresh the device and try again.");
+    }
     const current = detail.currentInstallation;
     if (!current) throw new Error("This device has no active installation to remove.");
-    if (current.rowVersion == null) throw new Error("Unable to remove installation: row version is not available.");
-    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/installations/${current.id}/remove`, {
-      removalReason,
-      effectiveTo,
-      expectedRowVersion: current.rowVersion,
-    }));
-    return (await this.getDeviceById(deviceId)).device;
+    const installationId = canonicalDeviceLifecycleId(current.id);
+    if (installationId === null) throw new Error("Unable to identify the installation. Reload the device before removal.");
+    const expectedRowVersion = current.rowVersion;
+    if (typeof expectedRowVersion !== "number" || !Number.isInteger(expectedRowVersion)
+      || expectedRowVersion < 1 || expectedRowVersion >= 2147483647) {
+      throw new Error("Unable to remove installation: a valid row version is not available. Reload the device and try again.");
+    }
+    const plainCarrier = (value: unknown): value is AnyRecord => value !== null && typeof value === "object" && !Array.isArray(value)
+      && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+    let response: { status: number; data: unknown };
+    try {
+      response = await apiClient.post(`/api/telemetry/devices/${requestedId}/installations/${installationId}/remove`, {
+        removalReason, effectiveTo, expectedRowVersion,
+      });
+    } catch (error) {
+      const rejected = error && typeof error === "object"
+        ? (error as { response?: { status?: number; data?: unknown } }).response
+        : undefined;
+      if (exactLifecycleEnvelope(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
+        && [400, 401, 403, 404, 409, 422].includes(rejected?.status ?? 0)) throw new DeviceRemovalOutcomeError("rejected");
+      throw new DeviceRemovalOutcomeError("unconfirmed");
+    }
+    const envelope = response?.data;
+    if (response?.status !== 200 || !exactLifecycleEnvelope(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceRemovalOutcomeError("unconfirmed");
+    const { success, data } = envelope;
+    if (success === false) throw new DeviceRemovalOutcomeError("rejected");
+    if (success !== true || !Object.hasOwn(envelope, "data") || !plainCarrier(data)) throw new DeviceRemovalOutcomeError("unconfirmed");
+    const rawReceipt = data;
+    for (const [camel, snake] of [["id", "id"], ["status", "status"], ["effectiveTo", "effective_to"]]) {
+      if (Object.keys(rawReceipt).some(key => key.replace(/_/g, "").toLowerCase() === camel.toLowerCase() && key !== camel && key !== snake)) {
+        throw new DeviceRemovalOutcomeError("unconfirmed");
+      }
+      if (camel !== snake && Object.hasOwn(rawReceipt, camel) && Object.hasOwn(rawReceipt, snake) && rawReceipt[camel] !== rawReceipt[snake]) {
+        throw new DeviceRemovalOutcomeError("unconfirmed");
+      }
+    }
+    if (!["id", "status", "effectiveTo"].every((camel) => hasExactReceiptField(rawReceipt, camel, snakeCaseKey(camel)))) {
+      throw new DeviceRemovalOutcomeError("unconfirmed");
+    }
+    const receipt = normalizeKeys(rawReceipt);
+    const receiptId = canonicalDeviceLifecycleId(receipt.id);
+    if (receiptId !== installationId || receipt.status !== "Removed" || typeof receipt.effective_to !== "string"
+      || removalEffectiveInstant(receipt.effective_to) !== requestedInstant) throw new DeviceRemovalOutcomeError("unconfirmed");
+    // The handler returns its captured effective instant, not a persisted row or
+    // device lifecycle. Optional display reads have a separate caller-owned outcome.
+    return { id: receiptId, status: "Removed", effectiveTo: receipt.effective_to };
   },
 
-  async markInstalled(deviceId: string | number, input: DeviceCommissioningInput) {
+  async markInstalled(deviceId: string | number, input: DeviceCommissioningInput): Promise<DeviceCommissioningReceipt> {
     const session = getSession();
     ensureManagementAccess(session);
+    const requestedId = canonicalDeviceLifecycleId(deviceId);
+    if (requestedId === null) throw new Error("A valid device identifier is required before commissioning.");
     const verificationReference = String(input.verificationReference ?? "").trim();
     if (input.result !== "Passed" && input.result !== "Failed") throw new Error("Select the observed commissioning result.");
+    const requestedResult = input.result;
     if (!verificationReference) throw new Error("Enter the commissioning evidence or failure reference.");
-    const detail = await this.getDeviceById(deviceId);
+    if (verificationReference.length > 500 || (requestedResult === "Failed" && verificationReference.length < 8)) {
+      throw new Error("Use a reference of at most 500 characters, with at least 8 characters for a Failed observation.");
+    }
+    // Preserve the complete preflight. No command is sent when any required read fails.
+    let detail: DeviceDetailRecord;
+    try {
+      detail = await this.getDeviceById(requestedId);
+    } catch {
+      throw new Error("Unable to read the installation before commissioning. Refresh the device and try again.");
+    }
     const current = detail.currentInstallation;
     if (!current) throw new Error("Install this device on a vehicle before commissioning it.");
-    if (input.result === "Passed" && !current.activationVerifiedAt) {
+    const installationId = canonicalDeviceLifecycleId(current.id);
+    if (installationId === null) throw new Error("Unable to identify the installation. Reload the device before commissioning.");
+    if (requestedResult === "Passed" && !current.activationVerifiedAt) {
       throw new Error("Commissioning requires an authenticated device heartbeat that verifies activation.");
     }
-    if (current.rowVersion == null) {
-      throw new Error("Unable to commission installation: row version is not available. Reload the device and try again.");
+    const expectedRowVersion = current.rowVersion;
+    if (typeof expectedRowVersion !== "number" || !Number.isInteger(expectedRowVersion)
+      || expectedRowVersion < 1 || expectedRowVersion >= 2147483647) {
+      throw new Error("Unable to commission installation: a valid row version is not available. Reload the device and try again.");
     }
-    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/installations/${current.id}/commission`, {
-      result: input.result,
-      verificationReference,
-      expectedRowVersion: current.rowVersion,
-    }));
-    return (await this.getDeviceById(deviceId)).device;
+    const plainCarrier = (value: unknown): value is AnyRecord => value !== null && typeof value === "object" && !Array.isArray(value)
+      && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+    let response: { status: number; data: unknown };
+    try {
+      response = await apiClient.post(`/api/telemetry/devices/${requestedId}/installations/${installationId}/commission`, {
+        result: requestedResult,
+        verificationReference,
+        expectedRowVersion,
+      });
+    } catch (error) {
+      const rejected = error && typeof error === "object"
+        ? (error as { response?: { status?: number; data?: unknown } }).response
+        : undefined;
+      if (exactLifecycleEnvelope(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
+        && [400, 401, 403, 404, 409, 422].includes(rejected?.status ?? 0)) {
+        throw new DeviceCommissioningOutcomeError("rejected");
+      }
+      throw new DeviceCommissioningOutcomeError("unconfirmed");
+    }
+    const envelope = response?.data;
+    if (response?.status !== 200 || !exactLifecycleEnvelope(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceCommissioningOutcomeError("unconfirmed");
+    const { success, data } = envelope;
+    if (success === false) throw new DeviceCommissioningOutcomeError("rejected");
+    if (success !== true || !Object.hasOwn(envelope, "data") || !plainCarrier(data)) throw new DeviceCommissioningOutcomeError("unconfirmed");
+    const rawReceipt = data;
+    for (const [camel, snake] of [["id", "id"], ["status", "status"], ["commissioningResult", "commissioning_result"], ["rowVersion", "row_version"]]) {
+      if (Object.keys(rawReceipt).some(key => key.replace(/_/g, "").toLowerCase() === camel.toLowerCase() && key !== camel && key !== snake)) {
+        throw new DeviceCommissioningOutcomeError("unconfirmed");
+      }
+      if (camel !== snake && Object.hasOwn(rawReceipt, camel) && Object.hasOwn(rawReceipt, snake) && rawReceipt[camel] !== rawReceipt[snake]) {
+        throw new DeviceCommissioningOutcomeError("unconfirmed");
+      }
+    }
+    if (!["id", "status", "commissioningResult", "rowVersion"].every((camel) => hasExactReceiptField(rawReceipt, camel, snakeCaseKey(camel)))) {
+      throw new DeviceCommissioningOutcomeError("unconfirmed");
+    }
+    const receipt = normalizeKeys(rawReceipt);
+    const receiptId = canonicalDeviceLifecycleId(receipt.id);
+    const expectedStatus = requestedResult === "Passed" ? "Verified" : "Failed";
+    if (receiptId !== installationId || receipt.commissioning_result !== requestedResult || receipt.status !== expectedStatus
+      || typeof receipt.row_version !== "number" || receipt.row_version !== expectedRowVersion + 1) {
+      throw new DeviceCommissioningOutcomeError("unconfirmed");
+    }
+    // A saved Failed observation is still a saved record. Neither status nor optional
+    // metadata certifies hardware; display reads must not erase this acknowledgement.
+    return { id: receiptId, commissioningResult: requestedResult, status: expectedStatus, rowVersion: receipt.row_version };
   },
 
-  async suspendDevice(deviceId: string | number): Promise<DeviceCommandRecord> {
+  async suspendDevice(deviceId: string | number): Promise<DeviceSuspensionReceipt> {
     const session = getSession();
     ensureManagementAccess(session);
-    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/suspend`, {}));
-    return (await this.getDeviceById(deviceId)).device;
+    const requestedId = canonicalDeviceLifecycleId(deviceId);
+    if (requestedId === null) throw new Error("A valid device identifier is required before suspension.");
+
+    const plainCarrier = (value: unknown): value is AnyRecord => value !== null && typeof value === "object" && !Array.isArray(value)
+      && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+    let response: { status: number; data: unknown };
+    try {
+      response = await apiClient.post(`/api/telemetry/devices/${requestedId}/suspend`, {});
+    } catch (error) {
+      const rejected = error && typeof error === "object"
+        ? (error as { response?: { status?: number; data?: unknown } }).response
+        : undefined;
+      // Only an explicit client-error response establishes a rejected request.
+      // A timeout, lost response or server failure leaves the outcome unconfirmed.
+      if (exactLifecycleEnvelope(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
+        && [400, 401, 403, 404, 409, 422].includes(rejected?.status ?? 0)) {
+        throw new DeviceSuspensionOutcomeError("rejected");
+      }
+      throw new DeviceSuspensionOutcomeError("unconfirmed");
+    }
+    const envelope = response?.data;
+    if (response?.status !== 200 || !exactLifecycleEnvelope(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceSuspensionOutcomeError("unconfirmed");
+    const { success, data } = envelope;
+    if (success === false) throw new DeviceSuspensionOutcomeError("rejected");
+    if (success !== true || !Object.hasOwn(envelope, "data") || !plainCarrier(data)) throw new DeviceSuspensionOutcomeError("unconfirmed");
+    const rawReceipt = data;
+    for (const [camel, snake] of [["id", "id"], ["status", "status"], ["deviceState", "device_state"], ["rowVersion", "row_version"]]) {
+      if (Object.keys(rawReceipt).some(key => key.replace(/_/g, "").toLowerCase() === camel.toLowerCase() && key !== camel && key !== snake)) {
+        throw new DeviceSuspensionOutcomeError("unconfirmed");
+      }
+      if (camel !== snake && Object.hasOwn(rawReceipt, camel) && Object.hasOwn(rawReceipt, snake) && rawReceipt[camel] !== rawReceipt[snake]) {
+        throw new DeviceSuspensionOutcomeError("unconfirmed");
+      }
+    }
+    if (!["id", "status", "deviceState", "rowVersion"].every((camel) => hasExactReceiptField(rawReceipt, camel, snakeCaseKey(camel)))) {
+      throw new DeviceSuspensionOutcomeError("unconfirmed");
+    }
+    const receipt = normalizeKeys(data as AnyRecord);
+    const receiptId = canonicalDeviceLifecycleId(receipt.id);
+    if (receiptId !== requestedId || receipt.status !== "Suspended" || receipt.device_state !== "Suspended"
+      || typeof receipt.row_version !== "number" || !Number.isSafeInteger(receipt.row_version) || receipt.row_version < 0) {
+      throw new DeviceSuspensionOutcomeError("unconfirmed");
+    }
+    // This is the server's command receipt, not a reconstructed device snapshot.
+    // Optional display reads belong to a separate refresh outcome in the caller.
+    return { id: receiptId, status: receipt.status, deviceState: receipt.device_state, rowVersion: receipt.row_version };
   },
 
-  async activateDevice(deviceId: string | number): Promise<DeviceCommandRecord> {
+  async activateDevice(deviceId: string | number): Promise<DeviceActivationReceipt> {
     const session = getSession();
     ensureManagementAccess(session);
-    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/activate`, {}));
-    return (await this.getDeviceById(deviceId)).device;
+    const requestedId = canonicalDeviceLifecycleId(deviceId);
+    if (requestedId === null) throw new Error("A valid device identifier is required before activation.");
+
+    const plainCarrier = (value: unknown): value is AnyRecord => value !== null && typeof value === "object" && !Array.isArray(value)
+      && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+    let response: { status: number; data: unknown };
+    try {
+      response = await apiClient.post(`/api/telemetry/devices/${requestedId}/activate`, {});
+    } catch (error) {
+      const rejected = error && typeof error === "object"
+        ? (error as { response?: { status?: number; data?: unknown } }).response
+        : undefined;
+      if (exactLifecycleEnvelope(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
+        && [400, 401, 403, 404, 409, 422].includes(rejected?.status ?? 0)) {
+        throw new DeviceActivationOutcomeError("rejected");
+      }
+      throw new DeviceActivationOutcomeError("unconfirmed");
+    }
+    const envelope = response?.data;
+    if (response?.status !== 200 || !exactLifecycleEnvelope(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceActivationOutcomeError("unconfirmed");
+    const { success, data } = envelope;
+    if (success === false) throw new DeviceActivationOutcomeError("rejected");
+    if (success !== true || !Object.hasOwn(envelope, "data") || !plainCarrier(data)) throw new DeviceActivationOutcomeError("unconfirmed");
+    const rawReceipt = data;
+    for (const [camel, snake] of [["id", "id"], ["status", "status"], ["deviceState", "device_state"], ["rowVersion", "row_version"], ["idempotentReplay", "idempotent_replay"]]) {
+      if (Object.keys(rawReceipt).some(key => key.replace(/_/g, "").toLowerCase() === camel.toLowerCase() && key !== camel && key !== snake)) {
+        throw new DeviceActivationOutcomeError("unconfirmed");
+      }
+      if (camel !== snake && Object.hasOwn(rawReceipt, camel) && Object.hasOwn(rawReceipt, snake) && rawReceipt[camel] !== rawReceipt[snake]) {
+        throw new DeviceActivationOutcomeError("unconfirmed");
+      }
+    }
+    if (!["id", "status", "rowVersion"].every((camel) => hasExactReceiptField(rawReceipt, camel, snakeCaseKey(camel)))) {
+      throw new DeviceActivationOutcomeError("unconfirmed");
+    }
+    const hasDeviceState = hasExactReceiptField(rawReceipt, "deviceState", "device_state");
+    const hasReplay = hasExactReceiptField(rawReceipt, "idempotentReplay", "idempotent_replay");
+    const receipt = normalizeKeys(rawReceipt);
+    const receiptId = canonicalDeviceLifecycleId(receipt.id);
+    const replay = hasReplay ? receipt.idempotent_replay : undefined;
+    if (receiptId !== requestedId || receipt.status !== "Active"
+      || typeof receipt.row_version !== "number" || !Number.isSafeInteger(receipt.row_version) || receipt.row_version < 0
+      || (hasReplay && typeof replay !== "boolean")) {
+      throw new DeviceActivationOutcomeError("unconfirmed");
+    }
+    const state = hasDeviceState ? receipt.device_state : undefined;
+    const deviceState = state === "Registered" || state === "Installed" || state === "Verified" ? state : null;
+    if (replay !== true && deviceState === null) throw new DeviceActivationOutcomeError("unconfirmed");
+    // An already-Active receipt may lack usable installation state. Keep only
+    // known software tokens; none is evidence of physical readiness or delivery.
+    return { id: receiptId, status: "Active", deviceState, rowVersion: receipt.row_version, idempotentReplay: replay === true };
   },
 
   async rotateDeviceSecret(deviceId: string | number): Promise<DeviceCredentialRotationResult> {

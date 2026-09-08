@@ -489,7 +489,9 @@ public sealed class RlsTenantIsolationPostgresTests
             "2026_08_11_stage76_telematics_security_hardening.sql",
         })
         {
-            await owner.ExecuteAsync(File.ReadAllText(Path.Combine(root, "database", "migrations", migration)));
+            await ExecuteMigrationWithDeadlockRetryAsync(
+                owner,
+                File.ReadAllText(Path.Combine(root, "database", "migrations", migration)));
             await owner.ExecuteAsync(
                 "INSERT INTO schema_migrations(version,description) VALUES(@version,'test terminal reconciliation') ON CONFLICT(version) DO NOTHING",
                 c => c.Parameters.AddWithValue("@version", Path.GetFileNameWithoutExtension(migration)));
@@ -501,6 +503,27 @@ public sealed class RlsTenantIsolationPostgresTests
             "INSERT INTO schema_migrations(version,description) VALUES('2026_07_30_stage53_tenant_rls_reconciliation','superseded by Stage58 in test terminal reconciliation') ON CONFLICT(version) DO NOTHING");
         await SeedFreshCriticalWorkersAsync(owner);
         return owner;
+    }
+
+    private static async Task ExecuteMigrationWithDeadlockRetryAsync(Database owner, string sql)
+    {
+        const int maxAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await owner.ExecuteAsync(sql);
+                return;
+            }
+            catch (PostgresException ex) when (
+                ex.SqlState == PostgresErrorCodes.DeadlockDetected && attempt < maxAttempts)
+            {
+                // The integration host can finish a startup schema reconciliation while
+                // this test fixture replays the terminal contract. PostgreSQL correctly
+                // aborts one participant; retry only that idempotent fixture migration.
+                await Task.Delay(TimeSpan.FromMilliseconds(100 * attempt));
+            }
+        }
     }
 
     private static Task SeedFreshCriticalWorkersAsync(Database owner) => owner.ExecuteAsync(

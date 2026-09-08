@@ -8,7 +8,8 @@ namespace Opstrax.Tests;
 // production saved SMTP settings into a table that did not exist. Every *.sql file must
 // be exactly one of: enrolled in the MIGRATIONS array, applied by the runner OUTSIDE
 // the array (the terminal security cutover), applied out-of-band before the runner
-// (CI/dev RLS preflight), or named on the documented orphan list below.
+// (CI/dev RLS preflight), applied by a verified purpose-built predeploy wrapper after
+// the canonical chain, or named on the documented orphan list below.
 public sealed class MigrationRunnerEnrollmentParityTests
 {
     [Fact]
@@ -24,6 +25,7 @@ public sealed class MigrationRunnerEnrollmentParityTests
         var accounted = new HashSet<string>(enrolled);
         accounted.UnionWith(AppliedByRunnerAfterTheArray);
         accounted.UnionWith(AppliedOutOfBandBeforeTheRunner);
+        accounted.UnionWith(AppliedByPurposeBuiltPredeployWrapper);
         accounted.UnionWith(UnenrolledOrphans);
 
         var unaccounted = disk.Where(f => !accounted.Contains(f)).OrderBy(f => f, StringComparer.Ordinal).ToArray();
@@ -33,12 +35,18 @@ public sealed class MigrationRunnerEnrollmentParityTests
             + "in this test with justification):\n  " + string.Join("\n  ", unaccounted));
 
         // The categories must not overlap — a file cannot be both enrolled and skipped.
-        foreach (var name in AppliedByRunnerAfterTheArray.Concat(AppliedOutOfBandBeforeTheRunner).Concat(UnenrolledOrphans))
+        foreach (var name in AppliedByRunnerAfterTheArray
+                     .Concat(AppliedOutOfBandBeforeTheRunner)
+                     .Concat(AppliedByPurposeBuiltPredeployWrapper)
+                     .Concat(UnenrolledOrphans))
             Assert.DoesNotContain(name, enrolled);
 
         // Skip-list hygiene: every documented file must still exist; an orphan that has
         // since been enrolled must be REMOVED from the list, so the list only shrinks.
-        foreach (var name in AppliedByRunnerAfterTheArray.Concat(AppliedOutOfBandBeforeTheRunner).Concat(UnenrolledOrphans))
+        foreach (var name in AppliedByRunnerAfterTheArray
+                     .Concat(AppliedOutOfBandBeforeTheRunner)
+                     .Concat(AppliedByPurposeBuiltPredeployWrapper)
+                     .Concat(UnenrolledOrphans))
             Assert.Contains(name, disk);
     }
 
@@ -48,6 +56,38 @@ public sealed class MigrationRunnerEnrollmentParityTests
         var runner = RunnerText();
         foreach (var name in AppliedByRunnerAfterTheArray)
             Assert.Contains($"-f database/migrations/{name}.sql", runner, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PurposeBuiltWrapperFiles_AreActuallyAppliedAfterTheCanonicalRunner()
+    {
+        var complianceWrapper = File.ReadAllText(Path.Combine(
+            RepoRoot(), "tools", "apply-canada-ksa-compliance-predeploy.sh"));
+        var shadowWrapper = File.ReadAllText(Path.Combine(
+            RepoRoot(), "tools", "apply-canada-ksa-hos-shadow-predeploy.sh"));
+        const string canonicalRunner = "./tools/apply-neon-predeploy-migrations.sh";
+        const string complianceRunner = "./tools/apply-canada-ksa-compliance-predeploy.sh";
+
+        var canonicalRunnerIndex = complianceWrapper.IndexOf(canonicalRunner, StringComparison.Ordinal);
+        Assert.True(canonicalRunnerIndex >= 0,
+            "Canada/KSA predeploy wrapper must run the canonical protected-environment migration chain first.");
+        var complianceRunnerIndex = shadowWrapper.IndexOf(complianceRunner, StringComparison.Ordinal);
+        Assert.True(complianceRunnerIndex >= 0,
+            "Canada/KSA HOS shadow wrapper must run the compliance wrapper, which owns the canonical chain, first.");
+
+        foreach (var name in AppliedByPurposeBuiltPredeployWrapper)
+        {
+            var migrationPath = $"database/migrations/{name}.sql";
+            var wrapper = name.Contains("stage101", StringComparison.Ordinal)
+                ? complianceWrapper
+                : shadowWrapper;
+            var requiredRunnerIndex = name.Contains("stage101", StringComparison.Ordinal)
+                ? canonicalRunnerIndex
+                : complianceRunnerIndex;
+            var migrationIndex = wrapper.IndexOf(migrationPath, StringComparison.Ordinal);
+            Assert.True(migrationIndex > requiredRunnerIndex,
+                $"{name} must be applied by its Canada/KSA predeploy wrapper only after the canonical chain and prerequisite wrapper.");
+        }
     }
 
     [Fact]
@@ -225,6 +265,19 @@ public sealed class MigrationRunnerEnrollmentParityTests
     [
         "2026_06_30_stage19_row_level_security",
         "2026_07_01_stage22_rls_reconcile_coverage",
+    ];
+
+    // Applied by the regulated Canada/KSA predeploy wrappers AFTER the canonical chain.
+    // Stage101 cannot be enrolled directly in MIGRATIONS: the compliance wrapper must
+    // first reserve and reconcile Batch6 fixed reference IDs. Stages102/103 remain in
+    // the shadow-only wrapper until qualified regulatory/SDET acceptance permits their
+    // promotion into the production chain. The test above mechanically verifies the
+    // full wrapper sequence and each migration reference.
+    private static readonly string[] AppliedByPurposeBuiltPredeployWrapper =
+    [
+        "2026_09_03_stage101_canada_ksa_compliance_baseline",
+        "2026_09_03_stage102_hos_policy_shadow_engine",
+        "2026_09_03_stage103_hos_shadow_retention_control",
     ];
 
     // Enrolled NOWHERE today: these files are in database/migrations/ but no runner, CI

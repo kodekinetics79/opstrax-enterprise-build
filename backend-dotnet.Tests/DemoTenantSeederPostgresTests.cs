@@ -149,7 +149,10 @@ public class DemoTenantSeederPostgresTests
             c => c.Parameters.AddWithValue("@c", companyId)));
         Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM hos_records WHERE company_id=@c AND hos_status='Warning' AND branch_id IS NOT NULL", c => c.Parameters.AddWithValue("@c", companyId)));
         Assert.Equal(1, await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM hos_clocks WHERE company_id=@c AND status='Warning' AND branch_id IS NOT NULL AND drive_time_remaining_minutes=165",
+            @"SELECT COUNT(*) FROM hos_clocks WHERE company_id=@c AND branch_id IS NOT NULL
+                AND status='Unavailable' AND source_authority='LegacyUnverified'
+                AND drive_time_remaining_minutes IS NULL AND shift_time_remaining_minutes IS NULL
+                AND cycle_time_remaining_minutes IS NULL",
             c => c.Parameters.AddWithValue("@c", companyId)));
         Assert.Equal(1, await db.ScalarLongAsync(
             @"SELECT COUNT(*) FROM hos_logs WHERE company_id=@c AND source='demo' AND source_event_id='safety-pilot-hos-1'

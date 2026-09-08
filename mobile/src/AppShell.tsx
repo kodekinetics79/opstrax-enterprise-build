@@ -4,6 +4,7 @@ import { enableScreens } from "react-native-screens";
 import { SessionProvider } from "@/auth/SessionProvider";
 import { WorkflowProvider } from "@/workflow/WorkflowContext";
 import { RootNavigator } from "@/navigation/RootNavigator";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { NetworkBanner, Shell } from "@/components/ui";
 
 enableScreens();
@@ -11,16 +12,17 @@ enableScreens();
 export function AppShell() {
   return (
     <SafeAreaProvider>
-      <SessionProvider>
-        <WorkflowProvider>
-          <Shell>
-            <StatusBar style="light" />
-            <NetworkBanner />
-            <RootNavigator />
-          </Shell>
-        </WorkflowProvider>
-      </SessionProvider>
+      <AppErrorBoundary>
+        <SessionProvider>
+          <WorkflowProvider>
+            <Shell>
+              <StatusBar style="light" />
+              <NetworkBanner />
+              <RootNavigator />
+            </Shell>
+          </WorkflowProvider>
+        </SessionProvider>
+      </AppErrorBoundary>
     </SafeAreaProvider>
   );
 }
-
