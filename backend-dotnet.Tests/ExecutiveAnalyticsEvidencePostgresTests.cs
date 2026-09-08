@@ -17,9 +17,11 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
     {
         var db = Db();
         await new Batch7SchemaService(db).EnsureAsync();
+        await new Batch4SchemaService(db).EnsureAsync();
         await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_sla_kpi_evidence_integrity.sql")));
         await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_executive_analytics_evidence_integrity.sql")));
         await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_dispatch_analytics_evidence_integrity.sql")));
+        await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_safety_analytics_evidence_integrity.sql")));
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var company = await Company(db, $"EXEC-A-{suffix}");
         var other = await Company(db, $"EXEC-B-{suffix}");
@@ -27,6 +29,7 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
         {
             var customer = await Customer(db, company, $"CUS-{suffix}");
             await Vehicle(db, company, $"VEH-{suffix}");
+            var driver = await Driver(db, company, $"DRV-REAL-{suffix}");
             await Snapshot(db, company, DateTime.UtcNow.Date, "runtime_computed", "calculated_from_qualified_sources", 71);
             await Snapshot(db, company, DateTime.UtcNow.Date.AddDays(-1), "legacy_unverified", "unverified", 99);
             await Snapshot(db, company, DateTime.UtcNow.Date.AddDays(-2), "demo_seed", "demo_seed", 98);
@@ -40,6 +43,11 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
             await DispatchException(db, company, activeAssignment, "user_workflow", "recorded_by_authenticated_actor");
             await DispatchException(db, company, legacyAssignment, "legacy_unverified", "unverified");
             await DeliveryProof(db, company, deliveredAssignment);
+            var qualifiedSafety = await SafetyEvent(db, company, driver, $"SAFE-VER-{suffix}", "Critical", "user_workflow", "recorded_by_authenticated_actor");
+            var legacySafety = await SafetyEvent(db, company, driver, $"SAFE-LEG-{suffix}", "High", "legacy_unverified", "unverified");
+            await Coaching(db, company, driver, qualifiedSafety, $"COACH-VER-{suffix}", "user_workflow", "recorded_by_authenticated_actor");
+            await Coaching(db, company, driver, legacySafety, $"COACH-BADLINK-{suffix}", "user_workflow", "recorded_by_authenticated_actor");
+            await Coaching(db, company, driver, null, $"COACH-LEG-{suffix}", "legacy_unverified", "unverified");
 
             var http = Principal(company, "dashboard:view", "reports:view", "customer_portal:view", "dispatch:view", "safety:view", "maintenance:view");
             var snapshots = Data(await Invoke("ExecutiveSnapshots", http, db, CancellationToken.None))
@@ -88,8 +96,12 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
             Assert.DoesNotContain("legacy_unverified", dispatch);
 
             var safety = JsonSerializer.Serialize(Value(await Invoke("AnalyticsSafety", http, db, CancellationToken.None)));
-            Assert.Contains("\"safetyEventsLast30d\":null", safety);
-            Assert.Contains("\"topRiskDrivers\":[]", safety);
+            Assert.Contains("\"safetyEventsLast30d\":1", safety);
+            Assert.Contains("\"criticalEvents\":1", safety);
+            Assert.Contains("\"openCoachingTasks\":1", safety);
+            Assert.Contains("\"driverSafetyAvg\":null", safety);
+            Assert.Contains($"\"driverCode\":\"DRV-REAL-{suffix}\"", safety);
+            Assert.DoesNotContain("safetyScore", safety);
 
             var maintenance = JsonSerializer.Serialize(Value(await Invoke("AnalyticsMaintenance", http, db, CancellationToken.None)));
             Assert.Contains("\"vehiclesOutOfService\":null", maintenance);
@@ -147,6 +159,9 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
     private static Task Vehicle(Database db, long company, string code) => db.ExecuteAsync(
         "INSERT INTO vehicles(company_id,vehicle_code,type,status,vin) VALUES(@company,@code,'Truck','Available',@code)",
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@code", code); });
+    private static Task<long> Driver(Database db, long company, string code) => db.InsertAsync(
+        "INSERT INTO drivers(company_id,driver_code,full_name,email,status) VALUES(@company,@code,@code,@email,'Available') RETURNING id",
+        c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@email", $"{code.ToLowerInvariant()}@example.test"); });
     private static Task Snapshot(Database db, long company, DateTime day, string origin, string verification, decimal score) => db.ExecuteAsync(
         @"INSERT INTO executive_snapshots(tenant_id,snapshot_date,operations_health_score,cost_health_score,safety_health_score,compliance_health_score,customer_sla_score,fleet_readiness_score,dispatch_readiness_score,data_origin,verification_status)
           VALUES(@company,@day,@score,@score,@score,@score,@score,@score,@score,@origin,@verification)",
@@ -178,6 +193,16 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
             c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@proof", proof); });
     }
 
+    private static Task<long> SafetyEvent(Database db, long company, long driver, string number, string severity, string origin, string verification) => db.InsertAsync(
+        @"INSERT INTO safety_events(company_id,event_number,driver_id,event_type,severity,description,event_time,occurred_at,data_origin,verification_status)
+          VALUES(@company,@number,@driver,'Harsh Braking',@severity,'Recorded test event',NOW(),NOW(),@origin,@verification) RETURNING id",
+        c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@number", number); c.Parameters.AddWithValue("@driver", driver); c.Parameters.AddWithValue("@severity", severity); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@verification", verification); });
+
+    private static Task Coaching(Database db, long company, long driver, long? safetyEvent, string number, string origin, string verification) => db.ExecuteAsync(
+        @"INSERT INTO coaching_tasks(company_id,task_number,driver_id,safety_event_id,coaching_type,priority,status,title,description,due_at,data_origin,verification_status)
+          VALUES(@company,@number,@driver,@safety,'Safety Review','High','Assigned',@number,'Recorded coaching task',NOW()-INTERVAL '1 day',@origin,@verification)",
+        c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@number", number); c.Parameters.AddWithValue("@driver", driver); c.Parameters.AddWithValue("@safety", (object?)safetyEvent ?? DBNull.Value); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@verification", verification); });
+
     private static async Task Cleanup(Database db, long company, long other)
     {
         await db.ExecuteAsync(@"DELETE FROM sla_breaches WHERE tenant_id=@company OR tenant_id=@other;
@@ -187,6 +212,9 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
             DELETE FROM dispatch_proofs WHERE company_id=@company OR company_id=@other;
             DELETE FROM dispatch_exceptions WHERE company_id=@company OR company_id=@other;
             DELETE FROM dispatch_assignments WHERE company_id=@company OR company_id=@other;
+            DELETE FROM coaching_tasks WHERE company_id=@company OR company_id=@other;
+            DELETE FROM safety_events WHERE company_id=@company OR company_id=@other;
+            DELETE FROM drivers WHERE company_id=@company OR company_id=@other;
             DELETE FROM vehicles WHERE company_id=@company OR company_id=@other;
             DELETE FROM customers WHERE company_id=@company OR company_id=@other;
             DELETE FROM companies WHERE id=@company OR id=@other;",

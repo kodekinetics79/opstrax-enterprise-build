@@ -215,7 +215,6 @@ function SafetyPanel() {
         <KpiCard label="Qualified Critical Events" value={n("criticalEvents")} />
         <KpiCard label="Qualified Open Coaching Tasks" value={n("openCoachingTasks")} />
         <KpiCard label="Qualified Coaching Overdue" value={n("overdueCoachingTasks")} />
-        <KpiCard label="Qualified Driver Safety Avg" value={n("driverSafetyAvg")} />
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {eventTypes.length > 0 && (
@@ -226,8 +225,8 @@ function SafetyPanel() {
         )}
         {riskDrivers.length > 0 && (
           <div className="panel p-4">
-            <p className="text-xs font-semibold text-slate-700 mb-2">Top Risk Drivers</p>
-            <SimpleTable rows={riskDrivers} cols={[{ key: "driverName", label: "Driver" }, { key: "safetyScore", label: "Score" }, { key: "eventCount", label: "Events" }]} />
+            <p className="text-xs font-semibold text-slate-700 mb-2">Drivers by Qualified Event Count</p>
+            <SimpleTable rows={riskDrivers} cols={[{ key: "driverName", label: "Driver" }, { key: "eventCount", label: "Events" }]} />
           </div>
         )}
       </div>

@@ -51,15 +51,17 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
     }
 
     [Fact]
-    public void OperationalPanels_RequireProvenanceAndUnsupportedPanelsFailClosed()
+    public void OperationalPanels_RequireProvenanceAndMaintenanceFailsClosed()
     {
         var handlers = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Controllers", "EndpointMappings.cs"));
 
         var operationsStart = handlers.IndexOf("private static async Task<IResult> AnalyticsOperations", StringComparison.Ordinal);
         var dispatchStart = handlers.IndexOf("private static async Task<IResult> AnalyticsDispatch", operationsStart, StringComparison.Ordinal);
-        var safetyStart = handlers.IndexOf("private static Task<IResult> AnalyticsSafety", dispatchStart, StringComparison.Ordinal);
+        var safetyStart = handlers.IndexOf("private static async Task<IResult> AnalyticsSafety", dispatchStart, StringComparison.Ordinal);
+        var maintenanceStart = handlers.IndexOf("private static Task<IResult> AnalyticsMaintenance", safetyStart, StringComparison.Ordinal);
         var operations = handlers[operationsStart..dispatchStart];
         var dispatch = handlers[dispatchStart..safetyStart];
+        var safety = handlers[safetyStart..maintenanceStart];
         Assert.Contains("QualifiedDispatchAssignmentSql", operations);
         Assert.Contains("QualifiedDispatchExceptionSql", operations);
         Assert.Contains("QualifiedDispatchAssignmentSql", dispatch);
@@ -67,13 +69,21 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
         Assert.DoesNotContain("legacy_unverified", operations);
         Assert.DoesNotContain("legacy_unverified", dispatch);
 
-        AssertFailClosed("AnalyticsSafety", "AnalyticsMaintenance");
         AssertFailClosed("AnalyticsMaintenance", "AnalyticsCustomer");
+        Assert.Contains("QualifiedSafetyEventSql", safety);
+        Assert.Contains("QualifiedCoachingTaskSql", safety);
+        Assert.Contains("QualifiedCoachingSourceSql", safety);
+        Assert.Contains("source_authority='Authoritative'", handlers);
+        Assert.Contains("media_status='Ready'", handlers);
+        Assert.Contains("driverSafetyAvg = avgSafety.HasValue", safety);
+        Assert.DoesNotContain("AVG(d.safety_score)", safety);
 
         var ui = File.ReadAllText(Path.Combine(RepoRoot, "frontend", "src", "pages", "AnalyticsDashboardPage.tsx"));
         Assert.Contains("Qualified Route Compliance", ui);
         Assert.Contains("Qualified Safety Events", ui);
         Assert.Contains("Qualified Critical Defects", ui);
+        Assert.Contains("Drivers by Qualified Event Count", ui);
+        Assert.DoesNotContain("Qualified Driver Safety Avg", ui);
         Assert.DoesNotContain("target=\"85%\"", ui);
 
         void AssertFailClosed(string method, string nextMethod)
@@ -103,5 +113,26 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
         Assert.Contains("DEFAULT 'unverified'", schema);
         Assert.Contains("ck_dispatch_assignments_evidence", migration);
         Assert.Contains("ck_dispatch_exceptions_evidence", migration);
+    }
+
+    [Fact]
+    public void SafetyWorkflowWrites_StampEvidenceAndDoNotInventCoachingScores()
+    {
+        var handlers = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Controllers", "EndpointMappings.cs"));
+        var pilot = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Controllers", "SafetyCoachingScorecardPilotEndpoints.cs"));
+        var schema = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Services", "Batch4SchemaService.cs"));
+        var migration = File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_safety_analytics_evidence_integrity.sql"));
+
+        Assert.Contains("'user_workflow','recorded_by_authenticated_actor'", handlers);
+        Assert.Contains("'user_workflow','recorded_by_authenticated_actor'", pilot);
+        Assert.DoesNotContain("Generated from OpsTrax safety intelligence.", handlers);
+        Assert.DoesNotContain("before_safety_score+6", handlers);
+        Assert.DoesNotContain("effectiveness_score=COALESCE(effectiveness_score,88)", handlers);
+        Assert.DoesNotContain("before_safety_score,due_at,row_version,updated_at)\n                  VALUES", pilot);
+        Assert.Contains("NULL,@due,0,NOW()", pilot);
+        Assert.Contains("DEFAULT 'legacy_unverified'", schema);
+        Assert.Contains("DEFAULT 'unverified'", schema);
+        Assert.Contains("ck_safety_events_evidence", migration);
+        Assert.Contains("ck_coaching_tasks_evidence", migration);
     }
 }

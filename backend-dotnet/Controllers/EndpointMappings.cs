@@ -9553,8 +9553,8 @@ public static partial class EndpointMappings
         var (referencesValid, ownerBranchId, referenceError) = await ValidateLegacySafetyReferencesAsync(http, body, db, ct);
         if (!referencesValid) return Results.BadRequest(ApiResponse<object>.Fail("Safety event validation failed", [referenceError!]));
         var companyId = GetCompanyId(http);
-        var id = await db.InsertAsync(@"INSERT INTO safety_events (company_id,branch_id,event_number,event_type,severity,driver_id,vehicle_id,job_id,route_id,location_description,speed,posted_speed_limit,occurred_at,review_status,coaching_status,incident_status,risk_score,ai_summary,recommended_action,row_version)
-            VALUES (@companyId,@branchId,@number,@type,@severity,@driver,@vehicle,@job,@route,@location,@speed,@limit,COALESCE(@occurred,NOW()),'New','Not Created','None',COALESCE(@risk,40),@summary,@action,0)", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)ownerBranchId ?? DBNull.Value); BindSafety(c, body); }, ct);
+        var id = await db.InsertAsync(@"INSERT INTO safety_events (company_id,branch_id,event_number,event_type,severity,driver_id,vehicle_id,job_id,route_id,location_description,speed,posted_speed_limit,occurred_at,review_status,coaching_status,incident_status,risk_score,ai_summary,recommended_action,row_version,data_origin,verification_status)
+            VALUES (@companyId,@branchId,@number,@type,@severity,@driver,@vehicle,@job,@route,@location,@speed,@limit,COALESCE(@occurred,NOW()),'New','Not Created','None',COALESCE(@risk,40),@summary,@action,0,'user_workflow','recorded_by_authenticated_actor')", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)ownerBranchId ?? DBNull.Value); BindSafety(c, body); }, ct);
         await audit.LogAsync(http, "safety.event.created", "SafetyEvent", id, ct: ct);
         return Results.Created($"/api/safety/events/{id}", ApiResponse<object>.Ok(new { id }, "Safety event created"));
     }
@@ -10031,7 +10031,7 @@ public static partial class EndpointMappings
     }
     private static async Task<IResult> CoachingAssign(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE coaching_tasks SET assigned_to_user_id=@assigned, status='Assigned' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@assigned", Get(body, "assignedToUserId") is DBNull ? 1 : Get(body, "assignedToUserId")); }, ct); await audit.LogAsync(http, "coaching.assigned", "CoachingTask", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Coaching assigned")); }
     private static async Task<IResult> CoachingAcknowledge(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE coaching_tasks SET driver_acknowledged=TRUE, acknowledged_at=NOW(), status='Driver Acknowledged' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "coaching.acknowledged", "CoachingTask", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Coaching acknowledged")); }
-    private static async Task<IResult> CoachingComplete(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE coaching_tasks SET status='Completed', completed_at=NOW(), after_safety_score=COALESCE(after_safety_score,before_safety_score+6), effectiveness_score=COALESCE(effectiveness_score,88) WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "coaching.completed", "CoachingTask", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Coaching completed")); }
+    private static async Task<IResult> CoachingComplete(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE coaching_tasks SET status='Completed', completed_at=NOW() WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "coaching.completed", "CoachingTask", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Coaching completed")); }
     private static async Task<IResult> CoachingAddNote(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         var noteId = await db.InsertAsync("INSERT INTO coaching_notes (company_id, coaching_task_id, note_type, note_text, created_by_user_id) VALUES (@companyId,@id,COALESCE(@type,'Manager Note'),@text,@userId)", c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@userId", http.Items[AuthUserIdItemKey] ?? 1); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@type", Get(body, "noteType")); c.Parameters.AddWithValue("@text", Get(body, "noteText") is DBNull ? "Coaching note placeholder." : Get(body, "noteText")); }, ct);
@@ -14515,8 +14515,8 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     }
 
     private static async Task<long> InsertCoaching(HttpContext http, Database db, object? driverId, object? safetyEventId, object? dashcamEventId, string type, object? priority, CancellationToken ct)
-        => await db.InsertAsync(@"INSERT INTO coaching_tasks (company_id, task_number, driver_id, safety_event_id, dashcam_event_id, assigned_to_user_id, coaching_type, priority, status, title, description, ai_script, before_safety_score, due_at)
-            VALUES (@companyId, CONCAT('COACH-', floor(extract(epoch from now()))::bigint), @driver, @safety, @dashcam, @userId, @type, COALESCE(@priority,'High'), 'Assigned', CONCAT(@type, ' action'), 'Generated from OpsTrax safety intelligence.', 'Review following distance and braking patterns from the event. Focus on maintaining safe distance in high-traffic zones.', 82, NOW() + 7 * INTERVAL '1 day')",
+        => await db.InsertAsync(@"INSERT INTO coaching_tasks (company_id, task_number, driver_id, safety_event_id, dashcam_event_id, assigned_to_user_id, coaching_type, priority, status, title, description, ai_script, before_safety_score, due_at, data_origin, verification_status)
+            VALUES (@companyId, CONCAT('COACH-', floor(extract(epoch from now()))::bigint), @driver, @safety, @dashcam, @userId, @type, COALESCE(@priority,'High'), 'Assigned', CONCAT(@type, ' action'), 'Created from a recorded safety event.', NULL, NULL, NOW() + 7 * INTERVAL '1 day', 'user_workflow', 'recorded_by_authenticated_actor')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
@@ -19358,6 +19358,30 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         @"((de.data_origin='user_workflow' AND de.verification_status='recorded_by_authenticated_actor')
            OR (de.data_origin='runtime_workflow' AND de.verification_status='derived_from_qualified_workflow')
            OR (de.data_origin='provider_import' AND de.verification_status='provider_verified'))";
+
+    private const string QualifiedSafetyEventSql =
+        @"((se.data_origin='user_workflow' AND se.verification_status='recorded_by_authenticated_actor')
+           OR (se.data_origin='runtime_detection' AND se.verification_status='derived_from_qualified_source')
+           OR (se.data_origin='provider_import' AND se.verification_status='provider_verified'))";
+
+    private const string QualifiedCoachingTaskSql =
+        @"((ct.data_origin='user_workflow' AND ct.verification_status='recorded_by_authenticated_actor')
+           OR (ct.data_origin='runtime_detection' AND ct.verification_status='derived_from_qualified_source')
+           OR (ct.data_origin='provider_import' AND ct.verification_status='provider_verified'))";
+
+    private const string QualifiedCoachingSourceSql =
+        @"(ct.safety_event_id IS NULL OR EXISTS (
+              SELECT 1 FROM safety_events se_source
+               WHERE se_source.id=ct.safety_event_id AND se_source.company_id=ct.company_id
+                 AND se_source.deleted_at IS NULL
+                 AND ((se_source.data_origin='user_workflow' AND se_source.verification_status='recorded_by_authenticated_actor')
+                   OR (se_source.data_origin='runtime_detection' AND se_source.verification_status='derived_from_qualified_source')
+                   OR (se_source.data_origin='provider_import' AND se_source.verification_status='provider_verified'))))
+          AND (ct.dashcam_event_id IS NULL OR EXISTS (
+              SELECT 1 FROM dashcam_events camera_source
+               WHERE camera_source.id=ct.dashcam_event_id AND camera_source.company_id=ct.company_id
+                 AND camera_source.deleted_at IS NULL
+                 AND camera_source.source_authority='Authoritative' AND camera_source.media_status='Ready'))";
 
     private static string String(System.Collections.Generic.IDictionary<string, object?> row, string key)
         => row.TryGetValue(key, out var v) ? v?.ToString() ?? "" : "";
@@ -31462,25 +31486,65 @@ LIMIT 100000",
         }, "Evidence-qualified dispatch analytics"));
     }
 
-    private static Task<IResult> AnalyticsSafety(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> AnalyticsSafety(HttpContext http, Database db, CancellationToken ct)
     {
+        var c = GetCompanyId(http);
         var denied = RequirePermission(http, "safety:view");
-        if (denied is not null) return Task.FromResult<IResult>(denied);
-        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return Task.FromResult<IResult>(branchDenied);
-        ct.ThrowIfCancellationRequested();
+        if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
-        return Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(new
+        async Task<long> EventCount(string predicate) => await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM safety_events se
+                WHERE se.company_id=@c AND se.deleted_at IS NULL
+                  AND COALESCE(se.occurred_at,se.event_time)>=NOW()-30*INTERVAL '1 day'
+                  AND {predicate} AND {QualifiedSafetyEventSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        async Task<long> CoachingCount(string predicate) => await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM coaching_tasks ct
+                WHERE ct.company_id=@c AND ct.deleted_at IS NULL
+                  AND {predicate} AND {QualifiedCoachingTaskSql} AND {QualifiedCoachingSourceSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+
+        var eventCount = await EventCount("TRUE");
+        var criticalEvents = await EventCount("LOWER(se.severity)='critical'");
+        var openCoaching = await CoachingCount("LOWER(ct.status) NOT IN ('completed','cancelled','dismissed')");
+        var overdueCoaching = await CoachingCount("ct.due_at<NOW() AND LOWER(ct.status) NOT IN ('completed','cancelled','dismissed')");
+        var eventTypes = await db.QueryAsync(
+            $@"SELECT se.event_type,se.severity,COUNT(*) cnt
+                 FROM safety_events se
+                WHERE se.company_id=@c AND se.deleted_at IS NULL
+                  AND COALESCE(se.occurred_at,se.event_time)>=NOW()-30*INTERVAL '1 day'
+                  AND {QualifiedSafetyEventSql}
+                GROUP BY se.event_type,se.severity ORDER BY cnt DESC,se.event_type",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        var topRiskDrivers = await db.QueryAsync(
+            $@"SELECT d.id,d.driver_code,d.full_name driver_name,COUNT(se.id) event_count
+                 FROM drivers d
+                 JOIN safety_events se ON se.driver_id=d.id AND se.company_id=d.company_id
+                  AND se.deleted_at IS NULL
+                  AND COALESCE(se.occurred_at,se.event_time)>=NOW()-30*INTERVAL '1 day'
+                  AND {QualifiedSafetyEventSql}
+                WHERE d.company_id=@c AND d.deleted_at IS NULL
+                  AND NOT (d.company_id=1
+                    AND d.driver_code ~ '^DRV-0(0[1-9]|1[0-9]|20)$'
+                    AND d.email ~ '^driver([1-9]|1[0-9]|20)@opstrax[.]example$')
+                GROUP BY d.id,d.driver_code,d.full_name
+                ORDER BY event_count DESC,d.full_name LIMIT 5",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        decimal? avgSafety = null;
+
+        return Results.Ok(ApiResponse<object>.Ok(new
         {
-            safetyEventsLast30d = (long?)null,
-            criticalEvents = (long?)null,
-            openCoachingTasks = (long?)null,
-            overdueCoachingTasks = (long?)null,
-            driverSafetyAvg = (decimal?)null,
-            eventTypeBreakdown = Array.Empty<object>(),
-            topRiskDrivers = Array.Empty<object>(),
+            safetyEventsLast30d = eventCount,
+            criticalEvents,
+            openCoachingTasks = openCoaching,
+            overdueCoachingTasks = overdueCoaching,
+            driverSafetyAvg = avgSafety.HasValue ? Math.Round(avgSafety.Value, 1) : (decimal?)null,
+            eventTypeBreakdown = eventTypes,
+            topRiskDrivers,
             insightType = "System Analytics Insight",
-            evidenceStatus = "Unavailable until safety events, coaching tasks and score calculations carry recorded source provenance."
-        }, "Safety analytics awaiting qualified evidence")));
+            evidenceStatus = "Safety events use recorded source provenance. Coaching counts also require every linked safety or camera source to be qualified; driver safety scores remain unavailable until their calculation inputs carry provenance."
+        }, "Evidence-qualified safety analytics"));
     }
 
     private static Task<IResult> AnalyticsMaintenance(HttpContext http, Database db, CancellationToken ct)

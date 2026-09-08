@@ -60,6 +60,8 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
         new("safety_events", "deleted_at",     "TIMESTAMPTZ NULL"),
         new("safety_events", "branch_id",      "BIGINT NULL"),
         new("safety_events", "row_version",    "BIGINT NOT NULL DEFAULT 0"),
+        new("safety_events", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("safety_events", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
 
         new("dashcam_events", "event_number", "VARCHAR(80) NULL"),
         new("dashcam_events", "event_type", "VARCHAR(120) NULL"),
@@ -109,6 +111,8 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
         new("coaching_tasks", "effectiveness_formula_version", "VARCHAR(40) NULL"),
         new("coaching_tasks", "effectiveness_evaluated_at", "TIMESTAMPTZ NULL"),
         new("coaching_tasks", "effectiveness_observation_json", "JSONB NULL"),
+        new("coaching_tasks", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("coaching_tasks", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
         new("coaching_notes", "branch_id", "BIGINT NULL"),
         new("driver_safety_scorecards", "branch_id", "BIGINT NULL"),
         new("vehicle_safety_scorecards", "branch_id", "BIGINT NULL"),
@@ -147,7 +151,8 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
             title VARCHAR(220) NOT NULL, description TEXT NULL, ai_script TEXT NULL, driver_acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
             acknowledged_at TIMESTAMPTZ NULL, completed_at TIMESTAMPTZ NULL, before_safety_score DECIMAL(6,2) NULL, after_safety_score DECIMAL(6,2) NULL,
             effectiveness_score DECIMAL(6,2) NULL, due_at TIMESTAMPTZ NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL)",
+            updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL,
+            data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified', verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified')",
         @"CREATE TABLE IF NOT EXISTS coaching_notes (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, coaching_task_id BIGINT NOT NULL,
             note_type VARCHAR(80) NOT NULL DEFAULT 'Manager Note', note_text TEXT NOT NULL, created_by_user_id BIGINT NULL,

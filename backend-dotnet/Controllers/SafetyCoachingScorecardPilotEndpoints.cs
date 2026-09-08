@@ -166,9 +166,9 @@ public static partial class EndpointMappings
         try
         {
             var id = await db.InsertAsync(
-                @"INSERT INTO coaching_tasks(company_id,branch_id,idempotency_key,idempotency_request_hash,task_number,driver_id,safety_event_id,dashcam_event_id,assigned_to_user_id,coaching_type,priority,status,title,description,ai_script,before_safety_score,due_at,row_version,updated_at)
+                @"INSERT INTO coaching_tasks(company_id,branch_id,idempotency_key,idempotency_request_hash,task_number,driver_id,safety_event_id,dashcam_event_id,assigned_to_user_id,coaching_type,priority,status,title,description,ai_script,before_safety_score,due_at,row_version,updated_at,data_origin,verification_status)
                   VALUES(@cid,@branchId,@idempotencyKey,@requestHash,@number,@driver,@safety,@dashcam,@assigned,@type,@priority,'Draft',@title,@description,@script,
-                         (SELECT score_30d FROM driver_safety_scores WHERE company_id=@cid AND driver_id=@driver),@due,0,NOW())",
+                         NULL,@due,0,NOW(),'user_workflow','recorded_by_authenticated_actor')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", companyId);

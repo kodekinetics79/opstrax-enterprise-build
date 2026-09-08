@@ -472,7 +472,9 @@ CREATE TABLE IF NOT EXISTS safety_events (
   severity VARCHAR(50) NOT NULL DEFAULT 'Low',
   description TEXT NULL,
   review_status VARCHAR(50) NOT NULL DEFAULT 'New',
-  event_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  event_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS dashcam_events (
@@ -1011,7 +1013,9 @@ CREATE TABLE IF NOT EXISTS coaching_tasks (
   due_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NULL,
-  deleted_at TIMESTAMPTZ NULL
+  deleted_at TIMESTAMPTZ NULL,
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS coaching_notes (
