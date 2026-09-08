@@ -17919,73 +17919,114 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     // ── Alerts / Exception Management ──────────────────────────────────────────
 
+    // The customer alert queue is built from telemetry_alerts because that table has
+    // production writers in the ingest and detection services. ai_insights is populated
+    // only by demo/legacy seeds and is not an acceptable operational evidence source.
     private const string AlertsSql =
-        @"SELECT ai.id,
-                 ai.title,
-                 ai.body,
-                 ai.severity,
-                 ai.status,
-                 ai.category,
-                 ai.alert_type alertType,
-                 ai.entity_type entityType,
-                 ai.entity_id entityId,
-                 ai.acknowledged_at acknowledgedAt,
-                 ai.closed_at closedAt,
-                 COALESCE(ack.full_name, ai.acknowledged_by) acknowledgedBy,
-                 ai.recommended_action recommendedAction,
-                 ai.created_at createdAt,
-                 ai.company_id companyId,
+        @"SELECT ta.id,
+                 COALESCE(NULLIF(INITCAP(REPLACE(REPLACE(ta.alert_type, '.', ' '), '_', ' ')), ''), 'Telemetry alert') title,
+                 ta.message body,
+                 ta.severity,
+                 CASE WHEN ta.status='Resolved' THEN 'Closed' ELSE ta.status END status,
+                 'Telematics' category,
+                 ta.alert_type alert_type,
                  CASE
-                   WHEN ai.entity_type IN ('vehicle','Vehicle') THEN (SELECT v.vehicle_code FROM vehicles v WHERE v.id = ai.entity_id AND v.company_id = ai.company_id LIMIT 1)
-                   WHEN ai.entity_type IN ('driver','Driver') THEN (SELECT d.full_name FROM drivers d WHERE d.id = ai.entity_id AND d.company_id = ai.company_id LIMIT 1)
-                   WHEN ai.entity_type IN ('job','shipment','Job','Shipment') THEN (SELECT COALESCE(j.job_number, j.job_code) FROM jobs j WHERE j.id = ai.entity_id AND j.company_id = ai.company_id LIMIT 1)
-                   WHEN ai.entity_type IN ('customer','Customer') THEN (SELECT c.name FROM customers c WHERE c.id = ai.entity_id AND c.company_id = ai.company_id LIMIT 1)
-                   ELSE NULL
-                 END entity,
+                   WHEN ta.vehicle_id IS NOT NULL THEN 'Vehicle'
+                   WHEN ta.driver_id IS NOT NULL THEN 'Driver'
+                   WHEN ta.device_id IS NOT NULL THEN 'Device'
+                   ELSE 'Telemetry'
+                 END entity_type,
+                 COALESCE(ta.vehicle_id, ta.driver_id, ta.device_id) entity_id,
+                 ta.acknowledged_at,
+                 ta.resolved_at closed_at,
+                 COALESCE(ack.full_name, ta.acknowledged_by) acknowledged_by,
+                 'Review the recorded telemetry event and current asset context.' recommended_action,
+                 ta.created_at,
+                 ta.company_id,
+                 COALESCE(v.vehicle_code, d.full_name, e.device_serial) entity,
+                 '/control-tower' entity_route,
                  CASE
-                   WHEN ai.entity_type IN ('vehicle','Vehicle') THEN '/vehicles/roster'
-                   WHEN ai.entity_type IN ('driver','Driver') THEN '/drivers/roster'
-                   WHEN ai.entity_type IN ('job','shipment','Job','Shipment') THEN '/jobs'
-                   WHEN ai.entity_type IN ('customer','Customer') THEN '/customers'
-                   WHEN ai.category = 'Maintenance' THEN '/maintenance'
-                   WHEN ai.category = 'Compliance' THEN '/compliance'
-                   WHEN ai.category = 'Safety' THEN '/safety'
-                   WHEN ai.category = 'Telematics' THEN '/iot-devices'
-                   ELSE '/alerts'
-                 END entityRoute,
-                 CASE
-                   WHEN ai.created_at >= NOW() - INTERVAL '1 hour' THEN CONCAT(GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (NOW() - ai.created_at)) / 60))::INT, 'm')
-                   WHEN ai.created_at >= NOW() - INTERVAL '24 hours' THEN CONCAT(GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (NOW() - ai.created_at)) / 3600))::INT, 'h')
-                   ELSE CONCAT(GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (NOW() - ai.created_at)) / 86400))::INT, 'd')
+                   WHEN ta.created_at >= NOW() - INTERVAL '1 hour' THEN CONCAT(GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (NOW() - ta.created_at)) / 60))::INT, 'm')
+                   WHEN ta.created_at >= NOW() - INTERVAL '24 hours' THEN CONCAT(GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (NOW() - ta.created_at)) / 3600))::INT, 'h')
+                   ELSE CONCAT(GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (NOW() - ta.created_at)) / 86400))::INT, 'd')
                  END age
-          FROM ai_insights ai
+          FROM telemetry_alerts ta
+          LEFT JOIN vehicles v
+            ON v.id=ta.vehicle_id AND v.company_id=ta.company_id AND v.deleted_at IS NULL
+          LEFT JOIN drivers d
+            ON d.id=ta.driver_id AND d.company_id=ta.company_id AND d.deleted_at IS NULL
+          LEFT JOIN eld_devices e
+            ON e.id=ta.device_id AND e.company_id=ta.company_id
+          LEFT JOIN LATERAL (
+            SELECT i.branch_id
+              FROM device_installations i
+             WHERE i.company_id=ta.company_id
+               AND i.device_id=ta.device_id
+               AND i.effective_to IS NULL
+               AND i.status IN ('Installed','Verified')
+             ORDER BY i.is_primary DESC, COALESCE(i.effective_from, i.installed_at) DESC, i.id DESC
+             LIMIT 1
+          ) device_scope ON TRUE
           LEFT JOIN users ack
-            ON CAST(ack.id AS TEXT) = ai.acknowledged_by
-           AND ack.company_id = ai.company_id";
+            ON CAST(ack.id AS TEXT)=ta.acknowledged_by
+           AND ack.company_id=ta.company_id";
+
+    private const string AlertsScopeSql =
+        @" AND ta.company_id=@cid
+           AND (@branchId::BIGINT IS NULL OR
+                CASE
+                  WHEN ta.vehicle_id IS NOT NULL THEN v.branch_id
+                  WHEN ta.driver_id IS NOT NULL THEN d.branch_id
+                  WHEN ta.device_id IS NOT NULL THEN COALESCE(device_scope.branch_id, e.branch_id)
+                  ELSE NULL
+                END=@branchId)";
+
+    private static void BindAlertScope(NpgsqlCommand command, HttpContext http)
+    {
+        command.Parameters.AddWithValue("@cid", GetCompanyId(http));
+        command.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
+    }
 
     private static async Task<IResult> AlertsSummary(HttpContext http, Database db, CancellationToken ct)
     {
         var denied = RequireAnyDirectPermission(http, "alerts:view");
         if (denied is not null) return denied;
-        var companyId = GetCompanyId(http);
-        var total       = await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_insights WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId), ct);
-        var critical    = await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_insights WHERE severity='Critical' AND company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId), ct);
-        var high        = await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_insights WHERE severity='High' AND company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId), ct);
-        var open        = await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_insights WHERE status='Open' AND company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId), ct);
-        var acked       = await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_insights WHERE status='Acknowledged' AND company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId), ct);
-        var closed      = await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_insights WHERE status='Closed' AND company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId), ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { total, critical, high, open, acknowledged = acked, closed }, "Alert summary"));
+        var summary = await db.QuerySingleAsync(
+            @"SELECT COUNT(*) total,
+                     COUNT(*) FILTER (WHERE ta.severity='Critical') critical,
+                     COUNT(*) FILTER (WHERE ta.severity='High') high,
+                     COUNT(*) FILTER (WHERE ta.status='Open') open,
+                     COUNT(*) FILTER (WHERE ta.status='Acknowledged') acknowledged,
+                     COUNT(*) FILTER (WHERE ta.status='Resolved') closed
+                FROM telemetry_alerts ta
+                LEFT JOIN vehicles v
+                  ON v.id=ta.vehicle_id AND v.company_id=ta.company_id AND v.deleted_at IS NULL
+                LEFT JOIN drivers d
+                  ON d.id=ta.driver_id AND d.company_id=ta.company_id AND d.deleted_at IS NULL
+                LEFT JOIN eld_devices e
+                  ON e.id=ta.device_id AND e.company_id=ta.company_id
+                LEFT JOIN LATERAL (
+                  SELECT i.branch_id
+                    FROM device_installations i
+                   WHERE i.company_id=ta.company_id AND i.device_id=ta.device_id
+                     AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
+                   ORDER BY i.is_primary DESC, COALESCE(i.effective_from, i.installed_at) DESC, i.id DESC
+                   LIMIT 1
+                ) device_scope ON TRUE
+               WHERE 1=1" + AlertsScopeSql,
+            c => BindAlertScope(c, http), ct);
+        return Results.Ok(ApiResponse<object>.Ok(summary ?? new Dictionary<string, object?>(), "Telemetry alert summary"));
     }
 
     private static async Task<IResult> AlertsList(HttpContext http, Database db, CancellationToken ct)
     {
-        var companyId = GetCompanyId(http);
         var denied = RequireAnyDirectPermission(http, "alerts:view");
         if (denied is not null) return denied;
         var rows = await db.QueryAsync(
-            AlertsSql + " WHERE ai.company_id=@cid ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Warning','Info'], ai.severity), ai.created_at DESC",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct);
-        return Results.Ok(ApiResponse<object>.Ok(rows, "Alerts"));
+            AlertsSql + " WHERE 1=1" + AlertsScopeSql +
+            " ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Warning','Info'], ta.severity), ta.created_at DESC LIMIT 500",
+            c => BindAlertScope(c, http), ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows, "Telemetry alerts"));
     }
 
     private static async Task<IResult> AlertDetail(HttpContext http, long id, Database db, CancellationToken ct)
@@ -17993,8 +18034,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var denied = RequireAnyDirectPermission(http, "alerts:view");
         if (denied is not null) return denied;
-        var row = await db.QuerySingleAsync(AlertsSql + " WHERE ai.id=@id AND ai.company_id=@cid LIMIT 1",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        var row = await db.QuerySingleAsync(AlertsSql + " WHERE ta.id=@id" + AlertsScopeSql + " LIMIT 1",
+            c => { c.Parameters.AddWithValue("@id", id); BindAlertScope(c, http); }, ct);
         if (row is null) return Results.NotFound();
 
         var tasks = await db.QueryAsync(
@@ -18012,9 +18053,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 aft.updated_at,
                 u.full_name AS assigned_to_name
               FROM alert_follow_up_tasks aft
-              LEFT JOIN users u ON u.id = aft.assigned_to_user_id
+              LEFT JOIN users u ON u.id = aft.assigned_to_user_id AND u.company_id=aft.company_id
               WHERE aft.alert_id=@id
                 AND aft.company_id=@cid
+                AND aft.source_type='Telemetry'
                 AND aft.deleted_at IS NULL
               ORDER BY aft.created_at DESC",
             c =>
@@ -18023,8 +18065,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@cid", companyId);
             }, ct);
 
-        var auditTrail = await AuditTrail(db, "Alert", id, companyId, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { alert = row, tasks, auditTrail }, "Alert detail"));
+        var auditTrail = await AuditTrail(db, "TelemetryAlert", id, companyId, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { alert = row, tasks, auditTrail }, "Telemetry alert detail"));
     }
 
     private static async Task<IResult> AlertAcknowledge(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
@@ -18034,10 +18076,22 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var note = Get(body, "note")?.ToString() ?? "";
         var userId = http.Items.TryGetValue(AuthUserIdItemKey, out var uid) ? uid?.ToString() ?? "" : "";
-        await db.ExecuteAsync(
-            "UPDATE ai_insights SET status='Acknowledged', acknowledged_at=NOW(), acknowledged_by=@by WHERE id=@id AND company_id=@cid",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@by", userId); }, ct);
-        await audit.LogAsync(http, "alert.acknowledged", "Alert", id, JsonSerializer.Serialize(new { note }), ct);
+        var affected = await db.ExecuteAsync(
+            @"UPDATE telemetry_alerts ta
+                 SET status='Acknowledged', acknowledged_at=NOW(), acknowledged_by=@by, updated_at=NOW()
+               WHERE ta.id=@id AND ta.company_id=@cid AND ta.status='Open'
+                 AND (@branchId::BIGINT IS NULL OR
+                      CASE
+                        WHEN ta.vehicle_id IS NOT NULL THEN (SELECT v.branch_id FROM vehicles v WHERE v.id=ta.vehicle_id AND v.company_id=ta.company_id AND v.deleted_at IS NULL)
+                        WHEN ta.driver_id IS NOT NULL THEN (SELECT d.branch_id FROM drivers d WHERE d.id=ta.driver_id AND d.company_id=ta.company_id AND d.deleted_at IS NULL)
+                        WHEN ta.device_id IS NOT NULL THEN COALESCE(
+                          (SELECT i.branch_id FROM device_installations i WHERE i.company_id=ta.company_id AND i.device_id=ta.device_id AND i.effective_to IS NULL AND i.status IN ('Installed','Verified') ORDER BY i.is_primary DESC, COALESCE(i.effective_from,i.installed_at) DESC, i.id DESC LIMIT 1),
+                          (SELECT e.branch_id FROM eld_devices e WHERE e.id=ta.device_id AND e.company_id=ta.company_id))
+                        ELSE NULL
+                      END=@branchId)",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@by", userId); BindAlertScope(c, http); }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Alert not found or already acknowledged"));
+        await audit.LogAsync(http, "telemetry_alert.acknowledged", "TelemetryAlert", id, JsonSerializer.Serialize(new { note }), ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "Acknowledged", note }, "Alert acknowledged"));
     }
 
@@ -18047,10 +18101,23 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var resolution = Get(body, "resolution")?.ToString() ?? "";
-        await db.ExecuteAsync(
-            "UPDATE ai_insights SET status='Closed', closed_at=NOW() WHERE id=@id AND company_id=@cid",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-        await audit.LogAsync(http, "alert.closed", "Alert", id, JsonSerializer.Serialize(new { resolution }), ct);
+        var userId = http.Items.TryGetValue(AuthUserIdItemKey, out var uid) ? uid?.ToString() ?? "" : "";
+        var affected = await db.ExecuteAsync(
+            @"UPDATE telemetry_alerts ta
+                 SET status='Resolved', resolved_at=NOW(), resolved_by=@by, updated_at=NOW()
+               WHERE ta.id=@id AND ta.company_id=@cid AND ta.status IN ('Open','Acknowledged')
+                 AND (@branchId::BIGINT IS NULL OR
+                      CASE
+                        WHEN ta.vehicle_id IS NOT NULL THEN (SELECT v.branch_id FROM vehicles v WHERE v.id=ta.vehicle_id AND v.company_id=ta.company_id AND v.deleted_at IS NULL)
+                        WHEN ta.driver_id IS NOT NULL THEN (SELECT d.branch_id FROM drivers d WHERE d.id=ta.driver_id AND d.company_id=ta.company_id AND d.deleted_at IS NULL)
+                        WHEN ta.device_id IS NOT NULL THEN COALESCE(
+                          (SELECT i.branch_id FROM device_installations i WHERE i.company_id=ta.company_id AND i.device_id=ta.device_id AND i.effective_to IS NULL AND i.status IN ('Installed','Verified') ORDER BY i.is_primary DESC, COALESCE(i.effective_from,i.installed_at) DESC, i.id DESC LIMIT 1),
+                          (SELECT e.branch_id FROM eld_devices e WHERE e.id=ta.device_id AND e.company_id=ta.company_id))
+                        ELSE NULL
+                      END=@branchId)",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@by", userId); BindAlertScope(c, http); }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Alert not found or already resolved"));
+        await audit.LogAsync(http, "telemetry_alert.resolved", "TelemetryAlert", id, JsonSerializer.Serialize(new { resolution }), ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "Closed", resolution }, "Alert closed"));
     }
 
@@ -18060,11 +18127,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var alert = await db.QuerySingleAsync(
-            "SELECT id, title FROM ai_insights WHERE id=@id AND company_id=@cid LIMIT 1",
+            AlertsSql + " WHERE ta.id=@id" + AlertsScopeSql + " LIMIT 1",
             c =>
             {
                 c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@cid", companyId);
+                BindAlertScope(c, http);
             }, ct);
         if (alert is null) return Results.NotFound(ApiResponse<object>.Fail("Alert not found"));
 
@@ -18074,11 +18141,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var userId = http.Items.TryGetValue(AuthUserIdItemKey, out var uid) && uid is not null ? Convert.ToInt64(uid) : 0L;
         var taskId = await db.InsertAsync(
             @"INSERT INTO alert_follow_up_tasks (
-                company_id, alert_id, title, description, priority, status,
+                company_id, alert_id, source_type, title, description, priority, status,
                 assigned_to_user_id, created_by_user_id, owner_name, due_at, created_at, updated_at
               )
               VALUES (
-                @cid, @alertId, @title, @desc, COALESCE(@priority, 'High'), 'Open',
+                @cid, @alertId, 'Telemetry', @title, @desc, COALESCE(@priority, 'High'), 'Open',
                 @assignedTo, @createdBy, NULLIF(@ownerName, ''), @dueAt, NOW(), NOW()
               )",
             c =>
@@ -18093,7 +18160,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@ownerName", ownerName);
                 c.Parameters.AddWithValue("@dueAt", Get(body, "dueAt") ?? DBNull.Value);
             }, ct);
-        await audit.LogAsync(http, "alert.task.created", "Alert", id, JsonSerializer.Serialize(new { taskId, title }), ct);
+        await audit.LogAsync(http, "telemetry_alert.task.created", "TelemetryAlert", id, JsonSerializer.Serialize(new { taskId, title }), ct);
         return Results.Ok(ApiResponse<object>.Ok(new { taskId, alertId = id, status = "Created", title }, "Task created"));
     }
 

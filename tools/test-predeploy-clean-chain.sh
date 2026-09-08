@@ -290,7 +290,8 @@ BEGIN
       ('2026_09_07_stage126_device_support_tier_history'),
       ('2026_09_08_stage128_device_compatibility_capability_catalog'),
       ('2026_09_08_stage129_latest_device_signal_projection'),
-      ('2026_09_08_stage130_canonical_diagnostic_evidence_identity')) required(version)
+      ('2026_09_08_stage130_canonical_diagnostic_evidence_identity'),
+      ('2026_09_08_stage131_alert_source_truth')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
     RAISE EXCEPTION 'Clean-chain target ledgers are missing or duplicated';
@@ -1001,6 +1002,14 @@ BEGIN
 
   IF to_regclass('public.idx_stage130_canonical_diagnostic_identity') IS NULL THEN
     RAISE EXCEPTION 'Clean-chain Stage130 canonical diagnostic identity index failed';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='alert_follow_up_tasks'
+      AND column_name='source_type'
+  ) OR to_regclass('public.idx_alert_tasks_source_alert') IS NULL THEN
+    RAISE EXCEPTION 'Clean-chain Stage131 alert source identity boundary failed';
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])

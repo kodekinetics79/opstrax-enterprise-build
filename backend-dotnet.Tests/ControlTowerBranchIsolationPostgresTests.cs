@@ -33,8 +33,8 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             await Location(db, company, ownVehicle, 71);
             await Location(db, company, foreignVehicle, 72);
             await Location(db, company, unallocatedVehicle, 73);
-            await TelemetryAlert(db, company, ownVehicle, $"Own telemetry alert {suffix}");
-            await TelemetryAlert(db, company, foreignVehicle, $"Foreign telemetry alert {suffix}");
+            var ownTelemetryAlert = await TelemetryAlert(db, company, ownVehicle, $"Own telemetry alert {suffix}");
+            var foreignTelemetryAlert = await TelemetryAlert(db, company, foreignVehicle, $"Foreign telemetry alert {suffix}");
 
             await Geofence(db, company, branchA, $"Own yard {suffix}");
             await Geofence(db, company, branchB, $"Foreign yard {suffix}");
@@ -127,6 +127,47 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.Equal("Open Telemetry Alerts", commandCenterWithAlerts.GetProperty("kpis")[1].GetProperty("label").GetString());
             Assert.Equal(1, commandCenterWithAlerts.GetProperty("kpis")[1].GetProperty("value").GetInt64());
 
+            var branchAlerts = Payload(await InvokeAlertsList(
+                Principal(company, branchA, "alerts:view"), db)).GetProperty("data");
+            Assert.Single(branchAlerts.EnumerateArray());
+            Assert.Equal($"Own telemetry alert {suffix}", branchAlerts[0].GetProperty("body").GetString());
+            Assert.Equal("Telematics", branchAlerts[0].GetProperty("category").GetString());
+            Assert.Equal("/control-tower", branchAlerts[0].GetProperty("entityRoute").GetString());
+            var branchAlertSummary = Payload(await InvokeAlertsSummary(
+                Principal(company, branchA, "alerts:view"), db)).GetProperty("data");
+            Assert.Equal(1, branchAlertSummary.GetProperty("total").GetInt64());
+            Assert.Equal(1, branchAlertSummary.GetProperty("open").GetInt64());
+
+            var alertPrincipal = Principal(company, branchA, "alerts:view", "alerts:acknowledge", "alerts:close");
+            var ownAlertDetail = Payload(await InvokeAlertDetail(alertPrincipal, ownTelemetryAlert, db)).GetProperty("data");
+            Assert.Equal($"Own telemetry alert {suffix}", ownAlertDetail.GetProperty("alert").GetProperty("body").GetString());
+            Assert.Empty(ownAlertDetail.GetProperty("tasks").EnumerateArray());
+            Assert.Equal(StatusCodes.Status404NotFound, Status(await InvokeAlertDetail(alertPrincipal, foreignTelemetryAlert, db)));
+            Assert.Equal(StatusCodes.Status404NotFound, Status(await InvokeAlertAction(
+                "AlertAcknowledge", alertPrincipal, foreignTelemetryAlert, new(), db)));
+
+            var taskResult = Payload(await InvokeAlertAction(
+                "AlertCreateTask", alertPrincipal, ownTelemetryAlert,
+                new Dictionary<string, object?> { ["title"] = $"Review telemetry {suffix}" }, db));
+            var taskId = taskResult.GetProperty("data").GetProperty("taskId").GetInt64();
+            var taskSource = await db.QuerySingleAsync(
+                "SELECT source_type FROM alert_follow_up_tasks WHERE id=@id AND company_id=@cid",
+                c => { c.Parameters.AddWithValue("@id", taskId); c.Parameters.AddWithValue("@cid", company); });
+            Assert.Equal("Telemetry", taskSource!["sourceType"]);
+
+            Assert.Equal(StatusCodes.Status200OK, Status(await InvokeAlertAction(
+                "AlertAcknowledge", alertPrincipal, ownTelemetryAlert,
+                new Dictionary<string, object?> { ["note"] = "Reviewed in branch scope" }, db)));
+            Assert.Equal(StatusCodes.Status200OK, Status(await InvokeAlertAction(
+                "AlertClose", alertPrincipal, ownTelemetryAlert,
+                new Dictionary<string, object?> { ["resolution"] = "Resolved in branch scope" }, db)));
+            var resolvedAlert = Payload(await InvokeAlertDetail(alertPrincipal, ownTelemetryAlert, db)).GetProperty("data");
+            Assert.Equal("Closed", resolvedAlert.GetProperty("alert").GetProperty("status").GetString());
+            Assert.Single(resolvedAlert.GetProperty("tasks").EnumerateArray());
+            var resolvedSummary = Payload(await InvokeAlertsSummary(alertPrincipal, db)).GetProperty("data");
+            Assert.Equal(0, resolvedSummary.GetProperty("open").GetInt64());
+            Assert.Equal(1, resolvedSummary.GetProperty("closed").GetInt64());
+
             var tenantPayload = Payload(await Invoke(Principal(company, null, "dashboard:view", "dashcam:view", "telematics:devices:view"), db));
             var tenantData = tenantPayload.GetProperty("data");
             Assert.Equal(3, tenantData.GetProperty("entities").GetArrayLength());
@@ -144,6 +185,10 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.Single(tenantData.GetProperty("recommendations").EnumerateArray());
             Assert.Equal(11, tenantData.GetProperty("actionQueue").GetArrayLength());
 
+            var tenantAlerts = Payload(await InvokeAlertsList(
+                Principal(company, null, "alerts:view"), db)).GetProperty("data");
+            Assert.Equal(2, tenantAlerts.GetArrayLength());
+
             var dashboardOnly = Payload(await Invoke(Principal(company, branchA, "dashboard:view"), db)).GetProperty("data");
             Assert.Empty(dashboardOnly.GetProperty("safetyVideo").EnumerateArray());
             Assert.Equal("Unknown", dashboardOnly.GetProperty("entities")[0].GetProperty("deviceStatus").GetString());
@@ -153,6 +198,8 @@ public sealed class ControlTowerBranchIsolationPostgresTests
         finally
         {
             await db.ExecuteAsync("DELETE FROM operational_events WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
+            await db.ExecuteAsync("DELETE FROM alert_follow_up_tasks WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
+            await db.ExecuteAsync("DELETE FROM audit_logs WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM telemetry_alerts WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM location_events WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM geofences WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
@@ -203,7 +250,7 @@ public sealed class ControlTowerBranchIsolationPostgresTests
         "INSERT INTO location_events(company_id,vehicle_id,lat,lng,speed_mph,event_type,event_time) VALUES (@cid,@vehicle,43,-79,@speed,'position',NOW())",
         c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@vehicle", vehicle); c.Parameters.AddWithValue("@speed", speed); });
 
-    private static Task TelemetryAlert(Database db, long company, long vehicle, string message) => db.ExecuteAsync(
+    private static Task<long> TelemetryAlert(Database db, long company, long vehicle, string message) => db.InsertAsync(
         "INSERT INTO telemetry_alerts(company_id,vehicle_id,alert_type,severity,message,status) VALUES (@cid,@vehicle,'branch.test','Warning',@message,'Open')",
         c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@vehicle", vehicle); c.Parameters.AddWithValue("@message", message); });
 
@@ -269,6 +316,38 @@ public sealed class ControlTowerBranchIsolationPostgresTests
         var method = typeof(EndpointMappings).GetMethod("CommandCenterSummary", BindingFlags.NonPublic | BindingFlags.Static)!;
         return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
     }
+
+    private static async Task<IResult> InvokeAlertsList(DefaultHttpContext http, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("AlertsList", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeAlertsSummary(DefaultHttpContext http, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("AlertsSummary", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeAlertDetail(DefaultHttpContext http, long alertId, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("AlertDetail", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, alertId, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeAlertAction(
+        string methodName,
+        DefaultHttpContext http,
+        long alertId,
+        Dictionary<string, object?> body,
+        Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, alertId, body, db, new Opstrax.Api.Services.AuditService(db), CancellationToken.None])!;
+    }
+
+    private static int Status(IResult result)
+        => Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode ?? StatusCodes.Status200OK;
 
     private static JsonElement Payload(IResult result)
     {

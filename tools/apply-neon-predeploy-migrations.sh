@@ -308,6 +308,8 @@ MIGRATIONS=(
   2026_09_08_stage129_latest_device_signal_projection
   # Indexed exact-event proof for customer-visible canonical diagnostic classification.
   2026_09_08_stage130_canonical_diagnostic_evidence_identity
+  # Disambiguate telemetry follow-up tasks from legacy seed-only insight ids.
+  2026_09_08_stage131_alert_source_truth
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -412,7 +414,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_09_07_stage126_device_support_tier_history|\
     2026_09_08_stage128_device_compatibility_capability_catalog|\
     2026_09_08_stage129_latest_device_signal_projection|\
-    2026_09_08_stage130_canonical_diagnostic_evidence_identity) repair_migration=true ;;
+    2026_09_08_stage130_canonical_diagnostic_evidence_identity|\
+    2026_09_08_stage131_alert_source_truth) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -496,7 +499,8 @@ BEGIN
       ('2026_09_07_stage126_device_support_tier_history'),
       ('2026_09_08_stage128_device_compatibility_capability_catalog'),
       ('2026_09_08_stage129_latest_device_signal_projection'),
-      ('2026_09_08_stage130_canonical_diagnostic_evidence_identity')) required(version)
+      ('2026_09_08_stage130_canonical_diagnostic_evidence_identity'),
+      ('2026_09_08_stage131_alert_source_truth')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -868,6 +872,13 @@ BEGIN
   END IF;
   IF to_regclass('public.idx_stage130_canonical_diagnostic_identity') IS NULL THEN
     RAISE EXCEPTION 'Stage130 canonical diagnostic evidence identity index is missing';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='alert_follow_up_tasks'
+      AND column_name='source_type'
+  ) OR to_regclass('public.idx_alert_tasks_source_alert') IS NULL THEN
+    RAISE EXCEPTION 'Stage131 alert source identity boundary is missing';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
