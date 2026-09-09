@@ -751,7 +751,7 @@ BEGIN
     ('warehouse_handovers'),('proof_packages'),('proof_artifacts'),
     ('billing_confidence_records'),
     ('incidents'),('incident_evidence'),('insurance_reports'),
-    ('coaching_tasks'),('coaching_notes'),('driver_safety_scorecards'),
+    ('coaching_tasks'),('driver_safety_scorecards'),
     ('dvir_reports'),('dvir_defects'),('hos_logs'),('hos_clocks'),
     ('compliance_violations'),('eld_devices'),('eld_malfunction_history'),
     ('hos_certifications'),('fault_codes'),('fault_occurrences'),('device_state_transitions'),
@@ -1023,6 +1023,14 @@ BEGIN
                         AND conname='ck_fleet_health_snapshot_evidence')
      OR to_regclass('public.idx_fhs_company_evidence_date') IS NULL THEN
     RAISE EXCEPTION 'Clean-chain fleet-health evidence boundary failed';
+  END IF;
+
+  -- Stage132 deliberately replaces coaching_notes' generic tenant-wide policy
+  -- with principal-scoped SELECT/INSERT policies. Its complete fingerprint and
+  -- ACL allow-list are the authoritative clean-chain assertion for that table.
+  IF to_regprocedure('opstrax_security.private_policy_contract_valid()') IS NULL
+     OR NOT opstrax_security.private_policy_contract_valid() THEN
+    RAISE EXCEPTION 'Clean-chain Stage132 private-user authority boundary failed';
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])
