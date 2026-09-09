@@ -607,7 +607,6 @@ BEGIN
         OR d.provider_sync_status IS DISTINCT FROM 'Unverified'
         OR d.first_connected_at IS NOT NULL
         OR d.last_heartbeat_at IS NOT NULL
-        OR d.last_seen_at IS NOT NULL
         OR d.last_sync_at IS NOT NULL
         OR d.provider_account_ref IS NOT NULL
         OR d.provider_external_id IS NOT NULL

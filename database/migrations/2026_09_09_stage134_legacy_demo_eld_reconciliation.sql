@@ -22,7 +22,6 @@ SET device_serial = CASE
     recommended_action = 'Connect and verify a real provider account and exact physical device',
     first_connected_at = NULL,
     last_heartbeat_at = NULL,
-    last_seen_at = NULL,
     last_sync_at = NULL,
     firmware_version = 'demo-fixture',
     provider_sync_status = 'Unverified',
@@ -47,6 +46,27 @@ WHERE d.company_id = (SELECT id FROM companies WHERE company_code='OPX-DEMO')
   AND d.provider IN (
       'Motive','Samsara','Omnitracs','Synthetic fixture — no provider account'
   );
+
+-- last_seen_at is owned by the terminal Stage 76 migration, which follows the
+-- main runner array on a clean protected database. Clear it when upgrading an
+-- established database without making Stage 134 depend on that later column.
+DO $stage134_optional_last_seen$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='eld_devices' AND column_name='last_seen_at'
+  ) THEN
+    EXECUTE $sql$
+      UPDATE eld_devices d
+      SET last_seen_at=NULL
+      WHERE d.company_id=(SELECT id FROM companies WHERE company_code='OPX-DEMO')
+        AND d.device_serial ~ '^DEMO-ELD-[0-9]{3}-(TRK|VAN|BOX)[0-9]{3}$'
+        AND d.device_model='Synthetic demo ELD'
+        AND d.provider='Synthetic fixture — no provider account'
+    $sql$;
+  END IF;
+END
+$stage134_optional_last_seen$;
 
 INSERT INTO schema_migrations(version, description)
 VALUES ('2026_09_09_stage134_legacy_demo_eld_reconciliation',
