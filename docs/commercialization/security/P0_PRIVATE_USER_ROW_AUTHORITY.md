@@ -56,3 +56,11 @@ Provider inboxes, replay ledgers, authentication challenges, delivery ledgers, a
 - That exact SHA is deployed to the real customer POC URL and the authenticated Chrome journeys are captured there.
 
 The first four items may be proven with disposable synthetic security fixtures. They do not prove real customers, devices, providers, video, routes, or regulatory acceptance. Those claims require their separate evidence gates.
+
+## Automated evidence map
+
+`RlsTenantIsolationPostgresTests.PrincipalScopes_IsolateTwoUsersAndTwoTenants_AndRejectSpoofTamperReplayExpiry` runs through the restricted `opstrax_app` and `opstrax_system` logins. It proves own-row reads, same-tenant and cross-tenant hidden rows, rejected same-tenant and cross-tenant ownership inserts, no-op foreign-row updates, tenant-only denial, ticket tamper denial, wrong-connection denial, transaction-replay denial, expiry denial, and disabled-principal denial.
+
+`PrivateUserAuthorityHttpPostgresTests.MySessions_TwoUsersAndTwoTenants_ReturnOnlyAuthenticatedUsersRows` runs real Kestrel handlers in the protected Staging configuration with bearer sessions and the two restricted PostgreSQL identities. It proves that forged session-list query parameters do not change the authenticated principal, guessed same-tenant and cross-tenant session IDs return 404 and remain intact, an owned session can be revoked, and same-tenant plus cross-tenant `userId` / `companyId` JSON fields cannot redirect a notification-preference write away from the authenticated user.
+
+`EveryTenantTable_HasExactSharedBoundedAndPrivatePolicies_AndNoPublicPolicy` and the Stage 132 migration verification lock the complete policy and grant inventory. CI reapplies the terminal migration chain, asserts every contract function, and runs these tests against disposable PostgreSQL for each exact candidate SHA.
