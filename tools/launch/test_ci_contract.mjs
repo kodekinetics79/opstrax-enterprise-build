@@ -177,6 +177,12 @@ test("release API image contains the required gateway and terminal migrations", 
   // per-file docker cp + cmp assertions below still prove the image payload itself.
   assert.match(release, /sed -n '\/\^MIGRATIONS=\(\/,\/\^\)\/p' tools\/apply-neon-predeploy-migrations\.sh/);
   assert.match(release, /runner enrolls missing file/);
+  assert.ok(dockerfile.includes(
+    "COPY telematics/src/Opstrax.Telematics.Contracts/Opstrax.Telematics.Contracts.csproj telematics/src/Opstrax.Telematics.Contracts/",
+  ));
+  assert.ok(dockerfile.includes(
+    "COPY telematics/src/Opstrax.Telematics.Contracts/ telematics/src/Opstrax.Telematics.Contracts/",
+  ));
 
   for (const migration of [
     "2026_07_16_stage42_telemetry_gateways.sql",
