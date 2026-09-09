@@ -32,9 +32,12 @@ public sealed class DemoCertificationTruthContractTests
         Assert.Contains("Provider evidence", hos, StringComparison.Ordinal);
         Assert.Contains("ELD records", fleetCompliance, StringComparison.Ordinal);
         Assert.DoesNotContain("KpiCard label=\"ELD\" value={(hos?.eldDevices ?? []).length ? \"Registered\"", fleetCompliance, StringComparison.Ordinal);
-        Assert.DoesNotContain("'KeepTruckin M300'", legacyDemoSeeds, StringComparison.Ordinal);
-        Assert.DoesNotContain("'Samsara VG34'", legacyDemoSeeds, StringComparison.Ordinal);
-        Assert.DoesNotContain("'Omnitracs IVG'", legacyDemoSeeds, StringComparison.Ordinal);
+        var legacyEldStart = legacyDemoSeeds.IndexOf("INSERT INTO eld_devices (id,device_serial", StringComparison.Ordinal);
+        var legacyEldEnd = legacyDemoSeeds.IndexOf("ON CONFLICT DO NOTHING", legacyEldStart, StringComparison.Ordinal);
+        Assert.True(legacyEldStart >= 0 && legacyEldEnd > legacyEldStart);
+        Assert.DoesNotContain("'KeepTruckin M300'", legacyDemoSeeds[legacyEldStart..legacyEldEnd], StringComparison.Ordinal);
+        Assert.DoesNotContain("'Samsara VG34'", legacyDemoSeeds[legacyEldStart..legacyEldEnd], StringComparison.Ordinal);
+        Assert.DoesNotContain("'Omnitracs IVG'", legacyDemoSeeds[legacyEldStart..legacyEldEnd], StringComparison.Ordinal);
         var legacyHosStart = legacyDemoSeeds.IndexOf("INSERT INTO hos_logs (id,company_id", StringComparison.Ordinal);
         var legacyHosEnd = legacyDemoSeeds.IndexOf("ON CONFLICT DO NOTHING", legacyHosStart, StringComparison.Ordinal);
         Assert.True(legacyHosStart >= 0 && legacyHosEnd > legacyHosStart);
@@ -62,5 +65,23 @@ public sealed class DemoCertificationTruthContractTests
         Assert.Contains("Stage133 demo ELD provider truth cleanup is incomplete", runner, StringComparison.Ordinal);
         Assert.Contains("Stage133 enriched demo gateway truth cleanup is incomplete", runner, StringComparison.Ordinal);
         Assert.Contains("Stage133 ACME demo harness truth cleanup is incomplete", runner, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Stage134ReconcilesTheOriginalDemoTenantWithoutTouchingOtherTenants()
+    {
+        var migration = File.ReadAllText(Path.Combine(Root, "database", "migrations", "2026_09_09_stage134_legacy_demo_eld_reconciliation.sql"));
+        var runner = File.ReadAllText(Path.Combine(Root, "tools", "apply-neon-predeploy-migrations.sh"));
+
+        Assert.Contains("company_code='OPX-DEMO'", migration, StringComparison.Ordinal);
+        Assert.Contains("'KeepTruckin M300','Samsara VG34','Omnitracs IVG','Synthetic demo ELD'", migration, StringComparison.Ordinal);
+        Assert.Contains("device_serial ~ '^(DEMO-)?ELD-[0-9]{3}-(TRK|VAN|BOX)[0-9]{3}$'", migration, StringComparison.Ordinal);
+        Assert.Contains("'DEMO-' || d.device_serial", migration, StringComparison.Ordinal);
+        Assert.Contains("provider = 'Synthetic fixture — no provider account'", migration, StringComparison.Ordinal);
+        Assert.Contains("provider_account_ref = NULL", migration, StringComparison.Ordinal);
+        Assert.Contains("last_sync_at = NULL", migration, StringComparison.Ordinal);
+        Assert.DoesNotContain("UPDATE companies", migration, StringComparison.Ordinal);
+        Assert.Contains("2026_09_09_stage134_legacy_demo_eld_reconciliation", runner, StringComparison.Ordinal);
+        Assert.Contains("Stage134 original OPX-DEMO ELD truth cleanup is incomplete", runner, StringComparison.Ordinal);
     }
 }

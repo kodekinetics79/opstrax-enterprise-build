@@ -644,6 +644,16 @@ public sealed class Batch6SchemaService(Database db, IConfiguration? configurati
           (10,'DEMO-ELD-010-VAN110','Synthetic demo ELD','Synthetic fixture — no provider account',10,10,'Diagnostic',NULL,'demo-fixture','Unverified')
           ON CONFLICT DO NOTHING",
 
+        @"UPDATE eld_devices d
+          SET device_serial=CASE WHEN d.device_serial LIKE 'DEMO-%' THEN d.device_serial ELSE 'DEMO-' || d.device_serial END,
+              device_model='Synthetic demo ELD',provider='Synthetic fixture — no provider account',status='Diagnostic',
+              last_heartbeat_at=NULL,last_sync_at=NULL,firmware_version='demo-fixture',provider_sync_status='Unverified',
+              notes='Synthetic demo fixture; no provider account or physical-device evidence.',updated_at=NOW()
+          WHERE d.company_id=(SELECT id FROM companies WHERE company_code='OPX-DEMO')
+            AND d.device_serial ~ '^(DEMO-)?ELD-[0-9]{3}-(TRK|VAN|BOX)[0-9]{3}$'
+            AND d.device_model IN ('KeepTruckin M300','Samsara VG34','Omnitracs IVG','Synthetic demo ELD')
+            AND d.provider IN ('Motive','Samsara','Omnitracs','Synthetic fixture — no provider account')",
+
         @"INSERT INTO driver_compliance_status (id,driver_id,country_code,profile_id,overall_status,license_valid,license_expiry,medical_cert_valid,medical_cert_expiry,drug_test_valid,drug_test_expiry,hos_status,violations_count) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'US',1,'Compliant',true,'2028-03-15',true,'2026-09-01',true,'2026-11-15','OK',0),
           (2,2,'US',1,'Warning',true,'2026-07-20',true,'2026-06-01',true,'2026-08-01','Warning',2),
