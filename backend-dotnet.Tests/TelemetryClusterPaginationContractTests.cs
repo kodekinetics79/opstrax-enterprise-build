@@ -81,7 +81,8 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains("Operational observation only — not certification", service, StringComparison.Ordinal);
         Assert.Contains("position_signal_evidence_headers", service, StringComparison.Ordinal);
         Assert.Contains("signalAvailability", page, StringComparison.Ordinal);
-        Assert.Contains("Capture reference", page, StringComparison.Ordinal);
+        Assert.Contains("Signal capture reference", page, StringComparison.Ordinal);
+        Assert.Contains("Diagnostic capture reference", page, StringComparison.Ordinal);
         Assert.DoesNotContain("while (rows.length < expectedTotal)", service, StringComparison.Ordinal);
     }
 

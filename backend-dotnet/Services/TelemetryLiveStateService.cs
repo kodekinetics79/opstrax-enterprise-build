@@ -398,6 +398,7 @@ public sealed class TelemetryLiveStateService(Database db)
                      lvp.lat, lvp.lng, lvp.speed_mph, lvp.heading,
                      lvp.accuracy_meters, lvp.engine_status, lvp.fuel_level, lvp.odometer_miles,
                      lvp.battery_voltage, lvp.event_time, lvp.received_at, lvp.event_count,
+                     lvp.source_event_id, lvp.correlation_id, lvp.causation_id, lvp.source_channel,
                      v.vehicle_code, d.full_name driver_name, e.device_serial,
                      v.status vehicle_status, v.device_status, v.camera_status,
                      v.readiness_score, v.data_quality_score,

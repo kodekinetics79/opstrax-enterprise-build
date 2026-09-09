@@ -27,6 +27,7 @@ public sealed class TenantScope : IAsyncDisposable
     internal NpgsqlTransaction Transaction { get; }
     // Factory-owned identity, never populated from an HTTP body or a system scope.
     internal long? CompanyId { get; }
+    internal long? UserId { get; }
     private bool _completed;
     private readonly Func<CancellationToken, Task>? _refreshTenantTicket;
     private readonly TimeSpan _ticketRefreshInterval;
@@ -43,11 +44,13 @@ public sealed class TenantScope : IAsyncDisposable
         NpgsqlTransaction transaction,
         Func<CancellationToken, Task>? refreshTenantTicket = null,
         TimeSpan? ticketRefreshInterval = null,
-        long? companyId = null)
+        long? companyId = null,
+        long? userId = null)
     {
         Connection = connection;
         Transaction = transaction;
         CompanyId = companyId;
+        UserId = userId;
         _refreshTenantTicket = refreshTenantTicket;
         _ticketRefreshInterval = ticketRefreshInterval ?? TimeSpan.Zero;
         _refreshAfterTimestamp = NextRefreshTimestamp(_ticketRefreshInterval);
@@ -238,10 +241,24 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
     // and releases the connection. No-op wrapper (fresh per-query connection) when
     // enforcement is off. The ambient scope is set from THIS frame and always cleared.
     public async Task<T> RunInTenantScopeAsync<T>(long companyId, Func<Task<T>> body, CancellationToken ct = default)
+        => await RunInTenantScopeCoreAsync(companyId, null, body, ct);
+
+    public async Task<T> RunInTenantScopeAsync<T>(
+        long companyId, long userId, Func<Task<T>> body, CancellationToken ct = default)
+    {
+        if (userId <= 0) throw new ArgumentOutOfRangeException(nameof(userId));
+        return await RunInTenantScopeCoreAsync(companyId, userId, body, ct);
+    }
+
+    private async Task<T> RunInTenantScopeCoreAsync<T>(
+        long companyId, long? explicitUserId, Func<Task<T>> body, CancellationToken ct)
     {
         if (!RlsEnforced) return await body();
         var priorScope = _scopes.Current;
-        await using var scope = await BeginTenantScopeAsync(companyId, ct);
+        var principalUserId = explicitUserId ?? priorScope?.UserId;
+        await using var scope = principalUserId is { } userId
+            ? await BeginTenantScopeAsync(companyId, userId, ct)
+            : await BeginTenantScopeAsync(companyId, ct);
         _scopes.Current = scope;
         try { var result = await body(); await scope.CompleteAsync(ct); return result; }
         finally { _scopes.Current = priorScope; }
@@ -275,7 +292,9 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         var priorScope = _scopes.Current;
         if (companyId <= 0 || (RlsEnforced && (priorScope is null || priorScope.CompanyId != companyId)))
             throw new InvalidOperationException("Document mutation requires the matching authenticated tenant scope.");
-        await using var scope = await BeginTenantScopeAsync(companyId, ct);
+        await using var scope = priorScope?.UserId is { } userId
+            ? await BeginTenantScopeAsync(companyId, userId, ct)
+            : await BeginTenantScopeAsync(companyId, ct);
         _scopes.Current = scope;
         var commitAttempted = false;
         try
@@ -468,7 +487,8 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         int MembershipCount, int GrantedToRoleCount, int OwnedDatabaseCount,
         int OwnedSchemaCount, int OwnedRelationCount, int OwnedFunctionCount, int OwnedTypeCount,
         bool DbConnect, bool DbCreate, bool DbTemporary,
-        bool SchemaUsage, bool SchemaCreate, bool CanIssueTicket, bool CanVerifyTicket);
+        bool SchemaUsage, bool SchemaCreate, bool CanIssueTicket, bool CanVerifyTicket,
+        bool CanIssuePrincipalTicket, bool CanVerifyPrincipalTicket);
 
     private static async Task<RuntimeIdentity> ReadIdentityAsync(NpgsqlConnection connection, CancellationToken ct)
     {
@@ -501,7 +521,13 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
                      has_function_privilege(current_user,
                        'opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE'),
                      has_function_privilege(current_user,
-                       'opstrax_security.current_tenant_id()','EXECUTE')
+                       'opstrax_security.current_tenant_id()','EXECUTE'),
+                     CASE WHEN to_regprocedure('opstrax_security.issue_principal_ticket(bigint,bigint,integer,bigint,integer)') IS NULL
+                       THEN false ELSE has_function_privilege(current_user,
+                         'opstrax_security.issue_principal_ticket(bigint,bigint,integer,bigint,integer)','EXECUTE') END,
+                     CASE WHEN to_regprocedure('opstrax_security.current_user_id()') IS NULL
+                       THEN false ELSE has_function_privilege(current_user,
+                         'opstrax_security.current_user_id()','EXECUTE') END
                 FROM pg_roles r WHERE r.rolname=current_user", connection);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
@@ -512,7 +538,8 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             reader.GetBoolean(8), reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11),
             reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15),
             reader.GetBoolean(16), reader.GetBoolean(17), reader.GetBoolean(18), reader.GetBoolean(19),
-            reader.GetBoolean(20), reader.GetBoolean(21), reader.GetBoolean(22));
+            reader.GetBoolean(20), reader.GetBoolean(21), reader.GetBoolean(22),
+            reader.GetBoolean(23), reader.GetBoolean(24));
     }
 
     private static void ValidateIdentity(RuntimeIdentity identity, string expectedRole, string lane)
@@ -528,8 +555,8 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             identity.DbTemporary || !identity.SchemaUsage || identity.SchemaCreate ||
             !identity.CanVerifyTicket ||
             (lane.StartsWith("application", StringComparison.Ordinal)
-                ? identity.CanIssueTicket
-                : !identity.CanIssueTicket))
+                ? identity.CanIssueTicket || identity.CanIssuePrincipalTicket || !identity.CanVerifyPrincipalTicket
+                : !identity.CanIssueTicket || !identity.CanIssuePrincipalTicket || identity.CanVerifyPrincipalTicket))
             throw new InvalidOperationException(
                 $"The {lane} database identity is not the exact restricted {expectedRole} role.");
     }
@@ -539,7 +566,22 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
     // DB-signed ticket through opstrax_system, then installs that opaque ticket with
     // SET LOCAL semantics. A copied or fabricated tenant id cannot authorize RLS.
     public async Task<TenantScope> BeginTenantScopeAsync(long companyId, CancellationToken ct = default)
+        => await BeginTenantScopeCoreAsync(companyId, null, ct);
+
+    // Authenticated HTTP requests use the v2 principal ticket. The system issuer verifies
+    // that userId is active and belongs to companyId before cryptographically binding both
+    // identities to this exact PostgreSQL backend + transaction. Off-pipeline tenant work
+    // continues to use a tenant-only v1 ticket and therefore has no private-row authority.
+    public async Task<TenantScope> BeginTenantScopeAsync(long companyId, long userId, CancellationToken ct = default)
     {
+        if (userId <= 0) throw new ArgumentOutOfRangeException(nameof(userId));
+        return await BeginTenantScopeCoreAsync(companyId, userId, ct);
+    }
+
+    private async Task<TenantScope> BeginTenantScopeCoreAsync(
+        long companyId, long? userId, CancellationToken ct)
+    {
+        if (companyId <= 0) throw new ArgumentOutOfRangeException(nameof(companyId));
         var connection = await OpenAsync(ct);
         NpgsqlTransaction? tx = null;
         try
@@ -553,7 +595,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
                     "SELECT set_config('app.current_tenant_id', @cid, true)", connection, tx);
                 legacy.Parameters.AddWithValue("@cid", companyId.ToString());
                 await legacy.ExecuteNonQueryAsync(ct);
-                return new TenantScope(connection, tx, companyId: companyId);
+                return new TenantScope(connection, tx, companyId: companyId, userId: userId);
             }
 
             int backendPid;
@@ -571,8 +613,11 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             string ticket;
             await using (var systemConnection = await OpenSystemAsync(ct))
             {
-                ticket = await IssueTenantTicketAsync(
-                    systemConnection, companyId, backendPid, transactionId, _tenantTicketTtlSeconds, ct);
+                ticket = userId is { } principalUserId
+                    ? await IssuePrincipalTicketAsync(systemConnection, companyId, principalUserId,
+                        backendPid, transactionId, _tenantTicketTtlSeconds, ct)
+                    : await IssueTenantTicketAsync(
+                        systemConnection, companyId, backendPid, transactionId, _tenantTicketTtlSeconds, ct);
             }
 
             if (string.IsNullOrWhiteSpace(ticket))
@@ -594,13 +639,11 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
                     string renewedTicket;
                     await using (var systemConnection = await OpenSystemAsync(refreshCt))
                     {
-                        renewedTicket = await IssueTenantTicketAsync(
-                            systemConnection,
-                            companyId,
-                            backendPid,
-                            transactionId,
-                            _tenantTicketTtlSeconds,
-                            refreshCt);
+                        renewedTicket = userId is { } principalUserId
+                            ? await IssuePrincipalTicketAsync(systemConnection, companyId, principalUserId,
+                                backendPid, transactionId, _tenantTicketTtlSeconds, refreshCt)
+                            : await IssueTenantTicketAsync(systemConnection, companyId, backendPid,
+                                transactionId, _tenantTicketTtlSeconds, refreshCt);
                     }
 
                     if (string.IsNullOrWhiteSpace(renewedTicket))
@@ -611,7 +654,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
                     renew.Parameters.AddWithValue("@ticket", renewedTicket);
                     await renew.ExecuteNonQueryAsync(refreshCt);
                 },
-                refreshInterval, companyId);
+                refreshInterval, companyId, userId);
         }
         catch
         {
@@ -646,6 +689,26 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             "SELECT opstrax_security.issue_tenant_ticket(@tenant_id,@backend_pid,@txid,@ttl_seconds)",
             systemConnection);
         issue.Parameters.AddWithValue("@tenant_id", companyId);
+        issue.Parameters.AddWithValue("@backend_pid", backendPid);
+        issue.Parameters.AddWithValue("@txid", transactionId);
+        issue.Parameters.AddWithValue("@ttl_seconds", ttlSeconds);
+        return (await issue.ExecuteScalarAsync(ct))?.ToString() ?? string.Empty;
+    }
+
+    private static async Task<string> IssuePrincipalTicketAsync(
+        NpgsqlConnection systemConnection,
+        long companyId,
+        long userId,
+        int backendPid,
+        long transactionId,
+        int ttlSeconds,
+        CancellationToken ct)
+    {
+        await using var issue = new NpgsqlCommand(
+            "SELECT opstrax_security.issue_principal_ticket(@tenant_id,@user_id,@backend_pid,@txid,@ttl_seconds)",
+            systemConnection);
+        issue.Parameters.AddWithValue("@tenant_id", companyId);
+        issue.Parameters.AddWithValue("@user_id", userId);
         issue.Parameters.AddWithValue("@backend_pid", backendPid);
         issue.Parameters.AddWithValue("@txid", transactionId);
         issue.Parameters.AddWithValue("@ttl_seconds", ttlSeconds);

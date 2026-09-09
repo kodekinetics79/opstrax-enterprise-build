@@ -6,6 +6,7 @@ using Xunit.Sdk;
 namespace Opstrax.Tests;
 
 [Trait("Category", "DeviceInstallationWorkLinkPostgres")]
+[Trait("Lane", "DedicatedDatabase")]
 public sealed class DeviceInstallationWorkLinkPostgresTests
 {
     private static readonly string[] RequiredGpsChecklist =

@@ -136,8 +136,8 @@ public sealed class SlaKpiEvidencePostgresTests
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@code", code); });
 
     private static Task Vehicle(Database db, long company, string code) => db.ExecuteAsync(
-        @"INSERT INTO vehicles(company_id,vehicle_code,type,status,vin)
-          VALUES(@company,@code,'Truck','Available',@code)",
+        @"INSERT INTO vehicles(company_id,vehicle_code,type,status,vin_exception_type,alternate_identifier)
+          VALUES(@company,@code,'Truck','Available','legacy-fleet-identifier',@code)",
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@code", code); });
 
     private static Task Target(Database db, long company, string code, string origin, string verification) => db.ExecuteAsync(

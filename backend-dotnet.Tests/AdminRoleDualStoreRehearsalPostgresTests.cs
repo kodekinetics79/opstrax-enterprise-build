@@ -36,13 +36,13 @@ public sealed class AdminRoleDualStoreRehearsalPostgresTests
     [
         "alerts:acknowledge", "alerts:close", "alerts:view", "compliance:view", "dashboard:view",
         "maintenance:close", "maintenance:create", "maintenance:manage", "maintenance:review", "maintenance:update",
-        "maintenance:view", "notifications:view", "telematics:devices:view", "telematics:diagnostics:view",
+        "maintenance:view", "notifications:view", "telematics:devices:rma", "telematics:devices:view", "telematics:diagnostics:view",
         "telematics:gps:view", "telematics:sensors:view", "telemetry:alerts:read", "telemetry:devices:read",
         "telemetry:live_state:read", "vehicles:view"
     ];
 
     private const string CandidateHash = "377e41d694c20a8a49a6bbf334da4ef6f950e12edb04d286df40584fd255f2cc";
-    private const string ClosureHash = "10579d2ac926f44bb553c8a0ed67c4704b18f49fbfa31c6882005f794ff797bd";
+    private const string ClosureHash = "1b32228fc30d83eff8f43931f7b481e4e51fff120dc606092816c19b4747179a";
 
     [Fact]
     public async Task ExactCandidate_DualWritesRevokesSessionsAndAuditsInsideSignedTenantTransaction()
@@ -273,7 +273,7 @@ public sealed class AdminRoleDualStoreRehearsalPostgresTests
             var userId = await _owner.InsertAsync(
                 """
                 INSERT INTO users(company_id,branch_id,role_id,full_name,email,role_name,status,permissions_json)
-                VALUES(@company,@branch,@role,@name,@email,@roleName,'Active','[]'::jsonb)
+                VALUES(@company,@branch,@role,@name,@email,@roleName,'Active',@permissions::jsonb)
                 """,
                 command =>
                 {
@@ -283,6 +283,8 @@ public sealed class AdminRoleDualStoreRehearsalPostgresTests
                     command.Parameters.AddWithValue("name", name);
                     command.Parameters.AddWithValue("email", $"a02-{ordinal}-{_suffix}@example.invalid");
                     command.Parameters.AddWithValue("roleName", roleName);
+                    command.Parameters.AddWithValue("permissions",
+                        JsonSerializer.Serialize(roleName == "Company Admin" ? new[] { "*" } : Array.Empty<string>()));
                 });
             await _owner.ExecuteAsync(
                 "INSERT INTO user_sessions(user_id,company_id,session_token,expires_at) VALUES(@user,@company,@token,NOW()+INTERVAL '1 hour')",
@@ -296,7 +298,7 @@ public sealed class AdminRoleDualStoreRehearsalPostgresTests
         }
 
         public Task<IResult> Update(IReadOnlyCollection<string> permissions, string[] actorPermissions)
-            => _runtime.RunInTenantScopeAsync(CompanyId, async () =>
+            => _runtime.RunInTenantScopeAsync(CompanyId, ActorUserId, async () =>
             {
                 var identity = await _runtime.QuerySingleAsync(
                     "SELECT current_user AS role,opstrax_security.current_tenant_id() AS tenant");

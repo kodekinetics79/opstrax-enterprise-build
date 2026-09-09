@@ -11,6 +11,7 @@ using Xunit.Sdk;
 namespace Opstrax.Tests;
 
 [Trait("Category", "DeviceConnectivityObservationPostgres")]
+[Trait("Lane", "DedicatedDatabase")]
 public sealed class DeviceConnectivityObservationPostgresTests
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);

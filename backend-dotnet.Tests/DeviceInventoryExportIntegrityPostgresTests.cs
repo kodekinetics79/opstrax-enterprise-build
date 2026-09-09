@@ -10,6 +10,7 @@ using Xunit.Sdk;
 namespace Opstrax.Tests;
 
 [Trait("Category", "DeviceInventoryExportIntegrityPostgres")]
+[Trait("Lane", "DedicatedDatabase")]
 public sealed class DeviceInventoryExportIntegrityPostgresTests
 {
     private static readonly string[] ExpectedColumns =

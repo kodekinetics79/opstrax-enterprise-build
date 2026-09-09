@@ -14,7 +14,8 @@ test -f "$baseline" || { echo "Missing warning baseline: $baseline" >&2; exit 2;
 
 set +e
 DOTNET_CLI_UI_LANGUAGE=en dotnet build "$project" --no-restore --configuration "$configuration" \
-  --target:Rebuild --verbosity:minimal --tl:off \
+  --target:Rebuild --verbosity:minimal --tl:off --disable-build-servers \
+  -m:1 /nodeReuse:false \
   '--consoleLoggerParameters:Summary;DisableConsoleColor' 2>&1 | tee "$build_log"
 pipeline_status=("${PIPESTATUS[@]}")
 set -e

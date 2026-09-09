@@ -41,7 +41,7 @@ public class Stage12TelemetryTests
                 "{\"reason\":\"speeding alert\"}",
                 "{\"action\":\"review\"}",
                 "medium",
-                "seed-alert-1",
+                "1001",
                 ActorTypes.System,
                 "test-harness");
 

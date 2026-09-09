@@ -117,8 +117,9 @@ public sealed class SamsaraDurableCursorPostgresTests
         await fixture.AssertStateAsync("Connected", "committed-1", false, historyCount: 1);
         await fixture.AssertUnknownMeasurementsAsync(sequence: 1);
         Assert.True(SyncData(await restarted.InvokeAsync("IntegrationSync")).GetProperty("success").GetBoolean());
-        Assert.Equal(3, restarted.Requests.Count);
-        AssertSyncRequest(restarted.Requests[2], "committed-1");
+        Assert.Equal(4, restarted.Requests.Count);
+        Assert.Equal("/me", restarted.Requests[0].AbsolutePath);
+        AssertSyncRequest(restarted.Requests[3], "committed-1");
         await fixture.AssertStateAsync("Connected", "recovered-2", true, historyCount: 2);
     }
 
@@ -269,6 +270,8 @@ public sealed class SamsaraDurableCursorPostgresTests
 
     private static HttpResponseMessage HandshakeResponse(Fixture fixture, Uri uri)
     {
+        if (uri.AbsolutePath == "/me")
+            return Json("""{"data":{"id":"durable-cursor-test","name":"Synthetic durable cursor fixture"}}""");
         if (uri.AbsolutePath == "/fleet/vehicles")
             return Json(JsonSerializer.Serialize(new { data = new[] { new { id = fixture.ProviderVehicleId } } }));
         Assert.Equal("/fleet/vehicles/stats/feed", uri.AbsolutePath);

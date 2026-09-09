@@ -9,6 +9,7 @@ using Xunit.Sdk;
 namespace Opstrax.Tests;
 
 [Trait("Category", "DeviceCompatibilityRegistryPostgres")]
+[Trait("Lane", "DedicatedDatabase")]
 public sealed class DeviceCompatibilityRegistryPostgresTests
 {
     [Fact]

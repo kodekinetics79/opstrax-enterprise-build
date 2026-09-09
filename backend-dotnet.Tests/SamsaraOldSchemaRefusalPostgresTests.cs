@@ -202,7 +202,8 @@ public sealed class SamsaraOldSchemaRefusalPostgresTests
                     last_sync_at TIMESTAMPTZ,sync_label TEXT,sync_last_completed_at TIMESTAMPTZ,
                     sync_last_ok BOOLEAN,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
                 CREATE TABLE eld_devices(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,company_id BIGINT,
-                    device_serial TEXT,provider TEXT,status TEXT,last_seen_at TIMESTAMPTZ);
+                    device_serial TEXT,provider TEXT,provider_account_ref TEXT,provider_external_id TEXT,
+                    status TEXT,last_seen_at TIMESTAMPTZ,deleted_at TIMESTAMPTZ);
                 CREATE TABLE location_events(id BIGINT PRIMARY KEY,speed_mph NUMERIC NOT NULL,heading SMALLINT NOT NULL);
                 CREATE TABLE latest_vehicle_positions(id BIGINT PRIMARY KEY,speed_mph NUMERIC NOT NULL,heading SMALLINT NOT NULL,source TEXT);
                 CREATE TABLE telemetry_live_asset_states(id BIGINT PRIMARY KEY,speed_mph NUMERIC NOT NULL,heading SMALLINT NOT NULL);

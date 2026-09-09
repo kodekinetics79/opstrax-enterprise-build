@@ -11,6 +11,7 @@ using Xunit.Sdk;
 namespace Opstrax.Tests;
 
 [Trait("Category", "CameraProviderIngestPostgres")]
+[Trait("Lane", "DedicatedDatabase")]
 public sealed class CameraProviderIngestPostgresTests
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);

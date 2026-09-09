@@ -983,7 +983,7 @@ app.UseWhen(
             // only from its DB-signed, PID+txid-bound ticket.
             if (rlsEnforceTenantContext)
             {
-                await using var reqScope = await scopedDb.BeginTenantScopeAsync(companyId, context.RequestAborted);
+                await using var reqScope = await scopedDb.BeginTenantScopeAsync(companyId, userId, context.RequestAborted);
                 scopes.Current = reqScope;
                 try
                 {

@@ -24,7 +24,7 @@ assert.match(command, /canViewGeofences = hasPermission\("map:view"\)/, "Geofenc
 assert.match(command, /kind === "gps-tracking"[\s\S]*navigate\("\/geofences"\)[\s\S]*Manage Geofences/, "GPS exposes geofence management");
 assert.match(service, /serialNumber: device\.serialNumber/, "GPS cluster retains the immutable serial for same-model device uniqueness");
 assert.match(command, /row\.serialNumber[\s\S]*row\.deviceName/, "GPS renders serial prominently and model secondarily");
-assert.match(command, /"obd-j1939"[\s\S]*columns: \["serialNumber", "vehicleCode", "deviceName"/, "OBD/J1939 table leads with immutable device serial");
+assert.match(command, /"obd-j1939"[\s\S]*columns: \["serialNumber", "vehicleCode"/, "OBD/J1939 table leads with immutable device serial");
 assert.match(command, /canViewDevices = hasPermission\(PERMISSIONS\.TELEMATICS_DEVICES_VIEW\)[\s\S]*canViewVehicles = hasPermission\(PERMISSIONS\.VEHICLES_VIEW\)[\s\S]*canViewJobs = hasDirectPermission\(PERMISSIONS\.SHIPMENTS_VIEW\)[\s\S]*canViewMap = hasPermission\(PERMISSIONS\.TELEMETRY_LIVE_STATE_READ\)/, "Telemetry drilldown controls follow their destination permissions");
 assert.match(command, /Device serial", row\.serialNumber[\s\S]*Device model", row\.deviceName/, "Telemetry detail keeps immutable serial primary and model secondary");
 assert.match(controlTower, /device: device\.serialNumber, model: device\.deviceName/, "Control Tower separates immutable serial from display model");

@@ -177,7 +177,8 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
         "INSERT INTO customers(company_id,customer_code,name,status,sla_tier) VALUES(@company,@code,@code,'Active','Standard') RETURNING id",
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@code", code); });
     private static Task<long> Vehicle(Database db, long company, string code) => db.InsertAsync(
-        "INSERT INTO vehicles(company_id,vehicle_code,type,status,vin) VALUES(@company,@code,'Truck','Available',@code) RETURNING id",
+        @"INSERT INTO vehicles(company_id,vehicle_code,type,status,vin_exception_type,alternate_identifier)
+          VALUES(@company,@code,'Truck','Available','legacy-fleet-identifier',@code) RETURNING id",
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@code", code); });
     private static Task<long> Driver(Database db, long company, string code) => db.InsertAsync(
         "INSERT INTO drivers(company_id,driver_code,full_name,email,status) VALUES(@company,@code,@code,@email,'Available') RETURNING id",

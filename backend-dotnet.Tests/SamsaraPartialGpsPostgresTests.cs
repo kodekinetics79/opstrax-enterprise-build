@@ -342,8 +342,8 @@ public sealed class SamsaraPartialGpsPostgresTests
         await using var fixture = await Fixture.Create();
         for (var index = 0; index < 3; index++)
         {
-            await fixture.Db.ExecuteAsync(@"INSERT INTO location_events(company_id,vehicle_id,lat,lng,speed_mph,heading,engine_status,event_time,source)
-                VALUES(@cid,@vid,34.05,-118.24,@speed,NULL,@engine,NOW()-(@minutes*INTERVAL '1 minute'),'samsara')",
+            await fixture.Db.ExecuteAsync(@"INSERT INTO location_events(company_id,vehicle_id,lat,lng,speed_mph,heading,engine_status,event_time,source,source_channel)
+                VALUES(@cid,@vid,34.05,-118.24,@speed,NULL,@engine,NOW()-(@minutes*INTERVAL '1 minute'),'samsara','samsara-api')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", fixture.CompanyId);
@@ -360,7 +360,7 @@ public sealed class SamsaraPartialGpsPostgresTests
         Assert.Equal(expected ? 1 : 0, await fixture.Count("SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid AND alert_type='idling'"));
         if (expected)
         {
-            await fixture.Db.ExecuteAsync("INSERT INTO location_events(company_id,vehicle_id,lat,lng,speed_mph,heading,engine_status,event_time,source) VALUES(@cid,@vid,34.05,-118.24,NULL,NULL,NULL,NOW(),'samsara')",
+            await fixture.Db.ExecuteAsync("INSERT INTO location_events(company_id,vehicle_id,lat,lng,speed_mph,heading,engine_status,event_time,source,source_channel) VALUES(@cid,@vid,34.05,-118.24,NULL,NULL,NULL,NOW(),'samsara','samsara-api')",
                 c => { c.Parameters.AddWithValue("@cid", fixture.CompanyId); c.Parameters.AddWithValue("@vid", fixture.VehicleId); });
             await fixture.Db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@testCompany", fixture.CompanyId));
             Assert.Equal(1, await fixture.Count("SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid AND alert_type='idling' AND status='Open'"));
@@ -393,8 +393,12 @@ public sealed class SamsaraPartialGpsPostgresTests
                     c => { c.Parameters.AddWithValue("@cid", f.CompanyId); c.Parameters.AddWithValue("@bid", branchId); c.Parameters.AddWithValue("@did", deviceId); c.Parameters.AddWithValue("@vid", f.VehicleId); });
                 await f.Db.ExecuteAsync(
                     @"INSERT INTO telemetry_rules(company_id,rule_type,threshold_value,severity,enabled,created_by,policy_origin,approval_status,approved_by,approved_at)
-                      VALUES(@cid,'idling',15,'Warning',TRUE,1,'user_workflow','approved',1,NOW())
-                      ON CONFLICT(company_id,rule_type) DO UPDATE SET threshold_value=15,severity='Warning',enabled=TRUE,created_by=1,policy_origin='user_workflow',approval_status='approved',approved_by=1,approved_at=NOW()",
+                      VALUES
+                        (@cid,'idling',15,'Warning',TRUE,1,'user_workflow','approved',1,NOW()),
+                        (@cid,'speeding',75,'High',TRUE,1,'user_workflow','approved',1,NOW())
+                      ON CONFLICT(company_id,rule_type) DO UPDATE SET
+                        threshold_value=EXCLUDED.threshold_value,severity=EXCLUDED.severity,enabled=TRUE,
+                        created_by=1,policy_origin='user_workflow',approval_status='approved',approved_by=1,approved_at=NOW()",
                     c => c.Parameters.AddWithValue("@cid", f.CompanyId));
                 f.Operation = await ConnectorOperationLease.TryAcquireAsync(f.Db, f.CompanyId, integrationId, ["Connected"], TimeSpan.FromSeconds(180), CancellationToken.None);
                 Assert.NotNull(f.Operation);

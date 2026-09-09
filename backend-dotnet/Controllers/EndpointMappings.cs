@@ -1851,7 +1851,7 @@ public static partial class EndpointMappings
             if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
             return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='predictive-margin'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
-        app.MapPost("/api/cost-margin/recalculate", (Delegate)CostMarginRecalculate);
+        app.MapPost("/api/cost-margin/recalculate", (HttpContext http, CancellationToken _) => CostMarginRecalculate(http));
         app.MapPost("/api/cost-margin/jobs/{jobId:long}/recalculate", (HttpContext http, long jobId, Database db, CancellationToken ct) => CostMarginRecalculateJob(http, jobId, db, ct));
 
         // ===== BATCH 5: COST LEAKAGE INTELLIGENCE ================================
@@ -10095,7 +10095,11 @@ public static partial class EndpointMappings
     private static async Task<IResult> CoachingComplete(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE coaching_tasks SET status='Completed', completed_at=NOW() WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "coaching.completed", "CoachingTask", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Coaching completed")); }
     private static async Task<IResult> CoachingAddNote(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        var noteId = await db.InsertAsync("INSERT INTO coaching_notes (company_id, coaching_task_id, note_type, note_text, created_by_user_id) VALUES (@companyId,@id,COALESCE(@type,'Manager Note'),@text,@userId)", c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@userId", http.Items[AuthUserIdItemKey] ?? 1); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@type", Get(body, "noteType")); c.Parameters.AddWithValue("@text", Get(body, "noteText") is DBNull ? "Coaching note placeholder." : Get(body, "noteText")); }, ct);
+        if (RequirePermission(http, "safety:manage") is { } denied) return denied;
+        var noteText = Get(body, "noteText")?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(noteText))
+            return Results.BadRequest(ApiResponse<object>.Fail("noteText is required"));
+        var noteId = await db.InsertAsync("INSERT INTO coaching_notes (company_id, coaching_task_id, note_type, note_text, created_by_user_id) VALUES (@companyId,@id,COALESCE(@type,'Manager Note'),@text,@userId)", c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@userId", GetUserId(http)); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@type", Get(body, "noteType")); c.Parameters.AddWithValue("@text", noteText); }, ct);
         await audit.LogAsync(http, "coaching.note.added", "CoachingTask", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id = noteId }, "Coaching note added"));
     }
@@ -17160,8 +17164,8 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         var tenantId = GetCompanyId(http);
         var userId = http.Items[AuthUserIdItemKey] ?? 1;
         var id = await db.InsertAsync(
-            @"INSERT INTO scheduled_reports (tenant_id,report_key,report_name,schedule_name,frequency,recipients_json,status,next_run_at,created_by_user_id)
-              VALUES (@tenantId,@key,@name,@sched,@freq,@rec,'Active',NOW() + 7 * INTERVAL '1 day',@userId)",
+            @"INSERT INTO scheduled_reports (tenant_id,report_key,report_name,schedule_name,frequency,recipients_json,status,next_run_at,created_by_user_id,owner_user_id)
+              VALUES (@tenantId,@key,@name,@sched,@freq,@rec,'Active',NOW() + 7 * INTERVAL '1 day',@userId,@userId)",
             c =>
             {
                 c.Parameters.AddWithValue("@tenantId", tenantId);
@@ -17170,7 +17174,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                 c.Parameters.AddWithValue("@name",  Get(body, "reportName") ?? "Custom Report");
                 c.Parameters.AddWithValue("@sched", Get(body, "scheduleName") ?? "New Schedule");
                 c.Parameters.AddWithValue("@freq",  Get(body, "frequency") ?? "Weekly");
-                c.Parameters.AddWithValue("@rec",   System.Text.Json.JsonSerializer.Serialize(Get(body, "recipients") ?? new[] { "admin@opstrax.com" }));
+                c.Parameters.AddWithValue("@rec",   System.Text.Json.JsonSerializer.Serialize(Get(body, "recipients") ?? Array.Empty<string>()));
             }, ct);
         await audit.LogAsync(http, "scheduled_report.created", "ScheduledReport", id, ct: ct);
         return Results.Created($"/api/reports/scheduled/{id}", ApiResponse<object>.Ok(new { id }, "Scheduled report created"));
@@ -17251,7 +17255,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                       sr.target_value,sr.actual_value,sr.unit,sr.status,sr.breach_reason,
                       sr.risk_score,sr.owner_role,sr.recommended_action,sr.measured_at,
                       sr.data_origin,sr.measurement_evidence_status,
-                      c.name customer_name,j.job_number
+                      c.name customer_name,j.job_code job_number
                  FROM sla_records sr
                  LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=sr.company_id AND c.company_id=@tenantId
                  LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=sr.company_id AND j.company_id=@tenantId
@@ -17315,7 +17319,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             $@"SELECT sb.id,sb.sla_record_id,sb.breach_type,sb.severity,sb.description,
                       sb.root_cause_placeholder,sb.status,sb.detected_at,sb.resolved_at,
                       sb.data_origin,sr.metric_name sla_name,sr.sla_type,
-                      c.name customer_name,j.job_number
+                      c.name customer_name,j.job_code job_number
                  FROM sla_breaches sb
                  JOIN sla_records sr ON sr.id=sb.sla_record_id AND sr.tenant_id=sb.tenant_id AND sr.company_id=@tenantId
                  LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=sr.company_id AND c.company_id=@tenantId
@@ -20456,7 +20460,10 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         if (db.RlsEnforced && companyId > 0)
         {
             var scopes = http.RequestServices.GetRequiredService<TenantScopeAccessor>();
-            await using var permissionScope = await db.BeginTenantScopeAsync(companyId, ct);
+            var userId = GetUserId(http);
+            await using var permissionScope = userId > 0
+                ? await db.BeginTenantScopeAsync(companyId, userId, ct)
+                : await db.BeginTenantScopeAsync(companyId, ct);
             scopes.Current = permissionScope;
             try
             {
@@ -29314,8 +29321,8 @@ LIMIT 100000",
 
         var notifications = await db.QueryAsync(
             @"SELECT DISTINCT n.id, n.event_type, n.severity, n.title, n.message, n.source_type,
-                     n.source_id, n.status, n.channel, n.priority, n.created_at, n.read_at,
-                     n.acknowledged_at, nr.status recipient_status
+                     n.source_id, nr.status, n.status notification_status, n.channel, n.priority,
+                     n.created_at, nr.read_at, nr.acknowledged_at, nr.status recipient_status
               FROM notifications n
               JOIN notification_recipients nr ON nr.notification_id = n.id
               WHERE n.company_id=@cid
@@ -29346,7 +29353,7 @@ LIMIT 100000",
               JOIN notification_recipients nr ON nr.notification_id = n.id
               WHERE n.company_id=@cid
                 AND (nr.user_id=@uid OR nr.role_target=@role)
-                AND n.status='unread'",
+                AND nr.status='unread'",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",  companyId);
@@ -29374,15 +29381,6 @@ LIMIT 100000",
             "UPDATE notification_recipients SET status='read', read_at=NOW() WHERE notification_id=@nid AND user_id=@uid AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@nid", id); c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
-        // Update aggregate status if all recipients have read it
-        var unread = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM notification_recipients WHERE notification_id=@nid AND status='unread'",
-            c => c.Parameters.AddWithValue("@nid", id), ct);
-        if (unread == 0)
-            await db.ExecuteAsync(
-                "UPDATE notifications SET status='read', read_at=NOW() WHERE id=@nid",
-                c => c.Parameters.AddWithValue("@nid", id), ct);
-
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "read" }));
     }
 
@@ -29393,8 +29391,6 @@ LIMIT 100000",
         if (RequirePermission(http, "notifications:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         var userId    = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
-        var note      = body.TryGetValue("note", out var n) ? n?.ToString() : null;
-
         // Verify access
         var access = await db.ScalarLongAsync(
             "SELECT COUNT(*) FROM notification_recipients WHERE notification_id=@nid AND user_id=@uid AND company_id=@cid",
@@ -29404,17 +29400,6 @@ LIMIT 100000",
         await db.ExecuteAsync(
             "UPDATE notification_recipients SET status='acknowledged', acknowledged_at=NOW() WHERE notification_id=@nid AND user_id=@uid AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@nid", id); c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-
-        // Only promote the shared parent row once every recipient has acknowledged it
-        // (mirror the read-promotion gate above); otherwise one recipient's ack would
-        // flip the notification for everyone.
-        var unacknowledged = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM notification_recipients WHERE notification_id=@nid AND status<>'acknowledged'",
-            c => c.Parameters.AddWithValue("@nid", id), ct);
-        if (unacknowledged == 0)
-            await db.ExecuteAsync(
-                "UPDATE notifications SET status='acknowledged', acknowledged_at=NOW(), acknowledged_by=@uid, acknowledgement_note=COALESCE(@note, acknowledgement_note) WHERE id=@nid AND company_id=@cid",
-                c => { c.Parameters.AddWithValue("@nid", id); c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@note", string.IsNullOrWhiteSpace(note) ? DBNull.Value : note); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         await audit.LogAsync(http, "notification.acknowledged", "Notification", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "acknowledged" }));

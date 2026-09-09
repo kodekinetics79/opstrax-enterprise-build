@@ -120,7 +120,8 @@ public sealed class SafetyCustomerReadEvidencePostgresTests
         });
 
     private static Task<long> Vehicle(Database db, long companyId, string code) => db.InsertAsync(
-        "INSERT INTO vehicles(company_id,vehicle_code,type,status) VALUES(@cid,@code,'Truck','Active') RETURNING id",
+        @"INSERT INTO vehicles(company_id,vehicle_code,type,status,vin_exception_type,alternate_identifier)
+          VALUES(@cid,@code,'Truck','Active','legacy-fleet-identifier',@code) RETURNING id",
         c =>
         {
             c.Parameters.AddWithValue("@cid", companyId);

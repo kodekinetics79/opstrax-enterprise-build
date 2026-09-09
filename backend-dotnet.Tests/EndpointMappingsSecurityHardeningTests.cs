@@ -179,7 +179,7 @@ public sealed class EndpointMappingsSecurityHardeningTests
         Assert.Contains("WHERE de.id=@id AND de.company_id=@cid", source, StringComparison.Ordinal);
         Assert.Contains("WHERE se.id=@id AND se.company_id=@cid", source, StringComparison.Ordinal);
         Assert.Contains("WHERE ep.id=@id AND ep.company_id=@cid", source, StringComparison.Ordinal);
-        Assert.Contains("WHERE tenant_id=@cid ORDER BY snapshot_date", source, StringComparison.Ordinal);
+        Assert.Contains("WHERE tenant_id=@cid AND {QualifiedExecutiveSnapshotSql}", source, StringComparison.Ordinal);
         Assert.Contains("WHERE company_id=@cid AND entity_name=@entity", source, StringComparison.Ordinal);
     }
 

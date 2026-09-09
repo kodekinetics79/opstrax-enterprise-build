@@ -6,6 +6,7 @@ using Xunit.Sdk;
 namespace Opstrax.Tests;
 
 [Trait("Category", "DeviceInstallationWorkPackagePostgres")]
+[Trait("Lane", "DedicatedDatabase")]
 public sealed class DeviceInstallationWorkPackagePostgresTests
 {
     [Fact]

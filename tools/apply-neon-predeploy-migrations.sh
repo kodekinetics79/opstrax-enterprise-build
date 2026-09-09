@@ -102,6 +102,8 @@ reapply_late_control_boundaries() {
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage130_canonical_diagnostic_evidence_identity.sql
+  # Must remain last: every preceding reconciliation can replace tenant policies.
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage132_private_user_row_authority.sql
 }
 
 MIGRATIONS=(
@@ -1192,8 +1194,14 @@ BEGIN
   IF (SELECT count(*) FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])<>0
      OR (SELECT count(*) FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket')<>1
      OR (SELECT count(*) FROM schema_migrations WHERE version='2026_08_11_stage76_telematics_security_hardening')<>1
+     OR (SELECT count(*) FROM schema_migrations WHERE version='2026_09_08_stage132_private_user_row_authority')<>1
      OR NOT has_function_privilege('opstrax_system','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
      OR has_function_privilege('opstrax_app','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
+     OR NOT has_function_privilege('opstrax_system','opstrax_security.issue_principal_ticket(bigint,bigint,integer,bigint,integer)','EXECUTE')
+     OR has_function_privilege('opstrax_app','opstrax_security.issue_principal_ticket(bigint,bigint,integer,bigint,integer)','EXECUTE')
+     OR NOT has_function_privilege('opstrax_app','opstrax_security.current_user_id()','EXECUTE')
+     OR NOT opstrax_security.migration_owned_policy_contract_valid()
+     OR NOT opstrax_security.private_policy_contract_valid()
      OR has_table_privilege('opstrax_app','eld_devices','SELECT')
      OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','SELECT')
      OR NOT has_table_privilege('opstrax_app','telematics_device_commands','SELECT')

@@ -6,6 +6,7 @@ using Xunit.Sdk;
 namespace Opstrax.Tests;
 
 [Trait("Category", "DeviceConnectivityProfilePostgres")]
+[Trait("Lane", "DedicatedDatabase")]
 public sealed class DeviceConnectivityProfilePostgresTests
 {
     [Fact]

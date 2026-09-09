@@ -6,6 +6,7 @@ using Xunit.Sdk;
 namespace Opstrax.Tests;
 
 [Trait("Category", "DeviceRemoteCommandPostgres")]
+[Trait("Lane", "DedicatedDatabase")]
 public sealed class DeviceRemoteCommandPostgresTests
 {
     [Fact]

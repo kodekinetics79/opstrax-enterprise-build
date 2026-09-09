@@ -585,6 +585,9 @@ public sealed class PostgresAiFoundationService(Database db, ICorrelationContext
     public AiRecommendationRecord CreateRecommendation(string tenantId, string recommendationType, string title, string summary, decimal confidenceScore, decimal urgencyScore, string impactJson, string reasonJson, string proposedActionJson, string riskLevel, string? sourceEventId = null, string? actorType = null, string? actorId = null, string status = "draft", string? moduleKey = null)
     {
         var createdAt = DateTimeOffset.UtcNow;
+        var effectiveModuleKey = string.IsNullOrWhiteSpace(moduleKey)
+            ? "fleet.foundation"
+            : moduleKey.Trim();
         var row = db.QuerySingleAsync(
             @"INSERT INTO ai_recommendations
                 (company_id, tenant_id, recommendation_type, module_key, title, summary, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, source_event_id, actor_type, actor_id, created_at, correlation_id, causation_id)
@@ -595,7 +598,7 @@ public sealed class PostgresAiFoundationService(Database db, ICorrelationContext
             {
                 c.Parameters.AddWithValue("@tenantId", FoundationPersistenceHelpers.RequireTenantId(tenantId));
                 c.Parameters.AddWithValue("@recommendationType", recommendationType);
-                c.Parameters.AddWithValue("@moduleKey", (object?)moduleKey ?? DBNull.Value);
+                c.Parameters.AddWithValue("@moduleKey", effectiveModuleKey);
                 c.Parameters.AddWithValue("@title", title);
                 c.Parameters.AddWithValue("@summary", summary);
                 c.Parameters.AddWithValue("@confidenceScore", confidenceScore);

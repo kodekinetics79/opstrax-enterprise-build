@@ -784,7 +784,10 @@ public sealed class SamsaraSyncPostgresTests
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", companyId);
-                    c.Parameters.AddWithValue("@key", $"samsara:{providerVehicleId}:{DateTimeOffset.Parse(delayedAt).UtcTicks}");
+                    c.Parameters.AddWithValue("@key", SamsaraSync.EventIdempotencyKey(
+                        "samsara-org:sync-test",
+                        providerVehicleId,
+                        DateTimeOffset.Parse(delayedAt).UtcDateTime));
                 });
             Assert.NotNull(delayedLineage);
             Assert.Equal(initialInstallationId, Convert.ToInt64(delayedLineage!["installationId"]));
