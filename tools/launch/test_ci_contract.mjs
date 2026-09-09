@@ -166,6 +166,7 @@ test("release container Telematics tests have a hermetic Postgres service", () =
 
 test("release API image contains the required gateway and terminal migrations", () => {
   const dockerfile = read("backend-dotnet/Dockerfile");
+  const gatewayDockerfile = read("telematics/Dockerfile");
   const workflow = read(".github/workflows/ci.yml");
   const release = workflow.slice(
     workflow.indexOf("release-container-builds:"),
@@ -182,6 +183,9 @@ test("release API image contains the required gateway and terminal migrations", 
   ));
   assert.ok(dockerfile.includes(
     "COPY telematics/src/Opstrax.Telematics.Contracts/ telematics/src/Opstrax.Telematics.Contracts/",
+  ));
+  assert.ok(gatewayDockerfile.includes(
+    "COPY telematics/src/Opstrax.Telematics.Protocols.J1939/Opstrax.Telematics.Protocols.J1939.csproj telematics/src/Opstrax.Telematics.Protocols.J1939/",
   ));
 
   for (const migration of [
