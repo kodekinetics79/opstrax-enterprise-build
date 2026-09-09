@@ -88,7 +88,7 @@ public sealed class SafetyPilotAuthDegradationUiContractTests
 
         var driverHos = Read("frontend", "src", "pages", "driver", "DriverHosPage.tsx");
         Assert.Contains("useDialogFocus<HTMLDivElement>(selected != null", driverHos, StringComparison.Ordinal);
-        Assert.Contains("aria-label=\"Certify daily HOS record\"", driverHos, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Attest to daily HOS record\"", driverHos, StringComparison.Ordinal);
         Assert.Contains("role=\"alert\"", driverHos, StringComparison.Ordinal);
         Assert.Contains("onClick={() => void refetch()}", driverHos, StringComparison.Ordinal);
     }

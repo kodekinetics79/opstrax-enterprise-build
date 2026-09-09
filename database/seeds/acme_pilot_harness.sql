@@ -1,4 +1,4 @@
--- ACME TRANSPORT — Enterprise pilot harness
+-- ACME TRANSPORT — synthetic enterprise pilot harness
 -- 1,000 vehicles · 1,250 drivers · 1,800 assets · 300 customers · realistic mixed states.
 -- Idempotent: keyed off company_code 'ACME-TRANSPORT'. Re-run safe (skips if present).
 -- Owner-role script (bypasses RLS) — bulk-seeds then relies on Stage22 RLS enrollment.
@@ -14,7 +14,7 @@ BEGIN
     END IF;
 
     INSERT INTO companies (company_code, name, industry, timezone, status)
-    VALUES ('ACME-TRANSPORT', 'Acme Transport', 'Transport & Logistics', 'America/Chicago', 'Active')
+    VALUES ('ACME-TRANSPORT', 'Acme Transport — Demo', 'Transport & Logistics', 'America/Chicago', 'Active')
     RETURNING id INTO cid;
     RAISE NOTICE 'Created ACME-TRANSPORT company_id=%', cid;
 
@@ -78,21 +78,19 @@ BEGIN
            (ARRAY['Active','Active','In Use','Maintenance','Idle'])[(g%5)+1]
     FROM generate_series(1,1800) g;
 
-    -- ── ELD devices — one per ~active vehicle ──
+    -- ── Synthetic ELD workflow records — no provider account or device evidence ──
     INSERT INTO eld_devices (company_id, device_serial, device_model, provider, vehicle_id,
-                            firmware_version, api_key_hash, hmac_secret,
-                            status, last_heartbeat_at, last_sync_at, created_at)
-    SELECT cid, 'ACME-ELD-' || LPAD(row_number() OVER (ORDER BY v.id)::text,4,'0'),
-           (ARRAY['GO9','VG34','LBB-3'])[(v.id%3)+1],
-           (ARRAY['Geotab','Samsara','Motive'])[(v.id%3)+1],
+                            firmware_version, status, last_heartbeat_at, last_sync_at,
+                            provider_sync_status, created_at)
+    SELECT cid, 'ACME-DEMO-ELD-' || LPAD(row_number() OVER (ORDER BY v.id)::text,4,'0'),
+           'Synthetic demo ELD',
+           'Synthetic fixture — no provider account',
            v.id,
-           'v' || (4+(v.id%3)) || '.' || (v.id%9) || '.' || ((v.id*7)%9),
-           encode(sha256(gen_random_bytes(32)), 'hex'),
-           encode(gen_random_bytes(32), 'hex'),
-           (CASE WHEN v.status='Out of Service' THEN 'Malfunction'
-                 WHEN v.device_status='Offline' THEN 'Diagnostic' ELSE 'Active' END),
-           NOW() - ((v.id % 120) * INTERVAL '1 minute'),
-           NOW() - ((v.id % 120) * INTERVAL '1 minute'),
+           'demo-fixture',
+           'Diagnostic',
+           NULL,
+           NULL,
+           'Unverified',
            NOW() - INTERVAL '200 days'
     FROM vehicles v WHERE v.company_id = cid;
 

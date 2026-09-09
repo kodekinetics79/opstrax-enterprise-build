@@ -154,7 +154,7 @@ function CanadaReadiness() {
         <KpiCard label="Driver/Vehicle docs" value={docs.length} />
         <KpiCard label="Inspections" value={inspections.length} />
         <KpiCard label="Expiry alerts" value={expiries.length} />
-        <KpiCard label="ELD" value={(hos?.eldDevices ?? []).length ? "Registered" : "None"} />
+        <KpiCard label="ELD records" value={(hos?.eldDevices ?? []).length} />
       </div>
 
       <Section title="Driver Qualification & Documents">
