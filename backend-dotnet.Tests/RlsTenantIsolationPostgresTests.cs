@@ -265,16 +265,26 @@ public sealed class RlsTenantIsolationPostgresTests
             Assert.Equal(0, await app.RunInTenantScopeAsync(companyA, userA, () =>
                 app.ExecuteAsync("UPDATE mobile_device_tokens SET app_version='spoofed' WHERE user_id=@other",
                     c => c.Parameters.AddWithValue("@other", userB))));
-            await Assert.ThrowsAsync<PostgresException>(() => app.RunInTenantScopeAsync(companyA, userA, () =>
-                app.ExecuteAsync(
-                    "INSERT INTO mobile_device_tokens(company_id,user_id,product,platform,push_token,token_fingerprint) VALUES(@company,@other,'fleet','ios',@token,@fingerprint)",
-                    c =>
-                    {
-                        c.Parameters.AddWithValue("@company", companyA);
-                        c.Parameters.AddWithValue("@other", userB);
-                        c.Parameters.AddWithValue("@token", "forged-" + suffix);
-                        c.Parameters.AddWithValue("@fingerprint", new string('d', 64));
-                    })));
+            Assert.Equal(0, await app.RunInTenantScopeAsync(companyA, userA, () =>
+                app.ExecuteAsync("UPDATE mobile_device_tokens SET app_version='spoofed' WHERE user_id=@other",
+                    c => c.Parameters.AddWithValue("@other", userC))));
+
+            async Task AssertSpoofedInsertRejected(long company, long otherUser, string marker)
+            {
+                await Assert.ThrowsAsync<PostgresException>(() => app.RunInTenantScopeAsync(companyA, userA, () =>
+                    app.ExecuteAsync(
+                        "INSERT INTO mobile_device_tokens(company_id,user_id,product,platform,push_token,token_fingerprint) VALUES(@company,@other,'fleet','ios',@token,@fingerprint)",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@company", company);
+                            c.Parameters.AddWithValue("@other", otherUser);
+                            c.Parameters.AddWithValue("@token", marker);
+                            c.Parameters.AddWithValue("@fingerprint", Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(marker))).ToLowerInvariant());
+                        })));
+            }
+
+            await AssertSpoofedInsertRejected(companyA, userB, "same-tenant-forged-" + suffix);
+            await AssertSpoofedInsertRejected(companyB, userC, "cross-tenant-forged-" + suffix);
             Assert.Empty(await app.RunInTenantScopeAsync(companyA, async () =>
                 (await app.QueryAsync("SELECT push_token FROM mobile_device_tokens WHERE company_id=@company",
                     c => c.Parameters.AddWithValue("@company", companyA))).ToArray()));

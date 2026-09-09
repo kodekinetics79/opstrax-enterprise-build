@@ -16,6 +16,7 @@ using Npgsql;
 using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
+using Opstrax.Api.Services;
 
 namespace Opstrax.Tests;
 
@@ -26,7 +27,9 @@ namespace Opstrax.Tests;
 [Trait("Category", "Integration")]
 public sealed class PrivateUserAuthorityHttpPostgresTests
 {
-    private const string Route = "/api/security/my-sessions";
+    private const string MySessionsRoute = "/api/security/my-sessions";
+    private const string SessionRevokeRoute = "/api/security/my-sessions/{id:long}";
+    private const string NotificationPrefsRoute = "/api/settings/notification-prefs";
 
     [Fact]
     public async Task MySessions_TwoUsersAndTwoTenants_ReturnOnlyAuthenticatedUsersRows()
@@ -53,14 +56,55 @@ public sealed class PrivateUserAuthorityHttpPostgresTests
 
         try
         {
-            await using var host = await ParityHost.StartAsync(ProductionHandler());
+            await using var host = await ParityHost.StartAsync(ProductionHandlers());
             Assert.Equal(new[] { sessionA, sessionA2 }.Order(), (await Sessions(host.Client, tokenA)).Order());
             Assert.Equal([sessionB], await Sessions(host.Client, tokenB));
             Assert.Equal([sessionC], await Sessions(host.Client, tokenC));
+            Assert.Equal(new[] { sessionA, sessionA2 }.Order(),
+                (await Sessions(host.Client, tokenA,
+                    $"{MySessionsRoute}?userId={userB}&companyId={companyB}")).Order());
+
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await Delete(host.Client, tokenA, $"/api/security/my-sessions/{sessionB}")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await Delete(host.Client, tokenA, $"/api/security/my-sessions/{sessionC}")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK,
+                (await Delete(host.Client, tokenA, $"/api/security/my-sessions/{sessionA2}")).StatusCode);
+            Assert.Equal([sessionA], await Sessions(host.Client, tokenA));
+            Assert.Equal([sessionB], await Sessions(host.Client, tokenB));
+            Assert.Equal([sessionC], await Sessions(host.Client, tokenC));
+
+            using (var sameTenantPreferenceSpoof = await PutJson(host.Client, tokenA, NotificationPrefsRoute,
+                JsonSerializer.Serialize(new
+                {
+                    userId = userB,
+                    companyId = companyA,
+                    email = new { enabled = false },
+                    sms = new { enabled = true },
+                })))
+                Assert.Equal(HttpStatusCode.OK, sameTenantPreferenceSpoof.StatusCode);
+            using (var crossTenantPreferenceSpoof = await PutJson(host.Client, tokenA, NotificationPrefsRoute,
+                JsonSerializer.Serialize(new
+                {
+                    userId = userC,
+                    companyId = companyB,
+                    email = new { enabled = true },
+                    sms = new { enabled = false },
+                })))
+                Assert.Equal(HttpStatusCode.OK, crossTenantPreferenceSpoof.StatusCode);
+            var preferenceOwners = await QueryOwnerIds(
+                "SELECT company_id,user_id FROM user_notification_prefs WHERE user_id=ANY(@users) ORDER BY user_id",
+                ("users", new[] { userA, userB, userC }));
+            Assert.Equal([(companyA, userA)], preferenceOwners);
+
             Assert.Equal(HttpStatusCode.Unauthorized, (await Get(host.Client, "unknown-" + suffix)).StatusCode);
         }
         finally
         {
+            await ExecuteOwner("DELETE FROM audit_logs WHERE company_id=ANY(@companies)",
+                ("companies", new[] { companyA, companyB }));
+            await ExecuteOwner("DELETE FROM user_notification_prefs WHERE company_id=ANY(@companies)",
+                ("companies", new[] { companyA, companyB }));
             await ExecuteOwner("DELETE FROM user_sessions WHERE company_id=ANY(@companies)",
                 ("companies", new[] { companyA, companyB }));
             await ExecuteOwner("DELETE FROM users WHERE company_id=ANY(@companies)",
@@ -70,32 +114,42 @@ public sealed class PrivateUserAuthorityHttpPostgresTests
         }
     }
 
-    private static Delegate ProductionHandler()
+    private static IReadOnlyList<(string Method, string Pattern, Delegate Handler)> ProductionHandlers()
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = Environments.Staging, Args = [] });
         builder.Configuration.Sources.Clear();
         using var app = builder.Build();
         app.MapOpsTraxEndpoints();
-        var matches = new List<Delegate>();
+        var required = new HashSet<(string Method, string Pattern)>
+        {
+            (HttpMethods.Get, MySessionsRoute),
+            (HttpMethods.Delete, SessionRevokeRoute),
+            (HttpMethods.Put, NotificationPrefsRoute),
+        };
+        var matches = new List<(string Method, string Pattern, Delegate Handler)>();
         foreach (var source in ((IEndpointRouteBuilder)app).DataSources)
         {
             if (source.GetType().GetField("_routeEntries", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(source) is not IEnumerable entries) continue;
             foreach (var entry in entries)
             {
-                if (entry is null || Member(entry, "RoutePattern") is not RoutePattern pattern || pattern.RawText != Route || Member(entry, "RouteHandler") is not Delegate handler) continue;
-                if (Member(entry, "HttpMethods") is IEnumerable<string> methods && methods.Contains(HttpMethods.Get)) matches.Add(handler);
+                if (entry is null || Member(entry, "RoutePattern") is not RoutePattern routePattern || routePattern.RawText is not { } pattern ||
+                    Member(entry, "RouteHandler") is not Delegate handler || Member(entry, "HttpMethods") is not IEnumerable<string> methods) continue;
+                foreach (var method in methods)
+                    if (required.Contains((method, pattern))) matches.Add((method, pattern, handler));
             }
         }
-        return Assert.Single(matches);
+        Assert.Equal(required.OrderBy(item => item.Pattern).ThenBy(item => item.Method),
+            matches.Select(item => (item.Method, item.Pattern)).OrderBy(item => item.Pattern).ThenBy(item => item.Method));
+        return matches;
     }
 
     private static object? Member(object value, string name) =>
         value.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(value)
         ?? value.GetType().GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(value);
 
-    private static async Task<long[]> Sessions(HttpClient client, string token)
+    private static async Task<long[]> Sessions(HttpClient client, string token, string path = MySessionsRoute)
     {
-        using var response = await Get(client, token);
+        using var response = await Send(client, HttpMethod.Get, token, path);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         return json.RootElement.GetProperty("data").EnumerateArray()
@@ -103,8 +157,18 @@ public sealed class PrivateUserAuthorityHttpPostgresTests
     }
 
     private static async Task<HttpResponseMessage> Get(HttpClient client, string token)
+        => await Send(client, HttpMethod.Get, token, MySessionsRoute);
+
+    private static async Task<HttpResponseMessage> Delete(HttpClient client, string token, string path)
+        => await Send(client, HttpMethod.Delete, token, path);
+
+    private static async Task<HttpResponseMessage> PutJson(HttpClient client, string token, string path, string json)
+        => await Send(client, HttpMethod.Put, token, path, new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
+
+    private static async Task<HttpResponseMessage> Send(
+        HttpClient client, HttpMethod method, string token, string path, HttpContent? content = null)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, Route);
+        using var request = new HttpRequestMessage(method, path) { Content = content };
         request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
         return await client.SendAsync(request);
     }
@@ -113,7 +177,8 @@ public sealed class PrivateUserAuthorityHttpPostgresTests
     {
         public HttpClient Client { get; } = client;
 
-        public static async Task<ParityHost> StartAsync(Delegate handler)
+        public static async Task<ParityHost> StartAsync(
+            IReadOnlyList<(string Method, string Pattern, Delegate Handler)> handlers)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
@@ -132,6 +197,7 @@ public sealed class PrivateUserAuthorityHttpPostgresTests
             builder.WebHost.UseKestrel().UseUrls("http://127.0.0.1:0");
             builder.Services.AddSingleton<TenantScopeAccessor>();
             builder.Services.AddSingleton<Database>();
+            builder.Services.AddSingleton<AuditService>();
             var serving = builder.Build();
             serving.Use(async (http, next) =>
             {
@@ -146,7 +212,7 @@ public sealed class PrivateUserAuthorityHttpPostgresTests
                 var db = http.RequestServices.GetRequiredService<Database>();
                 var session = await db.QuerySingleInSystemScopeAsync(
                     """
-                    SELECT s.user_id,s.company_id,u.role_name
+                    SELECT s.user_id,s.company_id,u.role_name,u.permissions_json
                     FROM user_sessions s JOIN users u ON u.id=s.user_id AND u.company_id=s.company_id
                     WHERE s.session_token=@token AND s.expires_at>NOW() AND lower(u.status)='active'
                     LIMIT 1
@@ -164,7 +230,7 @@ public sealed class PrivateUserAuthorityHttpPostgresTests
                 http.Items[EndpointMappings.AuthUserIdItemKey] = userId;
                 http.Items[EndpointMappings.AuthCompanyIdItemKey] = companyId;
                 http.Items[EndpointMappings.AuthRoleItemKey] = session["roleName"]?.ToString() ?? string.Empty;
-                http.Items[EndpointMappings.AuthPermissionsItemKey] = Array.Empty<string>();
+                http.Items[EndpointMappings.AuthPermissionsItemKey] = Permissions(session["permissionsJson"]);
                 var scopes = http.RequestServices.GetRequiredService<TenantScopeAccessor>();
                 await using var principal = await db.BeginTenantScopeAsync(companyId, userId, http.RequestAborted);
                 scopes.Current = principal;
@@ -181,7 +247,8 @@ public sealed class PrivateUserAuthorityHttpPostgresTests
                 }
                 finally { scopes.Current = null; }
             });
-            serving.MapGet(Route, handler);
+            foreach (var (method, pattern, handler) in handlers)
+                serving.MapMethods(pattern, [method], handler);
             await serving.StartAsync();
             var address = Assert.Single(serving.Services.GetRequiredService<IServer>().Features
                 .Get<IServerAddressesFeature>()!.Addresses);
@@ -191,6 +258,15 @@ public sealed class PrivateUserAuthorityHttpPostgresTests
                 Timeout = TimeSpan.FromSeconds(15)
             };
             return new ParityHost(serving, client);
+        }
+
+        private static string[] Permissions(object? raw)
+        {
+            if (raw is null or DBNull) return [];
+            using var json = JsonDocument.Parse(raw.ToString() ?? "[]");
+            return json.RootElement.ValueKind == JsonValueKind.Array
+                ? json.RootElement.EnumerateArray().Select(item => item.GetString()).Where(item => item is not null).Select(item => item!).ToArray()
+                : [];
         }
 
         public async ValueTask DisposeAsync()
@@ -228,7 +304,7 @@ public sealed class PrivateUserAuthorityHttpPostgresTests
     }
 
     private static Task<long> User(long company, string label, string suffix) => InsertOwner(
-        "INSERT INTO users(company_id,full_name,email,role_name,status,permissions_json) VALUES(@company,@name,@email,'Viewer','Active','[]'::jsonb) RETURNING id",
+        "INSERT INTO users(company_id,full_name,email,role_name,status,permissions_json) VALUES(@company,@name,@email,'Viewer','Active','[\"notifications:view\"]'::jsonb) RETURNING id",
         ("company", company), ("name", "HTTP Principal " + label),
         ("email", $"http-principal-{label}-{suffix}@example.invalid"));
 
@@ -252,6 +328,19 @@ public sealed class PrivateUserAuthorityHttpPostgresTests
         await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 30 };
         foreach (var (key, value) in values) command.Parameters.AddWithValue("@" + key, value);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<(long CompanyId, long UserId)[]> QueryOwnerIds(
+        string sql, params (string Key, object Value)[] values)
+    {
+        await using var connection = new NpgsqlConnection(TestDb.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        foreach (var (key, value) in values) command.Parameters.AddWithValue("@" + key, value);
+        await using var reader = await command.ExecuteReaderAsync();
+        var rows = new List<(long CompanyId, long UserId)>();
+        while (await reader.ReadAsync()) rows.Add((reader.GetInt64(0), reader.GetInt64(1)));
+        return rows.ToArray();
     }
 
     private static string FindRoot()
