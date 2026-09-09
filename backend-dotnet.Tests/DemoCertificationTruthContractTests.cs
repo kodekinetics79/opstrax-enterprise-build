@@ -1,0 +1,66 @@
+using System;
+using System.IO;
+using Xunit;
+
+namespace Opstrax.Tests;
+
+public sealed class DemoCertificationTruthContractTests
+{
+    private static string Root => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../"));
+
+    [Fact]
+    public void CanonicalDemoEldAndHosUiCannotImplyProviderOrProductCertification()
+    {
+        var seeder = File.ReadAllText(Path.Combine(Root, "backend-dotnet", "Services", "DemoTenantSeeder.cs"));
+        var hos = File.ReadAllText(Path.Combine(Root, "frontend", "src", "pages", "HosEldPage.tsx"));
+        var driverHos = File.ReadAllText(Path.Combine(Root, "frontend", "src", "pages", "driver", "DriverHosPage.tsx"));
+        var fleetCompliance = File.ReadAllText(Path.Combine(Root, "frontend", "src", "pages", "FleetCompliancePage.tsx"));
+        var legacyDemoSeeds = File.ReadAllText(Path.Combine(Root, "backend-dotnet", "Services", "Batch6SchemaService.cs"));
+        var scaleHarness = File.ReadAllText(Path.Combine(Root, "database", "seeds", "acme_pilot_harness.sql"));
+
+        Assert.Contains("'Synthetic demo ELD','Synthetic fixture — no provider account'", seeder, StringComparison.Ordinal);
+        Assert.Contains("NULL,'demo-fixture','Unverified'", seeder, StringComparison.Ordinal);
+        Assert.DoesNotContain("NOW()-INTERVAL '5 minute','pilot-1.0','Healthy'", seeder, StringComparison.Ordinal);
+        Assert.Contains("Driver attestation", hos, StringComparison.Ordinal);
+        Assert.Contains("It is not ELD product certification", hos, StringComparison.Ordinal);
+        Assert.Contains("Driver attested", driverHos, StringComparison.Ordinal);
+        Assert.Contains("Record attestation", driverHos, StringComparison.Ordinal);
+        Assert.Contains("Synthetic demo gateway", seeder, StringComparison.Ordinal);
+        Assert.Contains("DEMO-ELD-{companyId}", seeder, StringComparison.Ordinal);
+        Assert.DoesNotContain("var providers = new[] { \"Geotab\", \"Samsara\", \"Motive\" }", seeder, StringComparison.Ordinal);
+        Assert.DoesNotContain("Active devices must carry real credentials", seeder, StringComparison.Ordinal);
+        Assert.Contains("Provider evidence", hos, StringComparison.Ordinal);
+        Assert.Contains("ELD records", fleetCompliance, StringComparison.Ordinal);
+        Assert.DoesNotContain("KpiCard label=\"ELD\" value={(hos?.eldDevices ?? []).length ? \"Registered\"", fleetCompliance, StringComparison.Ordinal);
+        Assert.DoesNotContain("'KeepTruckin M300'", legacyDemoSeeds, StringComparison.Ordinal);
+        Assert.DoesNotContain("'Samsara VG34'", legacyDemoSeeds, StringComparison.Ordinal);
+        Assert.DoesNotContain("'Omnitracs IVG'", legacyDemoSeeds, StringComparison.Ordinal);
+        var legacyHosStart = legacyDemoSeeds.IndexOf("INSERT INTO hos_logs (id,company_id", StringComparison.Ordinal);
+        var legacyHosEnd = legacyDemoSeeds.IndexOf("ON CONFLICT DO NOTHING", legacyHosStart, StringComparison.Ordinal);
+        Assert.True(legacyHosStart >= 0 && legacyHosEnd > legacyHosStart);
+        Assert.DoesNotContain(",true)", legacyDemoSeeds[legacyHosStart..legacyHosEnd], StringComparison.Ordinal);
+        Assert.Contains("Acme Transport — Demo", scaleHarness, StringComparison.Ordinal);
+        Assert.DoesNotContain("ARRAY['Geotab','Samsara','Motive']", scaleHarness, StringComparison.Ordinal);
+        Assert.Contains("Synthetic fixture — no provider account", scaleHarness, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Stage133ScrubsOnlyTheRecognizedDemoFixtureAndIsInTheProtectedRunner()
+    {
+        var migration = File.ReadAllText(Path.Combine(Root, "database", "migrations", "2026_09_09_stage133_demo_eld_certification_truth.sql"));
+        var runner = File.ReadAllText(Path.Combine(Root, "tools", "apply-neon-predeploy-migrations.sh"));
+
+        Assert.Contains("device_serial LIKE 'MER-ELD-%'", migration, StringComparison.Ordinal);
+        Assert.Contains("LOWER(c.name) LIKE '%demo%'", migration, StringComparison.Ordinal);
+        Assert.Contains("provider_sync_status = 'Unverified'", migration, StringComparison.Ordinal);
+        Assert.Contains("last_sync_at = NULL", migration, StringComparison.Ordinal);
+        Assert.Contains("device_serial ~ ('^ELD-' || d.company_id || '-[0-9]{3}$')", migration, StringComparison.Ordinal);
+        Assert.Contains("Driver attestation of a complete daily HOS record", migration, StringComparison.Ordinal);
+        Assert.Contains("company_code = 'ACME-TRANSPORT'", migration, StringComparison.Ordinal);
+        Assert.Contains("ACME-DEMO-ELD-", migration, StringComparison.Ordinal);
+        Assert.Contains("2026_09_09_stage133_demo_eld_certification_truth", runner, StringComparison.Ordinal);
+        Assert.Contains("Stage133 demo ELD provider truth cleanup is incomplete", runner, StringComparison.Ordinal);
+        Assert.Contains("Stage133 enriched demo gateway truth cleanup is incomplete", runner, StringComparison.Ordinal);
+        Assert.Contains("Stage133 ACME demo harness truth cleanup is incomplete", runner, StringComparison.Ordinal);
+    }
+}

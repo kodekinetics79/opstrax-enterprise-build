@@ -36,7 +36,7 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
     public const string DemoCompanyCode = "MERIDIAN-DEMO";
     public const string DemoCompanyName = "Meridian Logistics — Demo";
     internal const string SafetyPilotFixtureKey = "safety-pilot";
-    internal const int SafetyPilotFixtureVersion = 7;
+    internal const int SafetyPilotFixtureVersion = 8;
     private readonly string demoPassword = ResolveDemoPassword(config);
     // Deterministic late-failure injection for transaction regression tests. Production
     // DI never sets this; keeping the hook internal prevents it becoming an app feature.
@@ -476,9 +476,14 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
                 WHERE NOT EXISTS (SELECT 1 FROM hos_logs WHERE company_id=@companyId AND source='demo' AND source_event_id='safety-pilot-hos-1');
               INSERT INTO eld_devices (company_id,branch_id,device_serial,device_model,provider,vehicle_id,driver_id,status,
                     last_sync_at,firmware_version,provider_sync_status,row_version)
-                SELECT @companyId,@branch,@eldSerial,'Pilot ELD','Synthetic Provider',@vehicle1,@driver1,'Diagnostic',
-                    NOW()-INTERVAL '5 minute','pilot-1.0','Healthy',1
-                WHERE NOT EXISTS (SELECT 1 FROM eld_devices WHERE company_id=@companyId AND device_serial=@eldSerial);",
+                SELECT @companyId,@branch,@eldSerial,'Synthetic demo ELD','Synthetic fixture — no provider account',@vehicle1,@driver1,'Diagnostic',
+                    NULL,'demo-fixture','Unverified',1
+                WHERE NOT EXISTS (SELECT 1 FROM eld_devices WHERE company_id=@companyId AND device_serial=@eldSerial);
+              UPDATE eld_devices SET device_model='Synthetic demo ELD',provider='Synthetic fixture — no provider account',
+                    last_sync_at=NULL,firmware_version='demo-fixture',provider_sync_status='Unverified'
+                WHERE company_id=@companyId AND device_serial=@eldSerial
+                  AND provider IN ('Synthetic Provider','Synthetic fixture — no provider account')
+                  AND device_model IN ('Pilot ELD','Synthetic demo ELD');",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branch", northBranchId); c.Parameters.AddWithValue("@driver1", driver1); c.Parameters.AddWithValue("@vehicle1", vehicle1); c.Parameters.AddWithValue("@eldSerial", eldSerial); }, ct);
 
         await db.ExecuteAsync(
@@ -675,44 +680,28 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
             }
         }
 
-        // Real ELD/telematics devices — one per vehicle — so the IoT / Telematics
-        // pages render genuine device records instead of the frontend seed overlay.
+        // Synthetic device workflow records — one per vehicle. They exercise the
+        // customer UI without naming a provider, inventing a provider heartbeat, or
+        // carrying credentials that could be mistaken for external evidence.
         if (await db.ScalarLongAsync("SELECT COUNT(*) FROM eld_devices WHERE company_id=@cid",
                 c => c.Parameters.AddWithValue("@cid", companyId), ct) == 0)
         {
-            var providers = new[] { "Geotab", "Samsara", "Motive" };
-            var models = new[] { "GO9", "VG34", "LBB-3" };
-            var deviceStatuses = new[] { "Active", "Active", "Active", "Diagnostic", "Active" };
             var di = 0;
             foreach (var v in vehicleRows)
             {
                 var vehicleId = Convert.ToInt64(v["id"]);
-                var p = di % providers.Length;
-                // Active devices must carry real credentials (ck_eld_devices_active_credentials):
-                // generate per-device random creds exactly like the provisioning endpoint.
-                var rawApiKey  = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-                var hmacSecret = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
                 await db.ExecuteAsync(
                     @"INSERT INTO eld_devices
                         (company_id, device_serial, device_model, provider, vehicle_id, firmware_version,
-                         api_key_hash, hmac_secret,
-                         status, last_heartbeat_at, last_sync_at, created_at)
+                         status, last_heartbeat_at, last_sync_at, provider_sync_status, created_at)
                       VALUES
-                        (@cid, @serial, @model, @provider, @vid, @fw,
-                         encode(sha256(@rawKey::bytea), 'hex'), @hmac,
-                         @status, NOW() - make_interval(mins => @hb), NOW() - make_interval(mins => @hb), NOW() - INTERVAL '90 days')",
+                        (@cid, @serial, 'Synthetic demo gateway', 'Synthetic fixture — no provider account', @vid, 'demo-fixture',
+                         'Diagnostic', NULL, NULL, 'Unverified', NOW() - INTERVAL '90 days')",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);
-                        c.Parameters.AddWithValue("@serial", $"ELD-{companyId}-{di + 1:D3}");
-                        c.Parameters.AddWithValue("@model", models[p]);
-                        c.Parameters.AddWithValue("@provider", providers[p]);
+                        c.Parameters.AddWithValue("@serial", $"DEMO-ELD-{companyId}-{di + 1:D3}");
                         c.Parameters.AddWithValue("@vid", vehicleId);
-                        c.Parameters.AddWithValue("@fw", $"v{4 + p}.{rng.Next(0, 9)}.{rng.Next(0, 9)}");
-                        c.Parameters.AddWithValue("@rawKey", rawApiKey);
-                        c.Parameters.AddWithValue("@hmac", hmacSecret);
-                        c.Parameters.AddWithValue("@status", deviceStatuses[di % deviceStatuses.Length]);
-                        c.Parameters.AddWithValue("@hb", rng.Next(1, 45));
                     }, ct);
                 di++;
             }

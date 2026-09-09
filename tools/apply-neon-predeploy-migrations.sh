@@ -312,6 +312,8 @@ MIGRATIONS=(
   2026_09_08_stage130_canonical_diagnostic_evidence_identity
   # Disambiguate telemetry follow-up tasks from legacy seed-only insight ids.
   2026_09_08_stage131_alert_source_truth
+  # Canonical synthetic ELDs never imply a healthy or authenticated provider feed.
+  2026_09_09_stage133_demo_eld_certification_truth
   # Commercial truth overlays. These fail customer-facing operational reads
   # closed unless their persisted evidence is qualified at the source.
   2026_09_08_notification_delivery_contract
@@ -521,7 +523,8 @@ BEGIN
       ('2026_09_08_stage128_device_compatibility_capability_catalog'),
       ('2026_09_08_stage129_latest_device_signal_projection'),
       ('2026_09_08_stage130_canonical_diagnostic_evidence_identity'),
-      ('2026_09_08_stage131_alert_source_truth')) required(version)
+      ('2026_09_08_stage131_alert_source_truth'),
+      ('2026_09_09_stage133_demo_eld_certification_truth')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -535,6 +538,56 @@ BEGIN
       AND (LOWER(c.name) LIKE '%demo%' OR LOWER(c.company_code) LIKE '%demo%')
   ) THEN
     RAISE EXCEPTION 'Stage104 camera demo truth cleanup is incomplete';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM eld_devices d
+    JOIN companies c ON c.id=d.company_id
+    WHERE d.device_serial LIKE 'MER-ELD-%'
+      AND d.device_model IN ('Pilot ELD','Synthetic demo ELD')
+      AND d.provider IN ('Synthetic Provider','Synthetic fixture — no provider account')
+      AND (LOWER(c.name) LIKE '%demo%' OR LOWER(c.company_code) LIKE '%demo%')
+      AND (d.provider_sync_status IS DISTINCT FROM 'Unverified'
+        OR d.last_sync_at IS NOT NULL
+        OR d.device_model IS DISTINCT FROM 'Synthetic demo ELD'
+        OR d.provider IS DISTINCT FROM 'Synthetic fixture — no provider account')
+  ) THEN
+    RAISE EXCEPTION 'Stage133 demo ELD provider truth cleanup is incomplete';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM eld_devices d
+    JOIN companies c ON c.id=d.company_id
+    WHERE d.device_serial ~ ('^ELD-' || d.company_id || '-[0-9]{3}$')
+      AND d.device_model IN ('GO9','VG34','LBB-3','Synthetic demo gateway')
+      AND d.provider IN ('Geotab','Samsara','Motive','Synthetic fixture — no provider account')
+      AND (LOWER(c.name) LIKE '%demo%' OR LOWER(c.company_code) LIKE '%demo%')
+      AND (d.status IS DISTINCT FROM 'Diagnostic'
+        OR d.provider_sync_status IS DISTINCT FROM 'Unverified'
+        OR d.last_heartbeat_at IS NOT NULL
+        OR d.last_sync_at IS NOT NULL
+        OR d.api_key_hash IS NOT NULL
+        OR d.api_key_previous_hash IS NOT NULL
+        OR d.hmac_secret IS NOT NULL
+        OR d.hmac_secret_encrypted IS NOT NULL
+        OR d.hmac_previous_secret_encrypted IS NOT NULL
+        OR d.device_model IS DISTINCT FROM 'Synthetic demo gateway'
+        OR d.provider IS DISTINCT FROM 'Synthetic fixture — no provider account')
+  ) THEN
+    RAISE EXCEPTION 'Stage133 enriched demo gateway truth cleanup is incomplete';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM eld_devices d
+    JOIN companies c ON c.id=d.company_id
+    WHERE c.company_code='ACME-TRANSPORT'
+      AND d.device_serial ~ '^ACME-ELD-[0-9]{4}$'
+      AND d.device_model IN ('GO9','VG34','LBB-3')
+      AND d.provider IN ('Geotab','Samsara','Motive')
+  ) OR EXISTS (
+    SELECT 1 FROM companies
+    WHERE company_code='ACME-TRANSPORT' AND name='Acme Transport'
+  ) THEN
+    RAISE EXCEPTION 'Stage133 ACME demo harness truth cleanup is incomplete';
   END IF;
   IF to_regclass('public.camera_provider_event_inbox') IS NULL
      OR to_regclass('public.camera_provider_media_references') IS NULL THEN
