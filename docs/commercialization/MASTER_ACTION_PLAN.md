@@ -4,13 +4,13 @@
 
 **Status:** CONTROLLED MASTER - ACTIVE ON MERGE
 **Factory model:** 2.0
-**Controlled plan revision:** 2.7
-**Effective date:** 2026-09-06
+**Controlled plan revision:** 2.8
+**Effective date:** 2026-09-08
 **Executive owner:** CTO Office / OpsTrax Commercialization Program
 **Parent tracker:** #110
-**Entry baseline:** `main@0af7b14ecf0fde7e833a1db4bb36025746099137`
-**Production POC software:** `a5e8963cde984c3e806f1a3adbc85d523211d80e`
-**Change control:** `CR-2026-09-06-01`
+**Entry baseline:** `main@2ed4e4295136118711fb7dcfd7db29d0ce3a3a42`
+**Production POC software:** `294a20ded52b7f6a3c4d689fa0de7d0b3fbe7efa`
+**Change control:** `CR-2026-09-08-01`
 
 ## 1. Governing decision
 
@@ -18,7 +18,7 @@ OpsTrax will complete all software-controllable engineering across fleet, telema
 
 Physical camera, sensor, tracker, CAN/J1939, PT40, OEM and other hardware evidence remains a final external confirmation layer. Missing hardware moves the affected physical gate to **EXTERNAL HOLD**. It does not stop unrelated engineering, integration or software verification, and it never becomes a simulated certification pass.
 
-This document consolidates the valid controls from v1.1 through v2.6. It replaces serial wave execution and any later pause rule that would idle engineering solely because another lane lacks hardware, provider access, regulatory evidence or a queued human reviewer. It preserves evidence integrity, exact-SHA acceptance, commercial truth, security, independent assurance and the limited scope of prior waivers.
+This document consolidates the valid controls from v1.1 through controlled revision 2.8. It replaces serial wave execution and any later pause rule that would idle engineering solely because another lane lacks hardware, provider access, regulatory evidence or a queued human reviewer. It preserves evidence integrity, exact-SHA acceptance, commercial truth, security, independent assurance and the limited scope of prior waivers.
 
 ## 2. Executive objective
 
@@ -86,10 +86,27 @@ Related defects close as one vertical unit. Typical batches include:
 - DeviceOps: inventory, SIM/eSIM, install, commission, transfer, replace, suspend, revoke, firmware, remote command, RMA and audit.
 - Compliance: source authority, duty state, clocks, edits, annotations, certification, diagnostics, transfer/inspection and jurisdiction rules.
 - Platform: RBAC/RLS, migration, readiness, workers, queues, backup, restore, observability, deployment identity and warning reduction.
+- Interface Efficiency: shared shell, information priority, page density, responsive structure, accessible controls, tables, and truthful loading, empty, stale and error states.
 
 A batch receives targeted BUILD checks, one INTEGRATE promotion and one frozen-candidate certification run unless a P0 requires earlier isolation.
 
-## 8. Software completion and hardware boundary
+## 8. Interface density and information priority standard
+
+OpsTrax is an operating product. Each page must maximize useful decision information without obscuring hierarchy, accessibility or commercial truth. This standard applies to all existing modules and every new or changed vertical slice.
+
+- Put the page's primary status, exception or task and its most likely action above the fold on a standard 1366 by 768 desktop viewport wherever the content permits.
+- Keep the global header, breadcrumbs, quick access and navigation compact. They must orient the user without consuming the working area needed for fleet, safety, device, sensor and compliance decisions.
+- Use one clear page heading. Keep supporting explanations concise and place secondary guidance beside or below the work it explains.
+- Size visible buttons for their action and label. Preserve accessible focus, target size and spacing without using large padded controls that displace operational content.
+- Use dense, readable KPI strips, filters, tables and split views for frequently scanned information. Give more space only to maps, media, complex forms or analysis that needs it.
+- Keep empty, loading, unavailable and error states proportional to their message. They must explain the truthful state and recovery action without expanding a small message into an otherwise empty full-screen panel.
+- Make responsive behavior structural. Reflow, collapse or progressively disclose secondary content at narrow widths while keeping DOM order, keyboard order and visual order aligned.
+- Prefer shared shell, token and primitive improvements that raise the quality of every module. Add page-specific layout only where the task and information hierarchy require it.
+- Review realistic long labels, large row counts, zero-data states, API failures, stale/offline states, browser zoom and desktop and handheld widths.
+
+During BUILD, the owning squad records the page's primary task path and checks the changed responsive states. During INTEGRATE, UX and independent SDET verify shared-shell regressions, keyboard behavior, density and information visibility. During CERTIFY, visible browser evidence on the frozen exact SHA confirms that critical status and actions remain understandable with persisted customer-scale data. A density defect that materially hides or obstructs a core workflow is P2 or P1 according to its operational effect; a cosmetic spacing issue is P3.
+
+## 9. Software completion and hardware boundary
 
 The following dispositions apply to software-controlled work:
 
@@ -113,7 +130,7 @@ Final external evidence includes, as applicable:
 
 Only this real evidence can promote the related external claim.
 
-## 9. Evidence rules by speed
+## 10. Evidence rules by speed
 
 | Evidence | BUILD | INTEGRATE | CERTIFY |
 |---|---:|---:|---:|
@@ -123,6 +140,7 @@ Only this real evidence can promote the related external claim.
 | Protocol fixtures and virtual devices | Required for protocol work | Required regression | Supporting only for hardware claims |
 | Production-shaped build and migration rehearsal | Optional per small change | Required | Required on frozen candidate |
 | Visible customer journey | Useful during development | Smoke coverage | Required for customer-facing claims |
+| Information priority, density and responsive states | Changed-page review | Shared-shell and representative-route review | Required for affected customer-facing claims |
 | Exact frontend and API SHA parity | Not required per edit | Candidate identity required | Mandatory |
 | Real provider account and responses | When available | When available | Mandatory for provider certification |
 | Physical hardware and field evidence | When available | When available | Mandatory for hardware certification |
@@ -130,7 +148,7 @@ Only this real evidence can promote the related external claim.
 
 Prior evidence remains attached to its original SHA and scope. It may be reused only when the relevant behavior is source-equivalent and the governing gate allows that use.
 
-## 10. Integration gate
+## 11. Integration gate
 
 A batch cannot enter CERTIFY until all applicable checks are green:
 
@@ -140,7 +158,7 @@ A batch cannot enter CERTIFY until all applicable checks are green:
 4. PostgreSQL-backed tests and persistence reconciliation.
 5. Migration enrollment and production-shaped rehearsal.
 6. Tenant, branch, role, export and direct-route authorization regression.
-7. Frontend contracts, build and bundle budget.
+7. Frontend contracts, build, bundle budget, shared-shell density, representative desktop and narrow layouts, and truthful loading/empty/error states.
 8. Mobile contracts and build when mobile code changes.
 9. Telematics, protocol, camera, sensor or provider regression when affected.
 10. Dependency and security checks.
@@ -148,22 +166,22 @@ A batch cannot enter CERTIFY until all applicable checks are green:
 12. Release containers and provenance.
 13. Zero unresolved P0/P1 in candidate scope.
 
-## 11. Certification gate
+## 12. Certification gate
 
 Only a frozen candidate can be certified. Its evidence record must name the exact frontend, API, worker, gateway and database migration identity in scope.
 
-Customer-facing acceptance requires visible Chrome on the intended POC or release surface, persisted data, refresh and sign-out/sign-in survival, role and branch boundaries, and truthful empty/stale/offline/error states. Demo data must be clearly labelled and cannot serve as customer, provider, hardware, video or regulatory evidence.
+Customer-facing acceptance requires visible Chrome on the intended POC or release surface, persisted data, refresh and sign-out/sign-in survival, role and branch boundaries, efficient information priority at desktop and narrow widths, and truthful empty/stale/offline/error states. Demo data must be clearly labelled and cannot serve as customer, provider, hardware, video or regulatory evidence.
 
 Provider claims require an authorized real provider account and authentic responses. Hardware claims require the exact physical device. ELD/HOS claims require the selected provider/device boundary, commercial rights, jurisdiction-appropriate official evidence and complete operational workflow proof. Production-support claims require measured performance, recovery, observability, backup/restore and support operations.
 
 Implementation teams may submit evidence but cannot self-certify critical claims. P0 domains require two logically independent qualified perspectives. AI-assisted review is supporting analysis only and cannot be represented as qualified-human acceptance.
 
-## 12. Current repository and production truth
+## 13. Current repository and production truth
 
-Live GitHub state was verified on 2026-09-06.
+Live GitHub and production state was verified on 2026-09-08.
 
-- Current `main` is `0af7b14ecf0fde7e833a1db4bb36025746099137`.
-- The production POC frontend and API report exact deployed software SHA `a5e8963cde984c3e806f1a3adbc85d523211d80e`.
+- Current `main` is `2ed4e4295136118711fb7dcfd7db29d0ce3a3a42`.
+- The production POC frontend and API report exact deployed software SHA `294a20ded52b7f6a3c4d689fa0de7d0b3fbe7efa`.
 - The original v2.0 activation snapshot recorded PRs #118 and #119 merged and PR #120 active. PR #120 has since merged.
 - PRs #201, #202, #210 and #216 are merged with successful checks.
 - PR #131 was closed without merge; its function was superseded by later integrated HOS work.
@@ -171,10 +189,12 @@ Live GitHub state was verified on 2026-09-06.
 - PRs #217 through #220 repaired and documented the production POC navigation, deployment identity and truth incident.
 - The production POC exposes the Camera Metadata module and visibly identifies the current tenant as demo data.
 - Stored camera records are metadata only. No real camera media, provider event stream or automated video assessment is certified.
+- Authenticated Firefox review on 2026-09-08 showed the Camera Metadata page unable to load records, Fleet Overview unable to reach the vehicle service, and Telematics Control Tower receiving HTTP 401. These are unresolved production POC acceptance failures; repository health does not override them.
+- The current hardening branch contains later software corrections and UI-density work that remain unpublished until a new integration candidate is frozen and authorized.
 
 Repository health and merged checks are evidence of software integration. They do not close the remaining real provider, device, field, regulatory or qualified-human gates.
 
-## 13. Current vertical-slice board
+## 14. Current vertical-slice board
 
 | Slice | Engineering position | External dependency | Current governed disposition |
 |---|---|---|---|
@@ -193,7 +213,7 @@ Repository health and merged checks are evidence of software integration. They d
 
 No Wave 1 through Wave 7 is completely certified and formally closed. Overall disposition remains **COMMERCIAL RELEASE - NOT GO**. A bounded M1/M2 pilot remains supportable only within its approved scope and current operational controls.
 
-## 14. Hardware-related software completion lanes
+## 15. Hardware-related software completion lanes
 
 ### Camera and video
 
@@ -211,7 +231,7 @@ Complete parser and session contracts, device identity, replay/CRC behavior, nor
 
 Complete transport/reassembly, selected PGN/SPN decoding, provenance, unknown-signal behavior, fault persistence, adapter boundaries and independent fixtures. Vehicle-bus acquisition, exact device bytes and physical validation remain external.
 
-## 15. Daily executive velocity dashboard
+## 16. Daily executive velocity dashboard
 
 The daily dashboard reports:
 
@@ -224,13 +244,14 @@ The daily dashboard reports:
 - build error count, compiler warning count and daily delta;
 - production and candidate readiness plus exact-SHA parity;
 - measured p95 indicators for affected critical paths;
+- representative desktop and narrow-view density findings, including critical information displaced below the fold;
 - external dependencies, owner, requested item and next review date;
 - queued qualified-human acceptances;
 - packages newly eligible, still blocked or suspended.
 
 Evidence details remain in issues, pull requests and immutable artifacts. The executive view reports decisions, movement and blockers without converting activity into progress.
 
-## 16. Commercial truth rules
+## 17. Commercial truth rules
 
 - UI, route, schema or catalog presence is not capability proof.
 - Demo or generated data is not real customer evidence.
@@ -242,7 +263,7 @@ Evidence details remain in issues, pull requests and immutable artifacts. The ex
 - Sales, proposals, demos, contracts and support statements must match the Capability Truth Matrix.
 - A capability may be excluded from a package while the rest of the package advances.
 
-## 17. Change control
+## 18. Change control
 
 This consolidated master supersedes conflicting serial-execution language in earlier plans and amendments. Earlier evidence, issue history, acceptance requirements and commercial limitations remain effective where they do not conflict with the operating model here.
 
@@ -253,17 +274,18 @@ This consolidated master supersedes conflicting serial-execution language in ear
 
 No change record substitutes for missing evidence. A waiver must never be silently inherited by another tenant, vehicle count, device, provider, jurisdiction, candidate SHA or time period.
 
-## 18. Required next actions
+## 19. Required next actions
 
 1. Finish and independently verify the current camera authority/truth batch; freeze it only after all integration gates pass.
-2. Continue software-controllable DeviceOps, sensor, J1939, PT40, GT06 and provider work in bounded vertical batches.
-3. Maintain an external procurement ledger naming the exact device or provider access needed for each final confirmation gate.
-4. Prepare repeatable physical test scripts, evidence templates and reference measurements before hardware arrives.
-5. Form at most two frozen certification candidates from integrated meaningful batches.
-6. Keep the production POC truthful: demo labels visible, no invented provider/media/AI claims, and exact deployed identity observable.
-7. Update #110 and the daily executive dashboard with software movement, external holds and actual certification eligibility.
+2. Complete the shared shell and high-priority fleet, camera, telematics, sensor and device density batch, then verify representative desktop, narrow, loading, empty and failure states.
+3. Continue software-controllable DeviceOps, sensor, J1939, PT40, GT06 and provider work in bounded vertical batches.
+4. Maintain an external procurement ledger naming the exact device or provider access needed for each final confirmation gate.
+5. Prepare repeatable physical test scripts, evidence templates and reference measurements before hardware arrives.
+6. Form at most two frozen certification candidates from integrated meaningful batches.
+7. Keep the production POC truthful: demo labels visible, no invented provider/media/AI claims, and exact deployed identity observable.
+8. Update #110 and the daily executive dashboard with software movement, external holds and actual certification eligibility.
 
-## 19. End state
+## 20. End state
 
 The factory completes when the selected commercial package has evidence-backed fleet operations, secure and supportable device/software behavior, applicable provider and regulatory acceptance, proven performance and recovery, truthful customer journeys, qualified independent sign-off and a final exact-SHA release disposition.
 

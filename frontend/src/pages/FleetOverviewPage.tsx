@@ -291,19 +291,19 @@ export function FleetOverviewPage() {
     <div className="ops-deck flex min-h-full shrink-0 flex-col gap-3">
 
       {/* ── Console rail: title, live meta, clock, primary action ─────────── */}
-      <header className="deck-rail relative shrink-0 px-5 py-3.5 pl-7 pr-7">
+      <header className="deck-rail relative shrink-0 px-5 py-2.5 pl-7 pr-7">
         <Screw className="left-2.5 top-2.5"   slot="18deg" />
         <Screw className="right-2.5 top-2.5"  slot="-42deg" />
         <Screw className="bottom-2.5 left-2.5" slot="66deg" />
         <Screw className="bottom-2.5 right-2.5" slot="-12deg" />
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <div className="min-w-0">
             <span className="section-title inline-flex items-center gap-2">
               <span className="live-dot h-1.5 w-1.5" />
               Fleet Operations Deck
             </span>
-            <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Fleet Command</h1>
-            <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
+            <h1 className="mt-0.5 text-[22px] font-black leading-none tracking-tight text-slate-950">Fleet Command</h1>
+            <p className="mt-1 text-[12px] font-medium text-slate-500">
               {totalFleet} vehicles evaluated · {counts.Active} operationally active · {flagged} dispatch flags
             </p>
           </div>
@@ -318,7 +318,7 @@ export function FleetOverviewPage() {
       </header>
 
       {/* ── Clay status tiles — puffy, pressable fleet filters ────────────── */}
-      <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
         <ClayKpi label={COMMAND_STATE_LABELS.Active}    count={counts.Active}    total={totalFleet} Icon={Truck}       tone="deck-clay-emerald" fill="deck-fill-emerald" icon="text-emerald-700" dot="bg-emerald-500 animate-pulse" active={tab === "Active"}    onClick={() => toggleTab("Active")} />
         <ClayKpi label={COMMAND_STATE_LABELS.Idle}      count={counts.Idle}      total={totalFleet} Icon={Zap}         tone="deck-clay-amber"   fill="deck-fill-amber"   icon="text-amber-700"   dot="bg-amber-400"             active={tab === "Idle"}      onClick={() => toggleTab("Idle")} />
         <ClayKpi label={COMMAND_STATE_LABELS.Available} count={counts.Available} total={totalFleet} Icon={Clock}       tone="deck-clay-sky"     fill="deck-fill-sky"     icon="text-sky-700"     dot="bg-sky-400"               active={tab === "Available"} onClick={() => toggleTab("Available")} />
@@ -336,7 +336,7 @@ export function FleetOverviewPage() {
 
         {/* Roster console — neumorphic chassis with an inset bezel screen */}
         <section className="deck-neumo flex min-w-0 flex-col overflow-hidden">
-          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pb-3 pt-3.5">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
             <div className="deck-seg flex flex-wrap items-center gap-1 p-1">
               {STATUS_TABS.map((t) => (
                 <button
@@ -398,7 +398,7 @@ export function FleetOverviewPage() {
             </button>
           </div>
 
-          <div className="deck-bezel mx-3 flex min-w-0 flex-col">
+          <div className="deck-bezel mx-2.5 flex min-w-0 flex-col">
             <div
               id="fleet-roster"
               className="deck-screen h-[min(52dvh,560px)] min-h-[280px] overflow-auto"
@@ -501,7 +501,7 @@ export function FleetOverviewPage() {
           </div>
 
           {/* Instrument strip */}
-          <div className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3 text-[11.5px] font-semibold text-slate-500">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 text-[11.5px] font-semibold text-slate-500">
             <span className="tabular-nums">
               {isFleetSettling
                 ? "Updating fleet view…"
@@ -607,23 +607,19 @@ function ClayKpi({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`deck-clay ${tone} ${active ? "deck-clay-pressed" : ""} flex min-w-0 flex-col gap-2 p-3 text-left`}
+      className={`deck-clay ${tone} ${active ? "deck-clay-pressed" : ""} grid min-h-14 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 p-2.5 text-left`}
     >
-      <div className="flex items-center gap-3">
-        <span className="deck-blob">
-          <Icon className={`h-4.5 w-4.5 ${icon}`} />
-        </span>
-        <p className="min-w-0 text-[22px] font-black leading-none tabular-nums text-slate-900">{count}</p>
-      </div>
-      <p className="flex min-h-[2.5em] items-start gap-1.5 text-[11px] font-bold leading-tight text-slate-600">
+      <span className="deck-blob row-span-2">
+        <Icon className={`h-4.5 w-4.5 ${icon}`} />
+      </span>
+      <p className="flex min-w-0 items-start gap-1.5 text-[10.5px] font-bold leading-tight text-slate-600">
         <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
-        <span>{label}</span>
+        <span className="line-clamp-2">{label}</span>
       </p>
-      <div className="flex items-center gap-2">
-        <div className="deck-track flex-1">
-          <div className={`deck-fill ${fill}`} style={{ width: `${pct}%` }} />
-        </div>
-        <span className="w-7 text-right text-[10px] font-bold tabular-nums text-slate-500">{total > 0 ? `${pct}%` : "—"}</span>
+      <p className="row-span-2 text-[20px] font-black leading-none tabular-nums text-slate-900">{count}</p>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <div className="deck-track min-w-0 flex-1"><div className={`deck-fill ${fill}`} style={{ width: `${pct}%` }} /></div>
+        <span className="w-7 text-right text-[9.5px] font-bold tabular-nums text-slate-500">{total > 0 ? `${pct}%` : "—"}</span>
       </div>
     </button>
   );

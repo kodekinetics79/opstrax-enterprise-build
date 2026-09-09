@@ -262,45 +262,44 @@ export function CameraProviderStatusPanel({ status }: { status: CameraProviderSt
       ? "The connector reported a camera intake failure or provider records require reconciliation. Quarantined records are excluded from customer event claims."
       : "Provider intake records exist, but provider authenticity, media access and certification remain unverified.";
   const lastReceipt = status.lastOpsTraxIntakeUtc === null ? "Never observed" : new Date(status.lastOpsTraxIntakeUtc).toLocaleString();
-  return <section className="rounded-2xl border border-amber-300 bg-amber-50 p-5" aria-labelledby="camera-provider-status-title">
-    <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+  return <section className="rounded-xl border border-amber-300 bg-amber-50 p-3.5" aria-labelledby="camera-provider-status-title">
+    <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
       <div>
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-amber-800">Camera provider intake</p>
-        <h2 id="camera-provider-status-title" className="mt-1 text-lg font-semibold text-slate-900">{title}</h2>
-        <p className="mt-2 max-w-3xl text-sm text-slate-700">{message}</p>
+        <h2 id="camera-provider-status-title" className="mt-0.5 text-base font-semibold text-slate-900">{title}</h2>
+        <p className="mt-1 max-w-3xl text-sm text-slate-700">{message}</p>
       </div>
-      <div className="text-sm text-slate-700">
-        <p><strong>Verification:</strong> External hold</p>
-        <p><strong>Certification:</strong> External hold</p>
-        <p><strong>Last OpsTrax intake:</strong> {lastReceipt}</p>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-700 lg:text-right">
+        <p><strong>Verification</strong><br />External hold</p>
+        <p><strong>Certification</strong><br />External hold</p>
+        <p className="col-span-2"><strong>Last OpsTrax intake:</strong> {lastReceipt}</p>
       </div>
     </div>
-    <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+    <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
       {[
         ["Observed events", status.observedEventCount],
         ["Matched pending", status.matchedEventCount],
         ["Unmatched", status.unmatchedEventCount],
         ["Quarantined", status.quarantinedEventCount],
         ["Pending media", status.pendingMediaCount],
-      ].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-amber-200 bg-white px-4 py-3">
-        <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</dt>
-        <dd className="mt-1 text-xl font-semibold text-slate-900">{value}</dd>
+      ].map(([label, value]) => <div key={String(label)} className="flex items-center justify-between gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2">
+        <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</dt>
+        <dd className="text-lg font-semibold tabular-nums text-slate-900">{value}</dd>
       </div>)}
     </dl>
-    <p className="mt-3 text-xs text-slate-600">Provider verified: No · Media available: No · Expired media references: {status.expiredMediaCount}</p>
-    <a className="btn-ghost mt-3 inline-flex text-xs" href="/integrations">Open Samsara camera intake setup</a>
+    <div className="mt-2 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-600">Provider verified: No · Media available: No · Expired media references: {status.expiredMediaCount}</p><a className="btn-ghost inline-flex text-xs" href="/integrations">Open Samsara camera intake setup</a></div>
   </section>;
 }
 
 export function CameraProviderPendingEventsPanel({ rows }: { rows: readonly CameraProviderPendingEvent[] }) {
   if (rows.length === 0) return null;
-  return <section className="rounded-2xl border border-slate-200 bg-white p-5" aria-labelledby="camera-provider-events-title">
+  return <section className="rounded-xl border border-slate-200 bg-white p-3.5" aria-labelledby="camera-provider-events-title">
     <div>
       <p className="text-xs font-bold uppercase tracking-[0.16em] text-amber-700">Unverified provider records</p>
-      <h2 id="camera-provider-events-title" className="mt-1 text-lg font-semibold text-slate-900">Camera safety intake queue</h2>
-      <p className="mt-2 max-w-4xl text-sm text-slate-600">These records are separate from stored camera metadata. They cannot be reviewed, coached, exported, or used as certification evidence until provider, media, privacy, and device checks pass.</p>
+      <h2 id="camera-provider-events-title" className="mt-0.5 text-base font-semibold text-slate-900">Camera safety intake queue</h2>
+      <p className="mt-1 max-w-4xl text-sm text-slate-600">These records are separate from stored camera metadata. They cannot be reviewed, coached, exported, or used as certification evidence until provider, media, privacy, and device checks pass.</p>
     </div>
-    <div className="mt-4 overflow-x-auto">
+    <div className="mt-3 overflow-x-auto">
       <table className="min-w-full text-left text-sm">
         <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><tr>
           <th className="px-3 py-2">Event</th><th className="px-3 py-2">Occurred</th><th className="px-3 py-2">Vehicle</th><th className="px-3 py-2">Reconciliation</th><th className="px-3 py-2">Evidence</th>
@@ -318,18 +317,21 @@ export function CameraProviderPendingEventsPanel({ rows }: { rows: readonly Came
 }
 
 export function CameraProviderUnavailablePanel({ scope, retrying, onRetry }: {
-  scope: "status" | "events";
+  scope: "status" | "events" | "both";
   retrying: boolean;
   onRetry: () => void;
 }) {
   const status = scope === "status";
-  return <section className="rounded-2xl border border-red-300 bg-red-50 p-5" role="alert">
+  const both = scope === "both";
+  return <section className="rounded-xl border border-red-300 bg-red-50 p-3.5" role="alert">
     <p className="text-xs font-bold uppercase tracking-[0.16em] text-red-700">Live camera provider data unavailable</p>
-    <h2 className="mt-1 text-lg font-semibold text-slate-900">{status ? "Provider intake status could not be confirmed" : "Provider intake queue could not be confirmed"}</h2>
-    <p className="mt-2 max-w-4xl text-sm text-slate-700">
+    <h2 className="mt-0.5 text-base font-semibold text-slate-900">
+      {both ? "Provider intake status and queue could not be confirmed" : status ? "Provider intake status could not be confirmed" : "Provider intake queue could not be confirmed"}
+    </h2>
+    <p className="mt-1 max-w-4xl text-sm text-slate-700">
       No empty, connected, healthy, media-ready, or certified state has been inferred. Stored manual metadata remains available below as a separate unverified record set.
     </p>
-    <button type="button" className="btn-secondary mt-3" disabled={retrying} onClick={onRetry}>{retrying ? "Retrying live provider data…" : "Retry live provider data"}</button>
+    <button type="button" className="btn-secondary mt-2" disabled={retrying} onClick={onRetry}>{retrying ? "Retrying live provider data…" : "Retry live provider data"}</button>
   </section>;
 }
 
@@ -742,22 +744,24 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
         </>
       }
     />
-    {kind === "dashcam" ? providerStatus.isLoading
+    {kind === "dashcam" ? providerStatus.isLoading || providerEvents.isLoading
       ? <LoadingState />
-      : providerStatus.isError || !providerStatus.data
-        ? <CameraProviderUnavailablePanel scope="status" retrying={providerStatus.isFetching} onRetry={() => { void providerStatus.refetch(); }} />
-        : <CameraProviderStatusPanel status={providerStatus.data} /> : null}
-    {kind === "dashcam" ? providerEvents.isLoading
-      ? <LoadingState />
-      : providerEvents.isError || !providerEvents.data
-        ? <CameraProviderUnavailablePanel scope="events" retrying={providerEvents.isFetching} onRetry={() => { void providerEvents.refetch(); }} />
-        : <CameraProviderPendingEventsPanel rows={providerEvents.data} /> : null}
+      : (providerStatus.isError || !providerStatus.data) && (providerEvents.isError || !providerEvents.data)
+        ? <CameraProviderUnavailablePanel scope="both" retrying={providerStatus.isFetching || providerEvents.isFetching} onRetry={() => { void providerStatus.refetch(); void providerEvents.refetch(); }} />
+        : <>
+          {providerStatus.isError || !providerStatus.data
+            ? <CameraProviderUnavailablePanel scope="status" retrying={providerStatus.isFetching} onRetry={() => { void providerStatus.refetch(); }} />
+            : <CameraProviderStatusPanel status={providerStatus.data} />}
+          {providerEvents.isError || !providerEvents.data
+            ? <CameraProviderUnavailablePanel scope="events" retrying={providerEvents.isFetching} onRetry={() => { void providerEvents.refetch(); }} />
+            : <CameraProviderPendingEventsPanel rows={providerEvents.data} />}
+        </> : null}
     {cameraNotice}
     {operationError && kind !== "dashcam" ? <div role="alert" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{operationError instanceof Error ? operationError.message : "The incident action could not be completed."}</div> : null}
     {kind === "dashcam" && Array.isArray(rowsQuery.data) && rowsQuery.data.some((row) => !cameraProjection(row)) ? <p role="alert">Some stored metadata is unavailable because its identity or fields cannot be interpreted safely. It cannot be edited or exported.</p> : null}
-    {kind === "dashcam" ? <section className="pt-2" aria-labelledby="stored-camera-metadata-title"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Manual records</p><h2 id="stored-camera-metadata-title" className="mt-1 text-lg font-semibold text-slate-900">Stored camera metadata</h2><p className="mt-1 text-sm text-slate-600">These records are unverified notes and are never treated as provider media or certification evidence.</p></section> : null}
-    <div className="grid gap-6 sm:grid-cols-3 xl:grid-cols-5">{config.kpis.slice(0, 5).map(([label,key]) => <KpiCard key={key} label={label} value={kind === "dashcam" ? (typeof s[key] === "number" && Number.isSafeInteger(s[key]) && Number(s[key]) >= 0 ? String(s[key]) : "Unavailable") : String(s[key] ?? 0)} status={/critical|overdue|missing|rejected/i.test(label) ? "Critical" : undefined} />)}</div>
-    <div className="flex flex-col gap-3 xl:flex-row xl:items-center"><input className="field xl:max-w-md" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by driver, vehicle, route, event, status...`} /><select className="field xl:max-w-[180px]" value={filter} onChange={(e) => setFilter(e.target.value)}><option>All</option><option>Critical</option><option>High</option><option>Pending</option><option>Reviewed</option><option>Open</option><option>Closed</option><option>Locked</option></select></div>
+    {kind === "dashcam" ? <section className="flex flex-col gap-1 pt-1 sm:flex-row sm:items-end sm:justify-between" aria-labelledby="stored-camera-metadata-title"><div><h2 id="stored-camera-metadata-title" className="text-base font-semibold text-slate-900">Stored manual camera metadata</h2><p className="text-sm text-slate-600">Unverified notes; never provider media or certification evidence.</p></div></section> : null}
+    <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-5">{config.kpis.slice(0, 5).map(([label,key]) => <KpiCard key={key} label={label} value={kind === "dashcam" ? (typeof s[key] === "number" && Number.isSafeInteger(s[key]) && Number(s[key]) >= 0 ? String(s[key]) : "Unavailable") : String(s[key] ?? 0)} status={/critical|overdue|missing|rejected/i.test(label) ? "Critical" : undefined} />)}</div>
+    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px]"><input className="field" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by driver, vehicle, route, event, status...`} /><select className="field" value={filter} onChange={(e) => setFilter(e.target.value)}><option>All</option><option>Critical</option><option>High</option><option>Pending</option><option>Reviewed</option><option>Open</option><option>Closed</option><option>Locked</option></select></div>
     {!rows.length ? (
       <EmptyState title={`No ${config.eyebrow.toLowerCase()} records`} subtitle={kind === "dashcam" ? "No provider event has been projected into this view. Manual entries remain explicitly unverified." : "Try another filter or create the first record."} />
     ) : (

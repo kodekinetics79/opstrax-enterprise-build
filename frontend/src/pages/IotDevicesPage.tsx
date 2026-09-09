@@ -1692,7 +1692,7 @@ export function IotDevicesPage() {
         <AssignmentRefreshNotice record={assignmentRecord} busy={assignmentRefreshPending} onRetry={() => { void refreshAssignmentDisplay(assignmentRecord); }} />
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard label="Active Managed Devices" value={managedCount} status={managedCount ? "Active" : "Pending"} icon={<RadioTower className="h-4 w-4" />} />
         <KpiCard label="Offline" value={offlineCount} status={!managedCount ? "Pending" : offlineCount ? "Critical" : "Healthy"} icon={<WifiOff className="h-4 w-4" />} />
         <KpiCard label="Needs Attention" value={attentionCount} status={!managedCount ? "Pending" : attentionCount ? "Watch" : "Healthy"} icon={<Activity className="h-4 w-4" />} />
@@ -1701,9 +1701,9 @@ export function IotDevicesPage() {
       </div>
       <p className="text-xs text-slate-500">Data health is a derived signal score for active devices: stale check-in, malfunction state, open telemetry alerts, and active faults reduce the score. Software gaps are persisted operational facts: incomplete exact identity, missing installation or SIM/eSIM profile, stale or absent telemetry, or an open RMA. Neither measure is certification evidence. <button type="button" className="font-semibold text-teal-700 hover:underline" onClick={() => setTab("archived")}>{archivedCount} archived</button> devices are retained separately.</p>
 
-      <div className="panel space-y-4 p-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="relative xl:min-w-[360px]">
+      <div className="panel space-y-3 p-3">
+        <div className="grid gap-2 xl:grid-cols-[minmax(280px,1fr)_auto] xl:items-center">
+          <div className="relative">
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
             <input
               className="field w-full pl-9"
@@ -1712,39 +1712,41 @@ export function IotDevicesPage() {
               aria-label="Search devices by provider, serial, IMEI, vehicle, driver, or tenant"
             />
           </div>
-          <div className="flex flex-wrap gap-2">
-            <select
-              aria-label="Sort devices"
-              className="field min-w-36"
-              value={deviceSort}
-              onChange={(event) => { setDeviceSort(event.target.value as typeof deviceSort); setDevicePage(1); }}
-            >
-              <option value="serial">Serial</option>
-              <option value="provider">Provider</option>
-              <option value="model">Model</option>
-              <option value="status">Status</option>
-              <option value="lastCheckIn">Last check-in</option>
-              <option value="vehicle">Vehicle</option>
-            </select>
+          <div className="flex flex-wrap gap-1.5 xl:justify-end">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-slate-500">Sort
+              <select
+                aria-label="Sort devices"
+                className="field min-w-32"
+                value={deviceSort}
+                onChange={(event) => { setDeviceSort(event.target.value as typeof deviceSort); setDevicePage(1); }}
+              >
+                <option value="serial">Serial</option>
+                <option value="provider">Provider</option>
+                <option value="model">Model</option>
+                <option value="status">Status</option>
+                <option value="lastCheckIn">Last check-in</option>
+                <option value="vehicle">Vehicle</option>
+              </select>
+            </label>
             <button type="button" className="btn-ghost py-2 text-xs" onClick={() => { setDeviceDirection((current) => current === "asc" ? "desc" : "asc"); setDevicePage(1); }}>
-              {deviceDirection === "asc" ? "Ascending" : "Descending"}
+              {deviceDirection === "asc" ? "A–Z" : "Z–A"}
             </button>
-          </div>
-          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Device workspace views">
-            {DEVICE_TABS.map((item) => (
-              <button key={item.key} role="tab" aria-selected={tab === item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item.key); setDevicePage(1); }}>
-                {item.label}
-              </button>
-            ))}
+            <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Device workspace views">
+              {DEVICE_TABS.map((item) => (
+                <button key={item.key} role="tab" aria-selected={tab === item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item.key); setDevicePage(1); }}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         {tab === "diagnostics" ? (
-          <section role="region" aria-labelledby="diagnostics-evidence-title" className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <section role="region" aria-labelledby="diagnostics-evidence-title" className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="max-w-3xl">
                 <h2 id="diagnostics-evidence-title" className="text-lg font-semibold text-slate-900">Diagnostics evidence is separate from device inventory</h2>
-                <p className="mt-2 text-sm text-slate-600">
+                <p className="mt-1 text-sm text-slate-600">
                   Only devices with received OBD, J1939, or CAN evidence appear in Diagnostics. Device Health does not infer diagnostic coverage for every registered device.
                 </p>
                 {!canDiagnostics ? <p role="status" className="mt-3 text-sm font-medium text-amber-700">Diagnostics evidence is not available for this role. Ask a tenant administrator for diagnostics access.</p> : null}
@@ -1809,9 +1811,9 @@ export function IotDevicesPage() {
           ) : !(providersQ.data ?? []).length ? (
             <EmptyState title={emptyState.title} subtitle={emptyState.subtitle} />
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-3 lg:grid-cols-2">
               {(providersQ.data ?? []).map((provider) => (
-                <div key={String(provider.id)} className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                <div key={String(provider.id)} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-lg font-semibold text-slate-900">{String(provider.name)}</p>
@@ -1819,12 +1821,12 @@ export function IotDevicesPage() {
                     </div>
                     <RiskBadge risk={String(provider.integrationStatus)} />
                   </div>
-                  <div className="mt-4 grid gap-2 text-sm text-slate-700">
+                  <div className="mt-3 grid gap-1.5 text-sm text-slate-700">
                     <div className="flex justify-between"><span>Last sync</span><span>{String(provider.lastSyncAt)}</span></div>
                     <div className="flex justify-between"><span>Scoped devices</span><span>{measuredCount(provider.deviceCount)}</span></div>
                     <div className="flex justify-between"><span>Needs follow-up</span><span>{measuredCount((provider as AnyRecord).pendingDevices)}</span></div>
                   </div>
-                  {canManageProviders ? <div className="mt-4 flex flex-wrap gap-2">
+                  {canManageProviders ? <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       className="btn-ghost"
                       title="Open provider management settings."
@@ -1853,43 +1855,43 @@ export function IotDevicesPage() {
               <thead>
                 <tr className="border-b border-slate-200">
                   {["Device", "Provider", "Identifier", "Vehicle", "Driver", "Firmware", "Check-in", "Connection", "Lifecycle", "Power", "Signal", "Health", "Install", "Compliance", "Operations gaps", "Actions"].map((header) => (
-                    <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
+                    <th key={header} className="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {deviceRows.map((row) => (
                   <tr key={String(row.id)} className="transition hover:bg-slate-50">
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-2.5">
                       <button className="text-left" onClick={() => setSelectedId(row.id)}>
                         <p className="font-semibold text-slate-900">{row.deviceName}</p>
                         <p className="text-xs text-slate-400">{row.deviceCategory} · {row.deviceType} · {row.serialNumber || row.identifier}</p>
                       </button>
                     </td>
-                    <td className="px-4 py-3 text-slate-700">{row.provider}</td>
-                    <td className="px-4 py-3 text-slate-700">
+                    <td className="px-3 py-2.5 text-slate-700">{row.provider}</td>
+                    <td className="px-3 py-2.5 text-slate-700">
                       <div>{row.serialNumber}</div>
                       <div className="text-xs text-slate-500">{row.imei || row.identifier}</div>
                     </td>
-                    <td className="px-4 py-3 text-slate-700">{row.assignedVehicleCode || "Unassigned"}</td>
-                    <td className="px-4 py-3 text-slate-700">{row.assignedDriverName || "Unassigned"}</td>
-                    <td className="px-4 py-3 text-slate-700">
+                    <td className="px-3 py-2.5 text-slate-700">{row.assignedVehicleCode || "Unassigned"}</td>
+                    <td className="px-3 py-2.5 text-slate-700">{row.assignedDriverName || "Unassigned"}</td>
+                    <td className="px-3 py-2.5 text-slate-700">
                       <div>{row.firmwareVersion}</div>
                       {row.firmwareVersion !== row.targetFirmwareVersion ? <div className="text-xs text-amber-700">Target {row.targetFirmwareVersion}</div> : null}
                     </td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{row.lastCheckIn}</td>
-                    <td className="px-4 py-3"><StatusBadge status={row.connectionStatus} /></td>
-                    <td className="px-4 py-3"><StatusBadge status={row.lifecycleStatus} />{row.archivedAt ? <div className="mt-1 text-xs text-slate-500">{new Date(row.archivedAt).toLocaleString()}</div> : null}</td>
-                    <td className="px-4 py-3 text-slate-700">{row.powerStatus}</td>
-                    <td className="px-4 py-3"><RiskBadge risk={row.signalStrength} /></td>
-                    <td className="px-4 py-3 text-slate-700">{row.dataHealthAvailable ? `${row.dataHealthScore}%` : "Unknown"}</td>
-                    <td className="px-4 py-3"><StatusBadge status={row.installStatus} /></td>
-                    <td className="px-4 py-3"><StatusBadge status={row.complianceStatus} /></td>
-                    <td className="px-4 py-3 text-slate-700">
+                    <td className="px-3 py-2.5 text-xs text-slate-400">{row.lastCheckIn}</td>
+                    <td className="px-3 py-2.5"><StatusBadge status={row.connectionStatus} /></td>
+                    <td className="px-3 py-2.5"><StatusBadge status={row.lifecycleStatus} />{row.archivedAt ? <div className="mt-1 text-xs text-slate-500">{new Date(row.archivedAt).toLocaleString()}</div> : null}</td>
+                    <td className="px-3 py-2.5 text-slate-700">{row.powerStatus}</td>
+                    <td className="px-3 py-2.5"><RiskBadge risk={row.signalStrength} /></td>
+                    <td className="px-3 py-2.5 text-slate-700">{row.dataHealthAvailable ? `${row.dataHealthScore}%` : "Unknown"}</td>
+                    <td className="px-3 py-2.5"><StatusBadge status={row.installStatus} /></td>
+                    <td className="px-3 py-2.5"><StatusBadge status={row.complianceStatus} /></td>
+                    <td className="px-3 py-2.5 text-slate-700">
                       <div>{row.supportStatus}</div>
                       <div className="text-xs text-slate-500">{!row.deviceOpsAssessmentAvailable ? "Reload after the DeviceOps assessment API is available" : row.openRmaCount > 0 ? `${row.highestOpenRmaSeverity} · ${row.openRmaCount} open RMA${row.openRmaCount === 1 ? "" : "s"}` : row.deviceOpsGaps.join(" · ") || "Hardware/provider certification holds tracked separately"}</div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-2.5">
                       <button
                         type="button"
                         className="btn-ghost h-8 px-3"
@@ -1917,7 +1919,7 @@ export function IotDevicesPage() {
 
       {selectedId ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelectedId(null)}>
-          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-4 sm:p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <button className="float-right icon-btn" aria-label="Close device details" onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></button>
             {canManageDeviceLifecycle && suspensionRefreshWarning && suspensionReceiptId && suspensionRefreshContext.current.target ? (
               <SuspensionRefreshNotice deviceId={suspensionReceiptId} busy={suspensionRefreshPending} onRetry={() => { void refreshSuspensionDisplay(suspensionReceiptId); }} />

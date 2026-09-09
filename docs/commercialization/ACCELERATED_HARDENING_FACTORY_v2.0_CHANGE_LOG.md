@@ -21,3 +21,12 @@
 - Updates repository truth through 2026-09-06: #118, #119 and #120 merged; #201, #202, #210 and #216 merged with successful checks; #131 closed without merge; #159 merged; #217 through #220 merged for the production POC truth incident.
 - Records current main `0af7b14ecf0fde7e833a1db4bb36025746099137` and production POC software `a5e8963cde984c3e806f1a3adbc85d523211d80e`.
 - Keeps overall commercial release at NOT GO and all real hardware/provider/regulatory gaps visible.
+
+## Controlled revision 2.8 update
+
+- Makes efficient page-space use, information priority and responsive density a binding cross-cutting product standard.
+- Requires the shared shell, navigation, headings, action controls, KPI strips, filters, tables and status panels to preserve working space while remaining accessible.
+- Requires loading, empty, unavailable and failure states to stay proportional to their content and show a truthful recovery path without consuming an otherwise empty viewport.
+- Adds representative desktop, narrow, zoom, large-data and failure-state review to BUILD, INTEGRATE and frozen-candidate browser evidence.
+- Records current `main` `2ed4e4295136118711fb7dcfd7db29d0ce3a3a42` and production POC software `294a20ded52b7f6a3c4d689fa0de7d0b3fbe7efa` as of 2026-09-08.
+- Records the observed production POC failures on Camera Metadata, Fleet Overview and Telematics Control Tower as open acceptance blockers rather than inferred passes.
