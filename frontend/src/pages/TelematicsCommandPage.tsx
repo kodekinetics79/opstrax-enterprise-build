@@ -209,6 +209,9 @@ function renderCell(column: string, row: TelematicsClusterRecord) {
       </div>
     );
   }
+  if (column === "alertStatus" && row.offlineWarning && /^clear$/i.test(String(row.alertStatus))) {
+    return <span className="text-xs font-semibold text-slate-500">No active alert record</span>;
+  }
   if (column === "sensorStatus" || column === "dataFreshnessStatus" || column === "alertStatus") {
     return <StatusBadge status={String(row[column as keyof TelematicsClusterRecord])} />;
   }
@@ -388,7 +391,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   const selectedRecord = rows.find((row) => row.id === selected?.id) ?? selected;
   const offlineCount = paged ? recordsQ.data?.summary.offline ?? 0 : rows.filter((row) => row.offlineWarning).length;
-  const issueCount = paged ? recordsQ.data?.summary.attention ?? 0 : rows.filter((row) => row.alertStatus === "Open" || (row.troubleCodes?.length ?? 0) > 0 || (row.deviceHealthAvailable && row.deviceHealth < 70)).length;
+  const issueCount = paged ? recordsQ.data?.summary.attention ?? 0 : rows.filter((row) => row.offlineWarning || row.alertStatus === "Open" || (row.troubleCodes?.length ?? 0) > 0 || (row.deviceHealthAvailable && row.deviceHealth < 70)).length;
 
   // Average health only counts rows that carry a real numeric health signal. With an
   // empty (or all-signal-less) fleet there is nothing to average, so we surface "—"
@@ -484,9 +487,9 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Fleet managed units" value={fleetUnits} status="Active" icon={kpiIcon} />
-        <KpiCard label="Fleet offline / stale" value={offlineCount} status={offlineCount ? "Critical" : "Healthy"} icon={<AlertTriangle className="h-4 w-4" />} />
-        <KpiCard label="Fleet needs action" value={issueCount} status={issueCount ? "Watch" : "Healthy"} icon={<RadioTower className="h-4 w-4" />} />
+        <KpiCard label="Fleet managed units" value={fleetUnits} status={fleetUnits ? "Recorded" : "None recorded"} icon={kpiIcon} />
+        <KpiCard label="Fleet offline / stale" value={offlineCount} status={!fleetUnits ? "Unknown" : offlineCount ? "Critical" : "No recorded gaps"} icon={<AlertTriangle className="h-4 w-4" />} />
+        <KpiCard label="Fleet needs action" value={issueCount} status={!fleetUnits ? "Unknown" : issueCount ? "Watch" : "No recorded issues"} icon={<RadioTower className="h-4 w-4" />} />
         <KpiCard
           label="Current page health"
           value={avgHealth == null ? "—" : `${avgHealth}%`}
