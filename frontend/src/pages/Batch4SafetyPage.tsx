@@ -717,6 +717,7 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     return kind === "safety" ? <>{safetyCoachingFeedback}{unavailable}</> : unavailable;
   }
   const s = (summary.data || {}) as AnyRecord;
+  const hasSourceRecords = Array.isArray(rowsQuery.data) && rowsQuery.data.length > 0;
   return <div className="fleet-console space-y-3">
     {safetyCoachingReceipt}
     <PageHeader
@@ -760,7 +761,7 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     {operationError && kind !== "dashcam" ? <div role="alert" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{operationError instanceof Error ? operationError.message : "The incident action could not be completed."}</div> : null}
     {kind === "dashcam" && Array.isArray(rowsQuery.data) && rowsQuery.data.some((row) => !cameraProjection(row)) ? <p role="alert">Some stored metadata is unavailable because its identity or fields cannot be interpreted safely. It cannot be edited or exported.</p> : null}
     {kind === "dashcam" ? <section className="flex flex-col gap-1 pt-1 sm:flex-row sm:items-end sm:justify-between" aria-labelledby="stored-camera-metadata-title"><div><h2 id="stored-camera-metadata-title" className="text-base font-semibold text-slate-900">Stored manual camera metadata</h2><p className="text-sm text-slate-600">Unverified notes; never provider media or certification evidence.</p></div></section> : null}
-    <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-5">{config.kpis.slice(0, 5).map(([label,key]) => <KpiCard key={key} label={label} value={kind === "dashcam" ? (typeof s[key] === "number" && Number.isSafeInteger(s[key]) && Number(s[key]) >= 0 ? String(s[key]) : "Unavailable") : String(s[key] ?? 0)} status={/critical|overdue|missing|rejected/i.test(label) ? "Critical" : undefined} />)}</div>
+    <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-5">{config.kpis.slice(0, 5).map(([label,key]) => <KpiCard key={key} label={label} value={kind === "dashcam" ? (typeof s[key] === "number" && Number.isSafeInteger(s[key]) && Number(s[key]) >= 0 ? String(s[key]) : "Unavailable") : kind === "safety" && key === "fleetSafetyScore" && !hasSourceRecords ? "Not assessed" : String(s[key] ?? 0)} status={/critical|overdue|missing|rejected/i.test(label) ? "Critical" : kind === "safety" && key === "fleetSafetyScore" && !hasSourceRecords ? "Unknown" : undefined} />)}</div>
     <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px]"><input className="field" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by driver, vehicle, route, event, status...`} /><select className="field" value={filter} onChange={(e) => setFilter(e.target.value)}><option>All</option><option>Critical</option><option>High</option><option>Pending</option><option>Reviewed</option><option>Open</option><option>Closed</option><option>Locked</option></select></div>
     {!rows.length ? (
       <EmptyState title={`No ${config.eyebrow.toLowerCase()} records`} subtitle={kind === "dashcam" ? "No provider event has been projected into this view. Manual entries remain explicitly unverified." : "Try another filter or create the first record."} />

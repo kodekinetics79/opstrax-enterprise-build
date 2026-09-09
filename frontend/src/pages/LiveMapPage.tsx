@@ -496,6 +496,7 @@ export function LiveMapPage() {
   const mapEntities = layers.vehicles ? visibleEntities : [];
   const recommendations = (data.recommendations as AnyRecord[]) ?? [];
   const openAlerts = alerts.data ?? [];
+  const openAlertCount = alerts.isSuccess ? String(openAlerts.length) : "--";
   const locatedEntityCount = liveEntities.filter(hasValidPosition).length;
   const recentFixCoverage = positionFreshness.located === 0
     ? null
@@ -552,7 +553,7 @@ export function LiveMapPage() {
               <MetaStat icon={<Satellite className="h-3.5 w-3.5 text-teal-500" />} value={String(kpis.registeredDevices ?? "--")} label="devices" />
               <MetaStat icon={<MapPin className="h-3.5 w-3.5 text-violet-500" />} value={String(positionFreshness.located)} label="positions" />
               <MetaStat icon={<Gauge className="h-3.5 w-3.5 text-blue-500" />} value={recentFixCoverage == null ? "--" : `${recentFixCoverage}%`} label="recent fixes" />
-              <MetaStat icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} value={String(kpis.openAlerts ?? "--")} label="open alerts" />
+              <MetaStat icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} value={openAlertCount} label="open alert records" />
             </div>
           </div>
 

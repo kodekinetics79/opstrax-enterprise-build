@@ -1,5 +1,6 @@
 import { type FormEvent, type ReactNode, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router";
 import {
   ArrowRight,
   CheckCircle2,
@@ -100,6 +101,7 @@ function JSONSummary({ value }: { value: unknown }) {
 }
 
 export function OperationsProofCenterPage() {
+  const navigate = useNavigate();
   const permissions = usePermissions();
   const directPermissions = new Set(permissions.map((permission) => permission.trim().toLowerCase().replaceAll(".", ":")));
   const hasPermission = (permission: string) => directPermissions.has("*") || directPermissions.has(permission.toLowerCase().replaceAll(".", ":"));
@@ -294,6 +296,7 @@ export function OperationsProofCenterPage() {
                 Load
               </button>
             </form>
+            <button type="button" className="btn-ghost h-10" onClick={() => navigate("/jobs")}>Browse jobs</button>
           </>
         }
       />
@@ -305,8 +308,9 @@ export function OperationsProofCenterPage() {
           Failed to load execution summary. Check the backend connection and RBAC permission.
         </div>
       ) : !summary ? (
-        <section className="panel p-6">
-          <p className="text-sm text-slate-500">Enter a job ID to load its execution and proof evidence.</p>
+        <section className="panel flex flex-wrap items-center justify-between gap-3 p-4">
+          <p className="text-sm text-slate-500">Select a job from the Jobs board or enter its ID to load execution and proof evidence.</p>
+          <button type="button" className="btn-ghost" onClick={() => navigate("/jobs")}>Open Jobs board <ArrowRight className="h-4 w-4" /></button>
         </section>
       ) : (
         <>

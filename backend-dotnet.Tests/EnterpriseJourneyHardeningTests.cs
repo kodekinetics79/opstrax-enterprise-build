@@ -107,7 +107,8 @@ public sealed class EnterpriseJourneyHardeningTests
         // than receipt connectivity or defaults.
         Assert.Contains("kpis.registeredDevices ?? \"--\"", map);
         Assert.Contains("String(positionFreshness.located)", map);
-        Assert.Contains("kpis.openAlerts ?? \"--\"", map);
+        Assert.Contains("alerts.isSuccess ? String(openAlerts.length) : \"--\"", map);
+        Assert.Contains("value={openAlertCount} label=\"open alert records\"", map);
         Assert.Contains("recentFixCoverage == null ? \"--\"", map);
         Assert.Contains("positionFreshness.recent / positionFreshness.located", map);
         Assert.DoesNotContain("kpis.connectedUnits", map);

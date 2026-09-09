@@ -33,6 +33,19 @@ const customerVisibility = fs.readFileSync(new URL("../src/pages/CustomerVisibil
 const customerEta = fs.readFileSync(new URL("../src/pages/CustomerEtaPage.tsx", import.meta.url), "utf8");
 const driverMessaging = fs.readFileSync(new URL("../src/pages/DriverMessagingPage.tsx", import.meta.url), "utf8");
 const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
+const safetyCenter = fs.readFileSync(new URL("../src/pages/Batch4SafetyPage.tsx", import.meta.url), "utf8");
+const telematicsCommand = fs.readFileSync(new URL("../src/pages/TelematicsCommandPage.tsx", import.meta.url), "utf8");
+const fleetWorkspace = fs.readFileSync(new URL("../src/pages/FleetWorkspacePage.tsx", import.meta.url), "utf8");
+const proofCenter = fs.readFileSync(new URL("../src/pages/OperationsProofCenterPage.tsx", import.meta.url), "utf8");
+
+assert.match(safetyCenter, /key === "fleetSafetyScore" && !hasSourceRecords \? "Not assessed"/, "An empty safety dataset must not be rendered as a measured zero score");
+assert.match(telematicsCommand, /row\.offlineWarning \|\| row\.alertStatus === "Open"/, "Offline sensor records must be included in the needs-action count");
+assert.match(telematicsCommand, /No active alert record/, "An offline sensor with no alert record must not be labeled all-clear");
+assert.match(liveMap, /value=\{openAlertCount\} label="open alert records"/, "The map summary and alert queue must share one count source");
+assert.match(fleetWorkspace, /Persisted operations snapshot/, "Fleet Workspace must describe persisted operational state without a live claim");
+assert.match(fleetWorkspace, /Demo snapshot queried/, "Synthetic tenants must label the query timestamp as a demo snapshot");
+assert.doesNotMatch(fleetWorkspace, /shipments on the road now/, "A persisted shipment state must not be described as current telemetry");
+assert.match(proofCenter, /Open Jobs board/, "Proof Center must provide a discoverable path to job identifiers");
 
 assert.doesNotMatch(
   audit,

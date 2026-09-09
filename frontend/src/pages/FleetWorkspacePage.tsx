@@ -25,7 +25,7 @@ type FleetMode = 'command' | 'shipments' | 'vehicles' | 'tracking' | 'maintenanc
 
 // Operational copy only — every line describes what the surface shows, never the product.
 const MODULES: Record<FleetMode, { label: string; short: string; description: string }> = {
-  command:     { label: 'Command',     short: 'Command',     description: 'Live posture across movement, assets, service and spend.' },
+  command:     { label: 'Command',     short: 'Command',     description: 'Persisted operations snapshot across movement, assets, service and spend.' },
   shipments:   { label: 'Shipments',   short: 'Shipments',   description: 'Booked loads, movement state and proof progression.' },
   vehicles:    { label: 'Vehicles',    short: 'Vehicles',    description: 'Assignment, readiness, fuel and service timing per unit.' },
   tracking:    { label: 'Tracking',    short: 'Tracking',    description: 'Movement events, geofences and telemetry exceptions.' },
@@ -88,6 +88,7 @@ function fmtTime(iso?: string): string | null {
 export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: FleetMode }) {
   const navigate = useNavigate();
   const { session } = useAuth();
+  const tenantIsExplicitlySynthetic = /\b(demo|synthetic|test)\b/i.test(String(session?.company?.name ?? ''));
   const hasPermission = useHasPermission();
   const canManageFleet = hasPermission('fleet:manage');
   const [mode, setMode] = useState<FleetMode>(initialMode);
@@ -200,7 +201,8 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
 
   const summary = overview?.summary;
 
-  // Per-mode instrument readouts — every value is a live count from the fetched rows.
+  // Per-mode instrument readouts — every value is computed from the current
+  // persisted API response. Telemetry rows disclose live/non-live provenance.
   const signals = useMemo(() => {
     switch (mode) {
       case 'shipments':
@@ -255,7 +257,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
     const rows: Array<{ id: string; label: string; detail: string; led: string }> = [];
     if (summary?.fuelAlerts) rows.push({ id: 'fuel-alerts', label: 'Fuel alerts', detail: `${summary.fuelAlerts} fueling events need review.`, led: 'deck-led-amber' });
     if (summary?.openMaintenance) rows.push({ id: 'maintenance', label: 'Maintenance queue', detail: `${summary.openMaintenance} work orders open or in progress.`, led: 'deck-led-amber' });
-    if (summary?.enRoute) rows.push({ id: 'movement', label: 'Freight in motion', detail: `${summary.enRoute} shipments on the road now.`, led: 'deck-led-sky' });
+    if (summary?.enRoute) rows.push({ id: 'movement', label: 'Freight in motion', detail: `${summary.enRoute} shipments are recorded in transit.`, led: 'deck-led-sky' });
     const carriersAwaitingEvidence = carriers.filter((c) => !/^(authority|provider)_verified$/i.test(c.complianceEvidence)).length;
     if (carriersAwaitingEvidence) rows.push({ id: 'carrier-compliance', label: 'Carrier evidence', detail: `${carriersAwaitingEvidence} carrier records await authority or provider verification.`, led: 'deck-led-amber' });
     return rows.slice(0, 4);
@@ -387,7 +389,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
           <div className="ml-auto flex flex-wrap items-center gap-2.5">
             {generatedAt && (
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
-                <span className="live-dot h-1.5 w-1.5" /> Updated {generatedAt}
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-400" /> {tenantIsExplicitlySynthetic ? 'Demo snapshot queried' : 'Snapshot queried'} {generatedAt}
               </span>
             )}
             <button type="button" className="btn-ghost h-10" disabled={refreshing} onClick={() => void refreshAll()}>
@@ -430,8 +432,8 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
 
       {/* ── Clay overview tiles — pressable mode shortcuts ────────────────── */}
       <div className="grid shrink-0 grid-cols-2 gap-2.5 xl:grid-cols-4">
-        <ClayStat Icon={Package} tone="fc-clay-teal"    iconCls="text-teal-700"    label="Active shipments" value={summary?.activeShipments ?? (loading ? '…' : 0)} caption="Booked + moving"      active={mode === 'shipments'}   onClick={() => setMode(mode === 'shipments' ? 'command' : 'shipments')} />
-        <ClayStat Icon={Truck}   tone="fc-clay-emerald" iconCls="text-emerald-700" label="Fleet available"  value={summary?.activeVehicles ?? (loading ? '…' : 0)}  caption="Ready for assignment" active={mode === 'vehicles'}    onClick={() => setMode(mode === 'vehicles' ? 'command' : 'vehicles')} />
+        <ClayStat Icon={Package} tone="fc-clay-teal"    iconCls="text-teal-700"    label="Active shipments" value={summary?.activeShipments ?? (loading ? '…' : 0)} caption="Recorded booked + moving" active={mode === 'shipments'} onClick={() => setMode(mode === 'shipments' ? 'command' : 'shipments')} />
+        <ClayStat Icon={Truck}   tone="fc-clay-emerald" iconCls="text-emerald-700" label="Fleet available"  value={summary?.activeVehicles ?? (loading ? '…' : 0)}  caption="Recorded ready state" active={mode === 'vehicles'} onClick={() => setMode(mode === 'vehicles' ? 'command' : 'vehicles')} />
         <ClayStat Icon={Wrench}  tone="fc-clay-amber"   iconCls="text-amber-700"   label="Open maintenance" value={summary?.openMaintenance ?? (loading ? '…' : 0)} caption="Work orders open"     active={mode === 'maintenance'} onClick={() => setMode(mode === 'maintenance' ? 'command' : 'maintenance')} alert={Boolean(summary?.openMaintenance)} />
         <ClayStat Icon={Fuel}    tone="fc-clay-red"     iconCls="text-rose-700"    label="Fuel alerts"      value={summary?.fuelAlerts ?? (loading ? '…' : 0)}      caption="Anomalies to review"  active={mode === 'fuel'}        onClick={() => setMode(mode === 'fuel' ? 'command' : 'fuel')} alert={Boolean(summary?.fuelAlerts)} />
       </div>
