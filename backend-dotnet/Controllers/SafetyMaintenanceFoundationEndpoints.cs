@@ -42,6 +42,7 @@ public static class SafetyMaintenanceFoundationEndpoints
             @"SELECT id, recommendation_type, title, summary, confidence_score, urgency_score, risk_level, status, source_event_id, created_at
               FROM ai_recommendations
               WHERE tenant_id=@companyId
+                " + EndpointMappings.GroundedRecommendationSql + @"
                 AND (
                     recommendation_type LIKE 'safety.%'
                     OR recommendation_type LIKE 'maintenance.%'

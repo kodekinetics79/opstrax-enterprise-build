@@ -22,7 +22,7 @@ public class VehicleRiskScoringTests
         var score = EndpointMappings.ComputeVehicleRiskScore(
             outOfService: true,
             criticalDefects: 0, activeFaults: 0, overduePm: 0,
-            openWorkOrders: 0, deviceOffline: false, baseRiskScore: 0);
+            openWorkOrders: 0);
 
         Assert.True(score >= 80, $"OOS vehicle score should be >= 80 but was {score}");
     }
@@ -31,7 +31,7 @@ public class VehicleRiskScoringTests
     [Fact]
     public void OutOfService_Vehicle_Has_Critical_Severity()
     {
-        var score    = EndpointMappings.ComputeVehicleRiskScore(true, 0, 0, 0, 0, false, 0);
+        var score    = EndpointMappings.ComputeVehicleRiskScore(true, 0, 0, 0, 0);
         var severity = EndpointMappings.ComputeVehicleSeverity(score, outOfService: true);
         Assert.Equal("critical", severity);
     }
@@ -40,8 +40,8 @@ public class VehicleRiskScoringTests
     [Fact]
     public void Critical_Defect_Increases_Score_By_55_Per_Defect()
     {
-        var scoreOne = EndpointMappings.ComputeVehicleRiskScore(false, 1, 0, 0, 0, false, 0);
-        var scoreTwo = EndpointMappings.ComputeVehicleRiskScore(false, 2, 0, 0, 0, false, 0);
+        var scoreOne = EndpointMappings.ComputeVehicleRiskScore(false, 1, 0, 0, 0);
+        var scoreTwo = EndpointMappings.ComputeVehicleRiskScore(false, 2, 0, 0, 0);
         Assert.Equal(55.0, scoreOne, precision: 1);
         Assert.Equal(100.0, scoreTwo, precision: 1); // 2 × 55 = 110 → capped at 100
     }
@@ -50,7 +50,7 @@ public class VehicleRiskScoringTests
     [Fact]
     public void One_Critical_Defect_Is_High_Severity()
     {
-        var score    = EndpointMappings.ComputeVehicleRiskScore(false, 1, 0, 0, 0, false, 0);
+        var score    = EndpointMappings.ComputeVehicleRiskScore(false, 1, 0, 0, 0);
         var severity = EndpointMappings.ComputeVehicleSeverity(score, outOfService: false);
         Assert.Equal("high", severity);
     }
@@ -60,7 +60,7 @@ public class VehicleRiskScoringTests
     [Fact]
     public void Three_Critical_Defects_Is_Critical_Severity()
     {
-        var score    = EndpointMappings.ComputeVehicleRiskScore(false, 3, 0, 0, 0, false, 0);
+        var score    = EndpointMappings.ComputeVehicleRiskScore(false, 3, 0, 0, 0);
         var severity = EndpointMappings.ComputeVehicleSeverity(score, outOfService: false);
         Assert.Equal("critical", severity);
     }
@@ -69,7 +69,7 @@ public class VehicleRiskScoringTests
     [Fact]
     public void Overdue_PM_Contributes_10_Points_Each()
     {
-        var score = EndpointMappings.ComputeVehicleRiskScore(false, 0, 0, 2, 0, false, 0);
+        var score = EndpointMappings.ComputeVehicleRiskScore(false, 0, 0, 2, 0);
         Assert.Equal(20.0, score, precision: 1);
     }
 
@@ -77,16 +77,8 @@ public class VehicleRiskScoringTests
     [Fact]
     public void Active_Fault_Codes_Contribute_8_Points_Each()
     {
-        var score = EndpointMappings.ComputeVehicleRiskScore(false, 0, 3, 0, 0, false, 0);
+        var score = EndpointMappings.ComputeVehicleRiskScore(false, 0, 3, 0, 0);
         Assert.Equal(24.0, score, precision: 1);
-    }
-
-    // Offline device contributes 12 pts.
-    [Fact]
-    public void Offline_Device_Contributes_12_Points()
-    {
-        var score = EndpointMappings.ComputeVehicleRiskScore(false, 0, 0, 0, 0, deviceOffline: true, baseRiskScore: 0);
-        Assert.Equal(12.0, score, precision: 1);
     }
 
     // Risk score is capped at 100.
@@ -95,15 +87,15 @@ public class VehicleRiskScoringTests
     {
         var score = EndpointMappings.ComputeVehicleRiskScore(
             outOfService: true, criticalDefects: 5, activeFaults: 5,
-            overduePm: 5, openWorkOrders: 5, deviceOffline: true, baseRiskScore: 100);
+            overduePm: 5, openWorkOrders: 5);
         Assert.Equal(100.0, score);
     }
 
-    // A clean vehicle with no issues scores 0 (before base risk score contribution).
+    // A clean vehicle with no qualified risk signals scores 0.
     [Fact]
-    public void Clean_Vehicle_No_Issues_Scores_Zero_Without_Base()
+    public void Clean_Vehicle_No_Issues_Scores_Zero()
     {
-        var score = EndpointMappings.ComputeVehicleRiskScore(false, 0, 0, 0, 0, false, baseRiskScore: 0);
+        var score = EndpointMappings.ComputeVehicleRiskScore(false, 0, 0, 0, 0);
         Assert.Equal(0.0, score, precision: 1);
     }
 
@@ -111,8 +103,8 @@ public class VehicleRiskScoringTests
     [Fact]
     public void Vehicle_Risk_Score_Is_Deterministic()
     {
-        var a = EndpointMappings.ComputeVehicleRiskScore(false, 1, 2, 1, 0, true, 20);
-        var b = EndpointMappings.ComputeVehicleRiskScore(false, 1, 2, 1, 0, true, 20);
+        var a = EndpointMappings.ComputeVehicleRiskScore(false, 1, 2, 1, 0);
+        var b = EndpointMappings.ComputeVehicleRiskScore(false, 1, 2, 1, 0);
         Assert.Equal(a, b);
     }
 }
@@ -124,7 +116,7 @@ public class DriverRiskScoringTests
     public void Driver_Below_65_Safety_Scores_At_Least_70()
     {
         var score = EndpointMappings.ComputeDriverRiskScore(
-            safetyScore: 50, openSafetyEvents: 0, overdueCoaching: 0, baseRiskScore: 0);
+            safetyScore: 50, openSafetyEvents: 0, overdueCoaching: 0);
         Assert.True(score >= 70, $"Driver with score 50% should have risk >= 70 but was {score}");
     }
 
@@ -132,7 +124,7 @@ public class DriverRiskScoringTests
     [Fact]
     public void Driver_Below_65_Safety_Is_Critical_Severity()
     {
-        var score    = EndpointMappings.ComputeDriverRiskScore(52, 0, 0, 0);
+        var score    = EndpointMappings.ComputeDriverRiskScore(52, 0, 0);
         var severity = EndpointMappings.ComputeDriverSeverity(score);
         Assert.Equal("critical", severity);
     }
@@ -141,7 +133,7 @@ public class DriverRiskScoringTests
     [Fact]
     public void Driver_65_To_75_Safety_Is_High_Severity()
     {
-        var score    = EndpointMappings.ComputeDriverRiskScore(70, 0, 0, 0);
+        var score    = EndpointMappings.ComputeDriverRiskScore(70, 0, 0);
         var severity = EndpointMappings.ComputeDriverSeverity(score);
         Assert.Equal("high", severity);
     }
@@ -151,8 +143,8 @@ public class DriverRiskScoringTests
     public void Overdue_Coaching_Contributes_15_Points_Each()
     {
         // Safety score = 90 → safetyComponent = 5
-        var scoreOne = EndpointMappings.ComputeDriverRiskScore(90, 0, 1, 0);
-        var scoreTwo = EndpointMappings.ComputeDriverRiskScore(90, 0, 2, 0);
+        var scoreOne = EndpointMappings.ComputeDriverRiskScore(90, 0, 1);
+        var scoreTwo = EndpointMappings.ComputeDriverRiskScore(90, 0, 2);
         Assert.Equal(5.0 + 15.0, scoreOne, precision: 1);
         Assert.Equal(5.0 + 30.0, scoreTwo, precision: 1);
     }
@@ -162,7 +154,7 @@ public class DriverRiskScoringTests
     public void Open_Safety_Events_Contribute_12_Points_Each()
     {
         // Safety score = 90 → safetyComponent = 5
-        var score = EndpointMappings.ComputeDriverRiskScore(90, openSafetyEvents: 2, overdueCoaching: 0, baseRiskScore: 0);
+        var score = EndpointMappings.ComputeDriverRiskScore(90, openSafetyEvents: 2, overdueCoaching: 0);
         Assert.Equal(5.0 + 24.0, score, precision: 1);
     }
 
@@ -171,7 +163,7 @@ public class DriverRiskScoringTests
     public void Driver_Risk_Score_Is_Capped_At_100()
     {
         var score = EndpointMappings.ComputeDriverRiskScore(
-            safetyScore: 30, openSafetyEvents: 10, overdueCoaching: 10, baseRiskScore: 100);
+            safetyScore: 30, openSafetyEvents: 10, overdueCoaching: 10);
         Assert.Equal(100.0, score);
     }
 
@@ -179,7 +171,7 @@ public class DriverRiskScoringTests
     [Fact]
     public void Safe_Driver_No_Events_Scores_Low()
     {
-        var score = EndpointMappings.ComputeDriverRiskScore(92, 0, 0, 0);
+        var score = EndpointMappings.ComputeDriverRiskScore(92, 0, 0);
         Assert.True(score <= 5, $"Safe driver score should be <= 5 but was {score}");
     }
 
@@ -187,9 +179,16 @@ public class DriverRiskScoringTests
     [Fact]
     public void Driver_Risk_Score_Is_Deterministic()
     {
-        var a = EndpointMappings.ComputeDriverRiskScore(68, 2, 1, 15);
-        var b = EndpointMappings.ComputeDriverRiskScore(68, 2, 1, 15);
+        var a = EndpointMappings.ComputeDriverRiskScore(68, 2, 1);
+        var b = EndpointMappings.ComputeDriverRiskScore(68, 2, 1);
         Assert.Equal(a, b);
+    }
+
+    [Fact]
+    public void Missing_Safety_Score_Does_Not_Create_Risk()
+    {
+        var score = EndpointMappings.ComputeDriverRiskScore(null, 0, 0);
+        Assert.Equal(0.0, score, precision: 1);
     }
 }
 

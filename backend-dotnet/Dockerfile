@@ -1,9 +1,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0.419-bookworm-slim@sha256:dd09bcce84d9130e7f3e85c83a8ce9709e1d95e45c48c722a0d7923b38d8024c AS build
 WORKDIR /src
 COPY backend-dotnet/Opstrax.Api.csproj backend-dotnet/
+COPY telematics/src/Opstrax.Telematics.Contracts/Opstrax.Telematics.Contracts.csproj telematics/src/Opstrax.Telematics.Contracts/
 COPY telematics/src/Opstrax.Telematics.Protocols.J1939/Opstrax.Telematics.Protocols.J1939.csproj telematics/src/Opstrax.Telematics.Protocols.J1939/
 RUN dotnet restore backend-dotnet/Opstrax.Api.csproj
 COPY backend-dotnet/ backend-dotnet/
+COPY telematics/src/Opstrax.Telematics.Contracts/ telematics/src/Opstrax.Telematics.Contracts/
 COPY telematics/src/Opstrax.Telematics.Protocols.J1939/ telematics/src/Opstrax.Telematics.Protocols.J1939/
 COPY database/init/001_schema.sql database/init/001_schema.sql
 # Package the WHOLE migrations directory. The previous per-file COPY allowlist had

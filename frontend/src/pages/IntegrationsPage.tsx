@@ -50,9 +50,11 @@ import {
 type ConfigField = {
   key: string;
   label: string;
-  type: "text" | "url" | "number";
+  type: "text" | "url" | "number" | "select";
   placeholder?: string;
   note?: string;
+  defaultValue?: string;
+  options?: Array<{ value: string; label: string }>;
 };
 
 type IntegrationOperationResult = {
@@ -156,11 +158,34 @@ function integrationFields(record: IntegrationRecord): ConfigField[] {
   if (record.key === "samsara") {
     return [
       {
+        key: "apiRegion",
+        label: "Samsara cloud region",
+        type: "select",
+        defaultValue: "us",
+        options: [
+          { value: "us", label: "United States / legacy Canada" },
+          { value: "eu", label: "Europe / United Kingdom" },
+          { value: "ca", label: "Canada cloud" },
+        ],
+        note: "Match the region shown in the Samsara dashboard URL. Changing it requires a new connection test and starts a new provider mapping review.",
+      },
+      {
         key: "apiToken",
         label: "Samsara API token",
         type: "text",
         placeholder: "Paste a tenant-authorized token",
-        note: "Requires Read Vehicles and Read Vehicle Statistics. OpsTrax stores the token encrypted and never displays it again.",
+        note: "Account-safe GPS discovery requires Read Org Information, Read Vehicles, and Read Vehicle Statistics. Camera intake separately requires Read Safety Events & Scores; the connection test does not claim that camera scope. OpsTrax stores the token encrypted and never displays it again.",
+      },
+      {
+        key: "cameraSafetyAutoSync",
+        label: "Automatic camera safety intake",
+        type: "select",
+        defaultValue: "disabled",
+        options: [
+          { value: "disabled", label: "Manual only" },
+          { value: "enabled", label: "Every scheduled connector cycle" },
+        ],
+        note: "Runs only after a successful GPS cycle and records provider event metadata. A missing camera permission does not mark GPS disconnected. Camera media, privacy acceptance, provider verification, and certification remain on External hold.",
       },
     ];
   }
@@ -234,7 +259,7 @@ function buildFormState(record: IntegrationRecord) {
       if (isSecretField(field.key) && isRedactedValue(record.config[field.key])) {
         return [field.key, ""];
       }
-      return [field.key, formatConfigValue(record.config[field.key])];
+      return [field.key, formatConfigValue(record.config[field.key]) || field.defaultValue || ""];
     }),
   ) as Record<string, string>;
 }
@@ -290,6 +315,7 @@ function ConfigDrawer({
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; details?: Record<string, unknown> | null } | null>(null);
   const [discoveryResult, setDiscoveryResult] = useState<IntegrationTestResult | null>(null);
   const [validationResult, setValidationResult] = useState<IntegrationTestResult | null>(null);
+  const [cameraSafetyResult, setCameraSafetyResult] = useState<IntegrationTestResult | null>(null);
 
   useEffect(() => {
     setForm(buildFormState(integration));
@@ -297,6 +323,7 @@ function ConfigDrawer({
     setTestResult(null);
     setDiscoveryResult(null);
     setValidationResult(null);
+    setCameraSafetyResult(null);
   }, [integration]);
 
   useEffect(() => {
@@ -423,6 +450,25 @@ function ConfigDrawer({
     },
   });
 
+  const cameraSafetyMut = useMutation({
+    mutationFn: () => integrationsApi.syncCameraSafety(integration.id),
+    onSuccess: async (result: IntegrationTestResult) => {
+      setCameraSafetyResult(result);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["integrations"] }),
+        qc.invalidateQueries({ queryKey: ["dashcam", "provider-status"] }),
+        qc.invalidateQueries({ queryKey: ["dashcam", "provider-events"] }),
+      ]);
+    },
+    onError: (error) => {
+      setCameraSafetyResult({
+        success: false,
+        message: error instanceof Error ? error.message : "Camera safety intake failed. Please try again.",
+      });
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+  });
+
   const fields = integrationFields(integration);
   const meta = CATEGORY_META[integration.category];
   const adapterAvailable = integration.adapterAvailable === true;
@@ -532,15 +578,29 @@ function ConfigDrawer({
               return (
                 <div key={field.key}>
                   <label htmlFor={inputId} className="field-label text-[12px] font-bold text-slate-700">{field.label}</label>
-                  <input
-                    id={inputId}
-                    type={field.type}
-                    className="field mt-1 w-full"
-                    value={form[field.key] ?? ""}
-                    onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
-                    placeholder={secretSet ? `${REDACTED_MARKER} (set — leave blank to keep)` : field.placeholder}
-                    disabled={!canConfigure}
-                  />
+                  {field.type === "select" ? (
+                    <select
+                      id={inputId}
+                      className="field mt-1 w-full"
+                      value={form[field.key] ?? field.defaultValue ?? ""}
+                      onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+                      disabled={!canConfigure}
+                    >
+                      {(field.options ?? []).map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      id={inputId}
+                      type={field.type}
+                      className="field mt-1 w-full"
+                      value={form[field.key] ?? ""}
+                      onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+                      placeholder={secretSet ? `${REDACTED_MARKER} (set — leave blank to keep)` : field.placeholder}
+                      disabled={!canConfigure}
+                    />
+                  )}
                   {secretSet ? (
                     <p className="mt-1 text-xs text-slate-400">Stored secret is set. Leave blank to keep it, or type a new value to replace it.</p>
                   ) : (
@@ -638,6 +698,39 @@ function ConfigDrawer({
                       {validationResult.details ? (
                         <p className="mt-1 tabular-nums">
                           Written {Number(validationResult.details.positionsWritten ?? 0)} · Unmatched {Number(validationResult.details.unmatched ?? 0)} · Historical {Number(validationResult.details.historicalOnly ?? 0)} · Rejected {Number(validationResult.details.rejected ?? 0)}
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
+                </li>
+                <li className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-bold text-slate-800">4. Intake camera safety events</p>
+                    <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700">
+                      External hold
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">
+                    Pull the real Samsara safety-event stream into the protected intake ledger. This records provider payload evidence only. When automatic intake is enabled, it runs after successful scheduled GPS cycles and backs off after a camera failure without marking GPS disconnected. Camera media, provider verification, privacy acceptance, and certification stay on External hold.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-ghost mt-2 text-xs"
+                    disabled={!canManage || cameraSafetyMut.isPending || !(testResult?.success || integration.lastTestOk)}
+                    onClick={() => {
+                      setCameraSafetyResult(null);
+                      cameraSafetyMut.mutate();
+                    }}
+                  >
+                    {cameraSafetyMut.isPending ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
+                    {cameraSafetyMut.isPending ? "Recording provider events..." : "Sync camera safety intake"}
+                  </button>
+                  {cameraSafetyResult && (
+                    <div role="status" aria-live="polite" className={`mt-2 rounded-lg border px-3 py-2 text-xs ${cameraSafetyResult.success ? "border-amber-200 bg-white text-amber-900" : "border-red-200 bg-red-50 text-red-700"}`}>
+                      <p className="font-semibold">{cameraSafetyResult.message}</p>
+                      {cameraSafetyResult.details ? (
+                        <p className="mt-1 tabular-nums">
+                          Observed {Number(cameraSafetyResult.details.eventsObserved ?? 0)} · Accepted {Number(cameraSafetyResult.details.eventsAccepted ?? 0)} · Replayed {Number(cameraSafetyResult.details.eventsReplayed ?? 0)} · Quarantined {Number(cameraSafetyResult.details.eventsQuarantined ?? 0)}
                         </p>
                       ) : null}
                     </div>

@@ -1,4 +1,5 @@
 using Opstrax.Api.Services;
+using Opstrax.Api.Services.Connectors;
 
 namespace Opstrax.Tests;
 
@@ -23,7 +24,7 @@ public sealed class TelemetryLaunchHardeningTests
         var samsara = Read("backend-dotnet", "Services", "Connectors", "SamsaraSync.cs");
         var raw = Read("telematics", "src", "Opstrax.Telematics.Gateway", "Projection", "PostgresPositionProjectionStore.cs");
 
-        AssertOrdered(native, "var latestRows = await db.ExecuteAsync", "if (vehicleId.HasValue && latestAdvanced && body.SpeedMph");
+        AssertOrdered(native, "var latestRows = await db.ExecuteAsync", "if (vehicleId.HasValue && latestAdvanced && speedThreshold is");
         AssertOrdered(native, "latestAdvanced = latestRows > 0", "GeofenceEvaluator.ProjectPositionAsync");
         AssertOrdered(gateway, "UpsertGatewayLatestPositionAsync", "if (gatewayLatestAdvanced && harshType is not null)");
         Assert.Contains("if (vehicleId is not null && gatewayLatestAdvanced)", gateway, StringComparison.Ordinal);
@@ -107,7 +108,10 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.DoesNotContain("SetIntegrationStatus(http, id, \"Connected\"", sync, StringComparison.Ordinal);
         Assert.Contains("Status422UnprocessableEntity", sync, StringComparison.Ordinal);
         Assert.Contains("MergeConfigForStorage", configure, StringComparison.Ordinal);
-        Assert.Contains("config_json = @config::jsonb", configure, StringComparison.Ordinal);
+        Assert.Contains("ConnectorRegistry.ContainsCredentialMutation(body)", configure, StringComparison.Ordinal);
+        Assert.Contains("CASE WHEN @providerBoundaryChanged", configure, StringComparison.Ordinal);
+        Assert.Contains("- 'syncCursor'", configure, StringComparison.Ordinal);
+        Assert.Contains("- 'cameraSafetyCursor'", configure, StringComparison.Ordinal);
         Assert.DoesNotContain("config_json,'{}'::jsonb) ||", configure, StringComparison.Ordinal);
         Assert.Contains("ConnectorOperationLease.CompleteTestAsync", testConnection, StringComparison.Ordinal);
         Assert.Contains("last_tested_at=NOW()", operationLease, StringComparison.Ordinal);
@@ -188,7 +192,7 @@ public sealed class TelemetryLaunchHardeningTests
         AssertOrdered(configure, "!connectors.HasAdapter(integrationKey)", "MergeConfigForStorage");
         Assert.Contains("No credentials were stored", configure, StringComparison.Ordinal);
         Assert.Contains("Status422UnprocessableEntity", configure, StringComparison.Ordinal);
-        Assert.Equal(3, Count(endpoints, "RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct)"));
+        Assert.Equal(4, Count(endpoints, "RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct)"));
         Assert.Contains("adapterAvailable: boolean", api, StringComparison.Ordinal);
         Assert.Contains("if (record.adapterAvailable !== true) return []", page, StringComparison.Ordinal);
         Assert.Contains("Adapter unavailable — evaluation only", page, StringComparison.Ordinal);
@@ -202,6 +206,7 @@ public sealed class TelemetryLaunchHardeningTests
         var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
         var disconnect = Block(endpoints, "private static async Task<IResult> DisconnectIntegration", "private static async Task<IResult> IntegrationSync");
         var sync = Block(endpoints, "private static async Task<IResult> IntegrationSync", "private static async Task<IResult> ConfigureIntegration");
+        var configure = Block(endpoints, "private static async Task<IResult> ConfigureIntegration", "private static async Task<IResult> IntegrationTestConnection");
         var worker = Read("backend-dotnet", "Services", "ConnectorSyncBackgroundService.cs");
         var operationLease = Read("backend-dotnet", "Services", "Connectors", "ConnectorOperationLease.cs");
         var syncFreshnessMigration = Read("database", "migrations", "2026_09_02_stage96_connector_sync_freshness.sql");
@@ -226,10 +231,16 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.Contains("syncLastAttemptAt = row.GetValueOrDefault", endpoints, StringComparison.Ordinal);
         Assert.Contains("syncLastCompletedAt = row.GetValueOrDefault", endpoints, StringComparison.Ordinal);
         Assert.Contains("isSyncOperation: true", sync, StringComparison.Ordinal);
+        Assert.Contains("providerBoundaryChanged", configure, StringComparison.Ordinal);
+        Assert.Contains("TryResolveApiRegion", configure, StringComparison.Ordinal);
+        Assert.Contains("unsupportedSamsaraRegion", configure, StringComparison.Ordinal);
         Assert.Contains("sync_last_attempt_at", syncFreshnessMigration, StringComparison.Ordinal);
         Assert.Contains("sync_last_completed_at", syncFreshnessMigration, StringComparison.Ordinal);
 
         Assert.Contains("key: \"apiToken\"", page, StringComparison.Ordinal);
+        Assert.Contains("key: \"apiRegion\"", page, StringComparison.Ordinal);
+        Assert.Contains("api.eu.samsara.com", Read("backend-dotnet", "Services", "Connectors", "SamsaraConnector.cs"), StringComparison.Ordinal);
+        Assert.Contains("api.ca.samsara.com", Read("backend-dotnet", "Services", "Connectors", "SamsaraConnector.cs"), StringComparison.Ordinal);
         Assert.Contains("onConnect={() => setConfigTarget(integration)}", page, StringComparison.Ordinal);
         Assert.Contains("provider portal", page, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Discover → Map → Validate", page, StringComparison.Ordinal);
@@ -240,6 +251,68 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.Contains("unwrap<IntegrationTestResult>(apiClient.post(`/api/integrations/${id}/sync`", api, StringComparison.Ordinal);
         Assert.DoesNotContain("isMatchedToDevice: true", telemetry, StringComparison.Ordinal);
         Assert.Contains("no persisted provider-device mapping has been verified", telemetry, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AutomaticSamsaraWorker_CarriesVerifiedProviderAccountBoundary()
+    {
+        var operation = new ConnectorOperationContext(
+            17, 23, 5, Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            "samsara", null, "Connected", true, "samsara-org:verified-account");
+
+        using var body = ConnectorSyncBackgroundService.BuildSyncOperationBody(operation, "durable-cursor");
+
+        Assert.Equal(17, body.RootElement.GetProperty("companyId").GetInt64());
+        Assert.Equal(23, body.RootElement.GetProperty("integrationId").GetInt64());
+        Assert.Equal(5, body.RootElement.GetProperty("operationGeneration").GetInt64());
+        Assert.Equal("11111111-1111-1111-1111-111111111111",
+            body.RootElement.GetProperty("operationLeaseToken").GetString());
+        Assert.Equal("samsara-org:verified-account",
+            body.RootElement.GetProperty("providerAccountReference").GetString());
+        Assert.Equal("durable-cursor", body.RootElement.GetProperty("cursor").GetString());
+    }
+
+    [Fact]
+    public void AutomaticCameraSafetyWorker_RequiresOptInAndUsesIndependentCadenceAndBoundary()
+    {
+        var now = new DateTimeOffset(2026, 9, 7, 16, 0, 0, TimeSpan.Zero);
+        Assert.False(ConnectorSyncBackgroundService.CameraSafetyPollingDue(null, now));
+        Assert.False(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"disabled\"}", now));
+        Assert.True(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"enabled\"}", now));
+        Assert.False(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"enabled\",\"cameraSafetyLastCompletedAt\":\"2026-09-07T15:56:00.0000000+00:00\",\"cameraSafetyLastOk\":true}", now));
+        Assert.True(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"enabled\",\"cameraSafetyLastCompletedAt\":\"2026-09-07T15:55:00.0000000+00:00\",\"cameraSafetyLastOk\":true}", now));
+        Assert.False(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"enabled\",\"cameraSafetyLastCompletedAt\":\"2026-09-07T15:46:00.0000000+00:00\",\"cameraSafetyLastOk\":false}", now));
+        Assert.True(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"enabled\",\"cameraSafetyLastCompletedAt\":\"2026-09-07T15:45:00.0000000+00:00\",\"cameraSafetyLastOk\":false}", now));
+
+        var operation = new ConnectorOperationContext(
+            17, 23, 6, Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            "samsara",
+            "{\"cameraSafetyAutoSync\":\"enabled\",\"cameraSafetyCursor\":\"camera-cursor\",\"cameraSafetyStartTime\":\"2026-09-06T12:00:00.0000000+00:00\"}",
+            "Connected", false, "samsara-org:verified-account");
+
+        using var body = ConnectorSyncBackgroundService.BuildCameraSafetyOperationBody(
+            operation, operation.ConfigJson, now, out var startTime, out var cursor);
+
+        Assert.Equal("camera-cursor", cursor);
+        Assert.Equal("2026-09-06T12:00:00.0000000+00:00", startTime);
+        Assert.Equal("sync-camera-safety", body.RootElement.GetProperty("action").GetString());
+        Assert.Equal(17, body.RootElement.GetProperty("companyId").GetInt64());
+        Assert.Equal(23, body.RootElement.GetProperty("integrationId").GetInt64());
+        Assert.Equal(6, body.RootElement.GetProperty("operationGeneration").GetInt64());
+        Assert.Equal("22222222-2222-2222-2222-222222222222",
+            body.RootElement.GetProperty("operationLeaseToken").GetString());
+        Assert.Equal("samsara-org:verified-account",
+            body.RootElement.GetProperty("providerAccountReference").GetString());
+        Assert.Equal("camera-cursor", body.RootElement.GetProperty("cursor").GetString());
+        Assert.Equal(startTime, body.RootElement.GetProperty("startTime").GetString());
+        Assert.Equal(5, body.RootElement.GetProperty("maxPages").GetInt32());
+        Assert.Equal(60, body.RootElement.GetProperty("maxDurationSeconds").GetInt32());
     }
 
     [Fact]

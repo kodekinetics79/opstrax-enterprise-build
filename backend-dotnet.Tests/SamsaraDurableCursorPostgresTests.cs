@@ -117,8 +117,9 @@ public sealed class SamsaraDurableCursorPostgresTests
         await fixture.AssertStateAsync("Connected", "committed-1", false, historyCount: 1);
         await fixture.AssertUnknownMeasurementsAsync(sequence: 1);
         Assert.True(SyncData(await restarted.InvokeAsync("IntegrationSync")).GetProperty("success").GetBoolean());
-        Assert.Equal(3, restarted.Requests.Count);
-        AssertSyncRequest(restarted.Requests[2], "committed-1");
+        Assert.Equal(4, restarted.Requests.Count);
+        Assert.Equal("/me", restarted.Requests[0].AbsolutePath);
+        AssertSyncRequest(restarted.Requests[3], "committed-1");
         await fixture.AssertStateAsync("Connected", "recovered-2", true, historyCount: 2);
     }
 
@@ -269,6 +270,8 @@ public sealed class SamsaraDurableCursorPostgresTests
 
     private static HttpResponseMessage HandshakeResponse(Fixture fixture, Uri uri)
     {
+        if (uri.AbsolutePath == "/me")
+            return Json("""{"data":{"id":"durable-cursor-test","name":"Synthetic durable cursor fixture"}}""");
         if (uri.AbsolutePath == "/fleet/vehicles")
             return Json(JsonSerializer.Serialize(new { data = new[] { new { id = fixture.ProviderVehicleId } } }));
         Assert.Equal("/fleet/vehicles/stats/feed", uri.AbsolutePath);
@@ -365,7 +368,7 @@ public sealed class SamsaraDurableCursorPostgresTests
             Assert.StartsWith("enc:", _encryptedToken);
             Assert.DoesNotContain(SyntheticToken, encrypted);
             IntegrationId = await Db.InsertAsync(
-                "INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json) VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara',@config::jsonb) RETURNING id",
+                "INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at) VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara',@config::jsonb,'samsara-org:durable-cursor-test',NOW()) RETURNING id",
                 command => { command.Parameters.AddWithValue("@cid", CompanyId); command.Parameters.AddWithValue("@config", encrypted); });
             var branchId = await Db.InsertAsync(
                 "INSERT INTO branches(company_id,branch_code,name,status) VALUES(@cid,@code,'Durable cursor branch','Active') RETURNING id",
@@ -374,8 +377,8 @@ public sealed class SamsaraDurableCursorPostgresTests
                 "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier) VALUES(@cid,@branch,@code,'truck','legacy-fleet-identifier',@code) RETURNING id",
                 command => { command.Parameters.AddWithValue("@cid", CompanyId); command.Parameters.AddWithValue("@branch", branchId); command.Parameters.AddWithValue("@code", "DCV-" + _suffix[..12]); });
             var deviceId = await Db.InsertAsync(
-                "INSERT INTO eld_devices(company_id,device_serial,provider,vehicle_id,status) VALUES(@cid,@serial,'Samsara',@vid,'Provisioning') RETURNING id",
-                command => { command.Parameters.AddWithValue("@cid", CompanyId); command.Parameters.AddWithValue("@serial", "samsara-" + ProviderVehicleId); command.Parameters.AddWithValue("@vid", VehicleId); });
+                "INSERT INTO eld_devices(company_id,device_serial,provider,provider_account_ref,provider_external_id,vehicle_id,status) VALUES(@cid,@serial,'Samsara','samsara-org:durable-cursor-test',@external,@vid,'Provisioning') RETURNING id",
+                command => { command.Parameters.AddWithValue("@cid", CompanyId); command.Parameters.AddWithValue("@serial", SamsaraSync.DeviceSerial(CompanyId, "samsara-org:durable-cursor-test", ProviderVehicleId)); command.Parameters.AddWithValue("@external", ProviderVehicleId); command.Parameters.AddWithValue("@vid", VehicleId); });
             await Db.ExecuteAsync(
                 "INSERT INTO device_installations(company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source) VALUES(@cid,@branch,@device,@vid,'Installed','GPS',true,@from,@from,'synthetic-durable-cursor')",
                 command =>

@@ -17,6 +17,26 @@ public sealed class CustomerEtaLinkRouteTests
         Assert.DoesNotContain("trackingUrl = $\"/track/{secureToken}\"", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void EtaSurfacesUsePersistedEvidenceAndBoundProviderClaims()
+    {
+        var endpoints = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var program = ReadSource("backend-dotnet", "Program.cs");
+
+        Assert.DoesNotContain("customer_experience_score", endpoints, StringComparison.Ordinal);
+        Assert.Contains("average_feedback_rating", endpoints, StringComparison.Ordinal);
+        Assert.Contains("NULLIF(eu.confidence_level,'Unspecified') eta_confidence_level", endpoints, StringComparison.Ordinal);
+        Assert.Contains("var (branchClause, branchId) = StrictBranchFilter(http, \"j\")", endpoints, StringComparison.Ordinal);
+        Assert.Contains("providerDeliveryClaim = false", endpoints, StringComparison.Ordinal);
+        Assert.Contains("Bulk ETA processing completed:", endpoints, StringComparison.Ordinal);
+        Assert.DoesNotContain("dispatch.eta.bulk.sent", endpoints, StringComparison.Ordinal);
+
+        Assert.Contains("app.MapPost(\"/api/customer-eta/track/{trackingCode}/feedback\", CustomerEtaPublicFeedback)", endpoints, StringComparison.Ordinal);
+        Assert.Contains("path.EndsWith(\"/feedback\"", program, StringComparison.Ordinal);
+        Assert.Contains("'eta_tracking','open'", endpoints, StringComparison.Ordinal);
+        Assert.DoesNotContain("INSERT INTO customer_feedback (company_id,customer_id,job_id,tracking_code,rating,sentiment,comments)", endpoints, StringComparison.Ordinal);
+    }
+
     private static string ReadSource(params string[] parts)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

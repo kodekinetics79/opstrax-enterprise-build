@@ -66,6 +66,8 @@ public sealed class Batch3SchemaService(Database db, IConfiguration? configurati
         new("maintenance_items", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
         new("maintenance_items", "updated_at", "TIMESTAMPTZ NULL"),
         new("maintenance_items", "deleted_at", "TIMESTAMPTZ NULL"),
+        new("maintenance_items", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("maintenance_items", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
 
         new("work_orders", "work_order_number", "VARCHAR(80) NULL"),
         new("work_orders", "asset_id", "BIGINT NULL"),
@@ -87,6 +89,8 @@ public sealed class Batch3SchemaService(Database db, IConfiguration? configurati
         new("work_orders", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
         new("work_orders", "updated_at", "TIMESTAMPTZ NULL"),
         new("work_orders", "deleted_at", "TIMESTAMPTZ NULL"),
+        new("work_orders", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("work_orders", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
 
         new("documents", "document_number", "VARCHAR(80) NULL"),
         new("documents", "entity_type", "VARCHAR(80) NULL"),
@@ -114,6 +118,8 @@ public sealed class Batch3SchemaService(Database db, IConfiguration? configurati
         new("dvir_reports", "row_version", "INT NOT NULL DEFAULT 1"),
         new("dvir_reports", "driver_repair_acknowledged_at", "TIMESTAMPTZ NULL"),
         new("dvir_reports", "driver_repair_acknowledged_by", "BIGINT NULL"),
+        new("dvir_reports", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("dvir_reports", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
         new("dvir_defects", "branch_id", "BIGINT NULL"),
         new("dvir_defects", "out_of_service", "BOOLEAN NOT NULL DEFAULT FALSE"),
         new("dvir_defects", "reviewed_at", "TIMESTAMPTZ NULL"),
@@ -122,7 +128,9 @@ public sealed class Batch3SchemaService(Database db, IConfiguration? configurati
         new("dvir_defects", "repair_certified_by", "BIGINT NULL"),
         new("dvir_defects", "driver_acknowledged_at", "TIMESTAMPTZ NULL"),
         new("dvir_defects", "driver_acknowledged_by", "BIGINT NULL"),
-        new("dvir_defects", "row_version", "INT NOT NULL DEFAULT 1")
+        new("dvir_defects", "row_version", "INT NOT NULL DEFAULT 1"),
+        new("dvir_defects", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("dvir_defects", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'")
     ];
 
     private static readonly string[] TableStatements =
@@ -205,7 +213,9 @@ public sealed class Batch3SchemaService(Database db, IConfiguration? configurati
             notes TEXT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL,
-            deleted_at TIMESTAMPTZ NULL)",
+            deleted_at TIMESTAMPTZ NULL,
+            data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+            verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified')",
         @"CREATE TABLE IF NOT EXISTS dvir_defects (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL DEFAULT 1,
@@ -216,7 +226,9 @@ public sealed class Batch3SchemaService(Database db, IConfiguration? configurati
             status VARCHAR(80) NOT NULL DEFAULT 'Open',
             linked_work_order_id BIGINT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NULL)",
+            updated_at TIMESTAMPTZ NULL,
+            data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+            verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified')",
         @"CREATE TABLE IF NOT EXISTS dvir_templates (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL DEFAULT 1,

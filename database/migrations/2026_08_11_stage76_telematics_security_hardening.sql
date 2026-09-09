@@ -124,7 +124,10 @@ BEGIN
       ('device_installation_quarantine',      TRUE,  FALSE,FALSE,FALSE,FALSE, TRUE,TRUE,TRUE,FALSE),
       ('dvir_inspection_results',             TRUE,  TRUE, TRUE, FALSE,FALSE, TRUE,TRUE,TRUE,TRUE),
       ('device_channel_health',               TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
-      ('telematics_device_commands',          TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
+      -- Command admission and state transitions use the separately authenticated system
+      -- connection. The tenant application may inspect the governed ledger but may not
+      -- create or rewrite entries directly.
+      ('telematics_device_commands',          TRUE,  TRUE, FALSE,FALSE,FALSE, TRUE,TRUE,TRUE,TRUE),
       ('telemetry_privacy_policies',          TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
       ('fault_codes',                         TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
       ('fault_occurrences',                   TRUE,  TRUE, TRUE, FALSE,FALSE, TRUE,TRUE,TRUE,TRUE),
@@ -301,6 +304,7 @@ BEGIN
       ('telemetry_gateways',FALSE,FALSE,FALSE,FALSE),
       ('device_state_transitions',TRUE,TRUE,FALSE,FALSE),
       ('device_installation_evidence',TRUE,TRUE,FALSE,FALSE),
+      ('telematics_device_commands',TRUE,FALSE,FALSE,FALSE),
       ('fault_occurrences',TRUE,TRUE,FALSE,FALSE),
       ('telemetry_nonces',FALSE,FALSE,FALSE,FALSE),
       ('gps_gateway_replay',FALSE,FALSE,FALSE,FALSE),

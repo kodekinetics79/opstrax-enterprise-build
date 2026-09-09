@@ -161,6 +161,9 @@ CREATE TABLE IF NOT EXISTS contracts (
   status VARCHAR(50) NOT NULL DEFAULT 'Active',
   effective_date DATE NULL,
   expiration_date DATE NULL,
+  data_origin VARCHAR(80) NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NULL,
   CONSTRAINT fk_contracts_company FOREIGN KEY (company_id) REFERENCES companies(id),
   CONSTRAINT fk_contracts_customer FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
@@ -373,7 +376,9 @@ CREATE TABLE IF NOT EXISTS dispatch_assignments (
   driver_id BIGINT NULL,
   match_score DECIMAL(6,2) NOT NULL DEFAULT 90,
   status VARCHAR(50) NOT NULL DEFAULT 'Assigned',
-  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS trips (
@@ -431,7 +436,9 @@ CREATE TABLE IF NOT EXISTS maintenance_items (
   category VARCHAR(100) NOT NULL,
   due_date DATE NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'Open',
-  risk_level VARCHAR(50) NOT NULL DEFAULT 'Medium'
+  risk_level VARCHAR(50) NOT NULL DEFAULT 'Medium',
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS work_orders (
@@ -443,7 +450,9 @@ CREATE TABLE IF NOT EXISTS work_orders (
   priority VARCHAR(50) NOT NULL DEFAULT 'Normal',
   status VARCHAR(50) NOT NULL DEFAULT 'Open',
   due_date DATE NULL,
-  estimated_cost DECIMAL(12,2) NULL
+  estimated_cost DECIMAL(12,2) NULL,
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS fuel_transactions (
@@ -454,7 +463,8 @@ CREATE TABLE IF NOT EXISTS fuel_transactions (
   total_cost DECIMAL(12,2) NOT NULL,
   idle_minutes INT NOT NULL DEFAULT 0,
   fuel_station VARCHAR(180) NULL,
-  transaction_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  transaction_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  data_origin VARCHAR(80) NULL
 );
 
 CREATE TABLE IF NOT EXISTS safety_events (
@@ -466,7 +476,9 @@ CREATE TABLE IF NOT EXISTS safety_events (
   severity VARCHAR(50) NOT NULL DEFAULT 'Low',
   description TEXT NULL,
   review_status VARCHAR(50) NOT NULL DEFAULT 'New',
-  event_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  event_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS dashcam_events (
@@ -528,7 +540,9 @@ CREATE TABLE IF NOT EXISTS carriers (
   name VARCHAR(220) NOT NULL,
   mc_number VARCHAR(80) NULL,
   safety_rating VARCHAR(80) NOT NULL DEFAULT 'Satisfactory',
-  status VARCHAR(50) NOT NULL DEFAULT 'Active'
+  status VARCHAR(50) NOT NULL DEFAULT 'Active',
+  data_origin VARCHAR(80) NULL,
+  compliance_evidence_status VARCHAR(80) NULL
 );
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -547,11 +561,26 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE TABLE IF NOT EXISTS sla_records (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   company_id BIGINT NOT NULL,
+  tenant_id BIGINT NOT NULL DEFAULT 1,
   customer_id BIGINT NULL,
+  job_id BIGINT NULL,
+  route_id BIGINT NULL,
+  sla_number VARCHAR(80) NULL,
+  sla_type VARCHAR(80) NOT NULL DEFAULT 'On-Time Delivery',
   metric_name VARCHAR(120) NOT NULL,
   target_value DECIMAL(10,2) NOT NULL,
   actual_value DECIMAL(10,2) NOT NULL,
-  status VARCHAR(50) NOT NULL DEFAULT 'On Track'
+  unit VARCHAR(40) NOT NULL DEFAULT '%',
+  status VARCHAR(50) NOT NULL DEFAULT 'On Track',
+  breach_reason TEXT NULL,
+  risk_score DECIMAL(6,2) NOT NULL DEFAULT 20,
+  owner_role VARCHAR(80) NULL,
+  recommended_action TEXT NULL,
+  data_origin VARCHAR(80) NULL,
+  measurement_evidence_status VARCHAR(80) NULL,
+  measured_at TIMESTAMPTZ NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NULL
 );
 
 CREATE TABLE IF NOT EXISTS kpi_records (
@@ -912,7 +941,9 @@ CREATE TABLE IF NOT EXISTS dvir_reports (
   notes TEXT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NULL,
-  deleted_at TIMESTAMPTZ NULL
+  deleted_at TIMESTAMPTZ NULL,
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS dvir_defects (
@@ -925,7 +956,9 @@ CREATE TABLE IF NOT EXISTS dvir_defects (
   status VARCHAR(80) NOT NULL DEFAULT 'Open',
   linked_work_order_id BIGINT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NULL
+  updated_at TIMESTAMPTZ NULL,
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS dvir_templates (
@@ -988,7 +1021,9 @@ CREATE TABLE IF NOT EXISTS coaching_tasks (
   due_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NULL,
-  deleted_at TIMESTAMPTZ NULL
+  deleted_at TIMESTAMPTZ NULL,
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS coaching_notes (
@@ -1150,6 +1185,9 @@ CREATE TABLE IF NOT EXISTS idling_events (
   estimated_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
   currency VARCHAR(10) NOT NULL DEFAULT 'USD',
   status VARCHAR(80) NOT NULL DEFAULT 'Open',
+  data_origin VARCHAR(80) NULL,
+  cost_evidence_status VARCHAR(40) NULL,
+  deleted_at TIMESTAMPTZ NULL,
   reviewed_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1164,6 +1202,9 @@ CREATE TABLE IF NOT EXISTS fuel_anomalies (
   severity VARCHAR(50) NOT NULL DEFAULT 'Medium',
   description TEXT NULL,
   estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
+  currency VARCHAR(10) NULL,
+  data_origin VARCHAR(80) NULL,
+  amount_evidence_status VARCHAR(40) NULL,
   status VARCHAR(80) NOT NULL DEFAULT 'Open',
   reviewed_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -1187,6 +1228,7 @@ CREATE TABLE IF NOT EXISTS contract_rates (
   origin_zone VARCHAR(120) NULL,
   destination_zone VARCHAR(120) NULL,
   vehicle_type VARCHAR(80) NULL,
+  currency VARCHAR(10) NOT NULL DEFAULT 'USD',
   base_rate DECIMAL(12,4) NOT NULL DEFAULT 0,
   minimum_charge DECIMAL(12,2) NULL,
   fuel_surcharge_percent DECIMAL(6,2) NULL,
@@ -1194,7 +1236,9 @@ CREATE TABLE IF NOT EXISTS contract_rates (
   effective_date DATE NULL,
   expiry_date DATE NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'Active',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  data_origin VARCHAR(80) NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NULL
 );
 
 CREATE TABLE IF NOT EXISTS carrier_documents (
@@ -1206,6 +1250,10 @@ CREATE TABLE IF NOT EXISTS carrier_documents (
   expiry_date DATE NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'Active',
   file_url VARCHAR(400) NULL,
+  data_origin VARCHAR(80) NULL,
+  verification_status VARCHAR(80) NULL,
+  verified_at TIMESTAMPTZ NULL,
+  verified_by BIGINT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -1220,6 +1268,8 @@ CREATE TABLE IF NOT EXISTS carrier_performance (
   incident_count INT NOT NULL DEFAULT 0,
   expense_total DECIMAL(12,2) NOT NULL DEFAULT 0,
   performance_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+  data_origin VARCHAR(80) NULL,
+  calculation_status VARCHAR(80) NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -1272,6 +1322,9 @@ CREATE TABLE IF NOT EXISTS cost_leakage_items (
   description TEXT NULL,
   estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
   projected_monthly_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
+  currency VARCHAR(10) NULL,
+  data_origin VARCHAR(80) NULL,
+  amount_evidence_status VARCHAR(40) NULL,
   severity VARCHAR(50) NOT NULL DEFAULT 'Medium',
   status VARCHAR(80) NOT NULL DEFAULT 'Open',
   risk_score DECIMAL(6,2) NOT NULL DEFAULT 40,
@@ -1524,6 +1577,7 @@ CREATE TABLE IF NOT EXISTS kpi_metrics (
   status VARCHAR(40) NOT NULL DEFAULT 'On Target',
   owner_role VARCHAR(80) NULL,
   recommendation TEXT NULL,
+  data_origin VARCHAR(80) NULL,
   last_calculated_at TIMESTAMPTZ NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NULL
@@ -1537,6 +1591,8 @@ CREATE TABLE IF NOT EXISTS kpi_targets (
   unit VARCHAR(40) NOT NULL DEFAULT '%',
   effective_date DATE NOT NULL,
   status VARCHAR(40) NOT NULL DEFAULT 'Active',
+  data_origin VARCHAR(80) NULL,
+  verification_status VARCHAR(80) NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NULL
 );
@@ -1550,6 +1606,7 @@ CREATE TABLE IF NOT EXISTS sla_breaches (
   description TEXT NULL,
   root_cause_placeholder VARCHAR(200) NULL,
   status VARCHAR(40) NOT NULL DEFAULT 'Open',
+  data_origin VARCHAR(80) NULL,
   detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   resolved_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -1569,6 +1626,8 @@ CREATE TABLE IF NOT EXISTS executive_snapshots (
   top_risks_json JSONB NULL,
   top_savings_json JSONB NULL,
   ai_brief TEXT NULL,
+  data_origin VARCHAR(80) NULL,
+  verification_status VARCHAR(80) NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

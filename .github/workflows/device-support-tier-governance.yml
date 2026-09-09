@@ -1,0 +1,82 @@
+name: DeviceOps support-tier governance
+
+on:
+  pull_request:
+    paths: &paths
+      - 'backend-dotnet/Controllers/DeviceSupportTierEndpoints.cs'
+      - 'backend-dotnet/Controllers/EndpointMappings.cs'
+      - 'backend-dotnet/Services/DeviceSupportTierPolicy.cs'
+      - 'backend-dotnet/Services/TelemetrySchemaService.cs'
+      - 'backend-dotnet.Tests/DeviceSupportTierContractTests.cs'
+      - 'backend-dotnet.Tests/DeviceSupportTierPolicyTests.cs'
+      - 'backend-dotnet.Tests/DeviceSupportTierPostgresTests.cs'
+      - 'database/migrations/2026_09_07_stage126_device_support_tier_history.sql'
+      - 'tools/apply-neon-predeploy-migrations.sh'
+      - 'tools/test-predeploy-clean-chain.sh'
+      - 'frontend/src/pages/IotDevicesPage.tsx'
+      - 'frontend/src/services/telematicsService.ts'
+      - 'frontend/scripts/test-device-support-tier-contract.mjs'
+      - 'frontend/package.json'
+      - '.github/workflows/device-support-tier-governance.yml'
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: device-support-tier-governance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-device-support-routing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17@sha256:a426e44bac0b759c95894d68e1a0ac03ecc20b619f498a91aae373bf06d8508d
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: opstrax_deviceops_stage126
+        ports:
+          - 55452:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d opstrax_deviceops_stage126"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      OPSTRAX_DEVICEOPS_STAGE126_DB: Host=127.0.0.1;Port=55452;Database=opstrax_deviceops_stage126;Username=postgres;Password=postgres
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Build dedicated support-tier database
+        run: |
+          psql -h 127.0.0.1 -p 55452 -U postgres -d opstrax_deviceops_stage126 -v ON_ERROR_STOP=1 -f database/init/001_schema.sql
+          psql -h 127.0.0.1 -p 55452 -U postgres -d opstrax_deviceops_stage126 -v ON_ERROR_STOP=1 -f database/migrations/2026_07_02_stage23_schema_migration_ledger.sql
+          psql -h 127.0.0.1 -p 55452 -U postgres -d opstrax_deviceops_stage126 -v ON_ERROR_STOP=1 -f backend-dotnet.Tests/Fixtures/device_retirement_test_prerequisites.sql
+          psql -h 127.0.0.1 -p 55452 -U postgres -d opstrax_deviceops_stage126 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage126_device_support_tier_history.sql
+      - name: Verify repeat-safe migration
+        run: psql -h 127.0.0.1 -p 55452 -U postgres -d opstrax_deviceops_stage126 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage126_device_support_tier_history.sql
+      - name: Run policy, contract, and PostgreSQL tests
+        run: >-
+          dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj
+          --filter "FullyQualifiedName~DeviceSupportTierPolicyTests|FullyQualifiedName~DeviceSupportTierContractTests|FullyQualifiedName~DeviceSupportTierPostgresTests"
+          --logger "console;verbosity=minimal"
+      - name: Verify customer support-tier truth
+        run: npm --prefix frontend run test:device-support-tier
+      - name: Build customer device surface
+        run: npm --prefix frontend run build

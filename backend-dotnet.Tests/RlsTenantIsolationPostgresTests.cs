@@ -231,38 +231,87 @@ public sealed class RlsTenantIsolationPostgresTests
     }
 
     [Fact]
-    public async Task EveryTenantTable_HasExactStage58Policies_AndNoPublicPolicy()
+    public async Task PrincipalScopes_IsolateTwoUsersAndTwoTenants_AndRejectSpoofTamperReplayExpiry()
+    {
+        var owner = await PreparedOwnerDbAsync();
+        var app = RuntimeDb(maxPool: 3);
+        var suffix = Guid.NewGuid().ToString("N");
+        var companyA = await owner.InsertAsync(
+            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Principal RLS A','Transportation')",
+            c => c.Parameters.AddWithValue("@code", "PRLA-" + suffix));
+        var companyB = await owner.InsertAsync(
+            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Principal RLS B','Transportation')",
+            c => c.Parameters.AddWithValue("@code", "PRLB-" + suffix));
+        var userA = await SeedPrincipal(owner, companyA, "A", suffix);
+        var userB = await SeedPrincipal(owner, companyA, "B", suffix);
+        var userC = await SeedPrincipal(owner, companyB, "C", suffix);
+        var tokenA = "principal-A-" + suffix;
+        var tokenB = "principal-B-" + suffix;
+        var tokenC = "principal-C-" + suffix;
+        await SeedMobileTokens(owner, companyA, userA, tokenA, userB, tokenB, companyB, userC, tokenC);
+
+        try
+        {
+            async Task<string[]> Visible(long company, long user) =>
+                await app.RunInTenantScopeAsync(company, user, async () =>
+                    (await app.QueryAsync(
+                        "SELECT push_token FROM mobile_device_tokens WHERE push_token=ANY(@tokens) ORDER BY push_token",
+                        c => c.Parameters.AddWithValue("@tokens", new[] { tokenA, tokenB, tokenC })))
+                    .Select(row => row["pushToken"]!.ToString()!).ToArray());
+
+            Assert.Equal([tokenA], await Visible(companyA, userA));
+            Assert.Equal([tokenB], await Visible(companyA, userB));
+            Assert.Equal([tokenC], await Visible(companyB, userC));
+            Assert.Equal(0, await app.RunInTenantScopeAsync(companyA, userA, () =>
+                app.ExecuteAsync("UPDATE mobile_device_tokens SET app_version='spoofed' WHERE user_id=@other",
+                    c => c.Parameters.AddWithValue("@other", userB))));
+            await Assert.ThrowsAsync<PostgresException>(() => app.RunInTenantScopeAsync(companyA, userA, () =>
+                app.ExecuteAsync(
+                    "INSERT INTO mobile_device_tokens(company_id,user_id,product,platform,push_token,token_fingerprint) VALUES(@company,@other,'fleet','ios',@token,@fingerprint)",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@company", companyA);
+                        c.Parameters.AddWithValue("@other", userB);
+                        c.Parameters.AddWithValue("@token", "forged-" + suffix);
+                        c.Parameters.AddWithValue("@fingerprint", new string('d', 64));
+                    })));
+            Assert.Empty(await app.RunInTenantScopeAsync(companyA, async () =>
+                (await app.QueryAsync("SELECT push_token FROM mobile_device_tokens WHERE company_id=@company",
+                    c => c.Parameters.AddWithValue("@company", companyA))).ToArray()));
+            Assert.Equal(3, await app.RunInSystemScopeAsync(() => app.ScalarLongAsync(
+                "SELECT COUNT(*) FROM mobile_device_tokens WHERE push_token=ANY(@tokens)",
+                c => c.Parameters.AddWithValue("@tokens", new[] { tokenA, tokenB, tokenC }))));
+
+            await AssertPrincipalTicketBindings(app, owner, companyA, userA, userB, tokenA, tokenB, tokenC);
+        }
+        finally
+        {
+            await owner.ExecuteAsync("DELETE FROM mobile_device_tokens WHERE company_id=ANY(@companies)",
+                c => c.Parameters.AddWithValue("@companies", new[] { companyA, companyB }));
+            await owner.ExecuteAsync("DELETE FROM users WHERE company_id=ANY(@companies)",
+                c => c.Parameters.AddWithValue("@companies", new[] { companyA, companyB }));
+            await owner.ExecuteAsync("DELETE FROM companies WHERE id=ANY(@companies)",
+                c => c.Parameters.AddWithValue("@companies", new[] { companyA, companyB }));
+        }
+    }
+
+    [Fact]
+    public async Task EveryTenantTable_HasExactSharedBoundedAndPrivatePolicies_AndNoPublicPolicy()
     {
         var owner = await PreparedOwnerDbAsync();
         var violations = await owner.QueryAsync("""
-            WITH tenant_tables AS (
-              SELECT c.oid,c.relname,
-                CASE WHEN c.relname='companies' THEN 'id'
-                     WHEN EXISTS(SELECT 1 FROM information_schema.columns x WHERE x.table_schema='public' AND x.table_name=c.relname AND x.column_name='company_id' AND x.data_type='bigint') THEN 'company_id'
-                     ELSE 'tenant_id' END tenant_col
-              FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-              WHERE n.nspname='public' AND c.relkind IN ('r','p')
-                AND c.relname NOT IN ('platform_invoices','gps_gateway_replay','platform_impersonation_sessions','roles','report_catalog')
-                AND (c.relname='companies' OR EXISTS(SELECT 1 FROM information_schema.columns x
-                  WHERE x.table_schema='public' AND x.table_name=c.relname
-                    AND x.column_name IN ('company_id','tenant_id') AND x.data_type='bigint'))
-            )
-            SELECT t.relname FROM tenant_tables t JOIN pg_class c ON c.oid=t.oid
-            WHERE NOT c.relrowsecurity OR NOT c.relforcerowsecurity
-               OR (SELECT COUNT(*) FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=t.relname)<>2
-               OR NOT EXISTS(SELECT 1 FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=t.relname
-                  AND p.policyname='tenant_ticket_app' AND p.roles='{opstrax_app}'::name[] AND p.cmd='ALL'
-                  AND p.qual LIKE '%'||t.tenant_col||'%opstrax_security.current_tenant_id()%'
-                  AND p.qual LIKE '%SELECT%' AND p.with_check=p.qual)
-               OR NOT EXISTS(SELECT 1 FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=t.relname
-                  AND p.policyname='system_control_plane' AND p.roles='{opstrax_system}'::name[] AND p.cmd='ALL'
-                  AND p.qual='true' AND p.with_check='true')
-            UNION ALL
-            SELECT tablename FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[]
+            SELECT contract FROM (VALUES
+              ('generic',opstrax_security.generic_policy_contract_valid()),
+              ('special',opstrax_security.special_policy_contract_valid()),
+              ('migration-owned',opstrax_security.migration_owned_policy_contract_valid()),
+              ('private',opstrax_security.private_policy_contract_valid())
+            ) checks(contract,valid) WHERE NOT valid
+            UNION ALL SELECT 'public:'||tablename
+              FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[]
             ORDER BY 1
             """);
         Assert.True(violations.Count == 0,
-            "Stage58 tenant policy violations: " + string.Join(", ", violations.Select(v => v["relname"] ?? v["tablename"])));
+            "Terminal tenant policy violations: " + string.Join(", ", violations.Select(v => v["contract"])));
     }
 
     [Fact]
@@ -434,6 +483,38 @@ public sealed class RlsTenantIsolationPostgresTests
     }
 
     [Fact]
+    public async Task FleetReadiness_RejectsPermissivePrivatePolicyDrift()
+    {
+        var owner = await PreparedOwnerDbAsync();
+        var readiness = new FleetProductionReadinessService(
+            RuntimeDb(), NullLogger<FleetProductionReadinessService>.Instance);
+        try
+        {
+            await owner.ExecuteAsync("""
+                DROP POLICY principal_app_select ON mobile_device_tokens;
+                CREATE POLICY principal_app_select ON mobile_device_tokens FOR SELECT TO opstrax_app
+                  USING (true OR (company_id=(SELECT opstrax_security.current_tenant_id())
+                    AND user_id=(SELECT opstrax_security.current_user_id())))
+                """);
+            Assert.Equal(0, await owner.ScalarLongAsync(
+                "SELECT CASE WHEN opstrax_security.private_policy_contract_valid() THEN 1 ELSE 0 END"));
+            var drifted = await readiness.CheckAsync();
+            Assert.False(drifted.Ready);
+            Assert.True(drifted.TenantCoverageViolations > 0);
+        }
+        finally
+        {
+            await owner.ExecuteAsync("""
+                DROP POLICY IF EXISTS principal_app_select ON mobile_device_tokens;
+                CREATE POLICY principal_app_select ON mobile_device_tokens FOR SELECT TO opstrax_app
+                  USING (company_id=(SELECT opstrax_security.current_tenant_id())
+                    AND user_id=(SELECT opstrax_security.current_user_id()))
+                """);
+        }
+        Assert.True((await readiness.CheckAsync()).Ready);
+    }
+
+    [Fact]
     public async Task FleetReadiness_RejectsMissingSpecialTablePrivilege()
     {
         var owner = await PreparedOwnerDbAsync();
@@ -466,6 +547,93 @@ public sealed class RlsTenantIsolationPostgresTests
                 c.Parameters.AddWithValue("@b", tenantB); c.Parameters.AddWithValue("@mb", markerB);
             });
 
+    private static Task<long> SeedPrincipal(Database owner, long companyId, string label, string suffix) =>
+        owner.InsertAsync(
+            "INSERT INTO users(company_id,full_name,email,role_name,status,permissions_json) VALUES(@company,@name,@email,'Viewer','Active','[]'::jsonb)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@company", companyId);
+                c.Parameters.AddWithValue("@name", "Principal " + label);
+                c.Parameters.AddWithValue("@email", $"principal-{label}-{suffix}@example.invalid");
+            });
+
+    private static Task SeedMobileTokens(
+        Database owner, long companyA, long userA, string tokenA, long userB, string tokenB,
+        long companyB, long userC, string tokenC) => owner.ExecuteAsync(
+        """
+        INSERT INTO mobile_device_tokens(company_id,user_id,product,platform,push_token,token_fingerprint)
+        VALUES (@companyA,@userA,'fleet','ios',@tokenA,@fingerprintA),
+               (@companyA,@userB,'fleet','ios',@tokenB,@fingerprintB),
+               (@companyB,@userC,'fleet','ios',@tokenC,@fingerprintC)
+        """,
+        c =>
+        {
+            c.Parameters.AddWithValue("@companyA", companyA); c.Parameters.AddWithValue("@userA", userA);
+            c.Parameters.AddWithValue("@tokenA", tokenA); c.Parameters.AddWithValue("@fingerprintA", new string('a', 64));
+            c.Parameters.AddWithValue("@userB", userB); c.Parameters.AddWithValue("@tokenB", tokenB);
+            c.Parameters.AddWithValue("@fingerprintB", new string('b', 64));
+            c.Parameters.AddWithValue("@companyB", companyB); c.Parameters.AddWithValue("@userC", userC);
+            c.Parameters.AddWithValue("@tokenC", tokenC); c.Parameters.AddWithValue("@fingerprintC", new string('c', 64));
+        });
+
+    private static async Task AssertPrincipalTicketBindings(
+        Database runtime, Database owner, long company, long user, long otherUser, params string[] tokens)
+    {
+        await using var appOne = new NpgsqlConnection(TestDb.AppConnectionString);
+        await using var appTwo = new NpgsqlConnection(TestDb.AppConnectionString);
+        await using var system = new NpgsqlConnection(TestDb.SystemConnectionString);
+        await appOne.OpenAsync(); await appTwo.OpenAsync(); await system.OpenAsync();
+
+        await using var tx = await appOne.BeginTransactionAsync();
+        var binding = await Binding(appOne, tx);
+        var ticket = await IssuePrincipal(system, company, user, binding.pid, binding.txid, 120);
+        await SetLocal(appOne, tx, "app.tenant_ticket", ticket);
+        Assert.Equal(user, await CurrentUser(appOne, tx));
+        Assert.Equal(1, await CountPrivateTokens(appOne, tx, tokens));
+
+        var tampered = ticket.Split(':');
+        tampered[2] = otherUser.ToString();
+        await SetLocal(appOne, tx, "app.tenant_ticket", string.Join(':', tampered));
+        Assert.Null(await CurrentUser(appOne, tx));
+        Assert.Equal(0, await CountPrivateTokens(appOne, tx, tokens));
+        await SetLocal(appOne, tx, "app.tenant_ticket", ticket);
+
+        await using (var wrongPid = await appTwo.BeginTransactionAsync())
+        {
+            await SetLocal(appTwo, wrongPid, "app.tenant_ticket", ticket);
+            Assert.Null(await CurrentUser(appTwo, wrongPid));
+            Assert.Equal(0, await CountPrivateTokens(appTwo, wrongPid, tokens));
+            await wrongPid.RollbackAsync();
+        }
+
+        await tx.CommitAsync();
+        await using (var replay = await appOne.BeginTransactionAsync())
+        {
+            await SetLocal(appOne, replay, "app.tenant_ticket", ticket);
+            Assert.Null(await CurrentUser(appOne, replay));
+            Assert.Equal(0, await CountPrivateTokens(appOne, replay, tokens));
+            await replay.RollbackAsync();
+        }
+
+        await using (var expiry = await appOne.BeginTransactionAsync())
+        {
+            var expiryBinding = await Binding(appOne, expiry);
+            var expiring = await IssuePrincipal(system, company, user, expiryBinding.pid, expiryBinding.txid, 5);
+            await SetLocal(appOne, expiry, "app.tenant_ticket", expiring);
+            Assert.Equal(user, await CurrentUser(appOne, expiry));
+            await Task.Delay(TimeSpan.FromSeconds(6.2));
+            Assert.Null(await CurrentUser(appOne, expiry));
+            Assert.Equal(0, await CountPrivateTokens(appOne, expiry, tokens));
+            await expiry.RollbackAsync();
+        }
+
+        await owner.ExecuteAsync("UPDATE users SET status='Suspended' WHERE id=@user",
+            c => c.Parameters.AddWithValue("@user", user));
+        await Assert.ThrowsAsync<PostgresException>(() => runtime.BeginTenantScopeAsync(company, user));
+        await owner.ExecuteAsync("UPDATE users SET status='Active' WHERE id=@user",
+            c => c.Parameters.AddWithValue("@user", user));
+    }
+
     private static async Task<Database> PreparedOwnerDbAsync()
     {
         var owner = OwnerDb();
@@ -487,6 +655,23 @@ public sealed class RlsTenantIsolationPostgresTests
             "2026_07_31_stage59_data_protection_key_ring.sql",
             "2026_08_02_stage67_telematics_diagnostics_integrity.sql",
             "2026_08_11_stage76_telematics_security_hardening.sql",
+            "2026_09_07_stage112_camera_provider_ingest_spine.sql",
+            "2026_09_07_stage115_device_compatibility_candidate_registry.sql",
+            "2026_09_07_stage116_device_connectivity_profiles.sql",
+            "2026_09_07_stage117_device_firmware_campaign_planning.sql",
+            "2026_09_07_stage118_device_rma_replacement.sql",
+            "2026_09_07_stage119_device_remote_command_governance.sql",
+            "2026_09_07_stage120_device_connectivity_observations.sql",
+            "2026_09_07_stage121_device_installation_work_packages.sql",
+            "2026_09_07_stage122_installation_work_package_links.sql",
+            "2026_09_07_stage123_device_retirement.sql",
+            "2026_09_07_stage124_rma_support_ownership.sql",
+            "2026_09_07_stage125_device_spare_pool.sql",
+            "2026_09_07_stage126_device_support_tier_history.sql",
+            "2026_09_08_stage128_device_compatibility_capability_catalog.sql",
+            "2026_09_08_stage129_latest_device_signal_projection.sql",
+            "2026_09_08_stage130_canonical_diagnostic_evidence_identity.sql",
+            "2026_09_08_stage132_private_user_row_authority.sql",
         })
         {
             await ExecuteMigrationWithDeadlockRetryAsync(
@@ -583,6 +768,35 @@ public sealed class RlsTenantIsolationPostgresTests
         command.Parameters.AddWithValue("@txid", txid);
         command.Parameters.AddWithValue("@ttl", ttl);
         return (string)(await command.ExecuteScalarAsync())!;
+    }
+
+    private static async Task<string> IssuePrincipal(
+        NpgsqlConnection system, long tenant, long user, int pid, long txid, int ttl)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT opstrax_security.issue_principal_ticket(@tenant,@user,@pid,@txid,@ttl)", system);
+        command.Parameters.AddWithValue("@tenant", tenant);
+        command.Parameters.AddWithValue("@user", user);
+        command.Parameters.AddWithValue("@pid", pid);
+        command.Parameters.AddWithValue("@txid", txid);
+        command.Parameters.AddWithValue("@ttl", ttl);
+        return (string)(await command.ExecuteScalarAsync())!;
+    }
+
+    private static async Task<long?> CurrentUser(NpgsqlConnection connection, NpgsqlTransaction tx)
+    {
+        await using var command = new NpgsqlCommand("SELECT opstrax_security.current_user_id()", connection, tx);
+        var value = await command.ExecuteScalarAsync();
+        return value is null or DBNull ? null : Convert.ToInt64(value);
+    }
+
+    private static async Task<long> CountPrivateTokens(
+        NpgsqlConnection connection, NpgsqlTransaction tx, params string[] tokens)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM mobile_device_tokens WHERE push_token=ANY(@tokens)", connection, tx);
+        command.Parameters.AddWithValue("@tokens", tokens);
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
     }
 
     private static async Task SetLocal(

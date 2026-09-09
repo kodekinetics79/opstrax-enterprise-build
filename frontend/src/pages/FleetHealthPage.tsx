@@ -114,6 +114,8 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
   const oos       = num(summary.oosVehicles);
   const blockers  = num(summary.criticalDefectVehicles);
   const avgSafety = optional(summary.avgSafetyScore);
+  const readinessCoverage = optional(summary.readinessEvidenceCoverage);
+  const driverCoverage = optional(summary.driverScoreCoverage);
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap gap-6 items-center shadow-sm">
@@ -150,7 +152,7 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
       {/* KPIs */}
       <div className="flex flex-wrap gap-8">
         <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Dispatch Ready</p>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">No Recorded Block</p>
           <p className="text-xl font-bold text-emerald-600">{ready}<span className="text-slate-400 font-normal text-sm">/{total}</span></p>
           <p className="text-xs text-slate-500">vehicles</p>
         </div>
@@ -179,6 +181,15 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
           <p className="text-xs text-slate-500">vehicles</p>
         </div>
       </div>
+      {score == null && (
+        <div className="w-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+          <p className="font-semibold">Fleet health score unavailable until qualified evidence covers the current fleet.</p>
+          <p className="mt-1 text-amber-700">
+            Vehicle readiness coverage: {readinessCoverage == null ? "unavailable" : `${readinessCoverage}%`}
+            {" · "}Driver score coverage: {driverCoverage == null ? "unavailable" : `${driverCoverage}%`}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -195,7 +206,7 @@ function InsightPanel({ insights }: { insights: AnyRecord[] }) {
           System Fleet Insight
         </span>
         <span className="ml-auto text-[10px] text-slate-400 font-medium">
-          Rule-based · Real data
+          Rule-based · Persisted records
         </span>
       </div>
       <ul className="divide-y divide-slate-100">
@@ -226,15 +237,17 @@ function VehicleMetricsStrip({ metrics }: { metrics: AnyRecord }) {
       {num(metrics.activeFaultCodes) > 0 && <span className="text-orange-600">{num(metrics.activeFaultCodes)} fault code{num(metrics.activeFaultCodes) > 1 ? "s" : ""}</span>}
       {num(metrics.overduePm) > 0 && <span className="text-amber-600">{num(metrics.overduePm)} PM overdue</span>}
       {num(metrics.openWorkOrders) > 0 && <span className="text-slate-600">{num(metrics.openWorkOrders)} open WO{num(metrics.openWorkOrders) > 1 ? "s" : ""}</span>}
-      {Boolean(metrics.deviceOffline) && <span className="text-slate-500">Device offline</span>}
     </div>
   );
 }
 
 function DriverMetricsStrip({ metrics }: { metrics: AnyRecord }) {
+  const safetyScore = optional(metrics.safetyScore);
   return (
     <div className="flex gap-4 px-4 py-2 bg-slate-50/70 text-xs text-slate-600 flex-wrap">
-      <span className={scoreColor(num(metrics.safetyScore, 100))}>Safety {num(metrics.safetyScore, 100)}%</span>
+      <span className={safetyScore == null ? "text-slate-400" : scoreColor(safetyScore)}>
+        {safetyScore == null ? "Safety score unavailable" : `Safety ${safetyScore}%`}
+      </span>
       {num(metrics.openSafetyEvents) > 0 && <span className="text-red-600">{num(metrics.openSafetyEvents)} open event{num(metrics.openSafetyEvents) > 1 ? "s" : ""}</span>}
       {num(metrics.overdueCoaching) > 0 && <span className="text-orange-600">{num(metrics.overdueCoaching)} coaching overdue</span>}
       {num(metrics.openCoachingTasks) > num(metrics.overdueCoaching) && (
@@ -271,6 +284,7 @@ function RiskCard({
   const metrics   = (item.metrics as AnyRecord) ?? {} as AnyRecord;
   const score     = num(item.priorityScore);
   const blocking  = Boolean(item.blockingDispatch);
+  const driverSafetyScore = optional(metrics.safetyScore);
 
 
   const body = (
@@ -316,8 +330,9 @@ function RiskCard({
         {isVehicle && num(metrics.activeFaultCodes) > 0 && <span className="text-orange-600">{num(metrics.activeFaultCodes)} fault code{num(metrics.activeFaultCodes) > 1 ? "s" : ""}</span>}
         {isVehicle && num(metrics.overduePm) > 0 && <span className="text-amber-600">{num(metrics.overduePm)} PM overdue</span>}
         {isVehicle && num(metrics.openWorkOrders) > 0 && <span className="text-slate-600">{num(metrics.openWorkOrders)} open WO{num(metrics.openWorkOrders) > 1 ? "s" : ""}</span>}
-        {isVehicle && Boolean(metrics.deviceOffline) && <span className="text-slate-500">Device offline</span>}
-        {isDriver && <span className={scoreColor(num(metrics.safetyScore, 100))}>Safety {num(metrics.safetyScore, 100)}%</span>}
+        {isDriver && <span className={driverSafetyScore == null ? "text-slate-400" : scoreColor(driverSafetyScore)}>
+          {driverSafetyScore == null ? "Safety score unavailable" : `Safety ${driverSafetyScore}%`}
+        </span>}
         {isDriver && num(metrics.openSafetyEvents) > 0 && <span className="text-red-600">{num(metrics.openSafetyEvents)} open event{num(metrics.openSafetyEvents) > 1 ? "s" : ""}</span>}
         {isDriver && num(metrics.overdueCoaching) > 0 && <span className="text-orange-600">{num(metrics.overdueCoaching)} coaching overdue</span>}
         {isDriver && num(metrics.openCoachingTasks) > num(metrics.overdueCoaching) && <span className="text-amber-600">{num(metrics.openCoachingTasks) - num(metrics.overdueCoaching)} pending coaching</span>}
@@ -680,12 +695,13 @@ function DriverDrawer({
   const coachingTasks = (data?.coachingTasks as AnyRecord[]) ?? [];
   const hos          = data?.hosStatus as AnyRecord | null;
   const assignment   = data?.currentAssignment as AnyRecord | null;
-  const safetyScore  = num(drv.safetyScore, 100);
+  const safetyScore  = optional(drv.safetyScore);
+  const riskScore    = optional(drv.riskScore);
   const driverInfoRows: [string, string][] = [
     ["Driver Code",   String(drv.driverCode ?? "—")],
     ["Status",        String(drv.status ?? "—")],
-    ["Safety Score",  `${safetyScore}%`],
-    ["Risk Score",    `${num(drv.riskScore)}%`],
+    ["Safety Score",  safetyScore == null ? "Unavailable" : `${safetyScore}%`],
+    ["Risk Score",    riskScore == null ? "Unavailable" : `${riskScore}%`],
     ["Vehicle",       String(drv.assignedVehicleCode ?? "Unassigned")],
     ["License",       String(drv.licenseNumber ?? "—")],
   ];
@@ -703,8 +719,8 @@ function DriverDrawer({
               {String(drv.fullName ?? `Driver #${driverId}`)}
             </h2>
           </div>
-          <div className={`text-sm font-bold ${scoreColor(safetyScore)} shrink-0`}>
-            Safety {safetyScore}%
+          <div className={`text-sm font-bold ${safetyScore == null ? "text-slate-400" : scoreColor(safetyScore)} shrink-0`}>
+            {safetyScore == null ? "Safety unavailable" : `Safety ${safetyScore}%`}
           </div>
           <button type="button" onClick={onClose} aria-label="Close driver detail" className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
             <X className="h-4 w-4" aria-hidden="true" />
@@ -725,7 +741,7 @@ function DriverDrawer({
               {driverInfoRows.map(([label, value]) => (
                 <div key={label} className="bg-slate-50 rounded-lg px-3 py-2">
                   <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">{label}</p>
-                  <p className={`text-sm font-semibold mt-0.5 ${label === "Safety Score" ? scoreColor(safetyScore) : "text-slate-800"}`}>
+                  <p className={`text-sm font-semibold mt-0.5 ${label === "Safety Score" && safetyScore != null ? scoreColor(safetyScore) : "text-slate-800"}`}>
                     {value}
                   </p>
                 </div>
@@ -992,6 +1008,7 @@ export function FleetHealthPage() {
 
   const summaryData = summary.data ?? {};
   const insights    = (summaryData.systemInsights as AnyRecord[]) ?? [];
+  const hasCompleteEvidence = summaryData.evidenceStatus === "calculated_from_complete_qualified_coverage";
 
   if (summary.isLoading) return <LoadingState />;
 
@@ -1024,7 +1041,7 @@ export function FleetHealthPage() {
         <PageHeader
           eyebrow="Operations"
           title="Fleet Health & Safety"
-          description="Dispatch readiness · Maintenance risk · Driver safety — unified operating view"
+          description="Recorded dispatch blocks · Maintenance risk · Driver safety — persisted operating view"
           actions={
             <button
               type="button"
@@ -1106,11 +1123,15 @@ export function FleetHealthPage() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
-            <CheckCircle className="h-10 w-10 text-emerald-400 mx-auto mb-3" />
+            {hasCompleteEvidence
+              ? <CheckCircle className="h-10 w-10 text-emerald-400 mx-auto mb-3" />
+              : <AlertTriangle className="h-10 w-10 text-amber-400 mx-auto mb-3" />}
             <p className="text-base font-semibold text-slate-700 mb-1">No risk items match the current filter</p>
             <p className="text-sm text-slate-500">
               {allRisks.length === 0
-                ? "All vehicles and drivers are currently within acceptable operational parameters."
+                ? hasCompleteEvidence
+                  ? "No open risk was found in the evidence-qualified records for the current scope."
+                  : "Current evidence coverage is incomplete, so an empty risk list does not confirm that vehicles and drivers are within acceptable parameters."
                 : "Try adjusting the severity or category filters."}
             </p>
           </div>
@@ -1177,8 +1198,8 @@ export function FleetHealthPage() {
                 </div>
                 <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
                   <CheckCircle className="h-8 w-8 text-emerald-400 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-600 mb-1">All drivers within normal parameters</p>
-                  <p className="text-xs text-slate-400">No drivers currently exceed the risk threshold.</p>
+                  <p className="text-sm font-semibold text-slate-600 mb-1">No driver risk records in this result</p>
+                  <p className="text-xs text-slate-400">Missing or unmeasured safety evidence is not treated as a normal result.</p>
                 </div>
               </div>
             )}
@@ -1190,8 +1211,8 @@ export function FleetHealthPage() {
                 </div>
                 <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
                   <CheckCircle className="h-8 w-8 text-emerald-400 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-600 mb-1">All vehicles within normal parameters</p>
-                  <p className="text-xs text-slate-400">No vehicles currently exceed the risk threshold.</p>
+                  <p className="text-sm font-semibold text-slate-600 mb-1">No vehicle risk records in this result</p>
+                  <p className="text-xs text-slate-400">Only persisted defects, verified faults, maintenance, and out-of-service records create cards.</p>
                 </div>
               </div>
             )}
@@ -1241,7 +1262,7 @@ export function FleetHealthPage() {
 
         {/* Footer note */}
         <p className="text-xs text-slate-400 text-center pb-4">
-          System Fleet Insight — rule-based guidance from live operational data.
+          System Fleet Insight — rule-based guidance from evidence-qualified operational records.
           Not AI-generated. Updated every 60 seconds.
         </p>
       </div>

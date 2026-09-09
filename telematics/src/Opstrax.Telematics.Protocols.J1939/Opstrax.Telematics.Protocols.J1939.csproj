@@ -6,4 +6,8 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Opstrax.Telematics.Contracts\Opstrax.Telematics.Contracts.csproj" />
+  </ItemGroup>
 </Project>

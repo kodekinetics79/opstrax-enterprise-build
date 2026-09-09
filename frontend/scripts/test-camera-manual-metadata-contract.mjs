@@ -50,6 +50,13 @@ const input = () => ({ eventType: "Near Miss", title: "Manual note", severity: "
 const receipt = (patch = {}) => ({ id: 19, rowVersion: 4, dataSource: "stored_metadata", provenanceStatus: "unverified", mediaAvailable: false, automatedAssessmentAvailable: false, ...patch });
 const response = (data = receipt(), status = 201) => ({ status, data: { success: true, data } });
 const record = (patch = {}) => ({ id: 19, rowVersion: 3, sourceAuthority: "LegacyUnverified", deletedAt: null, ...input(), driverId: 7, occurredAt: "2025-01-01T12:00:00.000Z", ...patch });
+const providerStatusRecord = (patch = {}) => ({ status: "AwaitingProviderConnection", verificationStatus: "ExternalHold", certificationStatus: "ExternalHold",
+  providerVerified: false, mediaAvailable: false, observedEventCount: 0, matchedEventCount: 0, unmatchedEventCount: 0,
+  quarantinedEventCount: 0, pendingMediaCount: 0, expiredMediaCount: 0, lastOpsTraxIntakeUtc: null, ...patch });
+const providerEventRecord = (patch = {}) => ({ intakeReference: "intake-23", eventType: "Samsara:Braking",
+  occurredAtUtc: "2025-01-01T12:00:00.000Z", receivedAtUtc: "2025-01-01T12:01:00.000Z",
+  reconciliationStatus: "Pending", processingStatus: "PendingVerification", verificationStatus: "ExternalHold",
+  providerVerified: false, mediaAvailable: false, vehicleCode: null, driverName: null, mediaReferenceCount: 0, ...patch });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); await new Promise((resolve) => setImmediate(resolve)); };
 
@@ -87,6 +94,41 @@ test("invalid primitives, aliases, bounds, unsafe JSON IDs and versions send no 
     assert.throws(() => f.api.dashcamApi.update(id, { rowVersion: 3, title: "Changed" }, f.session));
   }
   assert.equal(f.calls.length, 0);
+});
+
+test("provider status accepts only the exact fail-closed operational projection", async () => {
+  const f = serviceFixture();
+  f.setResponse(response(providerStatusRecord(), 200));
+  assert.deepEqual(await f.api.dashcamApi.providerStatus(), providerStatusRecord());
+  f.setResponse(response(providerStatusRecord({ status: "AwaitingCameraIntake" }), 200));
+  assert.equal((await f.api.dashcamApi.providerStatus()).status, "AwaitingCameraIntake");
+  for (const invalid of [
+    providerStatusRecord({ providerVerified: true }),
+    providerStatusRecord({ certificationStatus: "Certified" }),
+    providerStatusRecord({ observedEventCount: 1 }),
+    providerStatusRecord({ observedEventCount: 1, matchedEventCount: 1, lastOpsTraxIntakeUtc: null }),
+    providerStatusRecord({ observedEventCount: 1, matchedEventCount: 1, pendingMediaCount: 9, lastOpsTraxIntakeUtc: "2025-01-01T12:00:00.000Z" }),
+    { ...providerStatusRecord(), providerName: "private-provider" },
+  ]) {
+    f.setResponse(response(invalid, 200));
+    await assert.rejects(() => f.api.dashcamApi.providerStatus(), /unavailable/);
+  }
+});
+
+test("provider intake records expose only the bounded unverified projection", async () => {
+  const f = serviceFixture();
+  f.setResponse(response([providerEventRecord()], 200));
+  assert.deepEqual(await f.api.dashcamApi.providerEvents(), [providerEventRecord()]);
+  for (const invalid of [
+    [providerEventRecord({ providerVerified: true })],
+    [providerEventRecord({ verificationStatus: "Verified" })],
+    [providerEventRecord({ mediaAvailable: true })],
+    [providerEventRecord({ processingStatus: "Quarantined" })],
+    [{ ...providerEventRecord(), providerEventId: "private-provider-id" }],
+  ]) {
+    f.setResponse(response(invalid, 200));
+    await assert.rejects(() => f.api.dashcamApi.providerEvents(), /unavailable/);
+  }
 });
 
 const query = require("@tanstack/react-query");
@@ -147,6 +189,80 @@ test("actual camera summary uses an honest all-record wire key and label", () =>
   } finally { f.cleanup(); }
 });
 
+test("camera page shows the real provider hold instead of implying camera availability", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    const page = f.renderPage("dashcam", { providerStatus: { ...f.view.providerStatus, data: providerStatusRecord() } });
+    const panel = component(page, "CameraProviderStatusPanel"); assert.ok(panel);
+    const html = renderToStaticMarkup(panel);
+    assert.match(html, /Awaiting provider connection/);
+    assert.match(html, /no provider-backed camera evidence/i);
+    assert.match(html, /Provider verified: No/);
+    assert.match(html, /Media available: No/);
+    assert.match(html, /Open Samsara camera intake setup/);
+    assert.doesNotMatch(html, /connected|certified|ready/i);
+  } finally { f.cleanup(); }
+});
+
+test("camera page distinguishes a connected provider that has no camera intake", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    const page = f.renderPage("dashcam", { providerStatus: { ...f.view.providerStatus, data: providerStatusRecord({ status: "AwaitingCameraIntake" }) } });
+    const panel = component(page, "CameraProviderStatusPanel"); assert.ok(panel);
+    const html = renderToStaticMarkup(panel);
+    assert.match(html, /Provider connected; awaiting camera intake/);
+    assert.match(html, /no successful camera intake has completed/i);
+    assert.match(html, /Configure camera permissions/);
+    assert.doesNotMatch(html, /certified|media available: yes/i);
+  } finally { f.cleanup(); }
+});
+
+test("camera page surfaces connector camera failures as attention required", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    const page = f.renderPage("dashcam", { providerStatus: { ...f.view.providerStatus, data: providerStatusRecord({ status: "AttentionRequired" }) } });
+    const panel = component(page, "CameraProviderStatusPanel"); assert.ok(panel);
+    const html = renderToStaticMarkup(panel);
+    assert.match(html, /Provider intake needs attention/);
+    assert.match(html, /connector reported a camera intake failure/i);
+    assert.doesNotMatch(html, /certified|media available: yes/i);
+  } finally { f.cleanup(); }
+});
+
+test("camera provider queue renders only safe unverified fields and no customer actions", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    const providerRow = { ...providerEventRecord({ vehicleCode: "TRK-7" }), providerEventId: "private-event-id", payloadSha256: "private-hash" };
+    const page = f.renderPage("dashcam", { providerEvents: { ...f.view.providerEvents, data: [providerRow] } });
+    const panel = component(page, "CameraProviderPendingEventsPanel"); assert.ok(panel);
+    const html = renderToStaticMarkup(panel);
+    assert.match(html, /Camera safety intake queue/);
+    assert.match(html, /Samsara:Braking/);
+    assert.match(html, /TRK-7/);
+    assert.match(html, /External hold/);
+    assert.match(html, /cannot be reviewed, coached, exported, or used as certification evidence/i);
+    assert.doesNotMatch(html, /private-event-id|private-hash/);
+    assert.equal(elements(panel).filter((element) => element.type === "button" || element.type === "a").length, 0);
+  } finally { f.cleanup(); }
+});
+
+test("camera page keeps stored records visible when live provider status is unavailable", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    const page = f.renderPage("dashcam", {
+      providerStatus: { ...f.view.providerStatus, data: undefined, isError: true },
+    });
+    assert.ok(component(page, "PageHeader"));
+    assert.ok(component(page, "DataTable"));
+    const unavailable = component(page, "CameraProviderUnavailablePanel");
+    assert.ok(unavailable);
+    const html = renderToStaticMarkup(unavailable);
+    assert.match(html, /Provider intake status could not be confirmed/);
+    assert.match(html, /No empty, connected, healthy, media-ready, or certified state has been inferred/);
+    assert.match(html, /Stored manual metadata remains available below/);
+  } finally { f.cleanup(); }
+});
+
 test("actual camera page treats malformed list as unavailable, never empty/healthy or exportable", async () => {
   const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
   try {
@@ -167,7 +283,7 @@ test("actual camera page uses direct manage grant, current detail admission and 
     try {
       f.activateList();
       const page = f.renderPage("dashcam", { session: { ...f.session, permissions: [permission] } });
-      const create = button(component(page, "PageHeader").props.actions, "Record Event Metadata");
+      const create = button(component(page, "PageHeader").props.actions, "Record Manual Metadata");
       const allowed = ["dashcam:manage", "dashcam.manage", "*"].includes(permission);
       assert.equal(create.props.disabled, !allowed); create.props.onClick();
       assert.equal(Boolean(component(f.renderPage(), "CameraMetadataDialog")), allowed);
@@ -253,12 +369,12 @@ function workflowFixture({ source = workflowBuilt.outputFiles[0].text } = {}) {
   const f = serviceFixture(source, (name) => name === "react" ? hooks
     : name === "@tanstack/react-query" ? { ...query, useMutation, useQueryClient: () => client }
     : name === "camera-test-auth" ? { useAuth: () => ({ session: view.session }) }
-    : name === "camera-test-queries" ? new Proxy({}, { get: (_, key) => () => String(key).includes("Summary") ? view.summary : String(key).includes("Detail") ? view.detail : view.rows })
+    : name === "camera-test-queries" ? new Proxy({}, { get: (_, key) => () => String(key).includes("ProviderStatus") ? view.providerStatus : String(key).includes("ProviderEvents") ? view.providerEvents : String(key).includes("Summary") ? view.summary : String(key).includes("Detail") ? view.detail : view.rows })
     : require(name), document, FixtureUrl);
   const idle = { isError: false, isLoading: false, isFetching: false, fetchStatus: "idle", refetch: async () => {} };
   view = { enabled: true, session: f.session, canManage: true, canExport: true, selectedId: "19", visibleIds: ["19"],
     detail: { ...idle, data: { record: record() } }, rows: { ...idle, data: [record()] },
-    summary: { ...idle, data: { storedEventRecords: 1 } }, queryClient: client };
+    summary: { ...idle, data: { storedEventRecords: 1 } }, providerStatus: { ...idle, data: providerStatusRecord() }, providerEvents: { ...idle, data: [] }, queryClient: client };
   const render = (patch = {}) => { view = { ...view, ...patch }; cursor = 0; return f.api.useCameraMetadataWorkflow(view); };
   const activateQuery = (key, data, read = async () => data) => {
     const observer = new query.QueryObserver(client, { queryKey: key, queryFn: read, initialData: data, staleTime: Infinity, retry: false });
@@ -584,7 +700,7 @@ test("actual camera page retains acknowledgement on a subsequent read-error path
   const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
   try {
     f.activateList();
-    let page = f.renderPage(); button(component(page, "PageHeader").props.actions, "Record Event Metadata").props.onClick();
+    let page = f.renderPage(); button(component(page, "PageHeader").props.actions, "Record Manual Metadata").props.onClick();
     for (const [key, value] of Object.entries(input())) {
       const form = component(f.renderPage(), "CameraMetadataDialog"); form.props.onChange(form.props.editor, key, value);
     }
@@ -634,7 +750,7 @@ test("actual shared CSV sink sees only neutral whitelisted current fields and fo
     h.exportCurrent("list"); h.exportCurrent("detail");
     assert.equal(f.blobs.length, 2); assert.equal(f.downloads.length, 2);
     for (const blob of f.blobs) {
-      const csv = await blob.text(); assert.match(csv, /'=SUM/); assert.doesNotMatch(csv, /private|rowVersion|sourceAuthority|deletedAt|recordedLevel/); assert.match(csv, /not provided or verified/);
+      const csv = await blob.text(); assert.match(csv, /'=SUM/); assert.doesNotMatch(csv, /private|rowVersion|sourceAuthority|deletedAt|recordedLevel/); assert.match(csv, /remain unverified until the exact frozen candidate passes its evidence gates/);
     }
     for (const patch of [{ canExport: false }, { rows: { ...f.view.rows, data: {} } }, { rows: { ...f.view.rows, isError: true } }, { rows: { ...f.view.rows, fetchStatus: "paused" } }]) {
       h = f.render(patch); h.exportCurrent("list"); assert.equal(f.blobs.length, 2);
@@ -657,11 +773,16 @@ test("manual admission uses own sourceAuthority, active marker and exact core id
   const { cameraRecord, cameraProjection } = serviceFixture().api;
   assert.equal(cameraRecord(record()).manual, true);
   assert.equal(cameraRecord({ id: 19, row_version: "3", source_authority: "LegacyUnverified", deleted_at: null }).manual, true);
-  for (const patch of [{ sourceAuthority: undefined }, { sourceAuthority: "ProviderPending" }, { sourceAuthority: "Authoritative" },
-    { sourceAuthority: "Unknown" }, { sourceAuthority: {} }, { sourceAuthority: "" }, { deletedAt: "2025-01-01" },
-    { deletedAt: undefined }, { rowVersion: Number.MAX_SAFE_INTEGER + 1 }]) assert.equal(cameraRecord(record(patch)).manual, false);
+  assert.equal(cameraRecord(record({ sourceAuthority: "ProviderPending" })).manual, false);
+  assert.equal(cameraRecord(record({ sourceAuthority: "Authoritative" })).manual, false);
+  for (const patch of [{ sourceAuthority: undefined }, { sourceAuthority: "Unknown" }, { sourceAuthority: {} },
+    { sourceAuthority: "" }, { deletedAt: "2025-01-01" }, { deletedAt: undefined },
+    { rowVersion: Number.MAX_SAFE_INTEGER + 1 }, { rowVersion: undefined }]) {
+    assert.equal(cameraRecord(record(patch)), null);
+    assert.equal(cameraProjection(record(patch)), null);
+  }
   const sourceEventOnly = record(); delete sourceEventOnly.sourceAuthority; sourceEventOnly.sourceEvent = "LegacyUnverified";
-  assert.equal(cameraRecord(sourceEventOnly).manual, false);
+  assert.equal(cameraRecord(sourceEventOnly), null);
   for (const patch of [{ source_authority: "Authoritative" }, { row_version: 4 }, { deleted_at: "2025-01-01" },
     { Id: 20 }, { id: Number.MAX_SAFE_INTEGER + 1 }, { driverId: true }, { driverId: Number.MAX_SAFE_INTEGER + 1 }, { vehicleId: [] }]) {
     assert.equal(cameraProjection(record(patch)), null);

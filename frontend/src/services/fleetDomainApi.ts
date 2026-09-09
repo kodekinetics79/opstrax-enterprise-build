@@ -58,10 +58,9 @@ export function getVehicles(lifecycle: "active" | "archived" = "active") {
 }
 
 export function getVehicleById(id: string | number, lifecycle: "active" | "archived" = "active") {
-  // Collections here mirror exactly what the /api/vehicles/{id} endpoint returns
-  // (ControlTowerVehicleDetail): live active jobs, safety + dashcam video events,
-  // upcoming maintenance, and the recent GPS replay trail. Anything the backend
-  // legitimately omits defaults to [] so the UI shows an honest empty state.
+  // Collections here mirror exactly what the /api/vehicles/{id} endpoint returns.
+  // videoEvents contains only authorized, authoritative, media-ready camera records;
+  // manual metadata remains in the dedicated Camera Safety workspace.
   return apiRecord(`/api/vehicles/${id}?lifecycle=${lifecycle}`).then((detail) => ({
     ...detail,
     record: (detail.record as AnyRecord) ?? detail,

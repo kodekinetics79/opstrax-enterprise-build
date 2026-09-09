@@ -117,6 +117,8 @@ export const integrationsApi = {
     unwrap<IntegrationDetailPayload>(apiClient.post(`/api/integrations/${id}/configure`, config)),
   sync: (id: number | string) =>
     unwrap<IntegrationTestResult>(apiClient.post(`/api/integrations/${id}/sync`, {})),
+  syncCameraSafety: (id: number | string) =>
+    unwrap<IntegrationTestResult>(apiClient.post(`/api/integrations/${id}/camera-safety/sync`, {})),
   disconnect: (id: number | string) =>
     unwrap<IntegrationDetailPayload>(apiClient.post(`/api/integrations/${id}/disconnect`, {})),
   // Real connectivity: performs an actual handshake with the provider and returns the

@@ -53,8 +53,9 @@ public sealed class SafetyCoachingScorecardPilotPostgresTests
         {
             var driver = await Driver(db, company, 99201, $"S-{company}", "Scored Driver");
             async Task Add(decimal impact, int days, string status, bool deleted = false) => await db.ExecuteAsync(
-                @"INSERT INTO safety_events(company_id,driver_id,event_type,severity,score_impact,status,event_time,deleted_at)
-                  VALUES(@c,@d,'Speeding','High',@impact,@status,NOW()-@days*INTERVAL '1 day',CASE WHEN @deleted THEN NOW() ELSE NULL END)",
+                @"INSERT INTO safety_events(company_id,driver_id,event_type,severity,score_impact,status,event_time,deleted_at,data_origin,verification_status)
+                  VALUES(@c,@d,'Speeding','High',@impact,@status,NOW()-@days*INTERVAL '1 day',CASE WHEN @deleted THEN NOW() ELSE NULL END,
+                         'runtime_detection','derived_from_qualified_source')",
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@d", driver); c.Parameters.AddWithValue("@impact", impact); c.Parameters.AddWithValue("@status", status); c.Parameters.AddWithValue("@days", days); c.Parameters.AddWithValue("@deleted", deleted); });
             await Add(10, 1, "open");
             await Add(20, 10, "open");
@@ -98,9 +99,16 @@ public sealed class SafetyCoachingScorecardPilotPostgresTests
             var driverB = await Driver(db, company, branchB, $"B-{company}", "Branch B Driver");
             await db.ExecuteAsync("UPDATE drivers SET user_id=@u WHERE id=@d AND company_id=@c", c => { c.Parameters.AddWithValue("@u", user); c.Parameters.AddWithValue("@d", driverA); c.Parameters.AddWithValue("@c", company); });
             await db.ExecuteAsync("UPDATE drivers SET user_id=@u WHERE id=@d AND company_id=@c", c => { c.Parameters.AddWithValue("@u", branchBUser); c.Parameters.AddWithValue("@d", driverB); c.Parameters.AddWithValue("@c", company); });
-            await db.ExecuteAsync(@"INSERT INTO driver_safety_scores(company_id,driver_id,score_7d,score_30d,score_90d,events_7d,events_30d,events_90d,breakdown_json)
-                                    VALUES(@c,@d,80,72,76,1,2,3,'{""Harsh Braking"":{""count"":2,""impact"":28}}'::jsonb)
-                                    ON CONFLICT(company_id,driver_id) DO UPDATE SET score_30d=72,breakdown_json=EXCLUDED.breakdown_json,computed_at=NOW()",
+            await db.ExecuteAsync(@"INSERT INTO driver_safety_scores(company_id,driver_id,score_7d,score_30d,score_90d,events_7d,events_30d,events_90d,breakdown_json,data_origin,verification_status)
+                                    VALUES(@c,@d,80,72,76,1,2,3,'{""Harsh Braking"":{""count"":2,""impact"":28}}'::jsonb,'runtime_computed','calculated_from_qualified_sources')
+                                    ON CONFLICT(company_id,driver_id) DO UPDATE SET score_30d=72,breakdown_json=EXCLUDED.breakdown_json,computed_at=NOW(),
+                                      data_origin='runtime_computed',verification_status='calculated_from_qualified_sources'",
+                c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@d", driverA); });
+            await db.ExecuteAsync(@"INSERT INTO safety_events
+                    (company_id,driver_id,event_type,severity,score_impact,status,event_time,data_origin,verification_status)
+                  VALUES
+                    (@c,@d,'Harsh Braking','High',12,'open',NOW(),'runtime_detection','derived_from_qualified_source'),
+                    (@c,@d,'Harsh Braking','High',16,'open',NOW(),'runtime_detection','derived_from_qualified_source')",
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@d", driverA); });
 
             var forbidden = await Invoke("PilotCreateCoachingTask", Principal(company, branchA, user, "safety:view"), Body(driverA, "idem-forbidden"), db, new AuditService(db), CancellationToken.None);
@@ -217,9 +225,9 @@ public sealed class SafetyCoachingScorecardPilotPostgresTests
             Assert.Equal("Completed", (await db.QuerySingleAsync("SELECT status FROM coaching_tasks WHERE id=@id AND company_id=@c", c => { c.Parameters.AddWithValue("@id", taskId); c.Parameters.AddWithValue("@c", company); }))!["status"]);
             Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_notes WHERE coaching_task_id=@id AND note_type='Completion Outcome'", c => c.Parameters.AddWithValue("@id", taskId)));
 
-            await db.ExecuteAsync(@"INSERT INTO ai_recommendations(company_id,tenant_id,recommendation_type,module_key,title,summary,body,score,status)
-                                    VALUES(@c,@c,'coaching','coaching','Tenant-wide coaching narrative','Sensitive cross-branch coaching narrative','Sensitive cross-branch coaching narrative',99,'Recommended')",
-                c => c.Parameters.AddWithValue("@c", company));
+            await db.ExecuteAsync(@"INSERT INTO ai_recommendations(company_id,tenant_id,recommendation_type,module_key,title,summary,body,score,status,source_event_id,actor_type,actor_id)
+                                    VALUES(@c,@c,'coaching','coaching','Tenant-wide coaching narrative','Sensitive cross-branch coaching narrative','Sensitive cross-branch coaching narrative',99,'Recommended',@source,'system','coaching-test')",
+                c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@source", $"coaching:test:{taskId}"); });
             var detail = Assert.IsAssignableFrom<IValueHttpResult>(await Invoke("PilotCoachingTaskDetail", Principal(company, branchA, user, "safety:view"), taskId, db, CancellationToken.None));
             var branchDetailJson = JsonSerializer.Serialize(detail.Value);
             Assert.Contains("\"recommendations\":[]", branchDetailJson);
@@ -229,11 +237,16 @@ public sealed class SafetyCoachingScorecardPilotPostgresTests
             var tenantWideDetail = Assert.IsAssignableFrom<IValueHttpResult>(await Invoke("PilotCoachingTaskDetail", tenantWidePrincipal, taskId, db, CancellationToken.None));
             Assert.Contains("Sensitive cross-branch coaching narrative", JsonSerializer.Serialize(tenantWideDetail.Value));
 
-            _ = await Driver(db, company, branchA, $"UNKNOWN-{company}", "Unscored Driver");
+            var unscoredDriver = await Driver(db, company, branchA, $"UNKNOWN-{company}", "Unscored Driver");
+            await db.ExecuteAsync(@"INSERT INTO driver_safety_scores
+                    (company_id,driver_id,score_7d,score_30d,score_90d,events_7d,events_30d,events_90d,breakdown_json,data_origin,verification_status)
+                  VALUES(@c,@d,40,40,40,9,9,9,'{""Speeding"":{""count"":9}}'::jsonb,'legacy_unverified','unverified')",
+                c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@d", unscoredDriver); });
             var trends = Assert.IsAssignableFrom<IValueHttpResult>(await Invoke("SafetyScorecardTrends", Principal(company, branchA, user, "safety:view"), db, CancellationToken.None));
             var trendJson = JsonSerializer.Serialize(trends.Value);
             Assert.Contains("\"scoredDrivers\":1", trendJson);
             Assert.DoesNotContain("\"scoredDrivers\":2", trendJson);
+            Assert.Contains("\"fleetSafetyScore\":null", trendJson);
 
             await db.ExecuteAsync("UPDATE driver_safety_scores SET score_30d=60,computed_at=NOW() WHERE company_id=@c AND driver_id=@d", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@d", driverA); });
             var currentSummary = Assert.IsAssignableFrom<IValueHttpResult>(await Invoke("SafetyScorecardSummary", Principal(company, branchA, user, "safety:view"), db, CancellationToken.None));
@@ -254,7 +267,9 @@ public sealed class SafetyCoachingScorecardPilotPostgresTests
             Assert.Contains("calculationSource", scoreJson);
             Assert.Contains("stale", scoreJson);
             Assert.Contains("insufficient_data", scoreJson);
-            Assert.Contains("Harsh Braking", scoreJson);
+            Assert.Contains("\"safetyScore\":null", scoreJson);
+            Assert.DoesNotContain("\"safetyScore\":0", scoreJson);
+            Assert.Contains("calculated_from_qualified_sources", scoreJson);
         }
         finally
         {

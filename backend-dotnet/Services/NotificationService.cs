@@ -26,6 +26,39 @@ public sealed class NotificationService(Database db)
         TimeSpan? suppressionWindow = null,
         IReadOnlyCollection<long>? targetUserIds = null)
     {
+        // Recipient rows are private and the app identity cannot mint records owned by
+        // another user. Resolve and persist delivery envelopes through the separately
+        // authenticated system lane. This is also used for driver-originated events,
+        // where the sender correctly has no tenant-administration permission.
+        if (db.RlsEnforced)
+            return await db.RunInSystemTransactionAsync(
+                () => CreateCoreAsync(companyId, eventType, sourceType, sourceId, severity,
+                    title, message, audienceType, ct, targetDriverId, targetUserId, channel,
+                    priority, dedupeKey, suppressionWindow, targetUserIds), ct);
+
+        return await CreateCoreAsync(companyId, eventType, sourceType, sourceId, severity,
+            title, message, audienceType, ct, targetDriverId, targetUserId, channel,
+            priority, dedupeKey, suppressionWindow, targetUserIds);
+    }
+
+    private async Task<long> CreateCoreAsync(
+        long companyId,
+        string eventType,
+        string sourceType,
+        long? sourceId,
+        string severity,
+        string title,
+        string message,
+        string audienceType,
+        CancellationToken ct,
+        long? targetDriverId,
+        long? targetUserId,
+        string channel,
+        int priority,
+        string? dedupeKey,
+        TimeSpan? suppressionWindow,
+        IReadOnlyCollection<long>? targetUserIds)
+    {
         // Deduplication check
         if (!string.IsNullOrWhiteSpace(dedupeKey))
         {

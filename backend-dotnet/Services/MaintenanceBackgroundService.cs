@@ -427,6 +427,7 @@ public sealed class MaintenanceBackgroundService(
             sourceEventId,
             ActorTypes.System,
             "MaintenanceBackgroundService",
-            status: "active");
+            status: "active",
+            moduleKey: "maintenance");
     }
 }

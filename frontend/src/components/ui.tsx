@@ -109,7 +109,7 @@ export function FormField({
     : children;
 
   return (
-    <div className={`flex flex-col gap-1.5 ${className}`.trim()}>
+    <div className={`form-field flex flex-col ${className}`.trim()}>
       <label htmlFor={id} className="text-[12px] font-bold text-slate-700">
         {label}
         {required && <span aria-hidden className="ml-0.5 text-red-600">*</span>}
@@ -159,26 +159,26 @@ export function PageHeader({
   title: string; eyebrow?: string; description: string; actions?: ReactNode; footer?: ReactNode;
 }) {
   return (
-    <div className="liquid-glass relative min-w-0 shrink-0 px-4 py-4">
+    <div className="liquid-glass page-header relative min-w-0 shrink-0">
       <div className="pointer-events-none absolute inset-0 rounded-[inherit] bg-[radial-gradient(circle_at_top_right,rgba(45,212,191,.12),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(37,99,235,.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,.3),transparent_28%)]" />
-      <div className="relative flex min-w-0 flex-wrap items-end justify-between gap-4">
+      <div className="page-header__layout relative flex min-w-0 flex-wrap justify-between">
         <div className="min-w-0 flex-[1_1_24rem]">
         {eyebrow && (
-          <span className="inline-flex items-center gap-2 rounded-full border border-teal-400/20 bg-white/90 px-3 py-1 text-[10px] font-black uppercase tracking-[0.26em] text-teal-700 shadow-sm backdrop-blur">
+          <span className="page-header__eyebrow inline-flex items-center rounded-full border border-teal-400/20 bg-white/90 text-[10px] font-black uppercase tracking-[0.2em] text-teal-700 shadow-sm backdrop-blur">
             <span className="live-dot h-1.5 w-1.5" />
             {eyebrow}
           </span>
         )}
-          <h1 className="mt-2 break-words text-2xl font-bold tracking-tight text-slate-950 md:text-[28px]">{title}</h1>
-          <p className="mt-1 max-w-3xl break-words text-[13px] leading-5 text-slate-500">{description}</p>
+          <h1 className="page-header__title break-words font-bold tracking-tight text-slate-950">{title}</h1>
+          <p className="page-header__description max-w-3xl break-words text-[13px] text-slate-500">{description}</p>
         </div>
         {actions && (
-          <div className="flex min-w-0 max-w-full flex-[0_1_auto] flex-wrap items-center gap-2">
+          <div className="page-header__actions flex min-w-0 max-w-full flex-[0_1_auto] flex-wrap items-center">
             {actions}
           </div>
         )}
       </div>
-      {footer && <div className="relative mt-3 min-w-0 border-t border-slate-200/70 pt-3">{footer}</div>}
+      {footer && <div className="page-header__footer relative min-w-0 border-t border-slate-200/70">{footer}</div>}
     </div>
   );
 }
@@ -202,14 +202,14 @@ export function KpiCard({
     : "text-slate-950";
 
   return (
-    <div className="clay-card card-hover relative min-w-0 overflow-hidden p-4">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(13,148,136,.8),rgba(37,99,235,.75),rgba(124,58,237,.7))]" />
+    <div className="clay-card card-hover kpi-card relative min-w-0 overflow-hidden">
+      <div className="kpi-card__accent pointer-events-none absolute inset-x-0 top-0 bg-[linear-gradient(90deg,rgba(13,148,136,.8),rgba(37,99,235,.75),rgba(124,58,237,.7))]" />
       <div className="flex min-w-0 items-start justify-between gap-2">
         <p className="min-w-0 break-words text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
         {icon ? <div className="shrink-0 text-slate-400 [&>svg]:h-4 [&>svg]:w-4">{icon}</div> : null}
       </div>
-      <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
-        <p className={`min-w-0 break-words text-[26px] font-bold tracking-tight ${valueColor}`}>{value}</p>
+      <div className="kpi-card__value-row flex min-w-0 flex-wrap items-center justify-between">
+        <p className={`kpi-card__value min-w-0 break-words font-bold tracking-tight ${valueColor}`}>{value}</p>
         {status || trend ? (
           <span className={`badge ${isCritical ? "badge-danger" : isWarning ? "badge-warning" : "badge-info"}`}>
             {status ?? trend}
@@ -217,7 +217,7 @@ export function KpiCard({
         ) : null}
       </div>
       {(delta || trend) && (
-        <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+        <p className="kpi-card__detail flex items-center gap-1.5 text-xs font-semibold text-slate-500">
           {isDown ? <ArrowDownRight className="h-3.5 w-3.5 text-red-500" /> : isUp ? <ArrowUpRight className="h-3.5 w-3.5 text-emerald-500" /> : null}
           {delta ?? trend}
         </p>
@@ -231,13 +231,13 @@ export function KpiCard({
    ============================================================ */
 export function SkeletonCard() {
   return (
-    <div className="clay-card min-w-0 flex flex-col justify-between p-4">
+    <div className="clay-card kpi-skeleton min-w-0 flex flex-col justify-between">
       <div className="flex items-center justify-between gap-3">
         <div className="skeleton h-3 w-24 rounded-full" />
         <div className="skeleton h-5 w-14 rounded-full" />
       </div>
-      <div className="mt-2 skeleton h-8 w-24 rounded-lg" />
-      <div className="mt-2 flex items-center justify-between">
+      <div className="mt-1 skeleton h-7 w-24 rounded-lg" />
+      <div className="mt-1 flex items-center justify-between">
         <div className="skeleton h-3 w-20 rounded-full" />
         <div className="skeleton h-3 w-16 rounded-full" />
       </div>
@@ -295,12 +295,13 @@ export function StatusBadge({ status }: { status?: unknown }) {
    ============================================================ */
 export function RiskBadge({ risk }: { risk?: unknown }) {
   const text = String(risk ?? "Low");
+  const severity = text.trim().toUpperCase();
   // 700-level text for WCAG AA contrast on the light tinted pill (see StatusBadge).
-  const cls = /critical/i.test(text)
+  const cls = severity === "P0" || /critical/i.test(text)
     ? "border-red-400/35 bg-red-500/12 text-red-700 font-extrabold"
-    : /high/i.test(text)
+    : severity === "P1" || /high/i.test(text)
     ? "border-red-400/25 bg-red-500/8 text-red-700"
-    : /medium|warning/i.test(text)
+    : severity === "P2" || /medium|warning/i.test(text)
     ? "border-amber-400/30 bg-amber-500/10 text-amber-700"
     : "border-emerald-400/25 bg-emerald-500/8 text-emerald-700";
   return (
@@ -423,11 +424,11 @@ export function DataTable({
   return (
     <div className="panel overflow-hidden">
       {/* Table toolbar */}
-      <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-3.5 md:flex-row md:items-center md:justify-between">
+      <div className="data-table__toolbar flex flex-col border-b border-slate-100 md:flex-row md:items-center md:justify-between">
         <div className="relative max-w-xs flex-1">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
           <input
-            className="field h-9 py-0 pl-9 pr-3 text-sm"
+            className="field data-table__search text-sm"
             placeholder="Search records..."
             aria-label="Search records"
             value={search}
@@ -449,13 +450,17 @@ export function DataTable({
                 return (
                   <th
                     key={col}
-                    onClick={() => handleSort(col)}
                     aria-sort={isActive ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
-                    className={`sortable px-5 py-3.5 text-xs font-semibold uppercase tracking-wider transition ${
+                    className={`sortable p-0 text-xs font-semibold uppercase tracking-wider transition ${
                       isActive ? "sort-active text-slate-700" : "text-slate-500"
                     }`}
                   >
-                    <span className={`flex items-center gap-1.5 ${numeric ? "justify-end" : ""}`}>
+                    <button
+                      type="button"
+                      onClick={() => handleSort(col)}
+                      className={`data-table__sort group ${numeric ? "justify-end" : ""}`}
+                      aria-label={`Sort by ${labelize(col)}${isActive ? `, currently ${sortDir === "asc" ? "ascending" : "descending"}` : ""}`}
+                    >
                       {labelize(col)}
                       <span className="sort-icon">
                         {isActive
@@ -464,7 +469,7 @@ export function DataTable({
                             : <ChevronDownIcon className="h-3 w-3" />
                           : <ChevronUp className="h-3 w-3 opacity-0 group-hover:opacity-40" />}
                       </span>
-                    </span>
+                    </button>
                   </th>
                 );
               })}
@@ -473,7 +478,7 @@ export function DataTable({
           <tbody className="divide-y divide-slate-100">
             {pageRows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-5 py-12 text-center text-sm text-slate-500">
+                <td colSpan={columns.length} className="data-table__empty text-center text-sm text-slate-500">
                   No records found. Try a different search or filter.
                 </td>
               </tr>
@@ -495,10 +500,11 @@ export function DataTable({
                   tabIndex={onSelect ? 0 : undefined}
                   role={onSelect ? "button" : undefined}
                   aria-label={onSelect ? "View record details" : undefined}
+                  data-interactive={onSelect ? "true" : undefined}
                   className={`group transition-colors hover:bg-slate-50 ${onSelect ? "cursor-pointer" : ""}`}
                 >
                   {columns.map((col) => (
-                    <td key={col} className={`px-5 py-3.5 text-slate-600 ${numericCols.has(col) ? "text-right tabular-nums" : ""}`}>
+                    <td key={col} className={`data-table__cell text-slate-600 ${numericCols.has(col) ? "text-right tabular-nums" : ""}`}>
                       {renderCell(col, row[col])}
                     </td>
                   ))}
@@ -510,7 +516,7 @@ export function DataTable({
       </div>
 
       {sorted.length > 0 && (
-        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-2.5">
+        <div className="data-table__pager flex min-w-0 flex-wrap items-center justify-between border-t border-slate-100">
           <span className="text-xs text-slate-600">Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, sorted.length)} of {sorted.length} records</span>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <button className="btn-ghost btn-compact px-3 py-1 text-xs" type="button" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</button>
@@ -532,7 +538,7 @@ export function FilterBar({
   options?: string[]; value?: string; onChange?: (option: string) => void; children?: ReactNode;
 }) {
   return (
-    <div className="panel flex flex-wrap items-center gap-2 p-3">
+    <div className="panel filter-bar flex flex-wrap items-center">
       {options
         ? options.map((option) => {
             const active = option === value;
@@ -570,16 +576,16 @@ export function DetailDrawer({ record, onClose }: { record: AnyRecord | null; on
         role="dialog"
         aria-modal="true"
         aria-label="Record details"
-        className="anim-slide-right relative h-full w-full max-w-lg overflow-y-auto border-l border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 shadow-2xl"
+        className="anim-slide-right relative h-full w-full max-w-lg overflow-y-auto border-l border-slate-200 bg-gradient-to-b from-white to-slate-50 p-4 shadow-2xl"
       >
         <button aria-label="Close" className="float-right icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
         <p className="section-title text-teal-700">OpsTrax Detail</p>
-        <h2 className="mt-3 text-[28px] font-black tracking-tight text-slate-950">
+        <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
           {String(record.title || record.name || record.vehicleCode || record.driverCode || record.jobCode || `Record ${record.id}`)}
         </h2>
-        <div className="mt-6 space-y-2">
+        <div className="mt-4 space-y-2">
           {Object.entries(record).slice(0, 24).map(([key, value]) => (
-            <div key={key} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-2.5">
+            <div key={key} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
               <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 mt-0.5">{labelize(key)}</p>
               <p className="text-sm text-slate-700 text-right break-all">{String(value ?? "--")}</p>
             </div>
@@ -601,13 +607,13 @@ export function LoadingState() {
         {[...Array(4)].map((_, i) => <SkeletonCard key={i} />)}
       </div>
       {/* Table skeleton */}
-      <div className="panel p-5 space-y-3">
+      <div className="panel space-y-2 p-3">
         <div className="flex items-center gap-3">
           <div className="skeleton h-9 w-64 rounded-xl" />
           <div className="skeleton h-9 w-24 rounded-xl ml-auto" />
         </div>
         {[...Array(6)].map((_, i) => (
-          <div key={i} className="flex items-center gap-4 rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
+          <div key={i} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2">
             <div className="skeleton h-4 w-24 shrink-0" />
             <div className="skeleton h-4 flex-1" />
             <div className="skeleton h-4 w-16" />
@@ -624,7 +630,7 @@ export function LoadingState() {
    ============================================================ */
 export function ErrorState({ message, onRetry }: { message?: string; onRetry?: () => void }) {
   return (
-    <div className="panel flex flex-wrap items-center gap-3 border-red-400/20 bg-gradient-to-r from-red-50 to-white p-6" role="alert">
+    <div className="panel flex flex-wrap items-center gap-3 border-red-400/20 bg-gradient-to-r from-red-50 to-white p-4" role="alert">
       <AlertTriangle className="h-5 w-5 shrink-0 text-red-600" />
       <div className="min-w-0 flex-1">
         <p className="font-semibold text-red-700">Unable to load data</p>
@@ -641,13 +647,13 @@ export function ErrorState({ message, onRetry }: { message?: string; onRetry?: (
 
 export function EmptyState({ title = "No records found", subtitle, action }: { title?: string; subtitle?: string; action?: ReactNode }) {
   return (
-    <div className="panel flex flex-col items-center justify-center p-14 text-center">
-      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white text-slate-400 shadow-sm">
-        <Search className="h-6 w-6" />
+    <div className="panel flex flex-col items-center justify-center px-5 py-8 text-center">
+      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white text-slate-400 shadow-sm">
+        <Search className="h-5 w-5" />
       </div>
       <p className="font-semibold text-slate-800">{title}</p>
       {subtitle && <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">{subtitle}</p>}
-      {action && <div className="mt-4">{action}</div>}
+      {action && <div className="mt-3">{action}</div>}
     </div>
   );
 }
@@ -655,10 +661,10 @@ export function EmptyState({ title = "No records found", subtitle, action }: { t
 /* ============================================================
    AI INSIGHT CARD
    ============================================================ */
-export function AiInsightCard({ insight }: { insight: AnyRecord }) {
+export function AiInsightCard({ insight, label = "System Fleet Insight" }: { insight: AnyRecord; label?: string }) {
   const score = Number(insight.score || insight.confidence || 0);
   return (
-    <div className="relative overflow-hidden rounded-[20px] border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-white p-4 shadow-sm">
+    <div className="relative overflow-hidden rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-white p-3 shadow-sm">
       {/* Glow blob */}
       <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-violet-500/12 blur-2xl" />
       <div className="relative">
@@ -667,20 +673,20 @@ export function AiInsightCard({ insight }: { insight: AnyRecord }) {
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-100 border border-violet-200">
               <Sparkles className="h-3.5 w-3.5 text-violet-600" />
             </div>
-            <span className="text-[10px] font-black uppercase tracking-[0.24em] text-violet-600">System Fleet Insight</span>
+            <span className="text-[10px] font-black uppercase tracking-[0.24em] text-violet-600">{label}</span>
           </div>
           {score > 0 && (
             <span className="text-[10px] font-bold text-violet-400/70">{score}% confidence</span>
           )}
         </div>
-        <h3 className="mt-2.5 text-sm font-bold text-slate-800 leading-snug">
+        <h3 className="mt-2 text-sm font-bold text-slate-800 leading-snug">
           {String(insight.title || insight.recommendation || "Recommended action")}
         </h3>
         <p className="mt-1.5 text-xs leading-5 text-slate-600">
           {String(insight.body || insight.recommendation || insight.description || "Review the available data and assign an action owner.")}
         </p>
         {!!insight.moduleKey && (
-          <span className="mt-2.5 inline-block rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-600">
+          <span className="mt-2 inline-block rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-600">
             {String(insight.moduleKey)}
           </span>
         )}

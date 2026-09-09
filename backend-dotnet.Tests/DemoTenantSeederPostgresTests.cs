@@ -571,12 +571,15 @@ public class DemoTenantSeederPostgresTests
         // Match the production bootstrap order for every table/column DemoTenantSeeder
         // writes. Do not manually ALTER individual columns here: doing so previously
         // masked clean-install drift in both customer_feedback and documents.
+        await new CoreSchemaService(db, NullLogger<CoreSchemaService>.Instance).EnsureAsync();
         await new Batch1SchemaService(db).EnsureAsync();
         await new Batch2SchemaService(db).EnsureAsync();
         await new Batch3SchemaService(db).EnsureAsync();
         await new Batch4SchemaService(db).EnsureAsync();
         await new Batch5SchemaService(db).EnsureAsync();
         await new Batch6SchemaService(db).EnsureAsync();
+        await db.ExecuteAsync(File.ReadAllText(Path.Combine(
+            RepoRootPath(), "database", "migrations", "2026_09_03_stage99_hos_clock_source_truth.sql")));
         await new Batch7SchemaService(db).EnsureAsync();
         await new TelemetrySchemaService(db).EnsureAsync();
         await new SafetySchemaService(db).EnsureAsync();
@@ -593,6 +596,9 @@ public class DemoTenantSeederPostgresTests
         await new FinanceActivationSchemaService(db).EnsureAsync();
         await new TaxSchemaService(db).EnsureAsync();
         await new Stage9SchemaService(db).EnsureAsync();
+        await new FeatureFlagSchemaService(db).EnsureAsync();
+        await new SecuritySchemaService(db).EnsureAsync();
+        await new PlatformSchemaService(db).EnsureAsync();
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS company_id BIGINT NOT NULL DEFAULT 1");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS module_key VARCHAR(100) NULL");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS body TEXT NULL");

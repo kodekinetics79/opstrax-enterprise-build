@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { useQueries } from "@tanstack/react-query";
 import {
   Activity, AlertTriangle, ArrowUpRight, Camera, Cpu, Gauge,
-  ClipboardCheck, Radio, ShieldAlert, Truck, Wrench, WifiOff,
+  ClipboardCheck, Radio, ShieldAlert, Truck, Wrench,
 } from "lucide-react";
 import {
   ClayCard, EmptyState, ErrorState, KpiCard, PageHeader,
@@ -32,8 +32,13 @@ function pick(row: AnyRecord | undefined, ...keys: string[]): unknown {
   return undefined;
 }
 function num(v: unknown, fallback = 0): number {
+  if (v === null || v === undefined || v === "") return fallback;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+function optionalNum(v: unknown): number | null {
+  const n = num(v, NaN);
+  return Number.isFinite(n) ? n : null;
 }
 function bool(v: unknown): boolean {
   return v === true || v === "true" || v === 1 || v === "1";
@@ -105,7 +110,6 @@ function VehicleRiskCard({ risk }: { risk: AnyRecord }) {
   const faults = truthyCount(pick(m, "activeFaultCodes", "active_fault_codes"));
   const openWo = truthyCount(pick(m, "openWorkOrders", "open_work_orders"));
   const overduePm = truthyCount(pick(m, "overduePm", "overdue_pm"));
-  const offline = bool(pick(m, "deviceOffline", "device_offline"));
   const readiness = num(pick(m, "readinessScore", "readiness_score"), NaN);
 
   return (
@@ -134,16 +138,14 @@ function VehicleRiskCard({ risk }: { risk: AnyRecord }) {
       {/* Linked signals — each edge deep-links into the owning module */}
       <div className="flex flex-wrap gap-1.5">
         <SignalChip to={LINKS.dvir} icon={<ClipboardCheck className="h-3.5 w-3.5" />} label="DVIR"
-          value={critDef > 0 ? `${critDef} crit` : openDef > 0 ? `${openDef} open` : "OK"}
+          value={critDef > 0 ? `${critDef} crit` : openDef > 0 ? `${openDef} open` : "none open"}
           tone={critDef > 0 ? "red" : openDef > 0 ? "amber" : "slate"} />
         <SignalChip to={LINKS.obd} icon={<Cpu className="h-3.5 w-3.5" />} label="OBD"
-          value={faults > 0 ? `${faults} fault` : "clear"} tone={faults > 0 ? "red" : "slate"} />
+          value={faults > 0 ? `${faults} fault` : "none active"} tone={faults > 0 ? "red" : "slate"} />
         <SignalChip to={LINKS.downtime} icon={<Wrench className="h-3.5 w-3.5" />} label="WO"
-          value={openWo > 0 ? `${openWo} open` : "none"} tone={openWo > 0 ? "amber" : "slate"} />
+          value={openWo > 0 ? `${openWo} open` : "none open"} tone={openWo > 0 ? "amber" : "slate"} />
         <SignalChip to={LINKS.maintenance} icon={<Gauge className="h-3.5 w-3.5" />} label="PM"
-          value={overduePm > 0 ? `${overduePm} due` : "current"} tone={overduePm > 0 ? "amber" : "slate"} />
-        <SignalChip to={LINKS.sensors} icon={offline ? <WifiOff className="h-3.5 w-3.5" /> : <Radio className="h-3.5 w-3.5" />} label="Device"
-          value={offline ? "offline" : "online"} tone={offline ? "red" : "sky"} />
+          value={overduePm > 0 ? `${overduePm} due` : "none overdue"} tone={overduePm > 0 ? "amber" : "slate"} />
         {Number.isFinite(readiness) && (
           <SignalChip to={LINKS.fleetHealth} icon={<Activity className="h-3.5 w-3.5" />} label="Ready"
             value={`${Math.round(readiness)}%`} tone={readiness < 60 ? "amber" : "slate"} />
@@ -246,20 +248,22 @@ export function FleetIntelligencePage() {
   const teleKpis = ((telemetrySummary.data as AnyRecord)?.kpis ?? {}) as AnyRecord;
   const inc = (incidentsSummary.data ?? {}) as AnyRecord;
 
-  // ── KPI band values — every figure is a live read, never a constant ────────
-  const totalVehicles = num(pick(summary, "totalVehicles") ?? pick(vehSum, "total"));
-  const dispatchReady = num(pick(summary, "dispatchReadyVehicles"));
-  const availabilityPct = totalVehicles > 0 ? Math.round((dispatchReady / totalVehicles) * 100) : null;
+  // ── KPI band values — missing API measurements stay unavailable ────────────
+  const totalVehicles = optionalNum(pick(summary, "totalVehicles") ?? pick(vehSum, "total"));
+  const dispatchReady = optionalNum(pick(summary, "dispatchReadyVehicles"));
+  const availabilityPct = totalVehicles !== null && dispatchReady !== null && totalVehicles > 0
+    ? Math.round((dispatchReady / totalVehicles) * 100)
+    : null;
 
-  const openSafetyEvents = num(pick(summary, "openSafetyEventDrivers"));
-  const belowSafety = num(pick(summary, "belowSafetyThreshold"));
-  const activeFaults = Array.isArray(faultCodes.data) ? faultCodes.data.length : 0;
-  const vehiclesDowntime = Array.isArray(downtime.data) ? downtime.data.length : 0;
-  const overduePm = num(pick(summary, "overduePmVehicles"));
-  const openIncidents = num(pick(inc, "open_incidents", "openIncidents"));
-  const connectedDevices = num(
+  const openSafetyEvents = optionalNum(pick(summary, "openSafetyEventDrivers"));
+  const belowSafety = optionalNum(pick(summary, "belowSafetyThreshold"));
+  const activeFaults = Array.isArray(faultCodes.data) ? faultCodes.data.length : faultCodes.isSuccess ? 0 : null;
+  const vehiclesDowntime = Array.isArray(downtime.data) ? downtime.data.length : downtime.isSuccess ? 0 : null;
+  const overduePm = optionalNum(pick(summary, "overduePmVehicles"));
+  const openIncidents = optionalNum(pick(inc, "open_incidents", "openIncidents"));
+  const registeredDevices = optionalNum(
     pick(teleKpis, "registeredDevices", "connectedUnits") ??
-    (Array.isArray(devices.data) ? devices.data.length : undefined)
+    (Array.isArray(devices.data) ? devices.data.length : null)
   );
 
   const risks = useMemo(
@@ -299,7 +303,7 @@ export function FleetIntelligencePage() {
       <PageHeader
         eyebrow="Cross-Module Command"
         title="Fleet Intelligence"
-        description="A single Samsara-style command surface that joins fleet health, safety, maintenance, telematics, DVIR and incident signals per vehicle — every figure pulled live, every risk linked back to its module."
+        description="A cross-module view of current persisted fleet-health, safety, maintenance, telematics, DVIR and incident records. Missing measurements remain unavailable."
         footer={
           <div className="flex flex-wrap items-center gap-2.5">
             {(["Fleet Health", "Vehicles", "Safety", "Maintenance", "Telematics", "DVIR", "Incidents"]).map((m) => (
@@ -321,18 +325,18 @@ export function FleetIntelligencePage() {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
           <KpiCard label="Fleet Availability" value={availabilityPct === null ? "--" : `${availabilityPct}%`}
-            trend={dispatchReady > 0 ? `${dispatchReady}/${totalVehicles} dispatch-ready` : undefined} icon={<Truck className="h-5 w-5" />} />
-          <KpiCard label="Open Safety Events" value={openSafetyEvents} status={openSafetyEvents > 0 ? "risk" : undefined}
-            trend={belowSafety > 0 ? `${belowSafety} drivers below threshold` : undefined} icon={<ShieldAlert className="h-5 w-5" />} />
-          <KpiCard label="Active Fault Codes" value={activeFaults} status={activeFaults > 0 ? "critical" : undefined}
-            trend="OBD / J1939 live" icon={<Cpu className="h-5 w-5" />} />
-          <KpiCard label="Vehicles In Downtime" value={vehiclesDowntime} status={vehiclesDowntime > 0 ? "warning" : undefined}
+            trend={dispatchReady !== null && totalVehicles !== null ? `${dispatchReady}/${totalVehicles} dispatch-ready records` : undefined} icon={<Truck className="h-5 w-5" />} />
+          <KpiCard label="Open Safety Events" value={openSafetyEvents ?? "--"} status={openSafetyEvents !== null && openSafetyEvents > 0 ? "risk" : undefined}
+            trend={belowSafety !== null && belowSafety > 0 ? `${belowSafety} drivers below threshold` : undefined} icon={<ShieldAlert className="h-5 w-5" />} />
+          <KpiCard label="Active Fault Codes" value={activeFaults ?? "--"} status={activeFaults !== null && activeFaults > 0 ? "critical" : undefined}
+            trend={activeFaults === null ? undefined : "Verified diagnostic records"} icon={<Cpu className="h-5 w-5" />} />
+          <KpiCard label="Vehicles In Downtime" value={vehiclesDowntime ?? "--"} status={vehiclesDowntime !== null && vehiclesDowntime > 0 ? "warning" : undefined}
             icon={<Wrench className="h-5 w-5" />} />
-          <KpiCard label="Overdue PM" value={overduePm} status={overduePm > 0 ? "overdue" : undefined}
+          <KpiCard label="Overdue PM" value={overduePm ?? "--"} status={overduePm !== null && overduePm > 0 ? "overdue" : undefined}
             trend={pick(maint, "pm_compliance") ? `${pick(maint, "pm_compliance")} compliant` : undefined} icon={<Gauge className="h-5 w-5" />} />
-          <KpiCard label="Open Incidents" value={openIncidents} status={openIncidents > 0 ? "review" : undefined}
+          <KpiCard label="Open Incidents" value={openIncidents ?? "--"} status={openIncidents !== null && openIncidents > 0 ? "review" : undefined}
             icon={<AlertTriangle className="h-5 w-5" />} />
-          <KpiCard label="Connected Devices" value={connectedDevices} status="connected"
+          <KpiCard label="Registered Devices" value={registeredDevices ?? "--"}
             trend={pick(teleKpis, "connectivityCoverage") != null ? `${pick(teleKpis, "connectivityCoverage")}% coverage` : undefined}
             icon={<Radio className="h-5 w-5" />} />
         </div>
@@ -351,8 +355,10 @@ export function FleetIntelligencePage() {
           ) : healthRisks.isError ? (
             <ErrorState message="Fleet-health risk feed is unavailable." onRetry={() => healthRisks.refetch()} />
           ) : vehicleRisks.length === 0 ? (
-            <EmptyState title="No at-risk vehicles"
-              subtitle="Every vehicle is within normal operating range — no critical defects, overdue PM, active fault codes or device drop-offs across the fleet." />
+            <EmptyState title={totalVehicles === 0 ? "No fleet records" : "No current vehicle-risk records"}
+              subtitle={totalVehicles === 0
+                ? "Add vehicle records before fleet risk can be assessed."
+                : "No persisted critical defects, overdue maintenance, verified active fault codes, or open work-order risks currently meet this board's threshold."} />
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
               {vehicleRisks.map((r, i) => (
@@ -362,10 +368,10 @@ export function FleetIntelligencePage() {
           )}
         </section>
 
-        {/* Right rail: live alerts + fleet-health recommendations */}
+        {/* Right rail: persisted alerts + fleet-health recommendations */}
         <aside className="space-y-5">
           <ClayCard className="p-4">
-            <SectionHeader icon={<Radio className="h-4 w-4" />} title="Live Telematics Alerts"
+            <SectionHeader icon={<Radio className="h-4 w-4" />} title="Open Telematics Alerts"
               count={alerts.length} to="/alerts" cta="Center" />
             <div className="mt-3 space-y-2">
               {telemetryAlerts.isLoading ? (
@@ -375,7 +381,7 @@ export function FleetIntelligencePage() {
               ) : telemetryAlerts.isError ? (
                 <ErrorState message="Telemetry alert feed unavailable." onRetry={() => telemetryAlerts.refetch()} />
               ) : alerts.length === 0 ? (
-                <EmptyState title="No open alerts" subtitle="No telematics alerts are currently open across the fleet." />
+                <EmptyState title="No open alert records" subtitle="The current authorized result contains no open telematics alert records." />
               ) : (
                 alerts.slice(0, 8).map((a, i) => <AlertRow key={String(a.id ?? i)} alert={a} />)
               )}
@@ -393,8 +399,8 @@ export function FleetIntelligencePage() {
               ) : healthSummary.isError ? (
                 <ErrorState message="Fleet-health summary unavailable." onRetry={() => healthSummary.refetch()} />
               ) : healthInsights.length === 0 ? (
-                <EmptyState title="All clear"
-                  subtitle="Fleet health metrics are within normal operating range. No urgent actions required." />
+                <EmptyState title="No fleet-health insight available"
+                  subtitle="No data-driven fleet-health insight can be produced from the current records." />
               ) : (
                 healthInsights.map((ins, i) => <AlertRow key={i} alert={ins} />)
               )}
@@ -406,7 +412,7 @@ export function FleetIntelligencePage() {
             <SectionHeader icon={<Camera className="h-4 w-4" />} title="Connectivity" to={LINKS.sensors} cta="Devices" />
             <div className="mt-3 grid grid-cols-2 gap-2.5">
               {[
-                { label: "Live Units", value: pick(teleKpis, "liveUnits") ?? "--" },
+                { label: "Recent Telemetry", value: pick(teleKpis, "liveUnits") ?? "--" },
                 { label: "Device Offline", value: pick(teleKpis, "deviceOfflineUnits") ?? "--" },
                 { label: "Camera feed", value: pick(teleKpis, "cameraOfflineUnits") ?? "Not connected" },
                 { label: "DVIR Today", value: pick((dvirSummary.data ?? {}) as AnyRecord, "inspections_today") ?? "--" },

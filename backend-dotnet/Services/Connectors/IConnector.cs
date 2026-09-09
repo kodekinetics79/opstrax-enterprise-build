@@ -18,10 +18,14 @@ namespace Opstrax.Api.Services.Connectors;
 public sealed record ConnectorResult(
     bool Success,
     string Message,
-    IReadOnlyDictionary<string, object?>? Details = null)
+    IReadOnlyDictionary<string, object?>? Details = null,
+    string? ProviderAccountReference = null)
 {
-    public static ConnectorResult Ok(string message, IReadOnlyDictionary<string, object?>? details = null)
-        => new(true, message, details);
+    public static ConnectorResult Ok(
+        string message,
+        IReadOnlyDictionary<string, object?>? details = null,
+        string? providerAccountReference = null)
+        => new(true, message, details, providerAccountReference);
     public static ConnectorResult Fail(string message, IReadOnlyDictionary<string, object?>? details = null)
         => new(false, message, details);
 }

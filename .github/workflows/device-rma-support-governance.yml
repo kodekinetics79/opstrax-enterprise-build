@@ -1,0 +1,84 @@
+name: DeviceOps RMA support governance
+
+on:
+  pull_request:
+    paths: &paths
+      - 'backend-dotnet/Controllers/DeviceRmaSupportEndpoints.cs'
+      - 'backend-dotnet/Controllers/EndpointMappings.cs'
+      - 'backend-dotnet/Services/DeviceRmaSupportPolicy.cs'
+      - 'backend-dotnet/Services/TelemetrySchemaService.cs'
+      - 'backend-dotnet.Tests/DeviceRmaSupportContractTests.cs'
+      - 'backend-dotnet.Tests/DeviceRmaSupportPolicyTests.cs'
+      - 'backend-dotnet.Tests/DeviceRmaSupportPostgresTests.cs'
+      - 'database/migrations/2026_09_07_stage124_rma_support_ownership.sql'
+      - 'tools/apply-neon-predeploy-migrations.sh'
+      - 'tools/test-predeploy-clean-chain.sh'
+      - 'frontend/src/pages/IotDevicesPage.tsx'
+      - 'frontend/src/services/telematicsService.ts'
+      - 'frontend/scripts/test-device-rma-support-contract.mjs'
+      - 'frontend/package.json'
+      - '.github/workflows/device-rma-support-governance.yml'
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: device-rma-support-governance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  accountable-support-routing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17@sha256:a426e44bac0b759c95894d68e1a0ac03ecc20b619f498a91aae373bf06d8508d
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: opstrax_deviceops_stage124
+        ports:
+          - 55449:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d opstrax_deviceops_stage124"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      OPSTRAX_DEVICEOPS_STAGE124_DB: Host=127.0.0.1;Port=55449;Database=opstrax_deviceops_stage124;Username=postgres;Password=postgres
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Build dedicated RMA support database
+        run: |
+          psql -h 127.0.0.1 -p 55449 -U postgres -d opstrax_deviceops_stage124 -v ON_ERROR_STOP=1 -f database/init/001_schema.sql
+          psql -h 127.0.0.1 -p 55449 -U postgres -d opstrax_deviceops_stage124 -v ON_ERROR_STOP=1 -f database/migrations/2026_07_02_stage23_schema_migration_ledger.sql
+          psql -h 127.0.0.1 -p 55449 -U postgres -d opstrax_deviceops_stage124 -v ON_ERROR_STOP=1 -f backend-dotnet.Tests/Fixtures/device_connectivity_test_prerequisites.sql
+          psql -h 127.0.0.1 -p 55449 -U postgres -d opstrax_deviceops_stage124 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql
+          psql -h 127.0.0.1 -p 55449 -U postgres -d opstrax_deviceops_stage124 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage118_device_rma_replacement.sql
+          psql -h 127.0.0.1 -p 55449 -U postgres -d opstrax_deviceops_stage124 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage124_rma_support_ownership.sql
+      - name: Verify repeat-safe migration
+        run: psql -h 127.0.0.1 -p 55449 -U postgres -d opstrax_deviceops_stage124 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage124_rma_support_ownership.sql
+      - name: Run policy, contract, and PostgreSQL tests
+        run: >-
+          dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj
+          --filter "FullyQualifiedName~DeviceRmaSupportPolicyTests|FullyQualifiedName~DeviceRmaSupportContractTests|FullyQualifiedName~DeviceRmaSupportPostgresTests"
+          --logger "console;verbosity=minimal"
+      - name: Verify customer RMA support truth
+        run: npm --prefix frontend run test:device-rma-support
+      - name: Build customer device surface
+        run: npm --prefix frontend run build

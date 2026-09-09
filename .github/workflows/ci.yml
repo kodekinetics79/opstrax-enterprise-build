@@ -447,18 +447,19 @@ jobs:
           kill "$(cat /tmp/api.pid)" 2>/dev/null || true; sleep 2; kill -9 "$(cat /tmp/api.pid)" 2>/dev/null || true
           [ "$ok" = 1 ] || { echo "app never reported listening — boot log tail:"; tail -40 /tmp/api_boot.log; exit 1; }
           echo "tables after init: $(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")"
-      - name: Reapply mandatory terminal tenant and telemetry boundaries after schema materialization
+      - name: Reapply mandatory terminal and migration-owned boundaries after schema materialization
+        env:
+          NEON_PG_URI: postgresql://zayra:zayra@127.0.0.1:5433/opstrax_local?sslmode=disable
         run: |
-          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
-            -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
-          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
-            -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
-          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
-            -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
-          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
-            -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+          # Stage58/76 rebuild generic tenant grants. The production runner then
+          # restores every narrower late-slice ACL and applies Stage132 last.
+          # Reuse that ordered reconciliation here so CI cannot finish with the
+          # DeviceOps or private-user boundaries widened by a terminal replay.
+          ./tools/apply-neon-predeploy-migrations.sh
           test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[]")" = "0"
           test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM schema_migrations WHERE version='2026_08_11_stage76_telematics_security_hardening'")" = "1"
+          test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM schema_migrations WHERE version='2026_09_08_stage132_private_user_row_authority'")" = "1"
+          test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT opstrax_security.private_policy_contract_valid() AND opstrax_security.migration_owned_policy_contract_valid()")" = "t"
           test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT has_table_privilege('opstrax_app','eld_devices','SELECT') OR has_column_privilege('opstrax_app','eld_devices','api_key_hash','SELECT') OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','SELECT')")" = "f"
           test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid=d.defaclnamespace CROSS JOIN LATERAL aclexplode(d.defaclacl) a LEFT JOIN pg_roles r ON r.oid=a.grantee WHERE (d.defaclnamespace=0 OR n.nspname='public') AND d.defaclobjtype IN ('r','S') AND (a.grantee=0 OR r.rolname IN ('opstrax_app','opstrax_system'))")" = "0"
           psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q <<'SQL'
@@ -522,7 +523,11 @@ jobs:
           NEON_PG_URI: postgresql://zayra:zayra@127.0.0.1:5433/opstrax_local?sslmode=disable
         run: bash ./tools/apply-canada-ksa-hos-shadow-predeploy.sh
       - name: Run DB-backed integration suites
-        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName~Postgres|Category=Integration"
+        # DeviceOps and camera suites with their own disposable database are
+        # enforced by their dedicated workflows. Keep them out of this shared
+        # schema lane so a missing specialist DB is not reported as a product
+        # failure by xUnit's runtime-skip compatibility path.
+        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "(FullyQualifiedName~Postgres|Category=Integration)&Lane!=DedicatedDatabase"
 
   # A release migration must work from the real predecessor baseline without
   # startup schema materialization masking a missing owner migration. This job

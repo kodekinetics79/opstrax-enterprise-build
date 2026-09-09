@@ -114,10 +114,10 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
         }
       />
       <div className="grid gap-4 md:grid-cols-4">
-        <KpiCard label="Records" value={records.length} icon={<Icon />} status="Active" />
-        <KpiCard label="Open / Active" value={String(query.data?.summary?.active ?? records.filter((x) => String(x.status).match(/open|active|progress/i)).length)} icon={<ShieldCheck />} status="Healthy" />
+        <KpiCard label="Records" value={records.length} icon={<Icon />} status="Recorded" />
+        <KpiCard label="Open / Active" value={String(query.data?.summary?.active ?? records.filter((x) => String(x.status).match(/open|active|progress/i)).length)} icon={<ShieldCheck />} />
         <KpiCard label="Risk Items" value={String(query.data?.summary?.riskItems ?? records.filter((x) => String(x.riskLevel).match(/high|critical/i)).length)} icon={<Target />} status="Review" />
-        <KpiCard label="Fleet Insights" value={query.data?.insights?.length || 0} icon={<Bot />} status="Recommended" />
+        <KpiCard label="Recorded Insights" value={query.data?.insights?.length || 0} icon={<Bot />} status="Recorded" />
       </div>
       <FilterBar
         options={["All", "Active", "At Risk", "Completed", "Pending"]}
@@ -128,7 +128,11 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
         <DataTable rows={displayRecords} columns={columns} onSelect={setSelected} />
         <div className="space-y-4">
           {(query.data?.insights || []).slice(0, 3).map((insight) => <AiInsightCard key={String(insight.id)} insight={insight} />)}
-          {!query.data?.insights?.length ? <AiInsightCard insight={{ title: `${module.title} insights`, body: "Operational recommendations will surface as live events and data flow through this module." }} /> : null}
+          {!query.data?.insights?.length ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-5 text-sm text-slate-500">
+              No recorded recommendations are available for this module.
+            </div>
+          ) : null}
         </div>
       </div>
       <DetailDrawer record={selected} onClose={() => setSelected(null)} />

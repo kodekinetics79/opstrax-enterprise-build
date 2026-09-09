@@ -36,6 +36,12 @@ public sealed class CoreFleetUtilizationRegressionTests
         Assert.Contains("trip_hours_30d_estimated_open", handlers);
         Assert.Contains("/ 240.0 * 100", handlers);
         Assert.Contains("utilization_basis", handlers);
+        Assert.Contains("QualifiedUtilizationTripSql", handlers);
+        Assert.Contains("no_qualified_trip_evidence", handlers);
+        Assert.Contains("NULL::numeric readiness_score", handlers);
+        Assert.Contains("NULL::numeric risk_score", handlers);
+        Assert.DoesNotContain("v.readiness_score", handlers);
+        Assert.DoesNotContain("v.risk_score", handlers);
         Assert.DoesNotContain("WHEN 'On Route'  THEN LEAST(98", handlers);
     }
 
@@ -45,10 +51,16 @@ public sealed class CoreFleetUtilizationRegressionTests
         var page = Read("frontend", "src", "pages", "FleetUtilizationPage.tsx");
         Assert.Contains("30-day utilization", page);
         Assert.Contains("240-hour operating baseline", page);
-        Assert.Contains("hasUtilizationEvidence && fuelCost", page);
-        Assert.Contains("hasUtilizationEvidence && utilization <= 35", page);
-        Assert.Contains("lack trip-hour evidence", page);
+        Assert.Contains("qualifiedTrips && qualifiedFuelEvidence", page);
+        Assert.Contains("qualifiedTrips && utilization !== null", page);
+        Assert.Contains("qualified trip-hour evidence", page);
         Assert.Contains("open trip(s) estimated and capped at 24h", page);
+        Assert.Contains("An empty queue does not prove", page);
+        Assert.Contains("readiness evidence unavailable", page);
+        Assert.DoesNotContain("deployabilityScore", page);
+        Assert.DoesNotContain("riskScore", page);
+        Assert.DoesNotContain("Export live view", page);
+        Assert.DoesNotContain("No idle drag detected", page);
     }
 
     [Fact]

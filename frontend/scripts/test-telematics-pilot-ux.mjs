@@ -24,7 +24,7 @@ assert.match(command, /canViewGeofences = hasPermission\("map:view"\)/, "Geofenc
 assert.match(command, /kind === "gps-tracking"[\s\S]*navigate\("\/geofences"\)[\s\S]*Manage Geofences/, "GPS exposes geofence management");
 assert.match(service, /serialNumber: device\.serialNumber/, "GPS cluster retains the immutable serial for same-model device uniqueness");
 assert.match(command, /row\.serialNumber[\s\S]*row\.deviceName/, "GPS renders serial prominently and model secondarily");
-assert.match(command, /"obd-j1939"[\s\S]*columns: \["serialNumber", "vehicleCode", "deviceName"/, "OBD/J1939 table leads with immutable device serial");
+assert.match(command, /"obd-j1939"[\s\S]*columns: \["serialNumber", "vehicleCode"/, "OBD/J1939 table leads with immutable device serial");
 assert.match(command, /canViewDevices = hasPermission\(PERMISSIONS\.TELEMATICS_DEVICES_VIEW\)[\s\S]*canViewVehicles = hasPermission\(PERMISSIONS\.VEHICLES_VIEW\)[\s\S]*canViewJobs = hasDirectPermission\(PERMISSIONS\.SHIPMENTS_VIEW\)[\s\S]*canViewMap = hasPermission\(PERMISSIONS\.TELEMETRY_LIVE_STATE_READ\)/, "Telemetry drilldown controls follow their destination permissions");
 assert.match(command, /Device serial", row\.serialNumber[\s\S]*Device model", row\.deviceName/, "Telemetry detail keeps immutable serial primary and model secondary");
 assert.match(controlTower, /device: device\.serialNumber, model: device\.deviceName/, "Control Tower separates immutable serial from display model");
@@ -68,7 +68,7 @@ assert.match(service, /device-installations\/import-commit[\s\S]*timeout: 120000
 assert.match(importer, /action: "create" \| "update" \| "skip" \| "error"/, "Already-recorded rows have a neutral preview state");
 assert.match(importer, /config\.atomic === true && invalid > 0/, "Atomic imports cannot commit a known-invalid preview");
 assert.match(command, /exportTelemetryClusterCsv\(kind,[\s\S]*Export every authorized row matching the current search and filter/, "Paged export fetches the complete authorized result set");
-assert.match(devices, /Revoke & Archive[\s\S]*Use Suspend for a reversible stop/, "Permanent credential revocation is not mislabeled as reversible archive");
+assert.match(devices, /Retire device[\s\S]*Records software retirement[\s\S]*Physical disposition remains unverified/, "Permanent credential revocation is presented as governed software retirement without a physical claim");
 
 assert.match(service, /pageSize: 10_000[\s\S]*purpose: "export"[\s\S]*new Set\(identities\)\.size[\s\S]*exportComplete/, "Cluster export uses one bounded snapshot and fails closed on duplicate or incomplete identities");
 assert.match(service, /purpose: "export"/, "Cluster export declares its server-enforced export purpose");

@@ -50,7 +50,24 @@ public sealed class RlsReconciliationSchemaService(Database db)
                 'gps_gateway_replay',
                 -- Nullable global templates/catalog rows require Stage-58's split
                 -- SELECT versus mutation policies and must not be generically replaced.
-                'roles', 'report_catalog'
+                'roles', 'report_catalog',
+                -- Stage132 owns command-specific user/recipient policies. A generic
+                -- tenant policy here would silently reopen same-tenant private rows.
+                'mobile_device_tokens', 'user_notification_prefs', 'password_reset_tokens',
+                'user_mfa_status', 'user_locale_preferences', 'telemetry_stream_ticket_nonces',
+                'user_sessions', 'mfa_login_challenge_consumptions', 'notification_recipients',
+                'alert_notification_deliveries', 'report_execution_log', 'saved_reports',
+                'scheduled_reports', 'messaging_conversations', 'messaging_messages', 'coaching_notes',
+                -- DeviceOps evidence/projection tables have migration-owned read-only
+                -- application policies and narrower system verb grants.
+                'camera_provider_event_inbox', 'camera_provider_media_references',
+                'device_installation_artifact_references', 'device_installation_checklist_observations',
+                'device_installation_work_package_links', 'device_installation_work_packages',
+                'device_command_capabilities', 'device_connectivity_observations', 'device_connectivity_profiles',
+                'device_firmware_campaign_targets', 'device_firmware_campaigns', 'device_retirement_records',
+                'device_rma_cases', 'device_rma_events', 'device_rma_replacements', 'device_rma_support_actions',
+                'device_spare_pool_entries', 'device_spare_pool_events', 'device_support_tier_events',
+                'latest_device_signals', 'telematics_device_commands'
             ];
         BEGIN
             -- Owner-capable development boot may precede the mandatory terminal

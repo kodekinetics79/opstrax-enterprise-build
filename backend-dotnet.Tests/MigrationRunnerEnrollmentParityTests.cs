@@ -255,6 +255,7 @@ public sealed class MigrationRunnerEnrollmentParityTests
         "2026_07_31_stage58_nonforgeable_tenant_ticket",
         "2026_07_31_stage59_data_protection_key_ring",
         "2026_08_11_stage76_telematics_security_hardening",
+        "2026_09_08_stage132_private_user_row_authority",
     ];
 
     // Applied out-of-band BEFORE the runner: the CI integration job (and a dev box)

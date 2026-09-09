@@ -18,6 +18,7 @@
     <ProjectReference Include="..\..\src\Opstrax.Telematics.Gateway\Opstrax.Telematics.Gateway.csproj" />
     <ProjectReference Include="..\..\src\Opstrax.Telematics.Contracts\Opstrax.Telematics.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Opstrax.Telematics.Protocols.Gt06\Opstrax.Telematics.Protocols.Gt06.csproj" />
+    <ProjectReference Include="..\..\src\Opstrax.Telematics.Protocols.J1939\Opstrax.Telematics.Protocols.J1939.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -477,6 +477,68 @@ public class RevenueReadinessPostgresTests
     }
 
     [Fact]
+    public async Task PaymentLedger_RejectsUnsupportedClaims_AndListsOnlyPersistedPayments()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyId = await SeedCompanyAsync(db);
+        var otherCompanyId = await SeedCompanyAsync(db);
+        var customerId = await SeedCustomerAsync(db, companyId, "customer-payment-evidence");
+        var otherCustomerId = await SeedCustomerAsync(db, otherCompanyId, "customer-payment-hidden");
+        var invoiceId = await SeedIssuedInvoiceAsync(db, companyId, customerId, "INV-PAY-EVIDENCE", 100m, 0m, 100m, "unpaid", 2, 15);
+        var hiddenInvoiceId = await SeedIssuedInvoiceAsync(db, otherCompanyId, otherCustomerId, "INV-PAY-HIDDEN", 75m, 0m, 75m, "unpaid", 1, 15);
+        var service = CreateRevenueService(db);
+
+        await Assert.ThrowsAsync<InvoicePaymentValidationException>(() =>
+            service.RecordInvoicePaymentAsync(companyId, invoiceId, 10m, "CAD", "PAY-WRONG-CURRENCY", "manual"));
+        await Assert.ThrowsAsync<InvoicePaymentValidationException>(() =>
+            service.RecordInvoicePaymentAsync(companyId, invoiceId, 101m, "USD", "PAY-OVER", "manual"));
+
+        var first = await service.RecordInvoicePaymentAsync(companyId, invoiceId, 40m, "usd", " PAY-EVIDENCE-1 ", "manual");
+        Assert.NotNull(first);
+        Assert.Equal("USD", first!.Currency);
+        Assert.Equal("PAY-EVIDENCE-1", first.PaymentReference);
+        await Assert.ThrowsAsync<InvoicePaymentValidationException>(() =>
+            service.RecordInvoicePaymentAsync(companyId, invoiceId, 10m, "USD", "PAY-EVIDENCE-1", "manual"));
+
+        Assert.NotNull(await service.RecordInvoicePaymentAsync(otherCompanyId, hiddenInvoiceId, 75m, "USD", "PAY-HIDDEN", "manual"));
+        var visible = await service.ListInvoicePaymentsAsync(companyId);
+        var payment = Assert.Single(visible);
+        Assert.Equal(invoiceId, payment.IssuedInvoiceId);
+        Assert.Equal("INV-PAY-EVIDENCE", payment.InvoiceNumber);
+        Assert.Equal("Recorded", payment.RecordStatus);
+        Assert.False(payment.ProviderSettlementClaim);
+        Assert.DoesNotContain(visible, row => row.PaymentReference == "PAY-HIDDEN");
+
+        await db.ExecuteAsync(
+            @"INSERT INTO expenses
+                (company_id, expense_number, category, title, category_name, amount, currency,
+                 expense_date, customer_id, status, approval_status, receipt_status)
+              VALUES (@companyId, 'EXP-EVIDENCE-1', 'Customer Delivery', 'Recorded delivery cost',
+                      'Customer Delivery', 25, 'USD', CURRENT_DATE, @customerId,
+                      'Approved', 'Approved', 'Uploaded')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@customerId", customerId);
+            });
+        var profitability = await service.ListProfitabilityEvidenceAsync(companyId);
+        var margin = Assert.Single(profitability);
+        Assert.Equal(100m, margin.RevenueEstimate);
+        Assert.Equal(25m, margin.TotalCost);
+        Assert.Equal(75m, margin.GrossMargin);
+        Assert.Equal(75m, margin.GrossMarginPercent);
+        Assert.Equal("issued_invoices+approved_expenses", margin.DataOrigin);
+
+        Assert.Equal(1, await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM invoice_payments WHERE company_id=@companyId",
+            c => c.Parameters.AddWithValue("@companyId", companyId)));
+
+        await CleanupTenantAsync(db, companyId);
+        await CleanupTenantAsync(db, otherCompanyId);
+    }
+
+    [Fact]
     public async Task InvoiceIssue_WithoutApproval_ReturnsApprovalRequired()
     {
         var db = CreateDatabase();
@@ -606,21 +668,33 @@ public class RevenueReadinessPostgresTests
         Assert.Equal(250.00m, byType["completed_job_no_charge"].DetectedAmount); // rate card minimum_charge
         Assert.Equal(job1, byType["completed_job_no_charge"].EntityId);
         Assert.Equal(475.25m, byType["stale_draft_charge"].DetectedAmount); // draft charge amount
+        Assert.Equal("USD", byType["stale_draft_charge"].Currency);
+        Assert.Equal("Recorded", byType["stale_draft_charge"].AmountEvidenceStatus);
+        Assert.Equal("runtime_detector", byType["stale_draft_charge"].DataOrigin);
+        Assert.Equal("Open", byType["stale_draft_charge"].Status);
         Assert.Equal(draftCharge.Id, byType["stale_draft_charge"].EntityId);
 
         // Correctly-billed job produced nothing.
         Assert.DoesNotContain(outcome.Signals, s => s.EntityType == "job" && s.EntityId == job3);
         // Persisted to cost_leakage_items — exactly 2 open signals for this tenant.
         Assert.Equal(2, await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM cost_leakage_items WHERE company_id=@c AND status='open' AND category IN ('completed_job_no_charge','stale_draft_charge')",
+            "SELECT COUNT(*) FROM cost_leakage_items WHERE company_id=@c AND LOWER(status)='open' AND data_origin='runtime_detector' AND category IN ('completed_job_no_charge','stale_draft_charge')",
             c => c.Parameters.AddWithValue("@c", companyId)));
 
-        // Idempotent: re-running creates no duplicates.
+        // Idempotent: re-running creates no duplicates, preserves workflow state, and repairs
+        // evidence metadata on a legacy runtime row instead of silently hiding it from the queue.
+        await db.ExecuteAsync(
+            @"UPDATE cost_leakage_items
+                 SET status='Acknowledged', currency=NULL, data_origin=NULL, amount_evidence_status=NULL
+               WHERE company_id=@c AND category='stale_draft_charge'",
+            c => c.Parameters.AddWithValue("@c", companyId));
         var rerun = await service.DetectRevenueLeakageAsync(companyId, 7);
         Assert.Equal(0, rerun.SignalsCreated);
         Assert.Equal(2, rerun.SignalsAlreadyOpen);
+        Assert.Equal("Acknowledged", rerun.Signals.Single(s => s.SignalType == "stale_draft_charge").Status);
+        Assert.Equal("USD", rerun.Signals.Single(s => s.SignalType == "stale_draft_charge").Currency);
         Assert.Equal(2, await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM cost_leakage_items WHERE company_id=@c AND status='open'",
+            "SELECT COUNT(*) FROM cost_leakage_items WHERE company_id=@c AND LOWER(status) IN ('open','acknowledged') AND data_origin='runtime_detector' AND amount_evidence_status='Recorded'",
             c => c.Parameters.AddWithValue("@c", companyId)));
 
         await db.ExecuteAsync("DELETE FROM cost_leakage_items WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
@@ -847,6 +921,8 @@ public class RevenueReadinessPostgresTests
         await new BusinessSpineSchemaService(db).EnsureAsync();
         await new RevenueReadinessSchemaService(db).EnsureAsync();
         await new FinanceActivationSchemaService(db).EnsureAsync();
+        await new TaxSchemaService(db).EnsureAsync();
+        await new BillingProfileSchemaService(db).EnsureAsync();
     }
 
     private static async Task ApplyBaseSchemaAsync(Database db)
@@ -893,6 +969,15 @@ ON CONFLICT (id) DO UPDATE SET
         await db.ExecuteAsync("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS contract_id BIGINT NULL");
         await db.ExecuteAsync("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS job_number VARCHAR(60) NULL");
         await db.ExecuteAsync("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NULL");
+        await db.ExecuteAsync("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vin_exception_type VARCHAR(80) NULL");
+        await db.ExecuteAsync("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS alternate_identifier VARCHAR(120) NULL");
+        await db.ExecuteAsync("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_number VARCHAR(80) NULL");
+        await db.ExecuteAsync("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS category_name VARCHAR(120) NULL");
+        await db.ExecuteAsync("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS currency VARCHAR(10) NOT NULL DEFAULT 'USD'");
+        await db.ExecuteAsync("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS customer_id BIGINT NULL");
+        await db.ExecuteAsync("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approval_status VARCHAR(80) NOT NULL DEFAULT 'Pending'");
+        await db.ExecuteAsync("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_status VARCHAR(80) NOT NULL DEFAULT 'Missing'");
+        await db.ExecuteAsync("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL");
 
         await db.ExecuteAsync(@"
 INSERT INTO drivers (id, company_id, driver_code, full_name, phone, email, license_number, status, safety_score, readiness_score, risk_score, compliance_score, assigned_vehicle_id)
@@ -1001,6 +1086,7 @@ ON CONFLICT DO NOTHING");
 
     private static async Task CleanupTenantAsync(Database db, long companyId)
     {
+        await db.ExecuteAsync("DELETE FROM expenses WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM invoice_payments WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM issued_invoice_lines WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM issued_invoices WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));

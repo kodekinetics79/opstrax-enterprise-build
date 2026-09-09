@@ -13,7 +13,8 @@ namespace Opstrax.Telematics.Contracts.Identity;
 /// trivially spoofable. For those devices the "trust" that remains is <em>not</em> proof
 /// of identity; it is a defence-in-depth stack: explicit provisioning + IMEI allowlist +
 /// optional source-IP / SIM pinning + durable replay/sequence defence + behavioural
-/// trust-scoring + quarantine on anomaly. Use <see cref="ProvidesCryptographicDeviceAuth"/>
+/// trust-scoring + quarantine on anomaly. Use
+/// <see cref="DeviceAuthModeExtensions.ProvidesCryptographicDeviceAuth(DeviceAuthMode)"/>
 /// to branch on this rather than hard-coding assumptions.
 /// </para>
 /// </remarks>

@@ -582,19 +582,23 @@ public sealed class PostgresAiFoundationService(Database db, ICorrelationContext
         return run with { Status = "failed", ErrorJson = errorJson, CompletedAt = completedAt };
     }
 
-    public AiRecommendationRecord CreateRecommendation(string tenantId, string recommendationType, string title, string summary, decimal confidenceScore, decimal urgencyScore, string impactJson, string reasonJson, string proposedActionJson, string riskLevel, string? sourceEventId = null, string? actorType = null, string? actorId = null, string status = "draft")
+    public AiRecommendationRecord CreateRecommendation(string tenantId, string recommendationType, string title, string summary, decimal confidenceScore, decimal urgencyScore, string impactJson, string reasonJson, string proposedActionJson, string riskLevel, string? sourceEventId = null, string? actorType = null, string? actorId = null, string status = "draft", string? moduleKey = null)
     {
         var createdAt = DateTimeOffset.UtcNow;
+        var effectiveModuleKey = string.IsNullOrWhiteSpace(moduleKey)
+            ? "fleet.foundation"
+            : moduleKey.Trim();
         var row = db.QuerySingleAsync(
             @"INSERT INTO ai_recommendations
-                (company_id, tenant_id, recommendation_type, title, summary, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, source_event_id, actor_type, actor_id, created_at, correlation_id, causation_id)
+                (company_id, tenant_id, recommendation_type, module_key, title, summary, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, source_event_id, actor_type, actor_id, created_at, correlation_id, causation_id)
               VALUES
-                (@tenantId::bigint, @tenantId, @recommendationType, @title, @summary, @confidenceScore, @urgencyScore, COALESCE(@impact::jsonb, '{}'::jsonb), COALESCE(@reason::jsonb, '{}'::jsonb), COALESCE(@proposal::jsonb, '{}'::jsonb), @riskLevel, @status, @sourceEventId, @actorType, @actorId, @createdAt, @correlationId, @causationId)
+                (@tenantId::bigint, @tenantId, @recommendationType, @moduleKey, @title, @summary, @confidenceScore, @urgencyScore, COALESCE(@impact::jsonb, '{}'::jsonb), COALESCE(@reason::jsonb, '{}'::jsonb), COALESCE(@proposal::jsonb, '{}'::jsonb), @riskLevel, @status, @sourceEventId, @actorType, @actorId, @createdAt, @correlationId, @causationId)
               RETURNING id",
             c =>
             {
                 c.Parameters.AddWithValue("@tenantId", FoundationPersistenceHelpers.RequireTenantId(tenantId));
                 c.Parameters.AddWithValue("@recommendationType", recommendationType);
+                c.Parameters.AddWithValue("@moduleKey", effectiveModuleKey);
                 c.Parameters.AddWithValue("@title", title);
                 c.Parameters.AddWithValue("@summary", summary);
                 c.Parameters.AddWithValue("@confidenceScore", confidenceScore);

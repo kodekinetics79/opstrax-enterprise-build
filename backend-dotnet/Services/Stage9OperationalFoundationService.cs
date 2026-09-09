@@ -297,12 +297,13 @@ public sealed class Stage9OperationalFoundationService(
             @"INSERT INTO dispatch_assignments
                 (company_id,branch_id,job_id,trip_id,vehicle_id,driver_id,match_score,
                  assignment_status,status,assigned_by_user_id,assigned_at,acceptance_due_at,
-                 eligibility_json,notes)
+                 eligibility_json,notes,data_origin,verification_status)
               VALUES (@companyId,@branchId,@jobId,@tripId,@vehicleId,@driverId,@score,
                       'assigned','Assigned',@actor,NOW(),NOW()+INTERVAL '10 minutes',
                       jsonb_build_object('source','smart_assignment','recommendationId',@recommendationId,
                                          'riskLevel',@riskLevel,'score',@rawScore),
-                      'Created from accepted smart-assignment recommendation')",
+                      'Created from accepted smart-assignment recommendation',
+                      'user_workflow','recorded_by_authenticated_actor')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -557,7 +558,8 @@ public sealed class Stage9OperationalFoundationService(
                 requirementId.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.System,
                 "stage9-service",
-                status: "active");
+                status: "active",
+                moduleKey: "dispatch");
         }
 
         return await LoadByIdAsync("site_access_requirements", companyId, requirementId, ct);
@@ -621,7 +623,8 @@ public sealed class Stage9OperationalFoundationService(
                 id.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.System,
                 "stage9-service",
-                status: "active");
+                status: "active",
+                moduleKey: "dispatch");
         }
 
         return updated;
@@ -1264,7 +1267,8 @@ public sealed class Stage9OperationalFoundationService(
                 id.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.System,
                 "stage9-service",
-                status: "active");
+                status: "active",
+                moduleKey: "proof-of-delivery");
 
             return new(false, "Proof package requires at least one artifact or an exception note");
         }
@@ -1382,7 +1386,8 @@ public sealed class Stage9OperationalFoundationService(
                 id.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.System,
                 "stage9-service",
-                status: "active");
+                status: "active",
+                moduleKey: "proof-of-delivery");
         }
 
         var confidenceScore = hardBlocked ? 0.35m : Math.Min(0.98m, 0.55m + (artifactCount * 0.1m) + (blockers.Count == 0 ? 0.2m : 0m));
@@ -1806,6 +1811,7 @@ public sealed class Stage9OperationalFoundationService(
                   FROM ai_recommendations
                   WHERE company_id=@companyId
                     AND module_key IN ('dispatch', 'control-tower', 'command-center')
+                    " + EndpointMappings.GroundedRecommendationSql + @"
                   ORDER BY id DESC
                   LIMIT 1",
                 c => c.Parameters.AddWithValue("@companyId", companyId), ct);

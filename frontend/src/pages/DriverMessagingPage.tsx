@@ -4,14 +4,14 @@ import { Download, MessageCircle, MessageSquare, Radio, Send, Users, X } from "l
 import { ErrorState, KpiCard, LoadingState, PageHeader, StatusBadge, exportCsv } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { apiClient, unwrap } from "@/services/apiClient";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import type { AnyRecord } from "@/types";
 
 const TABS = ["Compose", "History", "Templates", "Broadcasts"] as const;
 type Tab = typeof TABS[number];
 
 async function fetchMessages(): Promise<AnyRecord[]> {
-  const res = await apiClient.get("/api/driver-messages");
-  return (res.data as AnyRecord[]) ?? [];
+  return unwrap<AnyRecord[]>(apiClient.get("/api/driver-messages"));
 }
 
 async function fetchDrivers(): Promise<AnyRecord[]> {
@@ -29,8 +29,8 @@ const MESSAGE_TEMPLATES = [
   { id: "docs",     category: "Compliance", title: "Document request",      body: "We need updated documents on file. Please upload your latest license and medical certificate in the driver app." },
 ];
 
-async function sendMessage(payload: AnyRecord) { return apiClient.post("/api/driver-messages", payload); }
-async function broadcastMessage(payload: AnyRecord) { return apiClient.post("/api/driver-messages/broadcast", payload); }
+async function sendMessage(payload: AnyRecord) { return unwrap<AnyRecord>(apiClient.post("/api/driver-messages", payload)); }
+async function broadcastMessage(payload: AnyRecord) { return unwrap<AnyRecord>(apiClient.post("/api/driver-messages/broadcast", payload)); }
 
 const CHANNEL_COLOR: Record<string, string> = {
   "In-App":    "border-blue-200 bg-blue-50 text-blue-700",
@@ -48,12 +48,12 @@ const TEMPLATE_CAT_COLOR: Record<string, string> = {
 
 export function DriverMessagingPage() {
   const hasPermission = useHasPermission();
-  const canSend = hasPermission("dispatch:update") || hasPermission("dispatch:assign") || hasPermission("users:manage");
+  const canSend = hasPermission("dispatch:manage");
   const [tab, setTab] = useState<Tab>("Compose");
-  const [composeForm, setComposeForm] = useState({ recipient: "", channel: "In-App", subject: "", body: "" });
+  const [composeForm, setComposeForm] = useState({ recipientId: "", channel: "In-App", subject: "", body: "" });
   const [broadcastForm, setBroadcastForm] = useState({ group: "All Active Drivers", subject: "", body: "" });
-  const [sent, setSent] = useState(false);
-  const [sentBroadcast, setSentBroadcast] = useState(false);
+  const [sendNotice, setSendNotice] = useState("");
+  const [broadcastNotice, setBroadcastNotice] = useState("");
   const qc = useQueryClient();
 
   const messagesQ = useQuery({ queryKey: ["driver-messages"], queryFn: fetchMessages });
@@ -63,28 +63,28 @@ export function DriverMessagingPage() {
 
   const sendMut = useMutation({
     mutationFn: sendMessage,
-    onSuccess: () => {
-      setComposeForm({ recipient: "", channel: "In-App", subject: "", body: "" });
-      setSent(true);
-      setTimeout(() => setSent(false), 3000);
+    onSuccess: (result) => {
+      setComposeForm({ recipientId: "", channel: "In-App", subject: "", body: "" });
+      setSendNotice(`${String(result.recordStatus ?? "Recorded In-App")}. Delivery outside the in-app conversation is not claimed.`);
       qc.invalidateQueries({ queryKey: ["driver-messages"] });
     },
+    onError: () => setSendNotice(""),
   });
   const broadcastMut = useMutation({
     mutationFn: broadcastMessage,
-    onSuccess: () => {
+    onSuccess: (result) => {
       setBroadcastForm({ group: "All Active Drivers", subject: "", body: "" });
-      setSentBroadcast(true);
-      setTimeout(() => setSentBroadcast(false), 3000);
+      setBroadcastNotice(`Recorded in ${String(result.recipientCount ?? 0)} authorized in-app inboxes.`);
       qc.invalidateQueries({ queryKey: ["driver-messages"] });
     },
+    onError: () => setBroadcastNotice(""),
   });
 
-  const deliveredCount = messages.filter((m) => String(m.status) === "Delivered").length;
-  const readCount      = messages.filter((m) => String(m.status) === "Read").length;
+  const recipientCount = messages.reduce((sum, m) => sum + Number(m.recipients ?? 0), 0);
+  const readCount      = messages.reduce((sum, m) => sum + Number(m.reads ?? 0), 0);
   const replyCount     = messages.reduce((s, m) => s + Number(m.replies ?? 0), 0);
   const broadcasts = messages.filter((m) => String(m.channel) === "Broadcast");
-  const broadcastCount = broadcasts.length;
+  const broadcastCount = broadcasts.filter((m) => Number(m.recipients ?? 0) > 0).length;
 
   if (messagesQ.isLoading) return <LoadingState />;
   if (messagesQ.isError) return <ErrorState message="Unable to load driver messages." />;
@@ -103,7 +103,7 @@ export function DriverMessagingPage() {
       <PageHeader
         eyebrow="Driver Messaging"
         title="Direct communication with your fleet"
-        description="Send individual messages, dispatch instructions, safety alerts and broadcast announcements to drivers via in-app, SMS and push channels."
+        description="Record individual conversations and broadcasts in authorized driver in-app inboxes, with persisted read and reply evidence."
         actions={
           <>
             <button type="button" className="btn-primary" onClick={() => setTab("Compose")}><Send className="h-4 w-4" /> New Message</button>
@@ -114,10 +114,10 @@ export function DriverMessagingPage() {
 
       {/* KPIs */}
       <div className="grid gap-4 md:grid-cols-4">
-        <KpiCard label="Delivered"       value={String(deliveredCount)} icon={<MessageCircle />} status="Healthy" />
-        <KpiCard label="Read"            value={String(readCount)}      icon={<MessageSquare />} status="Active"  />
-        <KpiCard label="Driver Replies"  value={String(replyCount)}     icon={<Users />}         status="Healthy" />
-        <KpiCard label="Broadcasts Sent" value={String(broadcastCount)} icon={<Radio />}         status="Healthy" />
+        <KpiCard label="In-App Recipients" value={String(recipientCount)} icon={<MessageCircle />} />
+        <KpiCard label="Read Receipts" value={String(readCount)} icon={<MessageSquare />} />
+        <KpiCard label="Recorded Replies" value={String(replyCount)} icon={<Users />} />
+        <KpiCard label="Recorded Broadcasts" value={String(broadcastCount)} icon={<Radio />} />
       </div>
 
       {/* Tabs */}
@@ -137,20 +137,20 @@ export function DriverMessagingPage() {
             <h2 className="text-lg font-semibold text-slate-900">Compose Message</h2>
             <label>
               <span className="field-label">Recipient Driver</span>
-              <select className="field mt-1" value={composeForm.recipient} onChange={(e) => setComposeForm((f) => ({ ...f, recipient: e.target.value }))} required disabled={driversQ.isLoading}>
+              <select className="field mt-1" value={composeForm.recipientId} onChange={(e) => setComposeForm((f) => ({ ...f, recipientId: e.target.value }))} required disabled={driversQ.isLoading}>
                 <option value="">{driversQ.isLoading ? "Loading drivers…" : drivers.length ? "Select driver…" : "No drivers found"}</option>
                 {drivers.map((d) => {
                   const name = String(d.fullName ?? d.full_name ?? d.name ?? d.driverCode ?? d.id);
                   const code = d.driverCode ?? d.driver_code;
-                  return <option key={String(d.id)} value={name}>{name}{code ? ` · ${String(code)}` : ""}</option>;
+                  const hasAccount = d.userId != null || d.user_id != null;
+                  return <option key={String(d.id)} value={String(d.id)} disabled={!hasAccount}>{name}{code ? ` · ${String(code)}` : ""}{hasAccount ? "" : " · no in-app account"}</option>;
                 })}
               </select>
             </label>
             <label>
               <span className="field-label">Channel</span>
-              <select className="field mt-1" value={composeForm.channel} onChange={(e) => setComposeForm((f) => ({ ...f, channel: e.target.value }))}>
-                <option>In-App</option><option>SMS</option>
-              </select>
+              <input className="field mt-1 bg-slate-50" value="In-App" readOnly aria-readonly="true" />
+              <span className="mt-1 block text-xs text-slate-500">SMS and push require a configured provider before they can be offered.</span>
             </label>
             <label>
               <span className="field-label">Subject</span>
@@ -162,10 +162,11 @@ export function DriverMessagingPage() {
             </label>
             <div className="flex items-center gap-3">
               <button type="submit" className="btn-primary" disabled={sendMut.isPending || !canSend} title={!canSend ? "You do not have permission to send messages." : undefined}>
-                <Send className="h-4 w-4" /> {sendMut.isPending ? "Sending…" : "Send Message"}
+                <Send className="h-4 w-4" /> {sendMut.isPending ? "Recording…" : "Record In-App Message"}
               </button>
-              {sent && <span className="text-sm font-semibold text-emerald-600">Message sent!</span>}
+              {sendNotice && <span className="text-sm font-semibold text-emerald-700">{sendNotice}</span>}
             </div>
+            {sendMut.isError && <p className="text-sm text-red-700" role="alert">{apiErrorMessage(sendMut.error, "The message was not recorded.")}</p>}
           </form>
 
           <div className="panel p-5 space-y-4">
@@ -188,13 +189,13 @@ export function DriverMessagingPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Recipient", "Subject", "Channel", "Status", "Replies", "Sent"].map((h) => (
+                  {["Recipient", "Subject", "Channel", "Status", "Reads", "Replies", "Recorded"].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {messages.map((m) => (
+                {messages.filter((m) => String(m.channel) !== "Broadcast").map((m) => (
                   <tr key={String(m.id)} className="transition hover:bg-slate-50">
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-900">{String(m.recipient)}</p>
@@ -208,6 +209,7 @@ export function DriverMessagingPage() {
                       <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${CHANNEL_COLOR[String(m.channel)] ?? "border-slate-200 bg-slate-50 text-slate-600"}`}>{String(m.channel)}</span>
                     </td>
                     <td className="px-4 py-3"><StatusBadge status={m.status} /></td>
+                    <td className="px-4 py-3 text-center text-slate-600">{Number(m.reads ?? 0)}</td>
                     <td className="px-4 py-3 text-center">
                       {Number(m.replies) > 0
                         ? <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-teal-100 text-[10px] font-bold text-teal-700">{Number(m.replies)}</span>
@@ -258,21 +260,20 @@ export function DriverMessagingPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50">
-                    {["Subject", "Recipients", "Status", "Reads", "Replies", "Sent"].map((h) => (
+                    {["Subject", "Recipients", "Status", "Reads", "Recorded"].map((h) => (
                       <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {broadcasts.length === 0 ? (
-                    <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-slate-400">No broadcasts sent yet.</td></tr>
+                    <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-400">No evidence-backed broadcasts recorded yet.</td></tr>
                   ) : broadcasts.map((b) => (
                     <tr key={String(b.id)} className="transition hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-900">{String(b.subject)}</td>
-                      <td className="px-4 py-3 text-slate-500">{String(b.recipient)}</td>
+                      <td className="px-4 py-3 text-slate-500">{String(b.recipients ?? 0)}</td>
                       <td className="px-4 py-3"><StatusBadge status={b.status} /></td>
-                      <td className="px-4 py-3 text-center text-slate-300">—</td>
-                      <td className="px-4 py-3 text-center">{Number(b.replies) > 0 ? <span className="text-teal-700 font-semibold">{Number(b.replies)}</span> : <span className="text-slate-300">—</span>}</td>
+                      <td className="px-4 py-3 text-center">{Number(b.reads ?? 0)}</td>
                       <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">{String(b.sentAt)}</td>
                     </tr>
                   ))}
@@ -287,12 +288,8 @@ export function DriverMessagingPage() {
               <span className="field-label">Recipient Group</span>
               <select className="field mt-1" value={broadcastForm.group} onChange={(e) => setBroadcastForm((f) => ({ ...f, group: e.target.value }))}>
                 <option>All Active Drivers</option>
-                <option>All Drivers</option>
-                <option>Depot — Morning Shift</option>
-                <option>Depot — Afternoon Shift</option>
-                <option>Long-Haul Drivers</option>
-                <option>Local Delivery Drivers</option>
               </select>
+              <span className="mt-1 block text-xs text-slate-500">Recipients are active driver accounts in your authorized branch scope.</span>
             </label>
             <label>
               <span className="field-label">Subject</span>
@@ -304,10 +301,11 @@ export function DriverMessagingPage() {
             </label>
             <div className="flex items-center gap-3">
               <button type="submit" className="btn-primary w-full" disabled={broadcastMut.isPending || !canSend} title={!canSend ? "You do not have permission." : undefined}>
-                <Radio className="h-4 w-4 mr-1.5" /> {broadcastMut.isPending ? "Broadcasting…" : "Send Broadcast"}
+                <Radio className="h-4 w-4 mr-1.5" /> {broadcastMut.isPending ? "Recording…" : "Record In-App Broadcast"}
               </button>
             </div>
-            {sentBroadcast && <p className="text-center text-sm font-semibold text-emerald-600">Broadcast sent to all drivers!</p>}
+            {broadcastNotice && <p className="text-center text-sm font-semibold text-emerald-700">{broadcastNotice}</p>}
+            {broadcastMut.isError && <p className="text-center text-sm text-red-700" role="alert">{apiErrorMessage(broadcastMut.error, "The broadcast was not recorded.")}</p>}
           </form>
         </div>
       )}

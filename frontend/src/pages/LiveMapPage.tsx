@@ -793,7 +793,7 @@ export function LiveMapPage() {
               ) : alerts.isLoading ? (
                 <p className="py-1 text-sm text-slate-500">Loading telemetry alerts…</p>
               ) : openAlerts.length === 0 ? (
-                <p className="flex items-center gap-2 py-1 text-sm text-slate-500"><CheckCircle className="h-4 w-4 text-teal-600" /> No open alerts.</p>
+                <p className="flex items-center gap-2 py-1 text-sm text-slate-500"><CheckCircle className="h-4 w-4 text-teal-600" /> No open alert records in the current result.</p>
               ) : (
                 openAlerts.slice(0, 6).map((alert) => (
                   <TelemetryAlertRow

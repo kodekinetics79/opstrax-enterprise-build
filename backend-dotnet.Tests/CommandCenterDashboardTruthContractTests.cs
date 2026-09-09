@@ -32,8 +32,9 @@ public sealed class CommandCenterDashboardTruthContractTests
         Assert.Contains("GetValueOrDefault(\"dispatchReadyVehicles\")", method, StringComparison.Ordinal);
         Assert.Contains("GetValueOrDefault(\"oosVehicles\")", method, StringComparison.Ordinal);
         Assert.Contains("GetValueOrDefault(\"criticalDefectVehicles\")", method, StringComparison.Ordinal);
-        Assert.Contains("GetValueOrDefault(\"avgFleetReadiness\")", method, StringComparison.Ordinal);
         Assert.Contains("GetValueOrDefault(\"avgSafetyScore\")", method, StringComparison.Ordinal);
+        Assert.Contains("GetValueOrDefault(\"qualifiedReadinessVehicles\")", method, StringComparison.Ordinal);
+        Assert.Contains("GetValueOrDefault(\"qualifiedDriverScores\")", method, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -44,12 +45,73 @@ public sealed class CommandCenterDashboardTruthContractTests
         // SQL-side defaults that turned "unmeasured" into a mid-range score.
         Assert.DoesNotContain("COALESCE(v.readiness_score", method, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("COALESCE(d.safety_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("device_status", method, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("COALESCE(v.out_of_service,FALSE)=FALSE", method, StringComparison.Ordinal);
+        Assert.Contains("FROM diagnostic_holds", method, StringComparison.Ordinal);
 
         // C#-side defaults: the composite must be null unless both inputs are measured
         // (ToDouble(null,50)*0.6 + ToDouble(null,100)*0.4 was a compile-time constant 70).
         Assert.DoesNotContain(", 50)", method, StringComparison.Ordinal);
         Assert.DoesNotContain(", 100)", method, StringComparison.Ordinal);
         Assert.Contains("double? fleetHealthScore", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedDriverSafetyScoreSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedDvirReportSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedMaintenanceItemSql", method, StringComparison.Ordinal);
+        Assert.Contains("WITH latest_driver_scores AS", method, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(v.out_of_service,FALSE)=TRUE", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("drivers.safety_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("unavailable_incomplete_qualified_coverage", method, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FleetHealthRiskBoard_UsesScopedDiagnosticEvidenceWithoutDefaultScores()
+    {
+        var method = Method("private static async Task<IResult> FleetHealthRisks(", "private static async Task<IResult> FleetHealthVehicleDetail(");
+
+        var snakeLookups = Regex.Matches(method, "(?:L|V|VN|S)\\([^,]+, \\\"([a-z0-9]+_[a-z0-9_]+)\\\"\\)");
+        Assert.True(snakeLookups.Count == 0,
+            $"snake_case row lookups can never match ToCamel'd query rows: {string.Join(", ", snakeLookups.Select(m => m.Groups[1].Value))}");
+
+        Assert.Contains("GetBranchId(http)", method, StringComparison.Ordinal);
+        Assert.Contains("@branchId::bigint IS NULL OR v.branch_id=@branchId", method, StringComparison.Ordinal);
+        Assert.Contains("@branchId::bigint IS NULL OR d.branch_id=@branchId", method, StringComparison.Ordinal);
+        Assert.Contains("FROM fault_occurrences", method, StringComparison.Ordinal);
+        Assert.Contains("fo.source_event_id=fc.last_source_event_id", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("0 active_faults", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("v.device_status", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("COALESCE(v.readiness_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("COALESCE(d.safety_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("v.risk_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("d.risk_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("QualifiedDriverSafetyScoreSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedSafetyEventSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedCoachingTaskSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedMaintenanceItemSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedWorkOrderSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedFaultOccurrenceSql", method, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnalyticsRates_StayNullWithoutMeasuredDenominators()
+    {
+        var source = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var operations = Slice(source, "private static async Task<IResult> AnalyticsOperations(", "private static async Task<IResult> AnalyticsDispatch(");
+        var safety = Slice(source, "private static async Task<IResult> AnalyticsSafety(", "private static async Task<IResult> AnalyticsMaintenance(");
+        var customer = Slice(source, "private static async Task<IResult> AnalyticsCustomer(", "private static async Task<IResult> AnalyticsTrends(");
+        var trends = Slice(source, "private static async Task<IResult> AnalyticsTrends(", "private static async Task<IResult> AnalyticsInsights(");
+        var insights = Slice(source, "private static async Task<IResult> AnalyticsInsights(", "// ══════════════════════════════════════════════════════════════════════════\n    // P9");
+
+        Assert.Contains("routeComplianceAvg = (decimal?)null", operations, StringComparison.Ordinal);
+        Assert.DoesNotContain("avgCompliance ?? 0", operations, StringComparison.Ordinal);
+        Assert.Contains("avgSafety.HasValue", safety, StringComparison.Ordinal);
+        Assert.DoesNotContain("avgSafety ?? 0", safety, StringComparison.Ordinal);
+        Assert.Contains("decimal? metRate", customer, StringComparison.Ordinal);
+        Assert.Contains(": null", customer, StringComparison.Ordinal);
+        Assert.DoesNotContain("otd30 ?? 0", trends, StringComparison.Ordinal);
+        Assert.DoesNotContain("otd7  ?? 0", trends, StringComparison.Ordinal);
+        Assert.Contains("otd7.HasValue && otd30.HasValue", trends, StringComparison.Ordinal);
+        Assert.DoesNotContain("No significant operational alerts at this time", insights, StringComparison.Ordinal);
+        Assert.Contains("se.company_id=d.company_id", safety, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -58,6 +120,14 @@ public sealed class CommandCenterDashboardTruthContractTests
         var method = Method("private static async Task<IResult> SafetyDashboard(", "// ── GET /api/safety/rules");
         Assert.DoesNotContain("?? 100m", method, StringComparison.Ordinal);
         Assert.Contains("(decimal?)null", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedSafetyEventSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedDriverSafetyScoreSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedCoachingTaskSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedCoachingSourceSql", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("safety_coaching_tasks", method, StringComparison.Ordinal);
+        Assert.Contains("='repeated_speeding'", method, StringComparison.Ordinal);
+        Assert.Contains("IN ('geofence_breach','geofence_exit')", method, StringComparison.Ordinal);
+        Assert.Contains("='stale_device'", method, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -87,9 +157,28 @@ public sealed class CommandCenterDashboardTruthContractTests
         Assert.Contains("date_trunc('week', NOW())", method, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CommandCenterSummary_DoesNot_Treat_Legacy_Device_Defaults_As_Operational_Evidence()
+    {
+        var method = Method("private static async Task<IResult> CommandCenterSummary(", "private static async Task<IResult> ControlTowerSummary(");
+
+        Assert.DoesNotContain("device_status", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("offline device", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ai_insights", method, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("telemetry_alerts", method, StringComparison.Ordinal);
+        Assert.Contains("RequirePermission(http, \"telemetry.alerts.read\")", method, StringComparison.Ordinal);
+        Assert.Contains("out_of_service OR status IN ('Maintenance','Out of Service')", method, StringComparison.Ordinal);
+        Assert.Contains("No vehicle is currently marked for maintenance or out of service", method, StringComparison.Ordinal);
+    }
+
     private static string Method(string startMarker, string endMarker)
     {
         var source = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        return Slice(source, startMarker, endMarker);
+    }
+
+    private static string Slice(string source, string startMarker, string endMarker)
+    {
         var start = source.IndexOf(startMarker, StringComparison.Ordinal);
         Assert.True(start >= 0, $"start marker not found: {startMarker}");
         var end = source.IndexOf(endMarker, start + startMarker.Length, StringComparison.Ordinal);

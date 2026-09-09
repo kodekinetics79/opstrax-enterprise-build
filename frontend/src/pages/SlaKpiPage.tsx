@@ -17,9 +17,9 @@ import type { AnyRecord } from "@/types";
 // rows. No synthetic/demo values: the page renders honest empty states, never
 // fabricated numbers.
 const EMPTY_KPI_METRICS: AnyRecord[] = [];
-const EMPTY_KPI_SUMMARY: AnyRecord = { total: 0, onTarget: 0, atRisk: 0, critical: 0 };
+const EMPTY_KPI_SUMMARY: AnyRecord = { total: 0, measured: 0, targetsRecorded: 0, comparisonsAvailable: 0 };
 const EMPTY_SLA_RECORDS: AnyRecord[] = [];
-const EMPTY_SLA_SUMMARY: AnyRecord = { met: 0, breached: 0 };
+const EMPTY_SLA_SUMMARY: AnyRecord = { total: 0, met: 0, breached: 0, openBreaches: [] };
 const EMPTY_SLA_BREACHES: AnyRecord[] = [];
 const EMPTY_AI_RECS: AnyRecord[] = [];
 
@@ -27,6 +27,7 @@ const EMPTY_AI_RECS: AnyRecord[] = [];
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
+    "Measured":     "border-blue-300 bg-blue-50 text-blue-700",
     "On Target":    "border-emerald-300 bg-emerald-50 text-emerald-700",
     "At Risk":      "border-amber-300 bg-amber-50 text-amber-700",
     "Critical":     "border-red-300 bg-red-50 text-red-700",
@@ -47,18 +48,20 @@ function TrendIcon({ trend }: { trend: string }) {
 }
 
 function KpiCard({ kpi }: { kpi: AnyRecord }) {
-  const actual = Number(kpi.actual_value ?? 0);
-  const target = Number(kpi.target_value ?? 1);
-  const pct    = Math.min(110, Math.round((actual / target) * 100));
+  const actual = Number(kpi.actual_value ?? kpi.actualValue ?? 0);
+  const targetRaw = kpi.target_value ?? kpi.targetValue;
+  const hasTarget = targetRaw !== null && targetRaw !== undefined && Number(targetRaw) > 0;
+  const target = hasTarget ? Number(targetRaw) : null;
+  const pct = target ? Math.min(110, Math.round((actual / target) * 100)) : null;
   const status = String(kpi.status ?? "");
   const barColor = status === "Critical" ? "bg-red-500" : status === "At Risk" ? "bg-amber-500" : "bg-emerald-500";
-  const displayPct = Math.min(100, pct);
+  const displayPct = pct === null ? 0 : Math.min(100, pct);
 
   return (
     <div className="panel p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="truncate font-semibold text-slate-900">{String(kpi.kpi_name ?? "")}</p>
+          <p className="truncate font-semibold text-slate-900">{String(kpi.kpi_name ?? kpi.kpiName ?? "")}</p>
           <p className="text-xs text-slate-500">{String(kpi.category ?? "")}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -72,13 +75,20 @@ function KpiCard({ kpi }: { kpi: AnyRecord }) {
             {actual.toLocaleString(undefined, { maximumFractionDigits: 1 })}
             <span className="ml-1 text-sm font-normal text-slate-500">{String(kpi.unit ?? "")}</span>
           </p>
-          <p className="text-xs text-slate-500">Target: {target.toLocaleString(undefined, { maximumFractionDigits: 1 })} {String(kpi.unit ?? "")}</p>
+          <p className="text-xs text-slate-500">
+            {target === null ? "No verified target recorded" : `Target: ${target.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${String(kpi.unit ?? "")}`}
+          </p>
         </div>
-        <p className={`text-sm font-bold ${pct >= 100 ? "text-emerald-700" : pct >= 90 ? "text-amber-600" : "text-red-600"}`}>{pct}%</p>
+        {pct !== null ? <p className={`text-sm font-bold ${pct >= 100 ? "text-emerald-700" : pct >= 90 ? "text-amber-600" : "text-red-600"}`}>{pct}%</p> : null}
       </div>
-      <div className="h-1.5 w-full rounded-full bg-slate-200">
-        <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${displayPct}%` }} />
-      </div>
+      {pct !== null ? (
+        <div className="h-1.5 w-full rounded-full bg-slate-200">
+          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${displayPct}%` }} />
+        </div>
+      ) : null}
+      {(kpi.evidence_status ?? kpi.evidenceStatus) ? (
+        <p className="text-[11px] font-medium text-blue-700">Evidence: {String(kpi.evidence_status ?? kpi.evidenceStatus)}</p>
+      ) : null}
       {kpi.recommendation ? (
         <p className="text-xs text-slate-500 italic border-s-2 border-violet-300 ps-2">{String(kpi.recommendation)}</p>
       ) : null}
@@ -125,11 +135,11 @@ export function SlaKpiPage() {
 
   // Attainment vs target, derived from the same live kpiMetrics the KPI cards use
   // (pct = actual / target, capped at 110 to mirror KpiCard). Bars colour by pct.
-  const kpiAttainmentData = kpiMetrics.map((k) => {
-    const actual = Number(k.actual_value ?? 0);
-    const target = Number(k.target_value ?? 0);
+  const kpiAttainmentData = kpiMetrics.filter((k) => Number(k.target_value ?? k.targetValue ?? 0) > 0).map((k) => {
+    const actual = Number(k.actual_value ?? k.actualValue ?? 0);
+    const target = Number(k.target_value ?? k.targetValue ?? 0);
     const pct = target > 0 ? Math.min(110, Math.round((actual / target) * 100)) : 0;
-    return { name: String(k.kpi_name ?? ""), pct, status: String(k.status ?? "") };
+    return { name: String(k.kpi_name ?? k.kpiName ?? ""), pct, status: String(k.status ?? "") };
   });
 
   function handleExport() {
@@ -144,7 +154,7 @@ export function SlaKpiPage() {
       <div className="flex h-full flex-col gap-6 overflow-y-auto">
         <div>
           <h1 className="text-xl font-extrabold text-slate-900">SLA / KPI Center</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Key performance indicators, SLA compliance, breach exposure and AI recommendations</p>
+          <p className="mt-0.5 text-sm text-slate-500">Recorded KPI measurements and verified SLA evidence</p>
         </div>
         <LoadingState />
       </div>
@@ -158,7 +168,7 @@ export function SlaKpiPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-extrabold text-slate-900">SLA / KPI Center</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Key performance indicators, SLA compliance, breach exposure and AI recommendations</p>
+          <p className="mt-0.5 text-sm text-slate-500">Recorded KPI measurements and verified SLA evidence</p>
         </div>
         <button type="button" className="btn-secondary flex items-center gap-2 text-sm" onClick={handleExport}>
           <Download className="h-4 w-4" />Export
@@ -166,34 +176,41 @@ export function SlaKpiPage() {
       </div>
 
       {/* Summary strip */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
-        <div className="panel p-3 text-center col-span-1"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Total KPIs</p><p className="text-2xl font-extrabold text-slate-900">{Number(kpiSummary.total ?? 0)}</p></div>
-        <div className="panel p-3 text-center col-span-1"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">On Target</p><p className="text-2xl font-extrabold text-emerald-700">{Number(kpiSummary.onTarget ?? 0)}</p></div>
-        <div className="panel p-3 text-center col-span-1"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">At Risk</p><p className="text-2xl font-extrabold text-amber-700">{Number(kpiSummary.atRisk ?? 0)}</p></div>
-        <div className="panel p-3 text-center col-span-1"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Critical</p><p className="text-2xl font-extrabold text-red-700">{Number(kpiSummary.critical ?? 0)}</p></div>
-        <div className="panel p-3 text-center col-span-1"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">SLA Met</p><p className="text-2xl font-extrabold text-emerald-700">{Number(slaSummary.met ?? 0)}</p></div>
-        <div className="panel p-3 text-center col-span-1"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">SLA Breached</p><p className="text-2xl font-extrabold text-red-700">{Number(slaSummary.breached ?? 0)}</p></div>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="panel p-3 text-center"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Recorded measurements</p><p className="text-2xl font-extrabold text-slate-900">{Number(kpiSummary.measured ?? kpiSummary.total ?? 0)}</p></div>
+        <div className="panel p-3 text-center"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Verified targets</p><p className="text-2xl font-extrabold text-blue-700">{Number(kpiSummary.targetsRecorded ?? 0)}</p></div>
+        <div className="panel p-3 text-center"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Comparable KPIs</p><p className="text-2xl font-extrabold text-slate-900">{Number(kpiSummary.comparisonsAvailable ?? 0)}</p></div>
+        <div className="panel p-3 text-center"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Verified SLA records</p><p className="text-2xl font-extrabold text-slate-900">{Number(slaSummary.total ?? 0)}</p></div>
+        <div className="panel p-3 text-center"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Verified SLA met</p><p className="text-2xl font-extrabold text-emerald-700">{Number(slaSummary.met ?? 0)}</p></div>
+        <div className="panel p-3 text-center"><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Verified SLA breached</p><p className="text-2xl font-extrabold text-red-700">{Number(slaSummary.breached ?? 0)}</p></div>
       </div>
 
-      {/* KPI Attainment Bar Chart — always visible */}
+      {/* Target comparisons appear only when both measurement and target are recorded. */}
       <div className="panel p-5">
         <p className="section-title mb-0.5">KPI Attainment vs Target (%)</p>
-        <p className="text-xs text-slate-400 mb-4">Values above 100% indicate target exceeded; below 90% are highlighted critical</p>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={kpiAttainmentData} margin={{ top: 4, right: 8, left: -16, bottom: 24 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#94a3b8" }} angle={-30} textAnchor="end" interval={0} />
-            <YAxis domain={[60, 115]} tick={{ fontSize: 10, fill: "#94a3b8" }} unit="%" />
-            <Tooltip formatter={(v: unknown) => [`${Number(v ?? 0)}%`, "Attainment"]} contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8 }} />
-            <ReferenceLine y={100} stroke="#0d9488" strokeDasharray="4 2" label={{ value: "Target", position: "right", fontSize: 10, fill: "#0d9488" }} />
-            <ReferenceLine y={90}  stroke="#f59e0b" strokeDasharray="4 2" />
-            <Bar dataKey="pct" radius={[4, 4, 0, 0]}>
-              {kpiAttainmentData.map((d, i) => (
-                <Cell key={i} fill={d.pct >= 100 ? "#0d9488" : d.pct >= 90 ? "#f59e0b" : "#dc2626"} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+        {kpiAttainmentData.length === 0 ? (
+          <div className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+            <p className="font-semibold text-slate-800">No verified KPI comparisons available</p>
+            <p className="mt-1 text-sm text-slate-500">Recorded measurements remain visible below. Attainment appears after a matching target is verified.</p>
+          </div>
+        ) : (
+          <>
+            <p className="text-xs text-slate-400 mb-4">Only measurements with a verified target are included.</p>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={kpiAttainmentData} margin={{ top: 4, right: 8, left: -16, bottom: 24 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#94a3b8" }} angle={-30} textAnchor="end" interval={0} />
+                <YAxis domain={[60, 115]} tick={{ fontSize: 10, fill: "#94a3b8" }} unit="%" />
+                <Tooltip formatter={(v: unknown) => [`${Number(v ?? 0)}%`, "Attainment"]} contentStyle={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8 }} />
+                <ReferenceLine y={100} stroke="#0d9488" strokeDasharray="4 2" label={{ value: "Target", position: "right", fontSize: 10, fill: "#0d9488" }} />
+                <ReferenceLine y={90} stroke="#f59e0b" strokeDasharray="4 2" />
+                <Bar dataKey="pct" radius={[4, 4, 0, 0]}>
+                  {kpiAttainmentData.map((d, i) => <Cell key={i} fill={d.pct >= 100 ? "#0d9488" : d.pct >= 90 ? "#f59e0b" : "#dc2626"} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </>
+        )}
       </div>
 
       {/* Tabs */}
@@ -222,6 +239,7 @@ export function SlaKpiPage() {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {filteredKpi.map((kpi, i) => <KpiCard key={i} kpi={kpi} />)}
           </div>
+          {filteredKpi.length === 0 ? <div className="panel p-8 text-center text-sm text-slate-500">No recorded non-demo measurements are available.</div> : null}
         </div>
       )}
 
@@ -238,7 +256,7 @@ export function SlaKpiPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  {["SLA", "Customer", "Type", "Target", "Actual", "Attainment", "Status"].map((h) => (
+                  {["SLA", "Customer", "Type", "Target", "Actual", "Evidence", "Status"].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>
                   ))}
                 </tr>
@@ -248,7 +266,6 @@ export function SlaKpiPage() {
                   const targetVal = Number(s.targetValue ?? 0);
                   const actualVal = Number(s.actualValue ?? 0);
                   const unit      = String(s.unit ?? "");
-                  const attain    = targetVal > 0 ? Math.round((actualVal / targetVal) * 100) : 0;
                   return (
                     <tr key={i} className="transition hover:bg-slate-50">
                       <td className="px-4 py-3">
@@ -260,7 +277,7 @@ export function SlaKpiPage() {
                       <td className="px-4 py-3 font-mono text-slate-700">{targetVal.toLocaleString(undefined, { maximumFractionDigits: 1 })} {unit}</td>
                       <td className="px-4 py-3 font-mono text-slate-700">{actualVal.toLocaleString(undefined, { maximumFractionDigits: 1 })} {unit}</td>
                       <td className="px-4 py-3">
-                        <span className={`text-xs font-bold ${attain >= 100 ? "text-emerald-700" : attain >= 90 ? "text-amber-600" : "text-red-600"}`}>{attain}%</span>
+                        <span className="text-xs font-medium text-blue-700">{String(s.measurementEvidenceStatus ?? "Verified")}</span>
                       </td>
                       <td className="px-4 py-3"><StatusBadge status={String(s.status ?? "")} /></td>
                     </tr>
@@ -269,6 +286,12 @@ export function SlaKpiPage() {
               </tbody>
             </table>
           </div>
+          {filteredSla.length === 0 ? (
+            <div className="panel p-8 text-center">
+              <p className="font-semibold text-slate-900">No verified SLA measurements recorded</p>
+              <p className="mt-1 text-sm text-slate-500">Unverified legacy and demo rows are excluded from customer SLA claims.</p>
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -278,8 +301,8 @@ export function SlaKpiPage() {
           {slaBreaches.length === 0 && (
             <div className="panel p-8 text-center">
               <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
-              <p className="mt-3 font-semibold text-slate-900">No open SLA breaches</p>
-              <p className="text-sm text-slate-500">All SLA commitments are within acceptable thresholds.</p>
+              <p className="mt-3 font-semibold text-slate-900">No verified open SLA breaches recorded</p>
+              <p className="text-sm text-slate-500">This does not establish that every SLA commitment was met.</p>
             </div>
           )}
           {slaBreaches.map((b, i) => (
@@ -308,7 +331,7 @@ export function SlaKpiPage() {
         </div>
       )}
 
-      {/* AI Advisor */}
+      {/* Grounded operations advisor */}
       {tab === "Operations Advisor" && (
         <div className="space-y-3">
           {kpiAiRecs.map((rec, i) => (
@@ -319,10 +342,11 @@ export function SlaKpiPage() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="font-semibold text-slate-900">{String(rec.title ?? "")}</p>
-                  <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700">Score {Number(rec.score ?? 0)}</span>
+                  <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700">Grounded recommendation</span>
                   {rec.priority ? <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${String(rec.priority) === "High" ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>{String(rec.priority)}</span> : null}
                 </div>
                 <p className="mt-1 text-sm text-slate-600 leading-relaxed">{String(rec.body ?? rec.description ?? "")}</p>
+                <p className="mt-1 text-[11px] text-slate-500">Source event: {String(rec.sourceEventId ?? "Recorded runtime event")}</p>
                 {rec.action_label ? (
                   <button
                     type="button"
@@ -334,6 +358,7 @@ export function SlaKpiPage() {
               <Target className="h-4 w-4 shrink-0 text-slate-400" />
             </div>
           ))}
+          {kpiAiRecs.length === 0 ? <div className="panel p-8 text-center text-sm text-slate-500">No source-grounded recommendations are available.</div> : null}
         </div>
       )}
     </div>

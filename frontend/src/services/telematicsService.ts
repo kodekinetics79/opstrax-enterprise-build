@@ -161,6 +161,8 @@ export type TelematicsDiagnosticSeedRecord = {
   faultCode: string;
   runAt: string;
   runBy: string;
+  evidenceClassification: string;
+  safetyActionStatus: string;
 };
 
 export type TelematicsInstallationSeedRecord = {
@@ -185,6 +187,93 @@ export type TelematicsInstallationSeedRecord = {
   assignmentReason?: string;
   removalReason?: string;
   checklist: Array<{ item: string; status: string }>;
+};
+
+export type DeviceInstallationChecklistObservationRecord = {
+  id: string;
+  workPackageId: string;
+  checklistItem: DeviceInstallationChecklistItem;
+  observedResult: DeviceInstallationChecklistResult;
+  evidenceReference: string;
+  observationNotes: string;
+  observedAt: string;
+  assuranceStatus: "Unverified";
+  physicalEvidenceClaim: false;
+  certificationClaim: false;
+  recordedByName: string;
+};
+
+export type DeviceInstallationArtifactReferenceRecord = {
+  id: string;
+  workPackageId: string;
+  artifactType: DeviceInstallationArtifactType;
+  objectKey: string;
+  sha256: string;
+  capturedAt: string;
+  contentVerificationStatus: "Unverified";
+  physicalEvidenceClaim: false;
+  certificationClaim: false;
+  recordedByName: string;
+};
+
+export type DeviceInstallationWorkPackageRecord = {
+  id: string;
+  deviceId: string;
+  vehicleId: string;
+  vehicleCode: string;
+  assignedInstallerUserId: string;
+  installerName: string;
+  workOrderReference: string;
+  appointmentStart: string;
+  appointmentEnd: string;
+  serviceLocation: string;
+  workScope: string;
+  readinessStatus: "AwaitingChecklist" | "BlockedByFailedCheck" | "ChecklistRecordedAwaitingArtifacts" | "RecordedAwaitingIndependentVerification" | "LinkedAwaitingIndependentVerification";
+  requiredChecklistItems: DeviceInstallationChecklistItem[];
+  latestChecklist: DeviceInstallationChecklistObservationRecord[];
+  artifactReferences: DeviceInstallationArtifactReferenceRecord[];
+  linkedInstallationId: string | null;
+  linkedInstallationStatus: string | null;
+  linkAssuranceStatus: "RecordedUnverified" | null;
+  linkedAt: string | null;
+  physicalAppointmentClaim: false;
+  physicalWorkClaim: false;
+  certificationClaim: false;
+};
+
+export type DeviceInstallationChecklistItem =
+  | "DeviceIdentity" | "VehicleIdentity" | "Mounting" | "PrimaryPower" | "Ground" | "Ignition"
+  | "GNSSAntenna" | "CellularAntenna" | "Harness" | "CANBus" | "CameraAlignment" | "SensorPlacement";
+export type DeviceInstallationChecklistResult = "Pass" | "Fail" | "NotObserved" | "NotApplicable";
+export type DeviceInstallationArtifactType =
+  | "InstallationPhoto" | "SerialLabel" | "WiringPhoto" | "PowerReading" | "TechnicianChecklist"
+  | "CommissioningReport" | "RemovalPhoto" | "OtherDocument";
+
+export type DeviceInstallationWorkPackageInput = {
+  vehicleId: string | number;
+  workOrderReference: string;
+  appointmentStart: string;
+  appointmentEnd: string;
+  serviceLocation: string;
+  workScope: string;
+  idempotencyKey: string;
+};
+
+export type DeviceInstallationChecklistObservationInput = {
+  checklistItem: DeviceInstallationChecklistItem;
+  observedResult: DeviceInstallationChecklistResult;
+  evidenceReference: string;
+  observationNotes: string;
+  observedAt: string;
+  idempotencyKey: string;
+};
+
+export type DeviceInstallationArtifactReferenceInput = {
+  artifactType: DeviceInstallationArtifactType;
+  objectKey: string;
+  sha256: string;
+  capturedAt: string;
+  idempotencyKey: string;
 };
 
 export type TelematicsSensorSeedRecord = {
@@ -223,6 +312,8 @@ export type DeviceCommandRecord = {
   deviceName: string;
   deviceType: string;
   deviceCategory: string;
+  manufacturer: string;
+  hardwareRevision: string;
   provider: string;
   providerCode: string;
   serialNumber: string;
@@ -254,6 +345,11 @@ export type DeviceCommandRecord = {
   complianceStatus: string;
   warrantyStatus: string;
   supportStatus: string;
+  deviceOpsGaps: string[];
+  deviceOpsAssessmentAvailable: boolean;
+  openRmaCount: number;
+  highestOpenRmaSeverity: string;
+  nextSupportResponseDueAt: string | null;
   lifecycleStatus: string;
   // Governed installation/commissioning state from eld_devices.device_state.
   // This is distinct from lifecycle status: an Active device can still be
@@ -296,6 +392,7 @@ export type DevicePageResult = {
     online: number;
     neverConnected: number;
     faulted: number | null;
+    readinessGaps: number | null;
   };
 };
 
@@ -469,17 +566,837 @@ function normalizeMalfunctionInput(notes: string): { malfunctionCode: string; ma
 
 export type DeviceDetailRecord = {
   device: DeviceCommandRecord;
+  compatibility: DeviceCompatibilityRecord;
+  currentConnectivityProfile: DeviceConnectivityProfileRecord | null;
+  connectivityProfiles: DeviceConnectivityProfileRecord[];
+  connectivityObservations: DeviceConnectivityObservationRecord[];
   telemetry: TelematicsTelemetrySeedRecord[];
   healthEvents: TelematicsHealthSeedRecord[];
   firmwareUpdates: TelematicsFirmwareSeedRecord[];
+  firmwareCampaigns: DeviceFirmwareCampaignRecord[];
+  rmaCases: DeviceRmaCaseRecord[];
+  sparePool: DeviceSparePoolRecord | null;
+  supportTierEvents: DeviceSupportTierEventRecord[];
+  remoteCommandCapabilities: DeviceRemoteCommandCapabilityRecord[];
+  remoteCommandHistory: DeviceRemoteCommandRecord[];
   diagnostics: TelematicsDiagnosticSeedRecord[];
   currentInstallation: TelematicsInstallationSeedRecord | null;
   installations: TelematicsInstallationSeedRecord[];
+  installationWorkPackages: DeviceInstallationWorkPackageRecord[];
   sensorReadings: TelematicsSensorSeedRecord[];
   providers: TelematicsProviderSeedRecord[];
   auditLog: AnyRecord[];
-  assignmentHistory: AnyRecord[];
+  retirementRecord: DeviceRetirementRecord | null;
+  lifecycleHistory: DeviceLifecycleTransitionRecord[];
 };
+
+export type DeviceLifecycleTransitionRecord = {
+  id: string;
+  fromState: string | null;
+  toState: string;
+  reasonCode: string;
+  reason: string | null;
+  actorUserId: string | null;
+  correlationId: string;
+  occurredAt: string;
+};
+
+export type DeviceRetirementRecord = {
+  id: string;
+  deviceId: string;
+  deviceSerial: string;
+  retirementReason: string;
+  dispositionPlan: "ReturnToVendor" | "Recycle" | "SecureStorage" | "Other";
+  sourceReference: string;
+  effectiveAt: string;
+  priorStatus: string;
+  priorDeviceState: string;
+  rowVersionBefore: number;
+  rowVersionAfter: number;
+  endedConnectivityProfileId: string | null;
+  credentialsRevoked: true;
+  recordStatus: "OperatorRecorded";
+  physicalDispositionStatus: "Unverified";
+  physicalDispositionClaim: false;
+  certificationClaim: false;
+  retiredBy: string;
+  createdAt: string;
+};
+
+export type DeviceRetirementInput = {
+  retirementReason: string;
+  dispositionPlan: DeviceRetirementRecord["dispositionPlan"];
+  sourceReference: string;
+  effectiveAt: string;
+  expectedRowVersion: number;
+  idempotencyKey: string;
+  safetyConfirmation: string;
+};
+
+export type DeviceConnectivityProfileRecord = {
+  id: string;
+  deviceId: string;
+  profileKind: "PhysicalSIM" | "eSIM" | "Unknown";
+  carrierName: string;
+  iccidLast4: string;
+  msisdnLast4: string | null;
+  apnConfigured: boolean;
+  assignmentStatus: "Assigned" | "Ended" | "Unknown";
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  sourceReference: string;
+  changeReason: string;
+  endReason: string | null;
+};
+
+export type DeviceConnectivityProfileInput = {
+  profileKind: "PhysicalSIM" | "eSIM";
+  carrierName: string;
+  iccid: string;
+  msisdn?: string;
+  apn?: string;
+  effectiveAt: string;
+  changeReason: string;
+  sourceReference: string;
+  idempotencyKey: string;
+};
+
+export type DeviceConnectivityObservationRecord = {
+  id: string;
+  deviceId: string;
+  connectivityProfileId: string;
+  profileIccidLast4: string;
+  sourceProvider: string;
+  sourceAuthenticationStatus: "Authenticated" | "Unverified";
+  subscriptionStatus: "Unknown" | "Active" | "Suspended" | "Deactivated";
+  networkRegistrationStatus: "Unknown" | "Registered" | "Roaming" | "Denied" | "Detached";
+  dataSessionStatus: "Unknown" | "Attached" | "Detached" | "Blocked";
+  usageBytes: number | null;
+  roaming: boolean | null;
+  observedAt: string;
+  receivedAt: string;
+  reconciliationStatus: "ExactCurrentProfile" | "Unavailable";
+  softwareObservationAvailable: boolean;
+  providerVerifiedClaim: false;
+  physicalConnectivityClaim: false;
+  certificationClaim: false;
+};
+
+export type DeviceFirmwareCampaignRecord = {
+  campaignId: string;
+  targetId: string;
+  campaignName: string;
+  targetFirmwareVersion: string;
+  rollbackFirmwareVersion: string | null;
+  rolloutStrategy: "Manual" | "Canary" | "Staged" | "Unknown";
+  batchSize: number;
+  scheduledFor: string;
+  maintenanceWindowMinutes: number;
+  executionStatus: "ExternalHold" | "Unknown";
+  providerCapabilityStatus: "Unverified" | "Unknown";
+  remoteUpgradeClaim: false;
+  externalHoldReason: string;
+  sourceReference: string;
+  changeReason: string;
+  createdAt: string;
+  deviceId: string;
+  deviceSerial: string;
+  manufacturer: string | null;
+  deviceModel: string | null;
+  hardwareRevision: string | null;
+  reportedFirmwareVersion: string | null;
+  planningStatus: "ReadyForExternalEvidence" | "BlockedIdentity" | "AlreadyCurrent" | "Unknown";
+  planningReason: string;
+  rolloutBatch: number;
+  deliveryStatus: "ExternalHold" | "Unknown";
+};
+
+export type DeviceFirmwareCampaignInput = {
+  campaignName: string;
+  targetFirmwareVersion: string;
+  rollbackFirmwareVersion?: string;
+  rolloutStrategy: "Manual" | "Canary" | "Staged";
+  scheduledFor: string;
+  maintenanceWindowMinutes: number;
+  batchSize: number;
+  deviceIds: Array<string | number>;
+  changeReason: string;
+  sourceReference: string;
+  idempotencyKey: string;
+};
+
+export type DeviceRmaEventRecord = {
+  id: string;
+  caseId: string;
+  sequenceNumber: number;
+  eventType: "CaseOpened" | "ReturnAuthorized" | "Shipped" | "Received" | "VendorDisposition" | "ReplacementLinked" | "CaseClosed" | "Unknown";
+  caseStatusAfter: "Open" | "AwaitingReturn" | "InTransit" | "UnderReview" | "ReplacementPlanned" | "Resolved" | "Unknown";
+  occurredAt: string;
+  custodyLocation: string | null;
+  trackingReference: string | null;
+  evidenceReference: string;
+  evidenceStatus: "Unverified";
+  notes: string;
+  physicalCompletionClaim: false;
+  recordedAt: string;
+};
+
+export type DeviceRmaReplacementRecord = {
+  id: string;
+  caseId: string;
+  failedDeviceId: string;
+  failedDeviceSerial: string;
+  replacementDeviceId: string;
+  replacementDeviceSerial: string;
+  replacementManufacturer: string | null;
+  replacementDeviceModel: string | null;
+  replacementHardwareRevision: string | null;
+  replacementFirmwareVersion: string | null;
+  replacementStatus: "Planned";
+  physicalSwapStatus: "ExternalHold";
+  physicalSwapClaim: false;
+  changeReason: string;
+  sourceReference: string;
+  createdAt: string;
+};
+
+export type DeviceRmaSupportActionRecord = {
+  id: string;
+  caseId: string;
+  deviceId: string;
+  actionType: "OwnershipClaimed" | "OwnershipReassigned" | "Escalated";
+  ownerUserId: string;
+  ownerNameSnapshot: string;
+  supportQueue: string;
+  escalationSeverity: "P0" | "P1" | "P2" | "P3" | null;
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
+  supportActionStatus: "OperatorRecorded";
+  supportResponseClaim: false;
+  physicalOutcomeClaim: false;
+  warrantyAcceptanceClaim: false;
+  recordedBy: string;
+  createdAt: string;
+};
+
+export type DeviceRmaCaseRecord = {
+  id: string;
+  deviceId: string;
+  deviceSerial: string;
+  manufacturer: string | null;
+  deviceModel: string | null;
+  hardwareRevision: string | null;
+  reportedFirmwareVersion: string | null;
+  severity: "P0" | "P1" | "P2" | "P3" | "Unknown";
+  failureCategory: string;
+  failureDescription: string;
+  observedAt: string;
+  warrantyPosture: "Unknown" | "ClaimedInWarranty" | "ClaimedOutOfWarranty" | "NotApplicable";
+  warrantyReference: string | null;
+  warrantyEvidenceStatus: "Unverified";
+  supportSlaReference: string;
+  responseDueAt: string;
+  sourceReference: string;
+  physicalEvidenceClaim: false;
+  currentStatus: "Open" | "AwaitingReturn" | "InTransit" | "UnderReview" | "ReplacementPlanned" | "Resolved" | "Unknown";
+  latestEventAt: string | null;
+  createdAt: string;
+  events: DeviceRmaEventRecord[];
+  replacement: DeviceRmaReplacementRecord | null;
+  supportActions: DeviceRmaSupportActionRecord[];
+};
+
+export type DeviceRmaCaseInput = {
+  severity: "P0" | "P1" | "P2" | "P3";
+  failureCategory: "Power" | "Connectivity" | "GNSS" | "CAN" | "Camera" | "Firmware" | "PhysicalDamage" | "Intermittent" | "Other";
+  failureDescription: string;
+  observedAt: string;
+  warrantyPosture: "Unknown" | "ClaimedInWarranty" | "ClaimedOutOfWarranty" | "NotApplicable";
+  warrantyReference?: string;
+  supportSlaReference: string;
+  responseDueAt: string;
+  sourceReference: string;
+  idempotencyKey: string;
+};
+
+export type DeviceRmaEventInput = {
+  eventType: "ReturnAuthorized" | "Shipped" | "Received" | "VendorDisposition" | "CaseClosed";
+  occurredAt: string;
+  custodyLocation?: string;
+  trackingReference?: string;
+  evidenceReference: string;
+  notes: string;
+  idempotencyKey: string;
+};
+
+export type DeviceRmaReplacementInput = {
+  replacementDeviceSerial: string;
+  changeReason: string;
+  sourceReference: string;
+  idempotencyKey: string;
+};
+
+export type DeviceRmaSupportActionInput = {
+  actionType: "TakeOwnership" | "Escalate";
+  supportQueue: string;
+  escalationSeverity?: "P0" | "P1" | "P2" | "P3";
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
+  idempotencyKey: string;
+};
+
+export type DeviceSparePoolEventRecord = {
+  id: string;
+  entryId: string;
+  deviceId: string;
+  actionType: "Added" | "Reserved" | "Released" | "Removed";
+  stateAfter: "Available" | "Reserved" | "Removed";
+  rmaCaseId: string | null;
+  failedDeviceId: string | null;
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
+  eventStatus: "OperatorRecorded";
+  physicalPossessionClaim: false;
+  conditionVerifiedClaim: false;
+  compatibilityClaim: false;
+  certificationClaim: false;
+  recordedBy: string;
+  createdAt: string;
+};
+
+export type DeviceSparePoolRecord = {
+  id: string;
+  deviceId: string;
+  deviceSerialSnapshot: string;
+  poolName: string;
+  entryReason: string;
+  sourceReference: string;
+  inventoryAssuranceStatus: "OperatorRecordedUnverified";
+  physicalPossessionClaim: false;
+  conditionVerifiedClaim: false;
+  certificationClaim: false;
+  addedBy: string;
+  createdAt: string;
+  currentState: "Available" | "Reserved" | "Removed";
+  events: DeviceSparePoolEventRecord[];
+};
+
+export type DeviceSparePoolActionInput = {
+  actionType: "Add" | "Reserve" | "Release" | "Remove";
+  poolName?: string;
+  rmaCaseId?: string;
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
+  idempotencyKey: string;
+};
+
+export type DeviceSupportTierEventRecord = {
+  id: string;
+  deviceId: string;
+  deviceSerialSnapshot: string;
+  actionType: "Assigned" | "Changed" | "Ended";
+  stateAfter: "Assigned" | "NotAssigned";
+  tierCode: "Standard" | "Priority" | "CriticalOps" | "Custom";
+  coverageWindow: "BusinessHours" | "ExtendedHours" | "AlwaysOn" | "Custom";
+  routingResponseTargetMinutes: number;
+  escalationPolicyReference: string;
+  commercialReference: string;
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
+  recordStatus: "OperatorRecordedUnverified";
+  commercialEntitlementVerifiedClaim: false;
+  providerSupportClaim: false;
+  hardwareSupportabilityClaim: false;
+  certificationClaim: false;
+  recordedBy: string;
+  createdAt: string;
+};
+
+export type DeviceSupportTierActionInput = {
+  actionType: "Assign" | "Change" | "End";
+  tierCode?: DeviceSupportTierEventRecord["tierCode"];
+  coverageWindow?: DeviceSupportTierEventRecord["coverageWindow"];
+  routingResponseTargetMinutes?: number;
+  escalationPolicyReference?: string;
+  commercialReference?: string;
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
+  idempotencyKey: string;
+};
+
+export type DeviceRemoteCommandCapabilityRecord = {
+  commandType: "RequestPosition" | "RequestDiagnostics" | "RestartDevice";
+  displayName: string;
+  commandClass: "Observation" | "Controlled";
+  capabilityStatus: "Unverified" | "Verified" | "Rejected" | "Revoked" | "Unknown";
+  evidenceSource: string | null;
+  evidenceReference: string | null;
+  observedAt: string | null;
+  expiresAt: string | null;
+  requestAdmissionAvailable: boolean;
+  confirmationText: string;
+  externalHold: boolean;
+  externalHoldReason: string | null;
+  certificationClaim: false;
+};
+
+export type DeviceRemoteCommandRecord = {
+  id: string;
+  commandType: string;
+  commandClass: string;
+  status: string;
+  governanceStatus: string;
+  purpose: string;
+  sourceReference: string;
+  attemptCount: number;
+  maxAttempts: number;
+  scheduledFor: string;
+  dispatchedAt: string | null;
+  acknowledgedAt: string | null;
+  appliedAt: string | null;
+  expiresAt: string | null;
+  lastError: string | null;
+  providerDeliveryClaim: false;
+  physicalOutcomeClaim: false;
+  createdAt: string;
+};
+
+export type DeviceRemoteCommandInput = {
+  commandType: "RequestPosition" | "RequestDiagnostics" | "RestartDevice";
+  payload: Record<string, unknown>;
+  purpose: string;
+  sourceReference: string;
+  safetyConfirmation: string;
+  idempotencyKey: string;
+};
+
+export type DeviceCompatibilityRecord = {
+  manufacturer: string | null;
+  deviceModel: string | null;
+  hardwareRevision: string | null;
+  firmwareVersion: string | null;
+  exactTupleComplete: boolean;
+  missingIdentityFields: string[];
+  registryStatus: string;
+  certificationStatus: "ExternalHold";
+  maximumTier: "Unverified";
+  candidateSha: string | null;
+  externalHold: true;
+  externalHoldReason: string;
+  capabilityDeclarationStatus: "NotRecorded" | "EngineeringDeclaredUnverified";
+  protocols: string[];
+  supportedFields: string[];
+  supportedEvents: string[];
+  supportedCommands: string[];
+  knownLimitations: string;
+  declarationSourceReference: string | null;
+  declaredAt: string | null;
+  catalogSupportTier: "Unverified";
+  certificationReference: null;
+  certificationDate: null;
+  physicalEvidenceClaim: false;
+  providerEvidenceClaim: false;
+  certificationClaim: false;
+};
+
+function mapConnectivityProfile(raw: AnyRecord): DeviceConnectivityProfileRecord {
+  const row = normalizeKeys(raw);
+  const iccidLast4 = typeof row.iccid_last4 === "string" && /^\d{4}$/.test(row.iccid_last4)
+    ? row.iccid_last4 : "";
+  const msisdnLast4 = typeof row.msisdn_last4 === "string" && /^\d{4}$/.test(row.msisdn_last4)
+    ? row.msisdn_last4 : null;
+  return {
+    id: String(row.id ?? ""),
+    deviceId: String(row.device_id ?? ""),
+    profileKind: row.profile_kind === "PhysicalSIM" || row.profile_kind === "eSIM"
+      ? row.profile_kind : "Unknown",
+    carrierName: String(row.carrier_name ?? ""),
+    iccidLast4,
+    msisdnLast4,
+    apnConfigured: row.apn_configured === true,
+    assignmentStatus: row.assignment_status === "Assigned" || row.assignment_status === "Ended"
+      ? row.assignment_status : "Unknown",
+    effectiveFrom: String(row.effective_from ?? ""),
+    effectiveTo: row.effective_to == null ? null : String(row.effective_to),
+    sourceReference: String(row.source_reference ?? ""),
+    changeReason: String(row.change_reason ?? ""),
+    endReason: row.end_reason == null ? null : String(row.end_reason),
+  };
+}
+
+function mapConnectivityObservation(raw: AnyRecord): DeviceConnectivityObservationRecord {
+  const row = normalizeKeys(raw);
+  const id = canonicalDeviceLifecycleId(row.id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  const connectivityProfileId = canonicalDeviceLifecycleId(row.connectivity_profile_id);
+  const observedAt = recordedDeviceCheckIn(row.observed_at, Number.MAX_SAFE_INTEGER);
+  const receivedAt = recordedDeviceCheckIn(row.received_at, Number.MAX_SAFE_INTEGER);
+  const observationOrderValid = observedAt !== null && receivedAt !== null &&
+    Date.parse(observedAt) <= Date.parse(receivedAt) + 5 * 60 * 1000;
+  const requiredFieldsAvailable = [
+    "id", "device_id", "connectivity_profile_id", "profile_iccid_last4", "source_provider",
+    "source_authentication_status", "subscription_status", "network_registration_status",
+    "data_session_status", "observed_at", "received_at", "reconciliation_status",
+    "provider_verified_claim", "physical_connectivity_claim", "certification_claim",
+  ].every((key) => Object.hasOwn(row, key));
+  const providerClaimSafe = row.provider_verified_claim === false;
+  const physicalClaimSafe = row.physical_connectivity_claim === false;
+  const certificationClaimSafe = row.certification_claim === false;
+  const subscriptionValid = ["Unknown", "Active", "Suspended", "Deactivated"].includes(String(row.subscription_status));
+  const networkValid = ["Unknown", "Registered", "Roaming", "Denied", "Detached"].includes(String(row.network_registration_status));
+  const sessionValid = ["Unknown", "Attached", "Detached", "Blocked"].includes(String(row.data_session_status));
+  const softwareObservationAvailable = requiredFieldsAvailable && providerClaimSafe && physicalClaimSafe && certificationClaimSafe &&
+    row.source_authentication_status === "Authenticated" &&
+    row.reconciliation_status === "ExactCurrentProfile" &&
+    subscriptionValid && networkValid && sessionValid &&
+    id !== null && deviceId !== null && connectivityProfileId !== null &&
+    typeof row.source_provider === "string" && /^[a-z0-9][a-z0-9._-]{0,79}$/.test(row.source_provider) &&
+    typeof row.profile_iccid_last4 === "string" && /^\d{4}$/.test(row.profile_iccid_last4) &&
+    observationOrderValid;
+  const usage = Number(row.usage_bytes);
+  return {
+    id: softwareObservationAvailable ? id! : "",
+    deviceId: softwareObservationAvailable ? deviceId! : "",
+    connectivityProfileId: softwareObservationAvailable ? connectivityProfileId! : "",
+    profileIccidLast4: typeof row.profile_iccid_last4 === "string" && /^\d{4}$/.test(row.profile_iccid_last4)
+      ? row.profile_iccid_last4 : "",
+    sourceProvider: softwareObservationAvailable ? String(row.source_provider ?? "") : "Unavailable",
+    sourceAuthenticationStatus: softwareObservationAvailable ? "Authenticated" : "Unverified",
+    subscriptionStatus: softwareObservationAvailable ? row.subscription_status as DeviceConnectivityObservationRecord["subscriptionStatus"] : "Unknown",
+    networkRegistrationStatus: softwareObservationAvailable ? row.network_registration_status as DeviceConnectivityObservationRecord["networkRegistrationStatus"] : "Unknown",
+    dataSessionStatus: softwareObservationAvailable ? row.data_session_status as DeviceConnectivityObservationRecord["dataSessionStatus"] : "Unknown",
+    usageBytes: softwareObservationAvailable && row.usage_bytes != null && Number.isSafeInteger(usage) && usage >= 0 ? usage : null,
+    roaming: softwareObservationAvailable && typeof row.roaming === "boolean" ? row.roaming : null,
+    observedAt: softwareObservationAvailable ? String(observedAt) : "",
+    receivedAt: softwareObservationAvailable ? String(receivedAt) : "",
+    reconciliationStatus: softwareObservationAvailable ? "ExactCurrentProfile" : "Unavailable",
+    softwareObservationAvailable,
+    providerVerifiedClaim: false,
+    physicalConnectivityClaim: false,
+    certificationClaim: false,
+  };
+}
+
+function mapDeviceLifecycleTransition(raw: AnyRecord): DeviceLifecycleTransitionRecord {
+  const row = normalizeKeys(raw);
+  const id = canonicalDeviceLifecycleId(row.id);
+  const occurredAt = recordedDeviceCheckIn(row.occurred_at, Number.MAX_SAFE_INTEGER);
+  if (id === null || occurredAt === null || typeof row.to_state !== "string" || !row.to_state.trim() ||
+      typeof row.reason_code !== "string" || !row.reason_code.trim() ||
+      typeof row.correlation_id !== "string" || !row.correlation_id.trim())
+    throw new Error("Device lifecycle history was incomplete or malformed.");
+  return {
+    id,
+    fromState: row.from_state == null ? null : String(row.from_state),
+    toState: row.to_state,
+    reasonCode: row.reason_code,
+    reason: row.reason == null ? null : String(row.reason),
+    actorUserId: row.actor_user_id == null ? null : String(row.actor_user_id),
+    correlationId: row.correlation_id,
+    occurredAt,
+  };
+}
+
+function mapDeviceRetirement(raw: AnyRecord): DeviceRetirementRecord {
+  const row = normalizeKeys(raw);
+  const id = canonicalDeviceLifecycleId(row.id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  const retiredBy = canonicalDeviceLifecycleId(row.retired_by);
+  const effectiveAt = recordedDeviceCheckIn(row.effective_at, Number.MAX_SAFE_INTEGER);
+  const createdAt = recordedDeviceCheckIn(row.created_at, Number.MAX_SAFE_INTEGER);
+  const before = parseRowVersion(row.row_version_before);
+  const after = parseRowVersion(row.row_version_after);
+  const disposition = row.disposition_plan;
+  if (id === null || deviceId === null || retiredBy === null || effectiveAt === null || createdAt === null ||
+      before == null || after !== before + 1 ||
+      !["ReturnToVendor", "Recycle", "SecureStorage", "Other"].includes(String(disposition)) ||
+      row.credentials_revoked !== true || row.record_status !== "OperatorRecorded" ||
+      row.physical_disposition_status !== "Unverified" || row.physical_disposition_claim !== false ||
+      row.certification_claim !== false)
+    throw new Error("The server did not preserve the governed unverified retirement boundary.");
+  return {
+    id,
+    deviceId,
+    deviceSerial: String(row.device_serial_snapshot ?? ""),
+    retirementReason: String(row.retirement_reason ?? ""),
+    dispositionPlan: disposition as DeviceRetirementRecord["dispositionPlan"],
+    sourceReference: String(row.source_reference ?? ""),
+    effectiveAt,
+    priorStatus: String(row.prior_status ?? ""),
+    priorDeviceState: String(row.prior_device_state ?? ""),
+    rowVersionBefore: before,
+    rowVersionAfter: after,
+    endedConnectivityProfileId: row.ended_connectivity_profile_id == null ? null : String(row.ended_connectivity_profile_id),
+    credentialsRevoked: true,
+    recordStatus: "OperatorRecorded",
+    physicalDispositionStatus: "Unverified",
+    physicalDispositionClaim: false,
+    certificationClaim: false,
+    retiredBy,
+    createdAt,
+  };
+}
+
+function mapFirmwareCampaign(raw: AnyRecord): DeviceFirmwareCampaignRecord {
+  const row = normalizeKeys(raw);
+  if (row.remote_upgrade_claim !== false)
+    throw new Error("Firmware planning data did not include the required no-upgrade-claim marker.");
+  return {
+    campaignId: String(row.campaign_id ?? row.id ?? ""),
+    targetId: String(row.target_id ?? row.id ?? ""),
+    campaignName: String(row.campaign_name ?? ""),
+    targetFirmwareVersion: String(row.target_firmware_version ?? ""),
+    rollbackFirmwareVersion: row.rollback_firmware_version == null ? null : String(row.rollback_firmware_version),
+    rolloutStrategy: row.rollout_strategy === "Manual" || row.rollout_strategy === "Canary" || row.rollout_strategy === "Staged"
+      ? row.rollout_strategy : "Unknown",
+    batchSize: Number.isInteger(Number(row.batch_size)) && Number(row.batch_size) > 0 ? Number(row.batch_size) : 0,
+    scheduledFor: String(row.scheduled_for ?? ""),
+    maintenanceWindowMinutes: Number.isInteger(Number(row.maintenance_window_minutes)) && Number(row.maintenance_window_minutes) > 0
+      ? Number(row.maintenance_window_minutes) : 0,
+    executionStatus: row.execution_status === "ExternalHold" ? "ExternalHold" : "Unknown",
+    providerCapabilityStatus: row.provider_capability_status === "Unverified" ? "Unverified" : "Unknown",
+    remoteUpgradeClaim: false,
+    externalHoldReason: String(row.external_hold_reason ?? "Firmware delivery evidence is unavailable."),
+    sourceReference: String(row.source_reference ?? ""),
+    changeReason: String(row.change_reason ?? ""),
+    createdAt: String(row.created_at ?? ""),
+    deviceId: String(row.device_id ?? ""),
+    deviceSerial: String(row.device_serial ?? ""),
+    manufacturer: row.manufacturer == null ? null : String(row.manufacturer),
+    deviceModel: row.device_model == null ? null : String(row.device_model),
+    hardwareRevision: row.hardware_revision == null ? null : String(row.hardware_revision),
+    reportedFirmwareVersion: row.reported_firmware_version == null ? null : String(row.reported_firmware_version),
+    planningStatus: row.planning_status === "ReadyForExternalEvidence" || row.planning_status === "BlockedIdentity" || row.planning_status === "AlreadyCurrent"
+      ? row.planning_status : "Unknown",
+    planningReason: String(row.planning_reason ?? "Planning status unavailable."),
+    rolloutBatch: Number.isInteger(Number(row.rollout_batch)) && Number(row.rollout_batch) > 0 ? Number(row.rollout_batch) : 0,
+    deliveryStatus: row.delivery_status === "ExternalHold" ? "ExternalHold" : "Unknown",
+  };
+}
+
+function mapRmaEvent(raw: AnyRecord): DeviceRmaEventRecord {
+  const row = normalizeKeys(raw);
+  if (row.physical_completion_claim !== false || row.evidence_status !== "Unverified")
+    throw new Error("RMA event data crossed the unverified physical-evidence boundary.");
+  const eventTypes = ["CaseOpened", "ReturnAuthorized", "Shipped", "Received", "VendorDisposition", "ReplacementLinked", "CaseClosed"];
+  const statuses = ["Open", "AwaitingReturn", "InTransit", "UnderReview", "ReplacementPlanned", "Resolved"];
+  return {
+    id: String(row.id ?? ""), caseId: String(row.case_id ?? ""),
+    sequenceNumber: Number.isSafeInteger(Number(row.sequence_number)) ? Number(row.sequence_number) : 0,
+    eventType: eventTypes.includes(String(row.event_type)) ? String(row.event_type) as DeviceRmaEventRecord["eventType"] : "Unknown",
+    caseStatusAfter: statuses.includes(String(row.case_status_after)) ? String(row.case_status_after) as DeviceRmaEventRecord["caseStatusAfter"] : "Unknown",
+    occurredAt: String(row.occurred_at ?? ""),
+    custodyLocation: row.custody_location == null ? null : String(row.custody_location),
+    trackingReference: row.tracking_reference == null ? null : String(row.tracking_reference),
+    evidenceReference: String(row.evidence_reference ?? ""), evidenceStatus: "Unverified",
+    notes: String(row.notes ?? ""), physicalCompletionClaim: false,
+    recordedAt: String(row.recorded_at ?? ""),
+  };
+}
+
+function mapRmaReplacement(raw: AnyRecord): DeviceRmaReplacementRecord {
+  const row = normalizeKeys(raw);
+  if (row.physical_swap_claim !== false || row.physical_swap_status !== "ExternalHold" || row.replacement_status !== "Planned")
+    throw new Error("RMA replacement data crossed the planning-only boundary.");
+  return {
+    id: String(row.id ?? ""), caseId: String(row.case_id ?? ""),
+    failedDeviceId: String(row.failed_device_id ?? ""), failedDeviceSerial: String(row.failed_device_serial ?? ""),
+    replacementDeviceId: String(row.replacement_device_id ?? ""), replacementDeviceSerial: String(row.replacement_device_serial ?? ""),
+    replacementManufacturer: row.replacement_manufacturer == null ? null : String(row.replacement_manufacturer),
+    replacementDeviceModel: row.replacement_device_model == null ? null : String(row.replacement_device_model),
+    replacementHardwareRevision: row.replacement_hardware_revision == null ? null : String(row.replacement_hardware_revision),
+    replacementFirmwareVersion: row.replacement_firmware_version == null ? null : String(row.replacement_firmware_version),
+    replacementStatus: "Planned", physicalSwapStatus: "ExternalHold", physicalSwapClaim: false,
+    changeReason: String(row.change_reason ?? ""), sourceReference: String(row.source_reference ?? ""),
+    createdAt: String(row.created_at ?? ""),
+  };
+}
+
+function mapRmaSupportAction(raw: AnyRecord): DeviceRmaSupportActionRecord {
+  const row = normalizeKeys(raw);
+  const actionTypes = ["OwnershipClaimed", "OwnershipReassigned", "Escalated"];
+  const severity = row.escalation_severity == null ? null : String(row.escalation_severity);
+  if (!actionTypes.includes(String(row.action_type)) ||
+      (severity !== null && !["P0", "P1", "P2", "P3"].includes(severity)) ||
+      row.support_action_status !== "OperatorRecorded" || row.support_response_claim !== false ||
+      row.physical_outcome_claim !== false || row.warranty_acceptance_claim !== false)
+    throw new Error("RMA support data crossed the operator-recorded no-outcome-claim boundary.");
+  return {
+    id: String(row.id ?? ""), caseId: String(row.case_id ?? ""), deviceId: String(row.device_id ?? ""),
+    actionType: String(row.action_type) as DeviceRmaSupportActionRecord["actionType"],
+    ownerUserId: String(row.owner_user_id ?? ""), ownerNameSnapshot: String(row.owner_name_snapshot ?? ""),
+    supportQueue: String(row.support_queue ?? ""),
+    escalationSeverity: severity as DeviceRmaSupportActionRecord["escalationSeverity"],
+    actionReason: String(row.action_reason ?? ""), sourceReference: String(row.source_reference ?? ""),
+    effectiveAt: String(row.effective_at ?? ""), supportActionStatus: "OperatorRecorded",
+    supportResponseClaim: false, physicalOutcomeClaim: false, warrantyAcceptanceClaim: false,
+    recordedBy: String(row.recorded_by ?? ""), createdAt: String(row.created_at ?? ""),
+  };
+}
+
+function mapSparePoolEvent(raw: AnyRecord): DeviceSparePoolEventRecord {
+  const row = normalizeKeys(raw);
+  const actions = ["Added", "Reserved", "Released", "Removed"];
+  const states = ["Available", "Reserved", "Removed"];
+  const id = canonicalDeviceLifecycleId(row.id);
+  const entryId = canonicalDeviceLifecycleId(row.entry_id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  const rmaCaseId = row.rma_case_id == null ? null : canonicalDeviceLifecycleId(row.rma_case_id);
+  const failedDeviceId = row.failed_device_id == null ? null : canonicalDeviceLifecycleId(row.failed_device_id);
+  if (!id || !entryId || !deviceId || !actions.includes(String(row.action_type)) || !states.includes(String(row.state_after)) ||
+      (row.rma_case_id != null && !rmaCaseId) || (row.failed_device_id != null && !failedDeviceId) ||
+      row.event_status !== "OperatorRecorded" || row.physical_possession_claim !== false ||
+      row.condition_verified_claim !== false || row.compatibility_claim !== false || row.certification_claim !== false)
+    throw new Error("Spare-pool event crossed the operator-recorded no-evidence-claim boundary.");
+  return {
+    id, entryId, deviceId,
+    actionType: String(row.action_type) as DeviceSparePoolEventRecord["actionType"],
+    stateAfter: String(row.state_after) as DeviceSparePoolEventRecord["stateAfter"],
+    rmaCaseId, failedDeviceId, actionReason: String(row.action_reason ?? ""),
+    sourceReference: String(row.source_reference ?? ""), effectiveAt: String(row.effective_at ?? ""),
+    eventStatus: "OperatorRecorded", physicalPossessionClaim: false, conditionVerifiedClaim: false,
+    compatibilityClaim: false, certificationClaim: false, recordedBy: String(row.recorded_by ?? ""),
+    createdAt: String(row.created_at ?? ""),
+  };
+}
+
+function mapSparePool(raw: AnyRecord, events: DeviceSparePoolEventRecord[]): DeviceSparePoolRecord {
+  const row = normalizeKeys(raw);
+  const id = canonicalDeviceLifecycleId(row.id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  if (!id || !deviceId || row.inventory_assurance_status !== "OperatorRecordedUnverified" ||
+      row.physical_possession_claim !== false || row.condition_verified_claim !== false || row.certification_claim !== false ||
+      events.length === 0 || events.some(event => event.entryId !== id || event.deviceId !== deviceId))
+    throw new Error("Spare-pool entry crossed the unverified inventory-planning boundary.");
+  return {
+    id, deviceId, deviceSerialSnapshot: String(row.device_serial_snapshot ?? ""),
+    poolName: String(row.pool_name ?? ""), entryReason: String(row.entry_reason ?? ""),
+    sourceReference: String(row.source_reference ?? ""), inventoryAssuranceStatus: "OperatorRecordedUnverified",
+    physicalPossessionClaim: false, conditionVerifiedClaim: false, certificationClaim: false,
+    addedBy: String(row.added_by ?? ""), createdAt: String(row.created_at ?? ""),
+    currentState: events[0].stateAfter, events,
+  };
+}
+
+function mapDeviceSupportTierEvent(raw: AnyRecord): DeviceSupportTierEventRecord {
+  const row = normalizeKeys(raw);
+  const actions = ["Assigned", "Changed", "Ended"];
+  const states = ["Assigned", "NotAssigned"];
+  const tiers = ["Standard", "Priority", "CriticalOps", "Custom"];
+  const coverage = ["BusinessHours", "ExtendedHours", "AlwaysOn", "Custom"];
+  const id = canonicalDeviceLifecycleId(row.id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  const target = Number(row.routing_response_target_minutes);
+  if (!id || !deviceId || !actions.includes(String(row.action_type)) || !states.includes(String(row.state_after)) ||
+      !tiers.includes(String(row.tier_code)) || !coverage.includes(String(row.coverage_window)) ||
+      !Number.isInteger(target) || target < 15 || target > 10080 ||
+      row.record_status !== "OperatorRecordedUnverified" ||
+      row.commercial_entitlement_verified_claim !== false || row.provider_support_claim !== false ||
+      row.hardware_supportability_claim !== false || row.certification_claim !== false)
+    throw new Error("Device support-tier data crossed the operator-recorded unverified boundary.");
+  return {
+    id, deviceId, deviceSerialSnapshot: String(row.device_serial_snapshot ?? ""),
+    actionType: String(row.action_type) as DeviceSupportTierEventRecord["actionType"],
+    stateAfter: String(row.state_after) as DeviceSupportTierEventRecord["stateAfter"],
+    tierCode: String(row.tier_code) as DeviceSupportTierEventRecord["tierCode"],
+    coverageWindow: String(row.coverage_window) as DeviceSupportTierEventRecord["coverageWindow"],
+    routingResponseTargetMinutes: target,
+    escalationPolicyReference: String(row.escalation_policy_reference ?? ""),
+    commercialReference: String(row.commercial_reference ?? ""),
+    actionReason: String(row.action_reason ?? ""), sourceReference: String(row.source_reference ?? ""),
+    effectiveAt: String(row.effective_at ?? ""), recordStatus: "OperatorRecordedUnverified",
+    commercialEntitlementVerifiedClaim: false, providerSupportClaim: false,
+    hardwareSupportabilityClaim: false, certificationClaim: false,
+    recordedBy: String(row.recorded_by ?? ""), createdAt: String(row.created_at ?? ""),
+  };
+}
+
+function mapRmaCase(raw: AnyRecord, events: DeviceRmaEventRecord[] = [], replacement: DeviceRmaReplacementRecord | null = null,
+  supportActions: DeviceRmaSupportActionRecord[] = []): DeviceRmaCaseRecord {
+  const row = normalizeKeys(raw);
+  if (row.physical_evidence_claim !== false || row.warranty_evidence_status !== "Unverified")
+    throw new Error("RMA case data crossed the unverified evidence boundary.");
+  const severities = ["P0", "P1", "P2", "P3"];
+  const statuses = ["Open", "AwaitingReturn", "InTransit", "UnderReview", "ReplacementPlanned", "Resolved"];
+  const warranty = ["Unknown", "ClaimedInWarranty", "ClaimedOutOfWarranty", "NotApplicable"];
+  return {
+    id: String(row.id ?? ""), deviceId: String(row.device_id ?? ""), deviceSerial: String(row.device_serial ?? ""),
+    manufacturer: row.manufacturer == null ? null : String(row.manufacturer),
+    deviceModel: row.device_model == null ? null : String(row.device_model),
+    hardwareRevision: row.hardware_revision == null ? null : String(row.hardware_revision),
+    reportedFirmwareVersion: row.reported_firmware_version == null ? null : String(row.reported_firmware_version),
+    severity: severities.includes(String(row.severity)) ? String(row.severity) as DeviceRmaCaseRecord["severity"] : "Unknown",
+    failureCategory: String(row.failure_category ?? ""), failureDescription: String(row.failure_description ?? ""),
+    observedAt: String(row.observed_at ?? ""),
+    warrantyPosture: warranty.includes(String(row.warranty_posture)) ? String(row.warranty_posture) as DeviceRmaCaseRecord["warrantyPosture"] : "Unknown",
+    warrantyReference: row.warranty_reference == null ? null : String(row.warranty_reference),
+    warrantyEvidenceStatus: "Unverified", supportSlaReference: String(row.support_sla_reference ?? ""),
+    responseDueAt: String(row.response_due_at ?? ""), sourceReference: String(row.source_reference ?? ""),
+    physicalEvidenceClaim: false,
+    currentStatus: statuses.includes(String(row.current_status)) ? String(row.current_status) as DeviceRmaCaseRecord["currentStatus"] : "Unknown",
+    latestEventAt: row.latest_event_at == null ? null : String(row.latest_event_at),
+    createdAt: String(row.created_at ?? ""), events, replacement, supportActions,
+  };
+}
+
+function mapRemoteCommandCapability(raw: AnyRecord): DeviceRemoteCommandCapabilityRecord {
+  const row = normalizeKeys(raw);
+  const commandTypes = ["RequestPosition", "RequestDiagnostics", "RestartDevice"];
+  const commandType = commandTypes.includes(String(row.command_type))
+    ? String(row.command_type) as DeviceRemoteCommandCapabilityRecord["commandType"]
+    : null;
+  if (commandType === null) throw new Error("The command catalog returned an unsupported command type.");
+  const status = ["Unverified", "Verified", "Rejected", "Revoked"].includes(String(row.capability_status))
+    ? String(row.capability_status) as DeviceRemoteCommandCapabilityRecord["capabilityStatus"] : "Unknown";
+  if (row.command_class !== "Observation" && row.command_class !== "Controlled")
+    throw new Error("The command catalog returned an unsupported command class.");
+  const commandClass = row.command_class;
+  const available = row.request_admission_available === true && status === "Verified" &&
+    typeof row.evidence_reference === "string" && row.evidence_reference.trim().length > 0 &&
+    typeof row.expires_at === "string" && row.expires_at.trim().length > 0;
+  if (row.certification_claim !== false)
+    throw new Error("Command capability data crossed the no-certification-claim boundary.");
+  return {
+    commandType, displayName: String(row.display_name ?? commandType), commandClass,
+    capabilityStatus: status, evidenceSource: row.evidence_source == null ? null : String(row.evidence_source),
+    evidenceReference: row.evidence_reference == null ? null : String(row.evidence_reference),
+    observedAt: row.observed_at == null ? null : String(row.observed_at),
+    expiresAt: row.expires_at == null ? null : String(row.expires_at),
+    requestAdmissionAvailable: available,
+    confirmationText: String(row.confirmation_text ?? ""),
+    externalHold: !available,
+    externalHoldReason: available ? null : String(row.external_hold_reason ?? "Verified capability evidence is unavailable."),
+    certificationClaim: false,
+  };
+}
+
+function mapRemoteCommand(raw: AnyRecord): DeviceRemoteCommandRecord {
+  const row = normalizeKeys(raw);
+  if (row.provider_delivery_claim !== false || row.physical_outcome_claim !== false)
+    throw new Error("Command history crossed the unverified delivery or physical-outcome boundary.");
+  return {
+    id: String(row.id ?? ""), commandType: String(row.command_type ?? "Unknown"),
+    commandClass: String(row.command_class ?? "Unknown"), status: String(row.status ?? "Unknown"),
+    governanceStatus: String(row.governance_status ?? "LegacyUnverified"),
+    purpose: String(row.purpose ?? ""), sourceReference: String(row.source_reference ?? ""),
+    attemptCount: Number.isSafeInteger(Number(row.attempt_count)) ? Number(row.attempt_count) : 0,
+    maxAttempts: Number.isSafeInteger(Number(row.max_attempts)) ? Number(row.max_attempts) : 0,
+    scheduledFor: String(row.scheduled_for ?? ""),
+    dispatchedAt: row.dispatched_at == null ? null : String(row.dispatched_at),
+    acknowledgedAt: row.acknowledged_at == null ? null : String(row.acknowledged_at),
+    appliedAt: row.applied_at == null ? null : String(row.applied_at),
+    expiresAt: row.expires_at == null ? null : String(row.expires_at),
+    lastError: row.last_error == null ? null : String(row.last_error),
+    providerDeliveryClaim: false, physicalOutcomeClaim: false,
+    createdAt: String(row.created_at ?? ""),
+  };
+}
 
 // The one-time secrets a provisioned device uses to authenticate its live telemetry
 // stream — the equivalent of a Render/Vercel deploy token. Shown once, never again.
@@ -662,6 +1579,7 @@ export type TelematicsClusterRecord = {
   deviceFixAt: string;
   gatewayReceivedAt: string;
   routingReadiness: string;
+  engineSpeed: string;
   engineHours: string;
   odometer: string;
   fuelLevel: string;
@@ -671,6 +1589,16 @@ export type TelematicsClusterRecord = {
   emissionsStatus: string;
   lastEngineDataAt: string;
   dataFreshnessStatus: string;
+  signalAvailability: string;
+  signalTransport: string;
+  signalAdapterVersion: string;
+  signalTrust: string;
+  signalEvidenceReference: string;
+  certificationBoundary: string;
+  diagnosticEvidenceClassification: string;
+  diagnosticSafetyAction: string;
+  diagnosticEvidenceReference: string;
+  diagnosticEvidenceDigest: string;
   sensorType: string;
   latestReading: string;
   expectedRange: string;
@@ -831,6 +1759,24 @@ function mapDeviceRow(
     : row.vehicle_id != null;
 
   const firmware = row.firmware_version == null ? "Unknown" : String(row.firmware_version);
+  const deviceOpsAssessmentFieldsAvailable = [
+    "exact_device_tuple_complete", "current_installation_recorded", "current_connectivity_profile_recorded",
+    "current_telemetry_observed", "software_lifecycle_clear", "open_rma_count", "deviceops_gap_count",
+  ].every((key) => Object.hasOwn(row, key));
+  const openRmaCount = deviceOpsAssessmentFieldsAvailable ? Number(row.open_rma_count ?? 0) : 0;
+  const derivedDeviceOpsGaps = deviceOpsAssessmentFieldsAvailable ? [
+      row.exact_device_tuple_complete === false ? "Complete exact hardware identity" : null,
+      row.current_installation_recorded === false ? "Record current installation" : null,
+      row.current_connectivity_profile_recorded === false ? "Record SIM/eSIM profile" : null,
+      row.current_telemetry_observed === false ? "Restore current telemetry observation" : null,
+      row.software_lifecycle_clear === false ? "Resolve device lifecycle hold" : null,
+      openRmaCount > 0 ? "Resolve open RMA" : null,
+    ].filter((value): value is string => value !== null) : [];
+  const projectedDeviceOpsGapCount = Number(row.deviceops_gap_count);
+  const deviceOpsAssessmentAvailable = deviceOpsAssessmentFieldsAvailable &&
+    Number.isInteger(projectedDeviceOpsGapCount) && projectedDeviceOpsGapCount >= 0 &&
+    projectedDeviceOpsGapCount === derivedDeviceOpsGaps.length;
+  const deviceOpsGaps = deviceOpsAssessmentAvailable ? derivedDeviceOpsGaps : [];
 
   return {
     id: (typeof row.id === "string" || typeof row.id === "number") ? row.id : serial,
@@ -839,6 +1785,8 @@ function mapDeviceRow(
     deviceName: String(row.device_model ?? serial ?? "Telematics device"),
     deviceType: String(row.device_model ?? row.device_category ?? "Unknown device"),
     deviceCategory: String(row.device_category ?? "Unknown"),
+    manufacturer: String(row.manufacturer ?? ""),
+    hardwareRevision: String(row.hardware_revision ?? ""),
     provider: String(row.provider ?? "Unknown"),
     // No provider registry endpoint — derive a stable code from the real provider name.
     providerCode: String(row.provider ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-"),
@@ -873,8 +1821,13 @@ function mapDeviceRow(
     installationActivationVerifiedAt: row.activation_verified_at == null ? null : String(row.activation_verified_at),
     deviceRole: String(row.current_installation_role ?? row.device_role ?? ""),
     complianceStatus: "Not assessed",
-    warrantyStatus: "—",
-    supportStatus: "—",
+    warrantyStatus: !deviceOpsAssessmentAvailable ? "Unassessed" : openRmaCount > 0 ? String(row.highest_open_rma_severity ?? "Open") : "No open RMA",
+    supportStatus: !deviceOpsAssessmentAvailable ? "Assessment unavailable" : deviceOpsGaps.length > 0 ? `${deviceOpsGaps.length} listed software gap${deviceOpsGaps.length === 1 ? "" : "s"}` : "No listed software gap",
+    deviceOpsGaps,
+    deviceOpsAssessmentAvailable,
+    openRmaCount,
+    highestOpenRmaSeverity: openRmaCount > 0 ? String(row.highest_open_rma_severity ?? "Unknown") : "None",
+    nextSupportResponseDueAt: row.next_support_response_due_at == null ? null : String(row.next_support_response_due_at),
     lifecycleStatus: revoked ? "Archived" : String(row.status ?? "Unknown"),
     deviceState: String(row.device_state ?? "Unknown"),
     eldStatus: String(row.status ?? "Unknown"),
@@ -927,6 +1880,130 @@ function mapInstallationRow(rawRow: AnyRecord, tenantId: number): TelematicsInst
   };
 }
 
+const installationChecklistItems: DeviceInstallationChecklistItem[] = [
+  "DeviceIdentity", "VehicleIdentity", "Mounting", "PrimaryPower", "Ground", "Ignition",
+  "GNSSAntenna", "CellularAntenna", "Harness", "CANBus", "CameraAlignment", "SensorPlacement",
+];
+const installationChecklistResults: DeviceInstallationChecklistResult[] = ["Pass", "Fail", "NotObserved", "NotApplicable"];
+const installationArtifactTypes: DeviceInstallationArtifactType[] = [
+  "InstallationPhoto", "SerialLabel", "WiringPhoto", "PowerReading", "TechnicianChecklist",
+  "CommissioningReport", "RemovalPhoto", "OtherDocument",
+];
+
+function requiredInstallationChecklistItems(category: string): DeviceInstallationChecklistItem[] {
+  const required: DeviceInstallationChecklistItem[] = [
+    "DeviceIdentity", "VehicleIdentity", "Mounting", "PrimaryPower", "Ground", "Ignition", "Harness",
+  ];
+  if (/gps|eld|telematics/i.test(category)) required.push("GNSSAntenna", "CellularAntenna");
+  if (/j1939|can|obd/i.test(category)) required.push("CANBus");
+  if (/camera|dashcam|video/i.test(category)) required.push("CameraAlignment");
+  if (/temperature|fuel|tire|sensor/i.test(category)) required.push("SensorPlacement");
+  return required;
+}
+
+function mapInstallationChecklistObservation(raw: AnyRecord): DeviceInstallationChecklistObservationRecord | null {
+  const row = normalizeKeys(raw);
+  const checklistItem = installationChecklistItems.find(value => value === row.checklist_item);
+  const observedResult = installationChecklistResults.find(value => value === row.observed_result);
+  if (!checklistItem || !observedResult || row.assurance_status !== "Unverified" ||
+      row.physical_evidence_claim !== false || row.certification_claim !== false) return null;
+  const id = canonicalDeviceLifecycleId(row.id);
+  const workPackageId = canonicalDeviceLifecycleId(row.work_package_id);
+  const observedAt = typeof row.observed_at === "string" ? row.observed_at : "";
+  if (!id || !workPackageId || installationEffectiveInstant(observedAt) === null ||
+      typeof row.evidence_reference !== "string" || row.evidence_reference.trim().length < 3 ||
+      typeof row.observation_notes !== "string" || row.observation_notes.trim().length < 3) return null;
+  return {
+    id, workPackageId, checklistItem, observedResult,
+    evidenceReference: String(row.evidence_reference ?? ""),
+    observationNotes: String(row.observation_notes ?? ""),
+    observedAt,
+    assuranceStatus: "Unverified", physicalEvidenceClaim: false, certificationClaim: false,
+    recordedByName: String(row.recorded_by_name ?? ""),
+  };
+}
+
+function mapInstallationArtifactReference(raw: AnyRecord): DeviceInstallationArtifactReferenceRecord | null {
+  const row = normalizeKeys(raw);
+  const artifactType = installationArtifactTypes.find(value => value === row.artifact_type);
+  if (!artifactType || row.content_verification_status !== "Unverified" ||
+      row.physical_evidence_claim !== false || row.certification_claim !== false) return null;
+  const id = canonicalDeviceLifecycleId(row.id);
+  const workPackageId = canonicalDeviceLifecycleId(row.work_package_id);
+  const capturedAt = typeof row.captured_at === "string" ? row.captured_at : "";
+  const objectKey = typeof row.object_key === "string" ? row.object_key : "";
+  if (!id || !workPackageId || installationEffectiveInstant(capturedAt) === null ||
+      !objectKey.trim() || objectKey.startsWith("/") || objectKey.includes("\\") ||
+      objectKey.includes("..") || /%2e/i.test(objectKey) || /^[a-z][a-z0-9+.-]*:/i.test(objectKey) ||
+      typeof row.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(row.sha256)) return null;
+  return {
+    id, workPackageId, artifactType,
+    objectKey, sha256: row.sha256, capturedAt,
+    contentVerificationStatus: "Unverified", physicalEvidenceClaim: false, certificationClaim: false,
+    recordedByName: String(row.recorded_by_name ?? ""),
+  };
+}
+
+function mapInstallationWorkPackage(
+  raw: AnyRecord,
+  checklistRows: DeviceInstallationChecklistObservationRecord[],
+  artifactRows: DeviceInstallationArtifactReferenceRecord[],
+  deviceCategory: string,
+): DeviceInstallationWorkPackageRecord | null {
+  const row = normalizeKeys(raw);
+  if (row.physical_appointment_claim !== false || row.physical_work_claim !== false || row.certification_claim !== false)
+    return null;
+  const id = canonicalDeviceLifecycleId(row.id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  const vehicleId = canonicalDeviceLifecycleId(row.vehicle_id);
+  const installerId = canonicalDeviceLifecycleId(row.assigned_installer_user_id);
+  const appointmentStartText = typeof row.appointment_start === "string" ? row.appointment_start : "";
+  const appointmentEndText = typeof row.appointment_end === "string" ? row.appointment_end : "";
+  const appointmentStart = installationEffectiveInstant(appointmentStartText);
+  const appointmentEnd = installationEffectiveInstant(appointmentEndText);
+  if (!id || !deviceId || !vehicleId || !installerId || appointmentStart === null || appointmentEnd === null ||
+      appointmentEnd <= appointmentStart || typeof row.work_order_reference !== "string" || !row.work_order_reference.trim() ||
+      typeof row.service_location !== "string" || !row.service_location.trim() ||
+      typeof row.work_scope !== "string" || row.work_scope.trim().length < 5)
+    return null;
+  const observations = checklistRows.filter(observation => observation.workPackageId === id);
+  const latest = new Map<DeviceInstallationChecklistItem, DeviceInstallationChecklistObservationRecord>();
+  for (const observation of observations) if (!latest.has(observation.checklistItem)) latest.set(observation.checklistItem, observation);
+  const latestChecklist = [...latest.values()];
+  const requiredChecklistItems = requiredInstallationChecklistItems(deviceCategory);
+  const requiredResults = requiredChecklistItems.map(item => latest.get(item));
+  const hasFailure = requiredResults.some(observation => observation?.observedResult === "Fail");
+  const allRecorded = requiredResults.every(observation => observation && ["Pass", "NotApplicable"].includes(observation.observedResult));
+  const artifactReferences = artifactRows.filter(artifact => artifact.workPackageId === id);
+  const linkedInstallationId = row.linked_installation_id == null
+    ? null : canonicalDeviceLifecycleId(row.linked_installation_id);
+  if (row.linked_installation_id != null && (!linkedInstallationId || row.link_assurance_status !== "RecordedUnverified" ||
+      row.link_physical_work_claim !== false || row.link_certification_claim !== false ||
+      installationEffectiveInstant(row.linked_at) === null || typeof row.linked_installation_status !== "string" ||
+      !row.linked_installation_status.trim())) return null;
+  const readinessStatus: DeviceInstallationWorkPackageRecord["readinessStatus"] = hasFailure
+    ? "BlockedByFailedCheck"
+    : !allRecorded
+      ? "AwaitingChecklist"
+      : artifactReferences.length === 0
+        ? "ChecklistRecordedAwaitingArtifacts"
+        : linkedInstallationId
+          ? "LinkedAwaitingIndependentVerification"
+          : "RecordedAwaitingIndependentVerification";
+  return {
+    id, deviceId, vehicleId, vehicleCode: String(row.vehicle_code ?? ""),
+    assignedInstallerUserId: installerId, installerName: String(row.installer_name ?? ""),
+    workOrderReference: row.work_order_reference, appointmentStart: appointmentStartText,
+    appointmentEnd: appointmentEndText, serviceLocation: row.service_location,
+    workScope: String(row.work_scope ?? ""), readinessStatus, requiredChecklistItems, latestChecklist,
+    artifactReferences, linkedInstallationId,
+    linkedInstallationStatus: linkedInstallationId ? String(row.linked_installation_status) : null,
+    linkAssuranceStatus: linkedInstallationId ? "RecordedUnverified" : null,
+    linkedAt: linkedInstallationId ? String(row.linked_at) : null,
+    physicalAppointmentClaim: false, physicalWorkClaim: false, certificationClaim: false,
+  };
+}
+
 function installationMutationKey(deviceId: string | number) {
   const uuid = globalThis.crypto?.randomUUID?.();
   return uuid ? `device-${deviceId}-${uuid}` : `device-${deviceId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -976,7 +2053,10 @@ function isValidPosition(position: AnyRecord | undefined) {
 function readableSource(source: unknown) {
   const value = String(source ?? "").trim();
   if (!value) return "Unknown source";
-  return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function normalizeProviderToken(value: string) {
@@ -1223,6 +2303,43 @@ function positionForDevice(device: DeviceCommandRecord, positions: AnyRecord[]):
   });
 }
 
+function signalCaptureReferences(headers: unknown) {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return "—";
+  const raw = (headers as AnyRecord)["j1939.capture_references"];
+  if (typeof raw !== "string" || !raw.trim()) return "—";
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return "—";
+    const references = parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+    return references.join(", ") || "—";
+  } catch {
+    return "—";
+  }
+}
+
+function parseDiagnosticCaptureReferences(value: unknown): string[] {
+  let candidate = value;
+  if (typeof candidate === "string") {
+    try { candidate = JSON.parse(candidate); } catch { return []; }
+  }
+  if (!Array.isArray(candidate)) return [];
+  return candidate
+    .filter((reference): reference is string => typeof reference === "string" && reference.trim().length > 0)
+    .map((reference) => reference.trim());
+}
+
+function readableSignalAvailability(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "—";
+  return raw.split(",").map((entry) => {
+    const separator = entry.lastIndexOf(":");
+    if (separator < 0) return entry;
+    const path = entry.slice(0, separator);
+    const status = entry.slice(separator + 1);
+    return `${path.split(".").at(-1) ?? path}: ${status}`;
+  }).join(", ");
+}
+
 // Build a cluster row from a real device + its real live position + real fault codes.
 // Every value is either a live field or an honest "—"/empty marker — no fake defaults.
 function toClusterRecord(
@@ -1238,7 +2355,33 @@ function toClusterRecord(
     const type = String(fault.code_type ?? "").trim();
     return code ? [type, code].filter(Boolean).join(" ") : "";
   }).filter(Boolean);
-  const explicitProtocol = String(position?.protocol ?? "").toLowerCase();
+  const faultProtocol = deviceFaults
+    .map((fault) => String(fault.protocol ?? fault.code_type ?? "").trim())
+    .find(Boolean) ?? "";
+  const latestFaultObservedAt = deviceFaults
+    .map((fault) => fault.last_observed_at ?? fault.observed_at ?? fault.last_seen_at ?? fault.first_seen_at)
+    .filter((value) => value != null && String(value).trim() !== "")
+    .map(String)
+    .sort((left, right) => (Date.parse(right) || 0) - (Date.parse(left) || 0))[0] ?? "";
+  const diagnosticEvidenceClassification = Array.from(new Set(deviceFaults
+    .map((fault) => String(fault.evidence_classification ?? "LegacyOrUnclassified"))))
+    .join(", ") || "—";
+  const diagnosticEvidenceReference = Array.from(new Set(deviceFaults
+    .flatMap((fault) => parseDiagnosticCaptureReferences(fault.diagnostic_evidence_references))))
+    .join(", ") || "—";
+  const diagnosticEvidenceDigest = Array.from(new Set(deviceFaults
+    .map((fault) => String(fault.diagnostic_evidence_reference_digest ?? "").trim())
+    .filter(Boolean)))
+    .join(", ") || "—";
+  const safetyActions = deviceFaults.map((fault) => String(fault.safety_action_status ?? "ObservationOnly"));
+  const diagnosticSafetyAction = safetyActions.includes("VehicleHoldActive")
+    ? "Vehicle hold active"
+    : safetyActions.includes("ReviewHoldActive")
+      ? "Review hold active"
+      : troubleCodes.length > 0
+        ? "Observation only — review required"
+        : "—";
+  const explicitProtocol = String(position?.protocol ?? faultProtocol).toLowerCase();
   const protocolType: TelematicsClusterRecord["protocolType"] = /j1939/.test(explicitProtocol)
     ? "J1939"
     : /obd/.test(explicitProtocol)
@@ -1257,7 +2400,16 @@ function toClusterRecord(
   const gatewayReceivedAt = position?.gateway_received_at;
   const lastPingAt = deviceFixAt ? String(deviceFixAt) : device.lastCheckIn;
   const engineStatus = position?.engine_status ? String(position.engine_status) : "—";
-  const hasEngineEvidence = troubleCodes.length > 0 || [position?.engine_status, position?.odometer_miles, position?.fuel_level, position?.battery_voltage].some((value) => value != null && String(value).trim() !== "");
+  const canonicalSignalCount = Number(position?.signal_count ?? 0);
+  const hasCanonicalSignals = Number.isInteger(canonicalSignalCount) && canonicalSignalCount > 0;
+  const hasEngineEvidence = troubleCodes.length > 0 || hasCanonicalSignals || [
+    position?.engine_status,
+    position?.engine_speed_rpm,
+    position?.engine_hours,
+    position?.odometer_miles,
+    position?.fuel_level,
+    position?.battery_voltage,
+  ].some((value) => value != null && String(value).trim() !== "");
   const requiredEvidenceAvailable = evidenceKind === "diagnostics" ? hasEngineEvidence : positionAvailable;
   // GPS and diagnostics have different evidence contracts. A vehicle-level fix is
   // never substituted for a source device's own evidence by the API.
@@ -1314,7 +2466,8 @@ function toClusterRecord(
     deviceFixAt: deviceFixAt ? String(deviceFixAt) : "—",
     gatewayReceivedAt: gatewayReceivedAt ? String(gatewayReceivedAt) : "—",
     routingReadiness,
-    engineHours: "—",
+    engineSpeed: position?.engine_speed_rpm != null ? `${position.engine_speed_rpm} rpm` : "—",
+    engineHours: position?.engine_hours != null ? `${position.engine_hours} h` : "—",
     odometer: position?.odometer_miles != null ? String(position.odometer_miles) : "—",
     fuelLevel: position?.fuel_level != null ? String(position.fuel_level) : "—",
     batteryVoltage: position?.battery_voltage != null ? String(position.battery_voltage) : "—",
@@ -1323,8 +2476,24 @@ function toClusterRecord(
     // A generic DTC is not automatically an emissions fault. That classification
     // requires a server-supplied diagnostic category which is not in this feed.
     emissionsStatus: "Not evaluated",
-    lastEngineDataAt: hasEngineEvidence ? lastPingAt : "—",
+    lastEngineDataAt: hasEngineEvidence ? (latestFaultObservedAt || lastPingAt) : "—",
     dataFreshnessStatus,
+    signalAvailability: readableSignalAvailability(position?.signal_availability),
+    signalTransport: position?.transport ? String(position.transport) : "—",
+    signalAdapterVersion: position?.adapter_version ? String(position.adapter_version) : "—",
+    signalTrust: position?.trust_score != null && Number.isFinite(Number(position.trust_score))
+      ? `${Math.round(Number(position.trust_score) * 100)}%`
+      : "—",
+    signalEvidenceReference: signalCaptureReferences(position?.signal_evidence_headers),
+    certificationBoundary: hasCanonicalSignals || troubleCodes.length > 0
+      ? position?.certification_claim === true
+        ? "Certification claim present"
+        : "Operational observation only — not certification"
+      : "—",
+    diagnosticEvidenceClassification,
+    diagnosticSafetyAction,
+    diagnosticEvidenceReference,
+    diagnosticEvidenceDigest,
     sensorType,
     // No standalone sensor-reading feed in the verified backend contract, so we
     // NEVER fabricate a reading or an expected-range setpoint. Both stay honest "—".
@@ -1412,6 +2581,7 @@ function toColdChainClusterRecord(
     deviceFixAt: "—",
     gatewayReceivedAt: lastPingAt || "—",
     routingReadiness: "Not applicable",
+    engineSpeed: "—",
     engineHours: "—",
     odometer: "—",
     fuelLevel: "—",
@@ -1421,6 +2591,16 @@ function toColdChainClusterRecord(
     emissionsStatus: "Not applicable",
     lastEngineDataAt: "—",
     dataFreshnessStatus: freshness,
+    signalAvailability: "—",
+    signalTransport: "—",
+    signalAdapterVersion: "—",
+    signalTrust: "—",
+    signalEvidenceReference: "—",
+    certificationBoundary: "—",
+    diagnosticEvidenceClassification: "—",
+    diagnosticSafetyAction: "—",
+    diagnosticEvidenceReference: "—",
+    diagnosticEvidenceDigest: "—",
     sensorType: zone?.name || device.zoneName || "Temperature",
     latestReading: hasTemperature ? `${Number(temperature).toFixed(1)} °C` : "—",
     expectedRange,
@@ -1542,6 +2722,9 @@ export const telematicsService = {
         online: Number(summary.online ?? 0),
         neverConnected: Number(summary.neverConnected ?? summary.never_connected ?? 0),
         faulted: summary.faulted == null ? null : Number(summary.faulted),
+        readinessGaps: summary.readinessGaps == null && summary.readiness_gaps == null
+          ? null
+          : Number(summary.readinessGaps ?? summary.readiness_gaps),
       },
     };
   },
@@ -1584,6 +2767,8 @@ export const telematicsService = {
         heading: row.position_heading,
         accuracy_meters: row.position_accuracy_meters,
         engine_status: row.position_engine_status,
+        engine_speed_rpm: row.position_engine_speed_rpm,
+        engine_hours: row.position_engine_hours,
         odometer_miles: row.position_odometer_miles,
         fuel_level: row.position_fuel_level,
         battery_voltage: row.position_battery_voltage,
@@ -1593,6 +2778,13 @@ export const telematicsService = {
         provider: row.position_provider,
         protocol: row.position_protocol,
         confidence: row.position_confidence,
+        transport: row.position_transport,
+        adapter_version: row.position_adapter_version,
+        signal_availability: row.position_signal_availability,
+        signal_evidence_headers: row.position_signal_evidence_headers,
+        trust_score: row.position_trust_score,
+        signal_count: row.position_signal_count,
+        certification_claim: row.position_certification_claim,
         device_fix_time: row.position_device_fix_time,
         gateway_received_at: row.position_gateway_received_at,
         freshness: row.position_freshness,
@@ -1674,10 +2866,125 @@ export const telematicsService = {
     const [scoped] = scopeDevicesForSession([device], session);
     if (!scoped) throw new Error("Device not found");
 
+    const installationChecklist = (Array.isArray(detail.installation_checklist_observations)
+      ? detail.installation_checklist_observations as AnyRecord[] : [])
+      .map(mapInstallationChecklistObservation)
+      .filter((row): row is DeviceInstallationChecklistObservationRecord => row !== null);
+    const installationArtifacts = (Array.isArray(detail.installation_artifact_references)
+      ? detail.installation_artifact_references as AnyRecord[] : [])
+      .map(mapInstallationArtifactReference)
+      .filter((row): row is DeviceInstallationArtifactReferenceRecord => row !== null);
+    const installationWorkPackages = (Array.isArray(detail.installation_work_packages)
+      ? detail.installation_work_packages as AnyRecord[] : [])
+      .map(row => mapInstallationWorkPackage(row, installationChecklist, installationArtifacts, scoped.deviceCategory))
+      .filter((row): row is DeviceInstallationWorkPackageRecord => row !== null);
+
     const serial = scoped.serialNumber;
     const deviceFaults = faults.filter((fault) => String(fault.device_id ?? "") === serial);
     const deviceAlerts = alerts.filter((alert) => String(alert.device_serial ?? "") === serial);
     const position = positionForDevice(scoped, positions);
+    const compatibilityRow = normalizeKeys(
+      detail.compatibility && typeof detail.compatibility === "object"
+        ? detail.compatibility as AnyRecord
+        : {},
+    );
+    const capabilityDeclarationStatus = compatibilityRow.capability_declaration_status === "EngineeringDeclaredUnverified"
+      ? "EngineeringDeclaredUnverified" as const
+      : "NotRecorded" as const;
+    const compatibilityList = (value: unknown): string[] => capabilityDeclarationStatus === "EngineeringDeclaredUnverified"
+      && Array.isArray(value)
+      ? [...new Set(value.filter((item): item is string => typeof item === "string")
+        .map(item => item.trim()).filter(item => item.length > 0))]
+      : [];
+    const compatibility: DeviceCompatibilityRecord = {
+      manufacturer: typeof compatibilityRow.manufacturer === "string" && compatibilityRow.manufacturer.trim()
+        ? compatibilityRow.manufacturer.trim() : null,
+      deviceModel: typeof compatibilityRow.device_model === "string" && compatibilityRow.device_model.trim()
+        ? compatibilityRow.device_model.trim() : null,
+      hardwareRevision: typeof compatibilityRow.hardware_revision === "string" && compatibilityRow.hardware_revision.trim()
+        ? compatibilityRow.hardware_revision.trim() : null,
+      firmwareVersion: typeof compatibilityRow.firmware_version === "string" && compatibilityRow.firmware_version.trim()
+        ? compatibilityRow.firmware_version.trim() : null,
+      exactTupleComplete: compatibilityRow.exact_tuple_complete === true,
+      missingIdentityFields: Array.isArray(compatibilityRow.missing_identity_fields)
+        ? compatibilityRow.missing_identity_fields.map(String) : ["compatibility status unavailable"],
+      registryStatus: String(compatibilityRow.registry_status ?? "Unregistered"),
+      // Fail closed if an older or malformed API omits the Stage115 projection.
+      certificationStatus: "ExternalHold",
+      maximumTier: "Unverified",
+      candidateSha: typeof compatibilityRow.candidate_sha === "string" && /^[0-9a-f]{40}$/.test(compatibilityRow.candidate_sha)
+        ? compatibilityRow.candidate_sha : null,
+      externalHold: true,
+      externalHoldReason: String(compatibilityRow.external_hold_reason
+        ?? "Compatibility evidence is unavailable. Hardware certification remains on external hold."),
+      capabilityDeclarationStatus,
+      protocols: compatibilityList(compatibilityRow.protocols),
+      supportedFields: compatibilityList(compatibilityRow.supported_fields),
+      supportedEvents: compatibilityList(compatibilityRow.supported_events),
+      supportedCommands: compatibilityList(compatibilityRow.supported_commands),
+      knownLimitations: typeof compatibilityRow.known_limitations === "string" && compatibilityRow.known_limitations.trim()
+        ? compatibilityRow.known_limitations.trim()
+        : "Capability metadata has not been recorded for this candidate.",
+      declarationSourceReference: capabilityDeclarationStatus === "EngineeringDeclaredUnverified"
+        && typeof compatibilityRow.declaration_source_reference === "string"
+        && compatibilityRow.declaration_source_reference.trim()
+        ? compatibilityRow.declaration_source_reference.trim() : null,
+      declaredAt: capabilityDeclarationStatus === "EngineeringDeclaredUnverified"
+        && typeof compatibilityRow.declared_at === "string"
+        && Number.isFinite(Date.parse(compatibilityRow.declared_at))
+        ? compatibilityRow.declared_at : null,
+      catalogSupportTier: "Unverified",
+      certificationReference: null,
+      certificationDate: null,
+      physicalEvidenceClaim: false,
+      providerEvidenceClaim: false,
+      certificationClaim: false,
+    };
+    const connectivityRows = Array.isArray(detail.connectivity_profiles)
+      ? detail.connectivity_profiles as AnyRecord[]
+      : [];
+    const connectivityProfiles = connectivityRows.map(mapConnectivityProfile);
+    const connectivityObservations = (Array.isArray(detail.connectivity_observations)
+      ? detail.connectivity_observations as AnyRecord[] : []).map(mapConnectivityObservation);
+    const firmwareCampaignRows = Array.isArray(detail.firmware_campaigns)
+      ? detail.firmware_campaigns as AnyRecord[]
+      : [];
+    const firmwareCampaigns = firmwareCampaignRows.map(mapFirmwareCampaign);
+    const rmaEvents = (Array.isArray(detail.rma_events) ? detail.rma_events as AnyRecord[] : []).map(mapRmaEvent);
+    const rmaReplacements = (Array.isArray(detail.rma_replacements) ? detail.rma_replacements as AnyRecord[] : []).map(mapRmaReplacement);
+    const rmaSupportActions = (Array.isArray(detail.rma_support_actions) ? detail.rma_support_actions as AnyRecord[] : []).map(mapRmaSupportAction);
+    const rmaCases = (Array.isArray(detail.rma_cases) ? detail.rma_cases as AnyRecord[] : []).map(rawCase => {
+      const caseId = String(normalizeKeys(rawCase).id ?? "");
+      return mapRmaCase(rawCase,
+        rmaEvents.filter(event => event.caseId === caseId),
+        rmaReplacements.find(replacement => replacement.caseId === caseId) ?? null,
+        rmaSupportActions.filter(action => action.caseId === caseId));
+    });
+    const sparePoolEvents = (Array.isArray(detail.spare_pool_events) ? detail.spare_pool_events as AnyRecord[] : []).map(mapSparePoolEvent);
+    const sparePool = detail.spare_pool_entry && typeof detail.spare_pool_entry === "object"
+      ? mapSparePool(detail.spare_pool_entry as AnyRecord, sparePoolEvents)
+      : null;
+    const supportTierEvents = (Array.isArray(detail.support_tier_events)
+      ? detail.support_tier_events as AnyRecord[] : []).map(mapDeviceSupportTierEvent);
+    const hasRemoteCommandGovernance = detail.remote_command_governance !== null &&
+      typeof detail.remote_command_governance === "object";
+    const remoteCommandGovernance = normalizeKeys(hasRemoteCommandGovernance
+      ? detail.remote_command_governance as AnyRecord : {});
+    if (hasRemoteCommandGovernance && (remoteCommandGovernance.provider_delivery_claim !== false ||
+        remoteCommandGovernance.physical_outcome_claim !== false))
+      throw new Error("Remote-command governance crossed the unverified outcome boundary.");
+    const remoteCommandCapabilities = (Array.isArray(remoteCommandGovernance.capabilities)
+      ? remoteCommandGovernance.capabilities as AnyRecord[] : []).map(mapRemoteCommandCapability);
+    const remoteCommandHistory = (Array.isArray(remoteCommandGovernance.history)
+      ? remoteCommandGovernance.history as AnyRecord[] : []).map(mapRemoteCommand);
+    const responseCurrentConnectivityProfile = detail.current_connectivity_profile && typeof detail.current_connectivity_profile === "object"
+      ? mapConnectivityProfile(detail.current_connectivity_profile as AnyRecord)
+      : null;
+    const currentConnectivityProfile = responseCurrentConnectivityProfile !== null
+      && responseCurrentConnectivityProfile.effectiveTo == null
+      && responseCurrentConnectivityProfile.assignmentStatus === "Assigned"
+      ? responseCurrentConnectivityProfile
+      : connectivityProfiles.find((profile) => profile.effectiveTo == null && profile.assignmentStatus === "Assigned") ?? null;
 
     // Telemetry: derived from the single live position snapshot (one point, or none).
     const telemetry: TelematicsTelemetrySeedRecord[] = position
@@ -1709,8 +3016,10 @@ export const telematicsService = {
       modemStatus: "—",
       gnssStatus: "—",
       faultCode: `${String(fault.code_type ?? "")} ${String(fault.code ?? "")}`.trim(),
-      runAt: String(fault.last_seen_at ?? fault.first_seen_at ?? ""),
+      runAt: String(fault.last_observed_at ?? fault.observed_at ?? fault.last_seen_at ?? fault.first_seen_at ?? ""),
       runBy: String(fault.description ?? ""),
+      evidenceClassification: String(fault.evidence_classification ?? "LegacyOrUnclassified"),
+      safetyActionStatus: String(fault.safety_action_status ?? "ObservationOnly"),
     }));
 
     // Health timeline: real telemetry alerts for this device.
@@ -1727,18 +3036,384 @@ export const telematicsService = {
 
     return {
       device: scoped,
+      compatibility,
+      currentConnectivityProfile,
+      connectivityProfiles,
+      connectivityObservations,
       telemetry,
       healthEvents,
       diagnostics,
-      firmwareUpdates: [], // no OTA/firmware-schedule endpoint
+      firmwareUpdates: [], // no executed OTA result feed; plans remain separate and ExternalHold
+      firmwareCampaigns,
+      rmaCases,
+      sparePool,
+      supportTierEvents,
+      remoteCommandCapabilities,
+      remoteCommandHistory,
       currentInstallation,
       installations,
+      installationWorkPackages,
       sensorReadings: [], // no standalone sensor-reading endpoint
       providers: await buildProviderAuditForDevice(scoped, session),
       auditLog: [], // no device audit-log endpoint
-      assignmentHistory: Array.isArray(detail.assignment_history)
-        ? (detail.assignment_history as AnyRecord[]).map(normalizeKeys)
-        : [],
+      retirementRecord: detail.retirement_record && typeof detail.retirement_record === "object"
+        ? mapDeviceRetirement(detail.retirement_record as AnyRecord) : null,
+      lifecycleHistory: (Array.isArray(detail.lifecycle_history)
+        ? detail.lifecycle_history as AnyRecord[]
+        : Array.isArray(detail.assignment_history) ? detail.assignment_history as AnyRecord[] : [])
+        .map(mapDeviceLifecycleTransition),
+    };
+  },
+
+  async createInstallationWorkPackage(deviceId: string | number, input: DeviceInstallationWorkPackageInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = installationBodyId(deviceId);
+    const vehicleId = installationBodyId(input.vehicleId);
+    const start = Date.parse(input.appointmentStart);
+    const end = Date.parse(input.appointmentEnd);
+    if (requestedId === null || vehicleId === null) throw new Error("Select a valid device and vehicle.");
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
+      throw new Error("Enter an appointment end after the appointment start.");
+    if (input.workOrderReference.trim().length < 2 || input.workOrderReference.trim().length > 120 ||
+        input.serviceLocation.trim().length < 2 || input.serviceLocation.trim().length > 160 ||
+        input.workScope.trim().length < 5 || input.workScope.trim().length > 1000)
+      throw new Error("Enter a work-order reference, service location, and work scope within the supported lengths.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The installation work-package form session is invalid. Close and reopen it.");
+    const row = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/installation-work-packages`, {
+        ...input, vehicleId, workOrderReference: input.workOrderReference.trim(),
+        serviceLocation: input.serviceLocation.trim(), workScope: input.workScope.trim(),
+      })));
+    if (row.physical_appointment_claim !== false || row.physical_work_claim !== false || row.certification_claim !== false)
+      throw new Error("The server did not preserve the unverified installation-work boundary.");
+    return { id: String(row.id ?? ""), note: "Installation work package recorded. Attendance and physical work remain unverified." };
+  },
+
+  async recordInstallationChecklistObservation(
+    deviceId: string | number, workPackageId: string | number,
+    input: DeviceInstallationChecklistObservationInput,
+  ) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = installationBodyId(deviceId);
+    const packageId = installationBodyId(workPackageId);
+    if (requestedId === null || packageId === null) throw new Error("A valid device and work package are required.");
+    if (!installationChecklistItems.includes(input.checklistItem) || !installationChecklistResults.includes(input.observedResult))
+      throw new Error("Select the checklist item and the result actually observed.");
+    if (input.evidenceReference.trim().length < 3 || input.evidenceReference.trim().length > 240 ||
+        input.observationNotes.trim().length < 3 || input.observationNotes.trim().length > 1000)
+      throw new Error("Enter an evidence reference and observation notes within the supported lengths.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The checklist form session is invalid. Close and reopen it.");
+    const row = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/installation-work-packages/${packageId}/checklist-observations`, {
+        ...input, evidenceReference: input.evidenceReference.trim(), observationNotes: input.observationNotes.trim(),
+      })));
+    if (row.assurance_status !== "Unverified" || row.physical_evidence_claim !== false || row.certification_claim !== false)
+      throw new Error("The server did not preserve the unverified checklist boundary.");
+    return { id: String(row.id ?? ""), note: "Operator checklist observation recorded. Independent physical verification remains outstanding." };
+  },
+
+  async recordInstallationArtifactReference(
+    deviceId: string | number, workPackageId: string | number,
+    input: DeviceInstallationArtifactReferenceInput,
+  ) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = installationBodyId(deviceId);
+    const packageId = installationBodyId(workPackageId);
+    const objectKey = input.objectKey.trim();
+    const sha256 = input.sha256.trim().toLowerCase();
+    if (requestedId === null || packageId === null) throw new Error("A valid device and work package are required.");
+    if (!installationArtifactTypes.includes(input.artifactType)) throw new Error("Select a supported artifact type.");
+    if (!objectKey || objectKey.length > 1024 || objectKey.startsWith("/") || objectKey.includes("\\") ||
+        objectKey.includes("..") || /%2e/i.test(objectKey) || /^[a-z][a-z0-9+.-]*:/i.test(objectKey))
+      throw new Error("Enter a relative governed-storage key.");
+    if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error("SHA-256 must contain exactly 64 hexadecimal characters.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The artifact-reference form session is invalid. Close and reopen it.");
+    const row = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/installation-work-packages/${packageId}/artifact-references`, {
+        ...input, objectKey, sha256,
+      })));
+    if (row.content_verification_status !== "Unverified" || row.physical_evidence_claim !== false || row.certification_claim !== false)
+      throw new Error("The server did not preserve the unverified artifact boundary.");
+    return { id: String(row.id ?? ""), note: "Artifact reference recorded. Content and physical work remain unverified." };
+  },
+
+  async linkInstallationWorkPackage(
+    deviceId: string | number, workPackageId: string | number, installationId: string | number,
+  ) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = installationBodyId(deviceId);
+    const packageId = installationBodyId(workPackageId);
+    const targetInstallationId = installationBodyId(installationId);
+    if (requestedId === null || packageId === null || targetInstallationId === null)
+      throw new Error("A valid device, work package, and persisted installation are required.");
+    const row = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/installation-work-packages/${packageId}/installation-links`, {
+        installationId: targetInstallationId,
+        idempotencyKey: installationMutationKey(`work-${packageId}-installation-${targetInstallationId}`),
+      })));
+    if (canonicalDeviceLifecycleId(row.work_package_id) !== String(packageId) ||
+        canonicalDeviceLifecycleId(row.installation_id) !== String(targetInstallationId) ||
+        row.link_assurance_status !== "RecordedUnverified" || row.physical_work_claim !== false ||
+        row.certification_claim !== false)
+      throw new Error("The server did not preserve the unverified installation-link boundary.");
+    return {
+      id: String(row.id ?? ""),
+      note: "Work package linked to the persisted installation. Physical work and certification remain unverified.",
+    };
+  },
+
+  async replaceDeviceConnectivityProfile(deviceId: string | number, input: DeviceConnectivityProfileInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = String(deviceId);
+    if (!/^\d+$/.test(requestedId) || Number(requestedId) <= 0) throw new Error("A valid device is required.");
+    if (!/^[0-9]{18,22}$/.test(input.iccid.trim())) throw new Error("ICCID must contain 18-22 digits.");
+    if (input.msisdn?.trim() && !/^\+[1-9][0-9]{7,14}$/.test(input.msisdn.trim()))
+      throw new Error("MSISDN must use E.164 format, for example +14165550123.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The connectivity form session is invalid. Close and reopen it.");
+    const payload = await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/connectivity-profiles`,
+      {
+        ...input,
+        carrierName: input.carrierName.trim(),
+        iccid: input.iccid.trim(),
+        msisdn: input.msisdn?.trim() || null,
+        apn: input.apn?.trim() || null,
+        changeReason: input.changeReason.trim(),
+        sourceReference: input.sourceReference.trim(),
+      },
+    ));
+    const normalized = normalizeKeys(payload);
+    if (normalized.connectivity_claim !== false)
+      throw new Error("The server did not return the required fail-closed connectivity acknowledgement.");
+    if (!normalized.profile || typeof normalized.profile !== "object")
+      throw new Error("The server did not return the recorded connectivity profile.");
+    return {
+      profile: mapConnectivityProfile(normalized.profile as AnyRecord),
+      idempotentReplay: normalized.idempotent_replay === true,
+      note: String(normalized.note ?? "Profile inventory recorded; connectivity remains unverified."),
+    };
+  },
+
+  async createFirmwareCampaign(input: DeviceFirmwareCampaignInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const deviceIds = input.deviceIds.map(installationBodyId);
+    if (deviceIds.length < 1 || deviceIds.length > 500 || deviceIds.some(id => id === null))
+      throw new Error("A firmware campaign requires 1-500 valid devices.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The firmware planning form session is invalid. Close and reopen it.");
+    const payload = await unwrap<AnyRecord>(apiClient.post("/api/telemetry/firmware-campaigns", {
+      ...input,
+      deviceIds,
+      campaignName: input.campaignName.trim(),
+      targetFirmwareVersion: input.targetFirmwareVersion.trim(),
+      rollbackFirmwareVersion: input.rollbackFirmwareVersion?.trim() || null,
+      changeReason: input.changeReason.trim(),
+      sourceReference: input.sourceReference.trim(),
+    }));
+    const normalized = normalizeKeys(payload);
+    if (normalized.remote_upgrade_claim !== false)
+      throw new Error("The server did not return the required no-upgrade-claim acknowledgement.");
+    if (!normalized.campaign || typeof normalized.campaign !== "object" || !Array.isArray(normalized.targets))
+      throw new Error("The server did not return the recorded firmware plan.");
+    const campaignRow = normalizeKeys(normalized.campaign as AnyRecord);
+    return {
+      campaignId: String(campaignRow.id ?? ""),
+      targets: (normalized.targets as AnyRecord[]).map(target => mapFirmwareCampaign({ ...campaignRow, ...normalizeKeys(target) })),
+      idempotentReplay: normalized.idempotent_replay === true,
+      note: String(normalized.note ?? "Firmware planning recorded; no command was dispatched."),
+    };
+  },
+
+  async createDeviceRmaCase(deviceId: string | number, input: DeviceRmaCaseInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(deviceId);
+    if (canonicalId === null) throw new Error("The RMA device identity is invalid.");
+    const normalizedInput = {
+      ...input,
+      failureDescription: input.failureDescription.trim(),
+      warrantyReference: input.warrantyReference?.trim() || null,
+      supportSlaReference: input.supportSlaReference.trim(),
+      sourceReference: input.sourceReference.trim(),
+    };
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${canonicalId}/rma-cases`, normalizedInput)));
+    if (payload.physical_evidence_claim !== false || !payload.rma_case || typeof payload.rma_case !== "object")
+      throw new Error("The server did not return a fail-closed RMA acknowledgement.");
+    return {
+      rmaCase: mapRmaCase(payload.rma_case as AnyRecord),
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "RMA case recorded; physical and warranty evidence remain unverified."),
+    };
+  },
+
+  async appendDeviceRmaEvent(caseId: string | number, input: DeviceRmaEventInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(caseId);
+    if (canonicalId === null) throw new Error("The RMA case identity is invalid.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/rma-cases/${canonicalId}/events`, {
+        ...input,
+        custodyLocation: input.custodyLocation?.trim() || null,
+        trackingReference: input.trackingReference?.trim() || null,
+        evidenceReference: input.evidenceReference.trim(), notes: input.notes.trim(),
+      })));
+    if (payload.physical_completion_claim !== false || !payload.rma_event || typeof payload.rma_event !== "object")
+      throw new Error("The server did not return a fail-closed custody acknowledgement.");
+    return {
+      event: mapRmaEvent(payload.rma_event as AnyRecord),
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Custody event recorded; physical verification remains external."),
+    };
+  },
+
+  async planDeviceRmaReplacement(caseId: string | number, input: DeviceRmaReplacementInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(caseId);
+    if (canonicalId === null) throw new Error("The RMA case identity is invalid.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/rma-cases/${canonicalId}/replacement`, {
+        ...input,
+        replacementDeviceSerial: input.replacementDeviceSerial.trim(),
+        changeReason: input.changeReason.trim(), sourceReference: input.sourceReference.trim(),
+      })));
+    if (payload.physical_swap_claim !== false || !payload.replacement || typeof payload.replacement !== "object")
+      throw new Error("The server did not return a planning-only replacement acknowledgement.");
+    return {
+      replacement: mapRmaReplacement(payload.replacement as AnyRecord),
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Replacement planned; no physical swap is claimed."),
+    };
+  },
+
+  async recordDeviceRmaSupportAction(caseId: string | number, input: DeviceRmaSupportActionInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(caseId);
+    if (canonicalId === null) throw new Error("The RMA case identity is invalid.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/rma-cases/${canonicalId}/support-actions`, {
+        ...input,
+        supportQueue: input.supportQueue.trim(),
+        escalationSeverity: input.actionType === "Escalate" ? input.escalationSeverity : null,
+        actionReason: input.actionReason.trim(), sourceReference: input.sourceReference.trim(),
+      })));
+    if (payload.support_response_claim !== false || payload.physical_outcome_claim !== false ||
+        payload.warranty_acceptance_claim !== false || !payload.support_action || typeof payload.support_action !== "object")
+      throw new Error("The server did not return an operator-recorded, no-outcome-claim support acknowledgement.");
+    const supportAction = mapRmaSupportAction(payload.support_action as AnyRecord);
+    const expectedStoredType = input.actionType === "Escalate" ? "Escalated" : null;
+    if ((expectedStoredType && supportAction.actionType !== expectedStoredType) ||
+        (!expectedStoredType && supportAction.actionType !== "OwnershipClaimed" && supportAction.actionType !== "OwnershipReassigned") ||
+        supportAction.supportQueue !== input.supportQueue.trim() ||
+        supportAction.escalationSeverity !== (input.actionType === "Escalate" ? input.escalationSeverity ?? null : null) ||
+        supportAction.actionReason !== input.actionReason.trim() || supportAction.sourceReference !== input.sourceReference.trim())
+      throw new Error("The recorded RMA support action does not match the submitted facts.");
+    return {
+      supportAction,
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "RMA support routing recorded; response and outcomes remain unverified."),
+    };
+  },
+
+  async recordDeviceSparePoolAction(deviceId: string | number, input: DeviceSparePoolActionInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(deviceId);
+    if (canonicalId === null) throw new Error("The spare-pool device identity is invalid.");
+    if (input.rmaCaseId !== undefined && canonicalDeviceLifecycleId(input.rmaCaseId) === null)
+      throw new Error("The RMA case identity is invalid.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${canonicalId}/spare-pool-actions`, {
+        ...input,
+        poolName: input.actionType === "Add" ? input.poolName?.trim() : null,
+        rmaCaseId: input.actionType === "Reserve" ? input.rmaCaseId : null,
+        actionReason: input.actionReason.trim(), sourceReference: input.sourceReference.trim(),
+      })));
+    if (payload.physical_possession_claim !== false || payload.condition_verified_claim !== false ||
+        payload.compatibility_claim !== false || payload.certification_claim !== false ||
+        !payload.entry || typeof payload.entry !== "object" || !payload.pool_event || typeof payload.pool_event !== "object")
+      throw new Error("The server did not return a fail-closed spare-pool planning acknowledgement.");
+    const poolEvent = mapSparePoolEvent(payload.pool_event as AnyRecord);
+    const entry = mapSparePool(payload.entry as AnyRecord, [poolEvent]);
+    const expectedAction = { Add: "Added", Reserve: "Reserved", Release: "Released", Remove: "Removed" }[input.actionType];
+    if (poolEvent.actionType !== expectedAction || poolEvent.actionReason !== input.actionReason.trim() ||
+        poolEvent.sourceReference !== input.sourceReference.trim() ||
+        (input.actionType === "Add" && entry.poolName !== input.poolName?.trim()) ||
+        (input.actionType === "Reserve" && poolEvent.rmaCaseId !== input.rmaCaseId))
+      throw new Error("The recorded spare-pool action does not match the submitted facts.");
+    return { entry, poolEvent, idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Spare-pool planning recorded; physical state remains unverified.") };
+  },
+
+  async recordDeviceSupportTierAction(deviceId: string | number, input: DeviceSupportTierActionInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(deviceId);
+    if (canonicalId === null) throw new Error("The support-tier device identity is invalid.");
+    const hasPlan = input.actionType !== "End";
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${canonicalId}/support-tier-actions`, {
+        ...input,
+        tierCode: hasPlan ? input.tierCode : null,
+        coverageWindow: hasPlan ? input.coverageWindow : null,
+        routingResponseTargetMinutes: hasPlan ? input.routingResponseTargetMinutes : null,
+        escalationPolicyReference: hasPlan ? input.escalationPolicyReference?.trim() : null,
+        commercialReference: hasPlan ? input.commercialReference?.trim() : null,
+        actionReason: input.actionReason.trim(), sourceReference: input.sourceReference.trim(),
+      })));
+    if (payload.commercial_entitlement_verified_claim !== false || payload.provider_support_claim !== false ||
+        payload.hardware_supportability_claim !== false || payload.certification_claim !== false ||
+        !payload.support_tier_event || typeof payload.support_tier_event !== "object")
+      throw new Error("The server did not return a fail-closed support-tier acknowledgement.");
+    const supportTierEvent = mapDeviceSupportTierEvent(payload.support_tier_event as AnyRecord);
+    const expectedAction = { Assign: "Assigned", Change: "Changed", End: "Ended" }[input.actionType];
+    if (supportTierEvent.deviceId !== canonicalId || supportTierEvent.actionType !== expectedAction ||
+        supportTierEvent.actionReason !== input.actionReason.trim() ||
+        supportTierEvent.sourceReference !== input.sourceReference.trim() ||
+        (hasPlan && (supportTierEvent.tierCode !== input.tierCode ||
+          supportTierEvent.coverageWindow !== input.coverageWindow ||
+          supportTierEvent.routingResponseTargetMinutes !== input.routingResponseTargetMinutes ||
+          supportTierEvent.escalationPolicyReference !== input.escalationPolicyReference?.trim() ||
+          supportTierEvent.commercialReference !== input.commercialReference?.trim())))
+      throw new Error("The recorded support-tier action does not match the submitted facts.");
+    return { supportTierEvent, idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Support routing recorded; entitlement and supportability remain unverified.") };
+  },
+
+  async requestDeviceRemoteCommand(deviceId: string | number, input: DeviceRemoteCommandInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(deviceId);
+    if (canonicalId === null) throw new Error("The remote-command device identity is invalid.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${canonicalId}/commands`, {
+        commandType: input.commandType,
+        payload: input.payload,
+        purpose: input.purpose.trim(), sourceReference: input.sourceReference.trim(),
+        safetyConfirmation: input.safetyConfirmation.trim(),
+        idempotencyKey: input.idempotencyKey,
+      })));
+    if (payload.request_recorded !== true || payload.dispatched !== false || payload.acknowledged !== false ||
+        payload.applied !== false || payload.provider_delivery_claim !== false || payload.physical_outcome_claim !== false ||
+        !payload.command || typeof payload.command !== "object")
+      throw new Error("The server did not return a truthful command-request acknowledgement.");
+    return {
+      command: mapRemoteCommand(payload.command as AnyRecord),
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Command request recorded; dispatch and outcome remain unverified."),
     };
   },
 
@@ -1827,7 +3502,9 @@ export const telematicsService = {
       deviceSerial: serial,
       imei: imei || null,
       deviceCategory,
-      deviceModel: payload.deviceName ?? payload.deviceType ?? "Device",
+      deviceModel: payload.deviceName ?? payload.deviceType ?? "",
+      manufacturer: payload.manufacturer ?? "",
+      hardwareRevision: payload.hardwareRevision ?? "",
       provider: payload.provider ?? "",
       firmwareVersion: payload.firmwareVersion ?? "",
       notes: payload.notes ?? "",
@@ -2028,6 +3705,38 @@ export const telematicsService = {
     // POST /api/telemetry/devices/{id}/revoke (revocation is the real "archive").
     await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${id}/revoke`, {}));
     return { success: true };
+  },
+
+  async retireDevice(deviceId: string | number, input: DeviceRetirementInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = canonicalDeviceLifecycleId(deviceId);
+    if (requestedId === null) throw new Error("A valid device is required before retirement.");
+    if (!Number.isInteger(input.expectedRowVersion) || input.expectedRowVersion < 1)
+      throw new Error("Reload the device to obtain its current revision before retirement.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The retirement form session is invalid. Close and reopen it.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/retire`, {
+        ...input,
+        retirementReason: input.retirementReason.trim(),
+        sourceReference: input.sourceReference.trim(),
+        safetyConfirmation: input.safetyConfirmation.trim(),
+      })));
+    if (payload.credentials_revoked !== true || payload.physical_disposition_claim !== false ||
+        payload.certification_claim !== false || !payload.retirement || typeof payload.retirement !== "object")
+      throw new Error("The server did not return a truthful retirement acknowledgement.");
+    const retirement = mapDeviceRetirement(payload.retirement as AnyRecord);
+    if (retirement.deviceId !== requestedId || retirement.rowVersionBefore !== input.expectedRowVersion ||
+        retirement.retirementReason !== input.retirementReason.trim() ||
+        retirement.dispositionPlan !== input.dispositionPlan ||
+        retirement.sourceReference !== input.sourceReference.trim())
+      throw new Error("The retirement receipt did not match the submitted device revision and facts.");
+    return {
+      retirement,
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Software retirement recorded; physical disposition remains unverified."),
+    };
   },
 
   async unassignDevice(deviceId: string | number, input: DeviceInstallationRemovalInput): Promise<DeviceRemovalReceipt> {

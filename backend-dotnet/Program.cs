@@ -181,6 +181,10 @@ builder.Services.AddSingleton<ServiceRunTracker>();
 builder.Services.AddSingleton<ConfigValidationService>();
 builder.Services.AddSingleton<FleetProductionReadinessService>();
 builder.Services.AddSingleton<TelemetryLiveStateService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<CameraProviderIngestService>();
+builder.Services.AddSingleton<CameraProviderStatusService>();
+builder.Services.AddSingleton<DeviceConnectivityObservationService>();
 // Agentic Brain — the model behind the AI foundation's empty reasoning slot.
 builder.Services.AddSingleton<AgenticBrainService>();
 builder.Services.AddScoped<IncidentService>();
@@ -698,6 +702,11 @@ app.UseWhen(
                 path.StartsWith("/api/maintenance/fault-codes/ingest", StringComparison.OrdinalIgnoreCase) ||
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                  path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase)) ||
+                // Customer feedback is authorized by the same active, expiring ETA
+                // capability token and is validated again by the endpoint before insert.
+                (context.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) &&
+                 path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase) &&
+                 path.EndsWith("/feedback", StringComparison.OrdinalIgnoreCase)) ||
                 // Customer-facing public tracking — token-scoped, expiring, revocable; no user session
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                  path.StartsWith("/api/customer-visibility/tracking/", StringComparison.OrdinalIgnoreCase)) ||
@@ -974,7 +983,7 @@ app.UseWhen(
             // only from its DB-signed, PID+txid-bound ticket.
             if (rlsEnforceTenantContext)
             {
-                await using var reqScope = await scopedDb.BeginTenantScopeAsync(companyId, context.RequestAborted);
+                await using var reqScope = await scopedDb.BeginTenantScopeAsync(companyId, userId, context.RequestAborted);
                 scopes.Current = reqScope;
                 try
                 {

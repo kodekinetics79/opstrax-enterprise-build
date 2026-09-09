@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
 using Opstrax.Api.Foundation;
 
@@ -31,29 +32,33 @@ public sealed class TelemetryLiveStateService(Database db)
         decimal? speedMph = row.TryGetValue("speedMph", out var speedRaw) && speedRaw is not null
             ? Convert.ToDecimal(speedRaw, CultureInfo.InvariantCulture)
             : null;
-        var speedThreshold = await GetRuleThresholdAsync(companyId, "speeding", 65m, ct);
-        var staleThreshold = await GetRuleThresholdAsync(companyId, "stale_device", 900m, ct);
+        var speedThreshold = await GetApprovedRuleThresholdAsync(companyId, "speeding", ct);
+        var staleThreshold = await GetApprovedRuleThresholdAsync(companyId, "stale_device", ct);
+        var isStale = staleThreshold is { } staleLimit && staleSeconds > (long)staleLimit;
+        var isSpeeding = speedThreshold is { } speedLimit && speedMph > speedLimit;
+        var policyConfigured = staleThreshold is not null || speedThreshold is not null;
 
-        var telemetryStatus = staleSeconds > (long)staleThreshold
+        var telemetryStatus = isStale
             ? "stale"
             : openAlerts > 0
                 ? "watch"
-                : speedMph > speedThreshold
+                : isSpeeding
                     ? "watch"
-                    : "healthy";
-        var riskLevel = staleSeconds > (long)staleThreshold
+                    : policyConfigured ? "healthy" : "unconfigured";
+        var riskLevel = isStale
             ? "high"
             : string.Equals(openAlertSeverity, "Critical", StringComparison.OrdinalIgnoreCase)
                 ? "high"
                 : string.Equals(openAlertSeverity, "High", StringComparison.OrdinalIgnoreCase)
-                  || openAlerts > 2 || speedMph > speedThreshold
+                  || openAlerts > 2 || isSpeeding
                 ? "medium"
-                : "low";
+                : policyConfigured ? "low" : "unrated";
         var nextAction = telemetryStatus switch
         {
             "stale" => "Check device heartbeat and field power",
-            "watch" when speedMph > speedThreshold => "Review speeding and driver coaching",
+            "watch" when isSpeeding => "Review speeding and driver coaching",
             "watch" when openAlerts > 0 => "Review open telemetry alerts",
+            "unconfigured" => "Configure and approve telemetry alert policies",
             _ when speedMph is null => "Speed unavailable; movement not established",
             _ when Value(row, "heading") is null => "Heading unavailable",
             _ => "No action required"
@@ -307,7 +312,9 @@ public sealed class TelemetryLiveStateService(Database db)
                   LIMIT 50",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
             var rules = await db.QueryAsync(
-                @"SELECT id, rule_type, threshold_value, severity, enabled, notes, created_at, updated_at
+                @"SELECT id, rule_type, threshold_value, severity, enabled, notes,
+                         policy_origin, approval_status, approved_by, approved_at,
+                         created_at, updated_at
                   FROM telemetry_rules
                   WHERE company_id=@cid
                   ORDER BY rule_type",
@@ -336,6 +343,7 @@ public sealed class TelemetryLiveStateService(Database db)
                   FROM ai_recommendations
                   WHERE company_id=@tenantId
                     AND @branchId::BIGINT IS NULL
+                    " + EndpointMappings.GroundedRecommendationSql + @"
                     AND (recommendation_type LIKE 'telemetry.%'
                          OR module_key LIKE 'telemetry.%'
                          OR module_key IN ('control-tower', 'command-center', 'dispatch'))
@@ -390,6 +398,7 @@ public sealed class TelemetryLiveStateService(Database db)
                      lvp.lat, lvp.lng, lvp.speed_mph, lvp.heading,
                      lvp.accuracy_meters, lvp.engine_status, lvp.fuel_level, lvp.odometer_miles,
                      lvp.battery_voltage, lvp.event_time, lvp.received_at, lvp.event_count,
+                     lvp.source_event_id, lvp.correlation_id, lvp.causation_id, lvp.source_channel,
                      v.vehicle_code, d.full_name driver_name, e.device_serial,
                      v.status vehicle_status, v.device_status, v.camera_status,
                      v.readiness_score, v.data_quality_score,
@@ -414,16 +423,19 @@ public sealed class TelemetryLiveStateService(Database db)
             }, ct);
     }
 
-    private async Task<decimal> GetRuleThresholdAsync(long companyId, string ruleType, decimal fallback, CancellationToken ct)
+    private async Task<decimal?> GetApprovedRuleThresholdAsync(long companyId, string ruleType, CancellationToken ct)
     {
-        var value = await db.ScalarDecimalAsync(
-            "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type=@type AND enabled=TRUE LIMIT 1",
+        return await db.ScalarDecimalAsync(
+            @"SELECT threshold_value FROM telemetry_rules
+              WHERE company_id=@cid AND rule_type=@type AND enabled=TRUE
+                AND policy_origin='user_workflow' AND approval_status='approved'
+                AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+              LIMIT 1",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);
                 c.Parameters.AddWithValue("@type", ruleType);
             }, ct);
-        return value ?? fallback;
     }
 
     private static IReadOnlyList<Dictionary<string, object?>> BuildEntities(List<Dictionary<string, object?>> states)

@@ -41,7 +41,7 @@ public class Stage12TelemetryTests
                 "{\"reason\":\"speeding alert\"}",
                 "{\"action\":\"review\"}",
                 "medium",
-                "seed-alert-1",
+                "1001",
                 ActorTypes.System,
                 "test-harness");
 
@@ -180,14 +180,14 @@ public class Stage12TelemetryTests
             });
 
         await db.ExecuteAsync(
-            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
-              VALUES (@companyId, 'speeding', 65, 'High', true)
-              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, enabled=TRUE, updated_at=NOW()",
+            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, created_by, policy_origin, approval_status, approved_by, approved_at)
+              VALUES (@companyId, 'speeding', 65, 'High', true, 1, 'user_workflow', 'approved', 1, NOW())
+              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, enabled=TRUE, created_by=1, policy_origin='user_workflow', approval_status='approved', approved_by=1, approved_at=NOW(), updated_at=NOW()",
             c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync(
-            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
-              VALUES (@companyId, 'stale_device', 900, 'Warning', true)
-              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, enabled=TRUE, updated_at=NOW()",
+            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, created_by, policy_origin, approval_status, approved_by, approved_at)
+              VALUES (@companyId, 'stale_device', 900, 'Warning', true, 1, 'user_workflow', 'approved', 1, NOW())
+              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, enabled=TRUE, created_by=1, policy_origin='user_workflow', approval_status='approved', approved_by=1, approved_at=NOW(), updated_at=NOW()",
             c => c.Parameters.AddWithValue("@companyId", companyId));
 
         await db.ExecuteAsync(

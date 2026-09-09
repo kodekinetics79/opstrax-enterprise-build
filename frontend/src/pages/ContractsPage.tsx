@@ -16,14 +16,6 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{status}</span>;
 }
 
-function RiskBadge({ level }: { level: string }) {
-  const cls =
-    level === "High" ? "bg-red-50 border-red-200 text-red-700" :
-    level === "Medium" ? "bg-amber-50 border-amber-200 text-amber-700" :
-    "bg-teal-50 border-teal-200 text-teal-700";
-  return <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{level}</span>;
-}
-
 function fmtDate(d: unknown): string {
   if (!d) return "—";
   try { return new Date(String(d)).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }); }
@@ -33,7 +25,7 @@ function fmtDate(d: unknown): string {
 // ── Create Contract Modal ────────────────────────────────────────────────────
 
 function CreateContractModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ contractCode: "", title: "", rateType: "FTL", effectiveDate: "", expiryDate: "" });
+  const [form, setForm] = useState({ contractNumber: "", title: "", customerId: "", rateType: "FTL", effectiveDate: "", expiryDate: "" });
   const qc = useQueryClient();
   const mut = useMutation({
     mutationFn: () => contractsApi.create(form as unknown as AnyRecord),
@@ -46,8 +38,9 @@ function CreateContractModal({ onClose, onSaved }: { onClose: () => void; onSave
         <h2 className="text-base font-bold text-slate-900">Create Contract</h2>
         <div className="grid grid-cols-2 gap-3">
           {[
-            { label: "Contract Code*", key: "contractCode", placeholder: "CON-2001" },
+            { label: "Contract Number*", key: "contractNumber", placeholder: "CON-2001" },
             { label: "Title*", key: "title", placeholder: "FTL Service Agreement" },
+            { label: "Customer ID*", key: "customerId", placeholder: "Customer record ID", type: "number" },
             { label: "Effective Date", key: "effectiveDate", placeholder: "2026-01-01", type: "date" },
             { label: "Expiry Date", key: "expiryDate", placeholder: "2027-01-01", type: "date" },
           ].map(({ label, key, placeholder, type }) => (
@@ -79,7 +72,7 @@ function CreateContractModal({ onClose, onSaved }: { onClose: () => void; onSave
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button
             type="button"
-            disabled={!form.contractCode || !form.title || mut.isPending}
+            disabled={!form.contractNumber || !form.title || !form.customerId || mut.isPending}
             className="btn-primary text-sm"
             onClick={() => mut.mutate()}
           >
@@ -97,7 +90,6 @@ type StatusFilter = "All" | "Active" | "Expiring Soon" | "Expired" | "Under Rene
 
 export function ContractsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
-  const [riskFilter, setRiskFilter] = useState<"All" | "High" | "Medium" | "Low">("All");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -122,7 +114,6 @@ export function ContractsPage() {
 
   const filtered = contracts.filter((c) => {
     if (statusFilter !== "All" && c.displayStatus !== statusFilter && c.status !== statusFilter) return false;
-    if (riskFilter !== "All" && c.riskHeatScore !== riskFilter) return false;
     if (search) {
       const q = search.toLowerCase();
       return (
@@ -146,7 +137,7 @@ export function ContractsPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Contracts</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Customer and carrier contract health, margin risk, renewal queue, and rate oversight</p>
+          <p className="text-sm text-slate-500 mt-0.5">Persisted contract terms, currencies, renewal dates, and rate oversight</p>
         </div>
         <div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("contracts", filtered)}>Export CSV</button>
@@ -162,7 +153,7 @@ export function ContractsPage() {
           { label: "Expired",             val: s.expiredContracts ?? contracts.filter((c) => c.displayStatus === "Expired").length, accent: "text-red-600" },
           { label: "Customers Covered",   val: s.customersCovered ?? "--" },
           { label: "Renewal Queue",       val: s.renewalQueue ?? "--", accent: "text-amber-600" },
-          { label: "Margin Risk",         val: s.marginRiskContracts ?? contracts.filter((c) => c.riskHeatScore === "High").length, accent: "text-red-600" },
+          { label: "Origin Unverified",   val: s.legacyOriginUnverified ?? "--", accent: "text-amber-600" },
         ].map(({ label, val, accent }) => (
           <div key={label} className="panel flex flex-col gap-1 min-w-32">
             <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
@@ -189,17 +180,6 @@ export function ContractsPage() {
             </button>
           ))}
         </div>
-        <select
-          title="Risk filter"
-          value={riskFilter}
-          onChange={(e) => setRiskFilter(e.target.value as typeof riskFilter)}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
-        >
-          <option value="All">All Risk</option>
-          <option value="High">High Risk</option>
-          <option value="Medium">Medium Risk</option>
-          <option value="Low">Low Risk</option>
-        </select>
         <input
           type="search"
           placeholder="Search contracts, customers…"
@@ -218,7 +198,7 @@ export function ContractsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Contract", "Customer", "Rate Type", "Status", "Margin Risk", "Effective", "Expires", "Action", ""].map((h) => (
+                  {["Contract", "Origin", "Customer", "Rate Type", "Status", "Effective", "Expires", "Action", ""].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -234,10 +214,10 @@ export function ContractsPage() {
                       <p className="font-medium text-slate-900">{String(c.contractCode ?? "--")}</p>
                       <p className="text-xs text-slate-400 max-w-40 truncate">{String(c.title ?? "")}</p>
                     </td>
+                    <td className="px-4 py-3 text-xs text-slate-600">{String(c.recordOrigin ?? "Legacy origin unverified")}</td>
                     <td className="px-4 py-3 text-slate-700">{String(c.customerName ?? "—")}</td>
                     <td className="px-4 py-3 text-slate-700 text-xs">{String(c.rateType ?? "—")}</td>
                     <td className="px-4 py-3"><StatusBadge status={String(c.displayStatus ?? c.status ?? "Active")} /></td>
-                    <td className="px-4 py-3"><RiskBadge level={String(c.riskHeatScore ?? "Low")} /></td>
                     <td className="px-4 py-3 text-xs text-slate-600">{fmtDate(c.effectiveDate)}</td>
                     <td className="px-4 py-3 text-xs text-slate-600">{fmtDate(c.expiryDate)}</td>
                     <td className="px-4 py-3">
@@ -274,7 +254,7 @@ export function ContractsPage() {
             </div>
             <div className="px-5 py-4 border-b border-white/6 flex gap-2 flex-wrap">
               <StatusBadge status={String(selected.displayStatus ?? selected.status ?? "Active")} />
-              <RiskBadge level={String(selected.riskHeatScore ?? "Low")} />
+              <span className="inline-flex text-xs px-2 py-0.5 rounded-full border border-white/15 text-slate-300">{String(selected.recordOrigin ?? "Legacy origin unverified")}</span>
             </div>
             <div className="px-5 py-4 border-b border-white/6">
               <p className="text-xs text-slate-400 mb-1">Title</p>
@@ -285,7 +265,7 @@ export function ContractsPage() {
                 ["Customer", String(selected.customerName ?? "—")],
                 ["Carrier", String(selected.carrierName ?? "—")],
                 ["Rate Type", String(selected.rateType ?? "—")],
-                ["Base Rate", selected.baseRate ? `$${Number(selected.baseRate).toFixed(2)}` : "—"],
+                ["Base Rate", selected.baseRate ? `${Number(selected.baseRate).toFixed(4)} ${String(selected.currency ?? "")}` : "—"],
                 ["Effective", fmtDate(selected.effectiveDate)],
                 ["Expires", fmtDate(selected.expiryDate)],
                 ["Fuel Surcharge", selected.fuelSurchargeEnabled ? "Enabled" : "Disabled"],
@@ -319,7 +299,7 @@ export function ContractsPage() {
                           </span>
                         </div>
                         <p className="text-xs text-slate-300 mt-1">{String(version.versionLabel ?? version.version_label ?? "Snapshot")}</p>
-                        <p className="text-xs text-slate-400 mt-1">{String(version.rateType ?? version.rate_type ?? "Per Mile")} · {String(version.marginRisk ?? version.margin_risk ?? "Low")} risk</p>
+                        <p className="text-xs text-slate-400 mt-1">{String(version.rateType ?? version.rate_type ?? "Per Mile")}</p>
                       </div>
                     );
                   })}

@@ -245,6 +245,21 @@ public sealed class FleetProductionReadinessService
         ), runtime_global(name,system_select,system_insert,system_update,system_delete) AS (VALUES
           ('service_run_history',true,true,true,true),('service_heartbeats',true,true,true,true),
           ('telemetry_nonces',true,true,false,true),('gps_gateway_replay',true,true,false,true)
+        ), private_scope(name) AS (VALUES
+          ('mobile_device_tokens'),('user_notification_prefs'),('password_reset_tokens'),
+          ('user_mfa_status'),('user_locale_preferences'),('telemetry_stream_ticket_nonces'),
+          ('user_sessions'),('mfa_login_challenge_consumptions'),('notification_recipients'),
+          ('alert_notification_deliveries'),('report_execution_log'),('saved_reports'),
+          ('scheduled_reports'),('messaging_conversations'),('messaging_messages'),('coaching_notes')
+        ), migration_owned_scope(name) AS (VALUES
+          ('camera_provider_event_inbox'),('camera_provider_media_references'),
+          ('device_installation_artifact_references'),('device_installation_checklist_observations'),
+          ('device_installation_work_package_links'),('device_installation_work_packages'),
+          ('device_command_capabilities'),('device_connectivity_observations'),('device_connectivity_profiles'),
+          ('device_firmware_campaign_targets'),('device_firmware_campaigns'),('device_retirement_records'),
+          ('device_rma_cases'),('device_rma_events'),('device_rma_replacements'),('device_rma_support_actions'),
+          ('device_spare_pool_entries'),('device_spare_pool_events'),('device_support_tier_events'),
+          ('latest_device_signals'),('telematics_device_commands')
         ), tenant_system_only(name) AS (VALUES
           ('telematics_device_trust_policy'),('telemetry_replay_seen'),
           ('telemetry_projection_inbox'),('raw_packets'),
@@ -265,6 +280,8 @@ public sealed class FleetProductionReadinessService
           WHERE n.nspname='public' AND c.relkind IN ('r','p')
             AND c.relname NOT IN ('platform_invoices','gps_gateway_replay','platform_impersonation_sessions','roles','report_catalog',
                                   'device_installation_quarantine')
+            AND NOT EXISTS (SELECT 1 FROM private_scope private_table WHERE private_table.name=c.relname)
+            AND NOT EXISTS (SELECT 1 FROM migration_owned_scope owned_table WHERE owned_table.name=c.relname)
             AND (c.relname='companies' OR EXISTS (
               SELECT 1 FROM information_schema.columns x
               WHERE x.table_schema='public' AND x.table_name=c.relname
@@ -295,7 +312,7 @@ public sealed class FleetProductionReadinessService
           ('device_state_transitions',true,false,false),('device_installations',true,true,false),
           ('device_installation_evidence',true,false,false),('device_channel_health',true,true,false),
           ('dvir_inspection_results',true,false,false),
-          ('telematics_device_commands',true,true,false),('telemetry_privacy_policies',true,true,false),
+          ('telematics_device_commands',false,false,false),('telemetry_privacy_policies',true,true,false),
           ('fault_codes',true,true,false),('fault_occurrences',true,false,false),
           ('diagnostic_holds',true,true,false),('canonical_telemetry_events',false,false,false),
           ('telemetry_stream_ticket_nonces',true,false,false),
@@ -573,6 +590,10 @@ public sealed class FleetProductionReadinessService
                    AND NOT has_function_privilege('opstrax_app','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
                    AND has_function_privilege('opstrax_system','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
                    AND has_function_privilege('opstrax_app','opstrax_security.current_tenant_id()','EXECUTE')
+                   AND NOT has_function_privilege('opstrax_app','opstrax_security.issue_principal_ticket(bigint,bigint,integer,bigint,integer)','EXECUTE')
+                   AND has_function_privilege('opstrax_system','opstrax_security.issue_principal_ticket(bigint,bigint,integer,bigint,integer)','EXECUTE')
+                   AND has_function_privilege('opstrax_app','opstrax_security.current_user_id()','EXECUTE')
+                   AND NOT has_function_privilege('opstrax_system','opstrax_security.current_user_id()','EXECUTE')
                    AND to_regclass('public.platform_data_protection_keys') IS NOT NULL
                    AND CASE WHEN to_regclass('public.platform_data_protection_keys') IS NULL THEN false ELSE (
                      (SELECT COUNT(*) FROM pg_attribute a
@@ -632,7 +653,9 @@ public sealed class FleetProductionReadinessService
         SELECT
           COALESCE((SELECT restricted FROM role_state),false) AS role_restricted,
           COUNT(*) FILTER (WHERE oid IS NULL)::int AS missing_tables,
-          COUNT(*) FILTER (WHERE tenant_scoped AND oid IS NOT NULL AND
+          COUNT(*) FILTER (WHERE tenant_scoped AND oid IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM private_scope private_table WHERE private_table.name=objects.name) AND
+            NOT EXISTS (SELECT 1 FROM migration_owned_scope owned_table WHERE owned_table.name=objects.name) AND
             (NOT relrowsecurity OR NOT relforcerowsecurity
              OR tenant_col IS NULL
              OR (SELECT COUNT(*) FROM pg_policies p
@@ -647,7 +670,10 @@ public sealed class FleetProductionReadinessService
                 AND p.qual='true'
                 AND p.with_check=p.qual)))::int AS rls_violations,
           COUNT(*) FILTER (WHERE oid IS NOT NULL AND
-            ((tenant_scoped AND (((objects.name NOT IN ('eld_devices','telemetry_gateways')
+            ((tenant_scoped
+              AND NOT EXISTS (SELECT 1 FROM private_scope private_table WHERE private_table.name=objects.name)
+              AND NOT EXISTS (SELECT 1 FROM migration_owned_scope owned_table WHERE owned_table.name=objects.name)
+              AND (((objects.name NOT IN ('eld_devices','telemetry_gateways')
                                   AND NOT has_table_privilege('opstrax_app',oid,'SELECT'))
                OR (objects.name='eld_devices' AND (
                  NOT has_column_privilege('opstrax_app',oid,'device_serial','SELECT')
@@ -707,8 +733,7 @@ public sealed class FleetProductionReadinessService
               AND p.with_check=p.qual))
            +
            (SELECT COUNT(*) FROM (VALUES
-             ('roles',5),('report_catalog',5),('role_permissions',5),
-             ('user_mfa_status',2),('user_locale_preferences',2)
+             ('roles',5),('report_catalog',5),('role_permissions',5)
            ) expected(table_name,policy_count)
            WHERE (SELECT COUNT(*) FROM pg_policies p
                   WHERE p.schemaname='public' AND p.tablename=expected.table_name)<>expected.policy_count)
@@ -719,9 +744,7 @@ public sealed class FleetProductionReadinessService
              ('report_catalog','report_catalog_app_select','SELECT','opstrax_app'),('report_catalog','report_catalog_app_insert','INSERT','opstrax_app'),
              ('report_catalog','report_catalog_app_update','UPDATE','opstrax_app'),('report_catalog','report_catalog_app_delete','DELETE','opstrax_app'),('report_catalog','system_control_plane','ALL','opstrax_system'),
              ('role_permissions','role_permissions_app_select','SELECT','opstrax_app'),('role_permissions','role_permissions_app_insert','INSERT','opstrax_app'),
-             ('role_permissions','role_permissions_app_update','UPDATE','opstrax_app'),('role_permissions','role_permissions_app_delete','DELETE','opstrax_app'),('role_permissions','system_control_plane','ALL','opstrax_system'),
-             ('user_mfa_status','tenant_ticket_app','ALL','opstrax_app'),('user_mfa_status','system_control_plane','ALL','opstrax_system'),
-             ('user_locale_preferences','tenant_ticket_app','ALL','opstrax_app'),('user_locale_preferences','system_control_plane','ALL','opstrax_system')
+             ('role_permissions','role_permissions_app_update','UPDATE','opstrax_app'),('role_permissions','role_permissions_app_delete','DELETE','opstrax_app'),('role_permissions','system_control_plane','ALL','opstrax_system')
            ) expected(table_name,policy_name,command_name,role_name)
            WHERE NOT EXISTS(SELECT 1 FROM pg_policies p WHERE p.schemaname='public'
              AND p.tablename=expected.table_name AND p.policyname=expected.policy_name
@@ -729,13 +752,15 @@ public sealed class FleetProductionReadinessService
            +
            (SELECT COUNT(*) FROM pg_policies p
             WHERE p.schemaname='public'
-              AND p.tablename IN ('roles','report_catalog','role_permissions','user_mfa_status','user_locale_preferences')
+              AND p.tablename IN ('roles','report_catalog','role_permissions')
               AND (p.roles='{public}'::name[] OR COALESCE(p.qual,'') LIKE '%current_setting%'
                 OR COALESCE(p.with_check,'') LIKE '%current_setting%'
                 OR (p.roles='{opstrax_app}'::name[]
                   AND COALESCE(p.qual,p.with_check,'') NOT LIKE '%opstrax_security.current_tenant_id()%')))
            + CASE WHEN opstrax_security.special_policy_contract_valid() THEN 0 ELSE 1 END
-           + CASE WHEN opstrax_security.generic_policy_contract_valid() THEN 0 ELSE 1 END)::int
+           + CASE WHEN opstrax_security.generic_policy_contract_valid() THEN 0 ELSE 1 END
+           + CASE WHEN opstrax_security.migration_owned_policy_contract_valid() THEN 0 ELSE 1 END
+           + CASE WHEN opstrax_security.private_policy_contract_valid() THEN 0 ELSE 1 END)::int
             AS tenant_coverage_violations,
           ((SELECT COUNT(*) FROM tenant_scope scope
             LEFT JOIN tenant_privileges expected ON expected.name=scope.name
@@ -803,7 +828,7 @@ public sealed class FleetProductionReadinessService
                OR has_sequence_privilege('opstrax_system',seq.oid,'UPDATE'))
            +
            (SELECT COUNT(*) FROM (VALUES
-              ('roles'),('report_catalog'),('role_permissions'),('user_mfa_status'),('user_locale_preferences')
+              ('roles'),('report_catalog'),('role_permissions')
             ) expected(table_name)
             WHERE NOT has_table_privilege('opstrax_app','public.'||expected.table_name,'SELECT')
               OR NOT has_table_privilege('opstrax_app','public.'||expected.table_name,'INSERT')
@@ -817,7 +842,7 @@ public sealed class FleetProductionReadinessService
               OR has_table_privilege('opstrax_system','public.'||expected.table_name,'TRUNCATE,REFERENCES,TRIGGER'))
            +
            (SELECT COUNT(*) FROM (VALUES
-              ('roles_id_seq'),('report_catalog_id_seq'),('role_permissions_id_seq'),('user_locale_preferences_id_seq')
+              ('roles_id_seq'),('report_catalog_id_seq'),('role_permissions_id_seq')
             ) expected(sequence_name)
             WHERE NOT has_sequence_privilege('opstrax_app','public.'||expected.sequence_name,'USAGE')
               OR NOT has_sequence_privilege('opstrax_app','public.'||expected.sequence_name,'SELECT')

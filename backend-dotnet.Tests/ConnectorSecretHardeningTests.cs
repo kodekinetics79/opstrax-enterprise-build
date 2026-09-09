@@ -225,6 +225,24 @@ public sealed class ConnectorSecretHardeningTests
         Assert.Contains("structured-secret", registry.DecryptConfig(merged)["api_token"], StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CredentialMutationDetection_SeparatesRealChangesFromDisplayMasks()
+    {
+        using var changed = JsonDocument.Parse(
+            """{"region":"us","provider":{"api_token":"replacement"}}""");
+        using var removed = JsonDocument.Parse(
+            """{"credentials":null}""");
+        using var masked = JsonDocument.Parse(
+            """{"apiToken":"••••••••","credentials":{"password":"***REDACTED***"},"region":"eu"}""");
+        using var metadataOnly = JsonDocument.Parse(
+            """{"region":"eu","authScheme":"Bearer"}""");
+
+        Assert.True(ConnectorRegistry.ContainsCredentialMutation(changed.RootElement));
+        Assert.True(ConnectorRegistry.ContainsCredentialMutation(removed.RootElement));
+        Assert.False(ConnectorRegistry.ContainsCredentialMutation(masked.RootElement));
+        Assert.False(ConnectorRegistry.ContainsCredentialMutation(metadataOnly.RootElement));
+    }
+
     private static ConnectorRegistry Registry(IDataKeyProvider keys, string environment, params IConnector[] connectors)
     {
         var pii = new PiiProtectionService(keys, NullLogger<PiiProtectionService>.Instance);

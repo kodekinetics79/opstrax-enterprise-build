@@ -10,6 +10,7 @@ public sealed class TelemetrySchemaService(Database db)
         foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
         foreach (var sql in CredentialHardening) await db.ExecuteAsync(sql, ct: ct);
+        foreach (var sql in PolicyHardening) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Seeds) await db.ExecuteAsync(sql, ct: ct);
     }
 
@@ -27,6 +28,27 @@ public sealed class TelemetrySchemaService(Database db)
     [
         // eld_devices security + lifecycle columns
         new("eld_devices", "company_id",   "BIGINT NOT NULL DEFAULT 1"),
+        // Operator-recorded hardware identity. Presence alone never grants a
+        // compatibility tier; the Stage115 registry stays ExternalHold-only.
+        new("eld_devices", "manufacturer", "VARCHAR(120) NULL"),
+        new("eld_devices", "hardware_revision", "VARCHAR(120) NULL"),
+        // Stage128 capability-catalog parity for owner-capable existing local
+        // databases. The production migration supplies the constraints and
+        // immutable declaration boundary.
+        new("device_compatibility_candidates", "capability_declaration_status", "VARCHAR(40) NOT NULL DEFAULT 'NotRecorded'"),
+        new("device_compatibility_candidates", "protocol_names", "TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]"),
+        new("device_compatibility_candidates", "supported_fields", "TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]"),
+        new("device_compatibility_candidates", "supported_events", "TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]"),
+        new("device_compatibility_candidates", "supported_commands", "TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]"),
+        new("device_compatibility_candidates", "known_limitations", "VARCHAR(2000) NOT NULL DEFAULT 'Capability metadata has not been recorded for this candidate.'"),
+        new("device_compatibility_candidates", "declaration_source_reference", "VARCHAR(240) NULL"),
+        new("device_compatibility_candidates", "declared_at", "TIMESTAMPTZ NULL"),
+        new("device_compatibility_candidates", "catalog_support_tier", "VARCHAR(32) NOT NULL DEFAULT 'Unverified'"),
+        new("device_compatibility_candidates", "certification_reference", "VARCHAR(240) NULL"),
+        new("device_compatibility_candidates", "certification_date", "DATE NULL"),
+        new("device_compatibility_candidates", "physical_evidence_claim", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        new("device_compatibility_candidates", "provider_evidence_claim", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        new("device_compatibility_candidates", "certification_claim", "BOOLEAN NOT NULL DEFAULT FALSE"),
         // IMEI is the hardware GPS-tracker identifier (GT06/Concox/PT40-class) the trusted
         // gateway resolves a device by. An identifier, never a credential. Also created by
         // migration 2026_07_11_stage32_device_imei.sql for restricted-role prod that skips
@@ -41,10 +63,43 @@ public sealed class TelemetrySchemaService(Database db)
         new("eld_devices", "hmac_secret_encrypted", "TEXT NULL"),
         new("eld_devices", "hmac_previous_secret_encrypted", "TEXT NULL"),
         new("eld_devices", "hmac_previous_valid_until", "TIMESTAMPTZ NULL"),
+        new("eld_devices", "hmac_key_version", "INT NOT NULL DEFAULT 1"),
+        new("eld_devices", "hmac_rotated_at", "TIMESTAMPTZ NULL"),
+        new("eld_devices", "credential_revoked_reason", "TEXT NULL"),
+        new("eld_devices", "device_state", "TEXT NOT NULL DEFAULT 'Provisioned'"),
+        new("eld_devices", "health_status", "VARCHAR(40) NOT NULL DEFAULT 'unknown'"),
+        new("eld_devices", "health_reason", "VARCHAR(120) NULL"),
+        new("eld_devices", "recommended_action", "TEXT NULL"),
+        new("eld_devices", "first_connected_at", "TIMESTAMPTZ NULL"),
+        new("eld_devices", "last_heartbeat_at", "TIMESTAMPTZ NULL"),
         new("eld_devices", "last_seen_at", "TIMESTAMPTZ NULL"),
         new("eld_devices", "revoked_at",   "TIMESTAMPTZ NULL"),
+        new("eld_devices", "retired_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "updated_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "deleted_at",   "TIMESTAMPTZ NULL"),
+        // Tenant alert thresholds are commercial operating policy. Legacy rows and
+        // system templates stay inert until an authenticated operator approves them.
+        new("telemetry_rules", "policy_origin", "VARCHAR(40) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("telemetry_rules", "approval_status", "VARCHAR(40) NOT NULL DEFAULT 'unapproved'"),
+        new("telemetry_rules", "approved_by", "BIGINT NULL"),
+        new("telemetry_rules", "approved_at", "TIMESTAMPTZ NULL"),
+        // Stage119 enriches the Stage66 durable command ledger. Production gets
+        // these columns from the migration; owner-capable local databases retain
+        // parity when explicit runtime DDL is enabled.
+        new("telematics_device_commands", "capability_id", "BIGINT NULL"),
+        new("telematics_device_commands", "device_serial_snapshot", "VARCHAR(120) NULL"),
+        new("telematics_device_commands", "manufacturer_snapshot", "VARCHAR(120) NULL"),
+        new("telematics_device_commands", "device_model_snapshot", "VARCHAR(160) NULL"),
+        new("telematics_device_commands", "hardware_revision_snapshot", "VARCHAR(120) NULL"),
+        new("telematics_device_commands", "firmware_version_snapshot", "VARCHAR(120) NULL"),
+        new("telematics_device_commands", "provider_snapshot", "VARCHAR(120) NULL"),
+        new("telematics_device_commands", "command_class", "VARCHAR(24) NULL"),
+        new("telematics_device_commands", "purpose", "VARCHAR(500) NULL"),
+        new("telematics_device_commands", "source_reference", "VARCHAR(240) NULL"),
+        new("telematics_device_commands", "safety_confirmation_hash", "VARCHAR(64) NULL"),
+        new("telematics_device_commands", "governance_status", "VARCHAR(24) NOT NULL DEFAULT 'LegacyUnverified'"),
+        new("telematics_device_commands", "provider_delivery_claim", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        new("telematics_device_commands", "physical_outcome_claim", "BOOLEAN NOT NULL DEFAULT FALSE"),
         // location_events telemetry enrichment
         // accuracy_meters is in the Batch1 CREATE, but a location_events table created by an
         // older path (pre-column) won't get it via CREATE IF NOT EXISTS — backfill idempotently
@@ -60,6 +115,8 @@ public sealed class TelemetrySchemaService(Database db)
         new("location_events", "client_generated_id", "VARCHAR(120) NULL"),
         new("location_events", "idempotency_key", "VARCHAR(120) NULL"),
         new("location_events", "ingest_fingerprint", "VARCHAR(64) NULL"),
+        new("location_events", "observed_at", "TIMESTAMPTZ NULL"),
+        new("location_events", "normalized_at", "TIMESTAMPTZ NULL"),
         // Keep owner-capable fresh installs aligned with the committed polygon
         // geofence migration. GeofenceEvaluator always selects this column.
         new("geofences", "polygon_json", "JSONB NULL"),
@@ -106,6 +163,86 @@ public sealed class TelemetrySchemaService(Database db)
 
     private static readonly string[] Tables =
     [
+        // Owner-capable development databases do not necessarily run the dated
+        // migration chain. Keep the command ledger's base shape here before the
+        // Stage119 columns below are reconciled.
+        @"CREATE TABLE IF NOT EXISTS telematics_device_commands (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            branch_id BIGINT NULL,
+            device_id BIGINT NOT NULL,
+            command_type VARCHAR(60) NOT NULL,
+            desired_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            reported_payload JSONB NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'queued',
+            idempotency_key VARCHAR(120) NOT NULL,
+            correlation_id VARCHAR(120) NULL,
+            attempt_count INT NOT NULL DEFAULT 0,
+            max_attempts INT NOT NULL DEFAULT 3,
+            scheduled_for TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            dispatched_at TIMESTAMPTZ NULL,
+            acknowledged_at TIMESTAMPTZ NULL,
+            applied_at TIMESTAMPTZ NULL,
+            expires_at TIMESTAMPTZ NULL,
+            last_error TEXT NULL,
+            requested_by BIGINT NULL,
+            approved_by BIGINT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL,
+            UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS latest_device_signals (
+            company_id BIGINT NOT NULL,
+            device_id BIGINT NOT NULL,
+            vehicle_id BIGINT NULL,
+            signal_path VARCHAR(240) NOT NULL,
+            value_json JSONB NULL,
+            unit VARCHAR(32) NOT NULL DEFAULT '',
+            availability VARCHAR(32) NOT NULL,
+            source VARCHAR(32) NOT NULL,
+            transport VARCHAR(32) NOT NULL,
+            protocol VARCHAR(80) NOT NULL,
+            adapter_name VARCHAR(120) NOT NULL,
+            adapter_version VARCHAR(40) NOT NULL,
+            trust_score NUMERIC(4,3) NOT NULL,
+            confidence NUMERIC(4,3) NOT NULL,
+            quality_flags JSONB NOT NULL DEFAULT '{}'::JSONB,
+            evidence_headers JSONB NOT NULL DEFAULT '{}'::JSONB,
+            event_id UUID NOT NULL,
+            correlation_id UUID NOT NULL,
+            observed_at TIMESTAMPTZ NOT NULL,
+            gateway_received_at TIMESTAMPTZ NOT NULL,
+            normalized_at TIMESTAMPTZ NOT NULL,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY(company_id,device_id,signal_path),
+            CONSTRAINT ck_stage129_runtime_signal_path CHECK (signal_path ~ '^[A-Za-z][A-Za-z0-9_.]{2,239}$'),
+            CONSTRAINT ck_stage129_runtime_signal_availability CHECK (
+              availability IN ('Available','Stale','ParameterSpecific','Error','NotAvailable')),
+            CONSTRAINT ck_stage129_runtime_signal_value_shape CHECK (
+              (availability IN ('Available','Stale') AND value_json IS NOT NULL)
+              OR (availability IN ('ParameterSpecific','Error','NotAvailable') AND value_json IS NULL)),
+            CONSTRAINT ck_stage129_runtime_signal_source CHECK (
+              source IN ('DirectDevice','VendorCloud','MobileApp','Simulator','Seed','Import','Manual')),
+            CONSTRAINT ck_stage129_runtime_signal_transport CHECK (
+              transport IN ('Tcp','Udp','Http','Mqtt','WebSocket','VendorWebhook','VendorPoll','Can')),
+            CONSTRAINT ck_stage129_runtime_signal_protocol CHECK (LENGTH(BTRIM(protocol)) BETWEEN 1 AND 80),
+            CONSTRAINT ck_stage129_runtime_signal_adapter CHECK (
+              LENGTH(BTRIM(adapter_name)) BETWEEN 1 AND 120
+              AND LENGTH(BTRIM(adapter_version)) BETWEEN 1 AND 40),
+            CONSTRAINT ck_stage129_runtime_signal_scores CHECK (
+              trust_score BETWEEN 0 AND 1 AND confidence BETWEEN 0 AND 1),
+            CONSTRAINT ck_stage129_runtime_signal_bounded_json CHECK (
+              pg_column_size(value_json)<=4096
+              AND pg_column_size(quality_flags)<=4096
+              AND pg_column_size(evidence_headers)<=16384),
+            CONSTRAINT ck_stage129_runtime_signal_times CHECK (
+              observed_at<=gateway_received_at+INTERVAL '5 minutes'
+              AND gateway_received_at<=normalized_at+INTERVAL '5 minutes'),
+            CONSTRAINT ck_stage129_runtime_no_certification CHECK (certification_claim=FALSE)
+        )",
+
         @"CREATE TABLE IF NOT EXISTS latest_vehicle_positions (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL,
@@ -193,16 +330,21 @@ public sealed class TelemetrySchemaService(Database db)
             UNIQUE (gateway_id)
         )",
 
-        // Per-tenant, per-rule configurable thresholds. Defaults seeded below.
+        // Per-tenant, per-rule configurable thresholds. System templates are
+        // visible but inert until an authenticated operator approves them.
         @"CREATE TABLE IF NOT EXISTS telemetry_rules (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL,
             rule_type VARCHAR(60) NOT NULL,
             threshold_value DECIMAL(12,4) NOT NULL DEFAULT 65,
             severity VARCHAR(40) NOT NULL DEFAULT 'High',
-            enabled BOOLEAN NOT NULL DEFAULT true,
+            enabled BOOLEAN NOT NULL DEFAULT false,
             notes TEXT NULL,
             created_by BIGINT NULL,
+            policy_origin VARCHAR(40) NOT NULL DEFAULT 'legacy_unverified',
+            approval_status VARCHAR(40) NOT NULL DEFAULT 'unapproved',
+            approved_by BIGINT NULL,
+            approved_at TIMESTAMPTZ NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL,
             UNIQUE (company_id, rule_type)
@@ -238,10 +380,434 @@ public sealed class TelemetrySchemaService(Database db)
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE (company_id, vehicle_id)
         )",
+
+        // Owner-capable empty-database bootstrap parity for Stage115. No rows are
+        // seeded, and this table has no product mutation endpoint.
+        @"CREATE TABLE IF NOT EXISTS device_compatibility_candidates (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            manufacturer VARCHAR(120) NOT NULL,
+            device_model VARCHAR(160) NOT NULL,
+            hardware_revision VARCHAR(120) NOT NULL,
+            firmware_version VARCHAR(120) NOT NULL,
+            software_candidate_sha VARCHAR(40) NOT NULL,
+            engineering_status VARCHAR(24) NOT NULL DEFAULT 'Candidate',
+            certification_status VARCHAR(24) NOT NULL DEFAULT 'ExternalHold',
+            external_hold_reason VARCHAR(500) NOT NULL,
+            capability_declaration_status VARCHAR(40) NOT NULL DEFAULT 'NotRecorded',
+            protocol_names TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+            supported_fields TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+            supported_events TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+            supported_commands TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+            known_limitations VARCHAR(2000) NOT NULL DEFAULT 'Capability metadata has not been recorded for this candidate.',
+            declaration_source_reference VARCHAR(240) NULL,
+            declared_at TIMESTAMPTZ NULL,
+            catalog_support_tier VARCHAR(32) NOT NULL DEFAULT 'Unverified',
+            certification_reference VARCHAR(240) NULL,
+            certification_date DATE NULL,
+            physical_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            provider_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL,
+            CONSTRAINT ck_stage115_candidate_manufacturer CHECK (BTRIM(manufacturer) <> ''),
+            CONSTRAINT ck_stage115_candidate_model CHECK (BTRIM(device_model) <> ''),
+            CONSTRAINT ck_stage115_candidate_hardware_revision CHECK (BTRIM(hardware_revision) <> ''),
+            CONSTRAINT ck_stage115_candidate_firmware CHECK (BTRIM(firmware_version) <> ''),
+            CONSTRAINT ck_stage115_candidate_sha CHECK (software_candidate_sha ~ '^[0-9a-f]{40}$'),
+            CONSTRAINT ck_stage115_candidate_engineering_status CHECK (engineering_status IN ('Candidate','Deferred','Rejected')),
+            CONSTRAINT ck_stage115_candidate_external_hold CHECK (certification_status='ExternalHold'),
+            CONSTRAINT ck_stage115_candidate_hold_reason CHECK (BTRIM(external_hold_reason) <> '')
+        )",
+
+        // Encrypted SIM/eSIM assignment history. Startup creates no profiles: every
+        // row must come from an explicit operator action with a source reference.
+        @"CREATE TABLE IF NOT EXISTS device_connectivity_profiles (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            branch_id BIGINT NULL,
+            device_id BIGINT NOT NULL,
+            profile_kind VARCHAR(20) NOT NULL,
+            carrier_name VARCHAR(120) NOT NULL,
+            iccid_encrypted TEXT NOT NULL,
+            iccid_bidx VARCHAR(64) NOT NULL,
+            iccid_last4 VARCHAR(4) NOT NULL,
+            msisdn_encrypted TEXT NULL,
+            msisdn_bidx VARCHAR(64) NULL,
+            msisdn_last4 VARCHAR(4) NULL,
+            apn_encrypted TEXT NULL,
+            apn_bidx VARCHAR(64) NULL,
+            apn_configured BOOLEAN NOT NULL DEFAULT FALSE,
+            assignment_status VARCHAR(20) NOT NULL DEFAULT 'Assigned',
+            effective_from TIMESTAMPTZ NOT NULL,
+            effective_to TIMESTAMPTZ NULL,
+            source_reference VARCHAR(240) NOT NULL,
+            change_reason VARCHAR(500) NOT NULL,
+            end_reason VARCHAR(500) NULL,
+            idempotency_key UUID NOT NULL,
+            created_by BIGINT NULL,
+            ended_by BIGINT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL,
+            CONSTRAINT ck_stage116_profile_kind CHECK (profile_kind IN ('PhysicalSIM','eSIM')),
+            CONSTRAINT ck_stage116_iccid_encrypted CHECK (iccid_encrypted LIKE 'enc:%'),
+            CONSTRAINT ck_stage116_iccid_bidx CHECK (iccid_bidx ~ '^[0-9a-f]{64}$'),
+            CONSTRAINT ck_stage116_iccid_last4 CHECK (iccid_last4 ~ '^[0-9]{4}$'),
+            CONSTRAINT ck_stage116_assignment_lifecycle CHECK (
+              (assignment_status='Assigned' AND effective_to IS NULL AND end_reason IS NULL AND ended_by IS NULL)
+              OR (assignment_status='Ended' AND effective_to IS NOT NULL AND effective_to>effective_from
+                  AND end_reason IS NOT NULL AND BTRIM(end_reason)<>''))
+        )",
+
+        // Firmware planning is deliberately non-executable. Both campaign and
+        // target rows are fixed at ExternalHold with remote_upgrade_claim=false.
+        @"CREATE TABLE IF NOT EXISTS device_firmware_campaigns (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            branch_id BIGINT NULL,
+            campaign_name VARCHAR(160) NOT NULL,
+            target_firmware_version VARCHAR(120) NOT NULL,
+            rollback_firmware_version VARCHAR(120) NULL,
+            rollout_strategy VARCHAR(20) NOT NULL,
+            batch_size INT NOT NULL,
+            scheduled_for TIMESTAMPTZ NOT NULL,
+            maintenance_window_minutes INT NOT NULL,
+            execution_status VARCHAR(24) NOT NULL DEFAULT 'ExternalHold',
+            provider_capability_status VARCHAR(24) NOT NULL DEFAULT 'Unverified',
+            remote_upgrade_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            external_hold_reason VARCHAR(500) NOT NULL,
+            source_reference VARCHAR(240) NOT NULL,
+            change_reason VARCHAR(500) NOT NULL,
+            idempotency_key UUID NOT NULL,
+            created_by BIGINT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage117_rollout_strategy CHECK (rollout_strategy IN ('Manual','Canary','Staged')),
+            CONSTRAINT ck_stage117_batch_size CHECK (batch_size BETWEEN 1 AND 100),
+            CONSTRAINT ck_stage117_window CHECK (maintenance_window_minutes BETWEEN 15 AND 720),
+            CONSTRAINT ck_stage117_execution_hold CHECK (execution_status='ExternalHold'),
+            CONSTRAINT ck_stage117_capability_unverified CHECK (provider_capability_status='Unverified'),
+            CONSTRAINT ck_stage117_no_remote_claim CHECK (remote_upgrade_claim=FALSE),
+            UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_firmware_campaign_targets (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            branch_id BIGINT NULL,
+            campaign_id BIGINT NOT NULL,
+            device_id BIGINT NOT NULL,
+            device_serial VARCHAR(120) NOT NULL,
+            manufacturer VARCHAR(120) NULL,
+            device_model VARCHAR(160) NULL,
+            hardware_revision VARCHAR(120) NULL,
+            reported_firmware_version VARCHAR(120) NULL,
+            target_firmware_version VARCHAR(120) NOT NULL,
+            planning_status VARCHAR(32) NOT NULL,
+            planning_reason VARCHAR(500) NOT NULL,
+            rollout_batch INT NOT NULL,
+            delivery_status VARCHAR(24) NOT NULL DEFAULT 'ExternalHold',
+            provider_capability_status VARCHAR(24) NOT NULL DEFAULT 'Unverified',
+            remote_upgrade_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage117_target_planning CHECK (planning_status IN ('ReadyForExternalEvidence','BlockedIdentity','AlreadyCurrent')),
+            CONSTRAINT ck_stage117_target_batch CHECK (rollout_batch>=1),
+            CONSTRAINT ck_stage117_target_delivery_hold CHECK (delivery_status='ExternalHold'),
+            CONSTRAINT ck_stage117_target_capability_unverified CHECK (provider_capability_status='Unverified'),
+            CONSTRAINT ck_stage117_target_no_remote_claim CHECK (remote_upgrade_claim=FALSE),
+            UNIQUE(company_id,campaign_id,device_id)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_rma_cases (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            device_serial VARCHAR(120) NOT NULL, manufacturer VARCHAR(120) NULL,
+            device_model VARCHAR(160) NULL, hardware_revision VARCHAR(120) NULL,
+            reported_firmware_version VARCHAR(120) NULL, severity VARCHAR(2) NOT NULL,
+            failure_category VARCHAR(40) NOT NULL, failure_description VARCHAR(1000) NOT NULL,
+            observed_at TIMESTAMPTZ NOT NULL, warranty_posture VARCHAR(32) NOT NULL,
+            warranty_reference VARCHAR(240) NULL, warranty_evidence_status VARCHAR(24) NOT NULL DEFAULT 'Unverified',
+            support_sla_reference VARCHAR(240) NOT NULL, response_due_at TIMESTAMPTZ NOT NULL,
+            source_reference VARCHAR(240) NOT NULL, physical_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            idempotency_key UUID NOT NULL, created_by BIGINT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage118_case_severity CHECK (severity IN ('P0','P1','P2','P3')),
+            CONSTRAINT ck_stage118_warranty_unverified CHECK (warranty_evidence_status='Unverified'),
+            CONSTRAINT ck_stage118_case_no_physical_claim CHECK (physical_evidence_claim=FALSE),
+            UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_rma_events (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, case_id BIGINT NOT NULL, device_id BIGINT NOT NULL,
+            sequence_number INT NOT NULL, event_type VARCHAR(40) NOT NULL, case_status_after VARCHAR(32) NOT NULL,
+            occurred_at TIMESTAMPTZ NOT NULL, custody_location VARCHAR(240) NULL,
+            tracking_reference VARCHAR(240) NULL, evidence_reference VARCHAR(240) NOT NULL,
+            evidence_status VARCHAR(24) NOT NULL DEFAULT 'Unverified', notes VARCHAR(1000) NOT NULL,
+            physical_completion_claim BOOLEAN NOT NULL DEFAULT FALSE, idempotency_key UUID NOT NULL,
+            recorded_by BIGINT NULL, recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage118_event_evidence_unverified CHECK (evidence_status='Unverified'),
+            CONSTRAINT ck_stage118_event_no_physical_claim CHECK (physical_completion_claim=FALSE),
+            UNIQUE(company_id,case_id,sequence_number), UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_rma_replacements (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, case_id BIGINT NOT NULL,
+            failed_device_id BIGINT NOT NULL, failed_device_serial VARCHAR(120) NOT NULL,
+            replacement_device_id BIGINT NOT NULL, replacement_device_serial VARCHAR(120) NOT NULL,
+            replacement_manufacturer VARCHAR(120) NULL, replacement_device_model VARCHAR(160) NULL,
+            replacement_hardware_revision VARCHAR(120) NULL, replacement_firmware_version VARCHAR(120) NULL,
+            replacement_status VARCHAR(24) NOT NULL DEFAULT 'Planned', physical_swap_status VARCHAR(24) NOT NULL DEFAULT 'ExternalHold',
+            physical_swap_claim BOOLEAN NOT NULL DEFAULT FALSE, change_reason VARCHAR(500) NOT NULL,
+            source_reference VARCHAR(240) NOT NULL, idempotency_key UUID NOT NULL,
+            created_by BIGINT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage118_replacement_distinct CHECK (failed_device_id<>replacement_device_id),
+            CONSTRAINT ck_stage118_replacement_status CHECK (replacement_status='Planned'),
+            CONSTRAINT ck_stage118_swap_external_hold CHECK (physical_swap_status='ExternalHold'),
+            CONSTRAINT ck_stage118_no_swap_claim CHECK (physical_swap_claim=FALSE),
+            UNIQUE(company_id,case_id), UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_command_capabilities (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            device_serial VARCHAR(120) NOT NULL, manufacturer VARCHAR(120) NOT NULL,
+            device_model VARCHAR(160) NOT NULL, hardware_revision VARCHAR(120) NOT NULL,
+            firmware_version VARCHAR(120) NOT NULL, provider VARCHAR(120) NOT NULL,
+            command_type VARCHAR(60) NOT NULL, command_class VARCHAR(24) NOT NULL,
+            capability_status VARCHAR(24) NOT NULL DEFAULT 'Unverified', evidence_source VARCHAR(40) NOT NULL,
+            evidence_reference VARCHAR(240) NOT NULL, observed_at TIMESTAMPTZ NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL, physical_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE, recorded_by BIGINT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NULL,
+            CONSTRAINT ck_stage119_capability_type CHECK (command_type IN ('RequestPosition','RequestDiagnostics','RestartDevice')),
+            CONSTRAINT ck_stage119_capability_status CHECK (capability_status IN ('Unverified','Verified','Rejected','Revoked')),
+            CONSTRAINT ck_stage119_capability_no_physical_claim CHECK (physical_evidence_claim=FALSE),
+            CONSTRAINT ck_stage119_capability_no_certification_claim CHECK (certification_claim=FALSE)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_connectivity_observations (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            connectivity_profile_id BIGINT NOT NULL, profile_iccid_bidx_snapshot VARCHAR(64) NOT NULL,
+            profile_iccid_last4 VARCHAR(4) NOT NULL, source_provider VARCHAR(80) NOT NULL,
+            source_account_bidx VARCHAR(64) NOT NULL, source_observation_bidx VARCHAR(64) NOT NULL,
+            payload_sha256 VARCHAR(64) NOT NULL, source_authentication_status VARCHAR(24) NOT NULL DEFAULT 'Authenticated',
+            subscription_status VARCHAR(24) NOT NULL, network_registration_status VARCHAR(24) NOT NULL,
+            data_session_status VARCHAR(24) NOT NULL, usage_bytes BIGINT NULL, roaming BOOLEAN NULL,
+            observed_at TIMESTAMPTZ NOT NULL, received_at TIMESTAMPTZ NOT NULL,
+            reconciliation_status VARCHAR(32) NOT NULL DEFAULT 'ExactCurrentProfile',
+            provider_verified_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            physical_connectivity_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage120_observation_no_provider_claim CHECK (provider_verified_claim=FALSE),
+            CONSTRAINT ck_stage120_observation_no_physical_claim CHECK (physical_connectivity_claim=FALSE),
+            CONSTRAINT ck_stage120_observation_no_certification_claim CHECK (certification_claim=FALSE)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_installation_work_packages (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            vehicle_id BIGINT NOT NULL, assigned_installer_user_id BIGINT NOT NULL,
+            work_order_reference VARCHAR(120) NOT NULL, appointment_start TIMESTAMPTZ NOT NULL,
+            appointment_end TIMESTAMPTZ NOT NULL, service_location VARCHAR(160) NOT NULL,
+            work_scope VARCHAR(1000) NOT NULL, idempotency_key VARCHAR(120) NOT NULL,
+            physical_appointment_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            physical_work_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            created_by BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage121_appointment_window CHECK (appointment_end>appointment_start),
+            CONSTRAINT ck_stage121_no_appointment_claim CHECK (physical_appointment_claim=FALSE),
+            CONSTRAINT ck_stage121_no_work_claim CHECK (physical_work_claim=FALSE),
+            CONSTRAINT ck_stage121_no_certification_claim CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,work_order_reference), UNIQUE(company_id,idempotency_key),
+            UNIQUE(company_id,id,device_id)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_installation_checklist_observations (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            work_package_id BIGINT NOT NULL, checklist_item VARCHAR(40) NOT NULL,
+            observed_result VARCHAR(24) NOT NULL, evidence_reference VARCHAR(240) NOT NULL,
+            observation_notes VARCHAR(1000) NOT NULL, observed_at TIMESTAMPTZ NOT NULL,
+            assurance_status VARCHAR(24) NOT NULL DEFAULT 'Unverified',
+            physical_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            idempotency_key VARCHAR(120) NOT NULL, recorded_by BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage121_checklist_result CHECK (observed_result IN ('Pass','Fail','NotObserved','NotApplicable')),
+            CONSTRAINT ck_stage121_checklist_assurance CHECK (assurance_status='Unverified'),
+            CONSTRAINT ck_stage121_checklist_no_physical_claim CHECK (physical_evidence_claim=FALSE),
+            CONSTRAINT ck_stage121_checklist_no_certification_claim CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,work_package_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_installation_artifact_references (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            work_package_id BIGINT NOT NULL, artifact_type VARCHAR(40) NOT NULL,
+            object_key TEXT NOT NULL, sha256 VARCHAR(64) NOT NULL, captured_at TIMESTAMPTZ NOT NULL,
+            content_verification_status VARCHAR(24) NOT NULL DEFAULT 'Unverified',
+            physical_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            idempotency_key VARCHAR(120) NOT NULL, recorded_by BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage121_artifact_sha CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+            CONSTRAINT ck_stage121_artifact_assurance CHECK (content_verification_status='Unverified'),
+            CONSTRAINT ck_stage121_artifact_no_physical_claim CHECK (physical_evidence_claim=FALSE),
+            CONSTRAINT ck_stage121_artifact_no_certification_claim CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,work_package_id,idempotency_key),
+            UNIQUE(company_id,work_package_id,artifact_type,sha256)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_installation_work_package_links (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            work_package_id BIGINT NOT NULL, installation_id BIGINT NOT NULL,
+            link_assurance_status VARCHAR(32) NOT NULL DEFAULT 'RecordedUnverified',
+            physical_work_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            idempotency_key VARCHAR(120) NOT NULL, linked_by BIGINT NOT NULL,
+            linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage122_link_assurance CHECK (link_assurance_status='RecordedUnverified'),
+            CONSTRAINT ck_stage122_link_no_physical_claim CHECK (physical_work_claim=FALSE),
+            CONSTRAINT ck_stage122_link_no_certification_claim CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,work_package_id), UNIQUE(company_id,installation_id),
+            UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_retirement_records (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            device_serial_snapshot VARCHAR(120) NOT NULL, retirement_reason VARCHAR(500) NOT NULL,
+            disposition_plan VARCHAR(32) NOT NULL, source_reference VARCHAR(240) NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL, prior_status VARCHAR(40) NOT NULL,
+            prior_device_state VARCHAR(40) NOT NULL, row_version_before BIGINT NOT NULL,
+            row_version_after BIGINT NOT NULL, ended_connectivity_profile_id BIGINT NULL,
+            credentials_revoked BOOLEAN NOT NULL DEFAULT TRUE,
+            record_status VARCHAR(32) NOT NULL DEFAULT 'OperatorRecorded',
+            physical_disposition_status VARCHAR(32) NOT NULL DEFAULT 'Unverified',
+            physical_disposition_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            idempotency_key UUID NOT NULL, retired_by BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage123_retirement_disposition CHECK
+              (disposition_plan IN ('ReturnToVendor','Recycle','SecureStorage','Other')),
+            CONSTRAINT ck_stage123_retirement_version CHECK
+              (row_version_before>=1 AND row_version_after=row_version_before+1),
+            CONSTRAINT ck_stage123_credentials_revoked CHECK (credentials_revoked=TRUE),
+            CONSTRAINT ck_stage123_record_status CHECK (record_status='OperatorRecorded'),
+            CONSTRAINT ck_stage123_physical_status CHECK (physical_disposition_status='Unverified'),
+            CONSTRAINT ck_stage123_no_physical_claim CHECK (physical_disposition_claim=FALSE),
+            CONSTRAINT ck_stage123_no_certification_claim CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,device_id), UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_rma_support_actions (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, case_id BIGINT NOT NULL,
+            device_id BIGINT NOT NULL, action_type VARCHAR(32) NOT NULL,
+            owner_user_id BIGINT NOT NULL, owner_name_snapshot VARCHAR(200) NOT NULL,
+            support_queue VARCHAR(120) NOT NULL, escalation_severity VARCHAR(2) NULL,
+            action_reason VARCHAR(500) NOT NULL, source_reference VARCHAR(240) NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL, idempotency_key UUID NOT NULL,
+            support_action_status VARCHAR(32) NOT NULL DEFAULT 'OperatorRecorded',
+            support_response_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            physical_outcome_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            warranty_acceptance_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            recorded_by BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage124_action_type CHECK
+              (action_type IN ('OwnershipClaimed','OwnershipReassigned','Escalated')),
+            CONSTRAINT ck_stage124_support_queue CHECK (LENGTH(BTRIM(support_queue)) BETWEEN 3 AND 120),
+            CONSTRAINT ck_stage124_escalation_pair CHECK
+              ((action_type='Escalated' AND escalation_severity IN ('P0','P1','P2','P3')) OR
+               (action_type IN ('OwnershipClaimed','OwnershipReassigned') AND escalation_severity IS NULL)),
+            CONSTRAINT ck_stage124_action_reason CHECK (LENGTH(BTRIM(action_reason)) BETWEEN 5 AND 500),
+            CONSTRAINT ck_stage124_source_reference CHECK (LENGTH(BTRIM(source_reference)) BETWEEN 3 AND 240),
+            CONSTRAINT ck_stage124_operator_recorded CHECK (support_action_status='OperatorRecorded'),
+            CONSTRAINT ck_stage124_no_response_claim CHECK (support_response_claim=FALSE),
+            CONSTRAINT ck_stage124_no_physical_claim CHECK (physical_outcome_claim=FALSE),
+            CONSTRAINT ck_stage124_no_warranty_claim CHECK (warranty_acceptance_claim=FALSE),
+            UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_spare_pool_entries (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            device_serial_snapshot VARCHAR(120) NOT NULL, pool_name VARCHAR(120) NOT NULL,
+            entry_reason VARCHAR(500) NOT NULL, source_reference VARCHAR(240) NOT NULL,
+            idempotency_key UUID NOT NULL,
+            inventory_assurance_status VARCHAR(40) NOT NULL DEFAULT 'OperatorRecordedUnverified',
+            physical_possession_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            condition_verified_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            added_by BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage125_pool_assurance CHECK (inventory_assurance_status='OperatorRecordedUnverified'),
+            CONSTRAINT ck_stage125_pool_no_possession CHECK (physical_possession_claim=FALSE),
+            CONSTRAINT ck_stage125_pool_no_condition CHECK (condition_verified_claim=FALSE),
+            CONSTRAINT ck_stage125_pool_no_certification CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,id), UNIQUE(company_id,device_id), UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_spare_pool_events (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, entry_id BIGINT NOT NULL,
+            device_id BIGINT NOT NULL, action_type VARCHAR(24) NOT NULL, state_after VARCHAR(24) NOT NULL,
+            rma_case_id BIGINT NULL, failed_device_id BIGINT NULL, action_reason VARCHAR(500) NOT NULL,
+            source_reference VARCHAR(240) NOT NULL, effective_at TIMESTAMPTZ NOT NULL,
+            idempotency_key UUID NOT NULL, event_status VARCHAR(32) NOT NULL DEFAULT 'OperatorRecorded',
+            physical_possession_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            condition_verified_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            compatibility_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            recorded_by BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage125_pool_event_pair CHECK ((action_type,state_after) IN
+              (('Added','Available'),('Reserved','Reserved'),('Released','Available'),('Removed','Removed'))),
+            CONSTRAINT ck_stage125_pool_event_case_pair CHECK
+              ((action_type IN ('Reserved','Released') AND rma_case_id IS NOT NULL AND failed_device_id IS NOT NULL) OR
+               (action_type IN ('Added','Removed') AND rma_case_id IS NULL AND failed_device_id IS NULL)),
+            CONSTRAINT ck_stage125_pool_event_status CHECK (event_status='OperatorRecorded'),
+            CONSTRAINT ck_stage125_pool_event_no_possession CHECK (physical_possession_claim=FALSE),
+            CONSTRAINT ck_stage125_pool_event_no_condition CHECK (condition_verified_claim=FALSE),
+            CONSTRAINT ck_stage125_pool_event_no_compatibility CHECK (compatibility_claim=FALSE),
+            CONSTRAINT ck_stage125_pool_event_no_certification CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_support_tier_events (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            device_serial_snapshot VARCHAR(120) NOT NULL, action_type VARCHAR(24) NOT NULL,
+            state_after VARCHAR(24) NOT NULL, tier_code VARCHAR(32) NOT NULL,
+            coverage_window VARCHAR(32) NOT NULL, routing_response_target_minutes INT NOT NULL,
+            escalation_policy_reference VARCHAR(240) NOT NULL, commercial_reference VARCHAR(240) NOT NULL,
+            action_reason VARCHAR(500) NOT NULL, source_reference VARCHAR(240) NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL, idempotency_key UUID NOT NULL,
+            record_status VARCHAR(40) NOT NULL DEFAULT 'OperatorRecordedUnverified',
+            commercial_entitlement_verified_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            provider_support_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            hardware_supportability_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            recorded_by BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage126_support_action CHECK (action_type IN ('Assigned','Changed','Ended')),
+            CONSTRAINT ck_stage126_support_state CHECK
+              ((action_type IN ('Assigned','Changed') AND state_after='Assigned') OR
+               (action_type='Ended' AND state_after='NotAssigned')),
+            CONSTRAINT ck_stage126_support_tier CHECK (tier_code IN ('Standard','Priority','CriticalOps','Custom')),
+            CONSTRAINT ck_stage126_support_coverage CHECK (coverage_window IN ('BusinessHours','ExtendedHours','AlwaysOn','Custom')),
+            CONSTRAINT ck_stage126_support_target CHECK (routing_response_target_minutes BETWEEN 15 AND 10080),
+            CONSTRAINT ck_stage126_support_status CHECK (record_status='OperatorRecordedUnverified'),
+            CONSTRAINT ck_stage126_support_no_entitlement CHECK (commercial_entitlement_verified_claim=FALSE),
+            CONSTRAINT ck_stage126_support_no_provider CHECK (provider_support_claim=FALSE),
+            CONSTRAINT ck_stage126_support_no_hardware CHECK (hardware_supportability_claim=FALSE),
+            CONSTRAINT ck_stage126_support_no_certification CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,idempotency_key)
+        )",
     ];
 
     private static readonly string[] Indexes =
     [
+        "CREATE INDEX IF NOT EXISTS ix_stage129_signal_device_observed ON latest_device_signals(company_id,device_id,observed_at DESC,signal_path)",
+        "CREATE INDEX IF NOT EXISTS ix_stage129_signal_vehicle_observed ON latest_device_signals(company_id,vehicle_id,observed_at DESC) WHERE vehicle_id IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_ta_company_status ON telemetry_alerts(company_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_ta_vehicle ON telemetry_alerts(vehicle_id, company_id)",
         "CREATE INDEX IF NOT EXISTS idx_ta_type ON telemetry_alerts(company_id, alert_type, vehicle_id)",
@@ -262,32 +828,121 @@ public sealed class TelemetrySchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_tr_company ON telemetry_rules(company_id, rule_type, enabled)",
         "CREATE INDEX IF NOT EXISTS idx_tlsa_company_updated ON telemetry_live_asset_states(company_id, updated_at)",
         "CREATE INDEX IF NOT EXISTS idx_tlsa_company_risk ON telemetry_live_asset_states(company_id, risk_level, open_alert_count)",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage115_device_compatibility_tuple_candidate
+          ON device_compatibility_candidates (
+            UPPER(BTRIM(manufacturer)),UPPER(BTRIM(device_model)),
+            UPPER(BTRIM(hardware_revision)),UPPER(BTRIM(firmware_version)),software_candidate_sha)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage115_device_compatibility_lookup
+          ON device_compatibility_candidates (
+            UPPER(BTRIM(manufacturer)),UPPER(BTRIM(device_model)),
+            UPPER(BTRIM(hardware_revision)),UPPER(BTRIM(firmware_version)),created_at DESC,id DESC)",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage116_connectivity_current_device
+          ON device_connectivity_profiles(company_id,device_id) WHERE effective_to IS NULL",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage116_connectivity_current_iccid
+          ON device_connectivity_profiles(iccid_bidx) WHERE effective_to IS NULL",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage116_connectivity_idempotency
+          ON device_connectivity_profiles(company_id,device_id,idempotency_key)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage116_connectivity_history
+          ON device_connectivity_profiles(company_id,device_id,effective_from DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage117_campaigns_company_schedule
+          ON device_firmware_campaigns(company_id,scheduled_for DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage117_targets_device_recent
+          ON device_firmware_campaign_targets(company_id,device_id,created_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage117_targets_campaign_batch
+          ON device_firmware_campaign_targets(company_id,campaign_id,rollout_batch,id)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage118_cases_device_recent
+          ON device_rma_cases(company_id,device_id,created_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage118_cases_severity_due
+          ON device_rma_cases(company_id,severity,response_due_at,id)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage118_events_case_sequence
+          ON device_rma_events(company_id,case_id,sequence_number)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage118_replacements_device
+          ON device_rma_replacements(company_id,replacement_device_id,created_at DESC)",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage119_capability_evidence
+          ON device_command_capabilities(company_id,device_id,command_type,evidence_reference)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage119_capability_lookup
+          ON device_command_capabilities(company_id,device_id,command_type,capability_status,expires_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage119_commands_device_recent
+          ON telematics_device_commands(company_id,device_id,created_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage119_commands_capability
+          ON telematics_device_commands(company_id,capability_id,created_at DESC,id DESC) WHERE capability_id IS NOT NULL",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage120_connectivity_profile_owner
+          ON device_connectivity_profiles(company_id,id,device_id)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage120_observations_device_recent
+          ON device_connectivity_observations(company_id,device_id,observed_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage120_observations_profile_recent
+          ON device_connectivity_observations(company_id,connectivity_profile_id,observed_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage121_work_device_schedule
+          ON device_installation_work_packages(company_id,device_id,appointment_start DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage121_checklist_work_latest
+          ON device_installation_checklist_observations(company_id,work_package_id,checklist_item,observed_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage121_artifact_work_recent
+          ON device_installation_artifact_references(company_id,work_package_id,captured_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage122_links_device_recent
+          ON device_installation_work_package_links(company_id,device_id,linked_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage123_retirement_recent
+          ON device_retirement_records(company_id,effective_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage124_support_case_recent
+          ON device_rma_support_actions(company_id,case_id,effective_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage124_support_owner_queue
+          ON device_rma_support_actions(company_id,owner_user_id,support_queue,effective_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage125_pool_entry_lookup
+          ON device_spare_pool_entries(company_id,pool_name,device_serial_snapshot,id)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage125_pool_event_recent
+          ON device_spare_pool_events(company_id,entry_id,effective_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage126_support_device_recent
+          ON device_support_tier_events(company_id,device_id,effective_at DESC,id DESC)",
     ];
 
     private static readonly string[] Seeds =
     [
-        // last_seen_at: spread across last 12 minutes for demo staleness variety
-        "UPDATE eld_devices SET last_seen_at = NOW() - (id % 12) * INTERVAL '1 minute' WHERE last_seen_at IS NULL",
-        // Seed default speeding rule for every company that has devices
-        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
-          SELECT DISTINCT company_id, 'speeding', 65, 'High', true
+        // Inert policy templates. They make supported controls discoverable without
+        // silently activating a jurisdiction- or customer-specific threshold.
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, policy_origin, approval_status)
+          SELECT DISTINCT company_id, 'speeding', 65, 'High', false,
+                 'Template only; requires operator approval.', 'system_template', 'unapproved'
           FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
           ON CONFLICT DO NOTHING",
-        // Seed default stale-device rule (900 seconds = 15 minutes)
-        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
-          SELECT DISTINCT company_id, 'stale_device', 900, 'Warning', true
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, policy_origin, approval_status)
+          SELECT DISTINCT company_id, 'stale_device', 900, 'Warning', false,
+                 'Template only; requires operator approval.', 'system_template', 'unapproved'
           FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
           ON CONFLICT DO NOTHING",
-        // Excessive-idling window in minutes (OperationalAlertDetectionService)
-        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
-          SELECT DISTINCT company_id, 'idling', 15, 'Warning', true
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, policy_origin, approval_status)
+          SELECT DISTINCT company_id, 'idling', 15, 'Warning', false,
+                 'Template only; requires operator approval.', 'system_template', 'unapproved'
           FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
           ON CONFLICT DO NOTHING",
-        // Fuel-level drop (percentage points inside 45 min) that counts as an anomaly
-        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
-          SELECT DISTINCT company_id, 'fuel_drop_pct', 20, 'High', true
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, policy_origin, approval_status)
+          SELECT DISTINCT company_id, 'fuel_drop_pct', 20, 'High', false,
+                 'Template only; requires operator approval.', 'system_template', 'unapproved'
           FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
           ON CONFLICT DO NOTHING",
+    ];
+
+    private static readonly string[] PolicyHardening =
+    [
+        "ALTER TABLE telemetry_rules ALTER COLUMN enabled SET DEFAULT FALSE",
+        // Preserve a previously recorded operator action when created_by carries a
+        // real authenticated user. Rows from the old startup seeds had no actor.
+        @"UPDATE telemetry_rules
+             SET policy_origin='user_workflow', approval_status='approved',
+                 approved_by=created_by, approved_at=COALESCE(updated_at,created_at,NOW())
+           WHERE policy_origin='legacy_unverified' AND approval_status='unapproved'
+             AND created_by IS NOT NULL AND created_by>0",
+        @"UPDATE telemetry_rules
+             SET enabled=FALSE, approved_by=NULL, approved_at=NULL
+           WHERE enabled=TRUE AND NOT (
+             policy_origin='user_workflow' AND approval_status='approved'
+             AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL)",
+        @"DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_telemetry_rules_approved_activation') THEN
+              ALTER TABLE telemetry_rules ADD CONSTRAINT ck_telemetry_rules_approved_activation CHECK (
+                enabled=FALSE OR (
+                  policy_origin='user_workflow' AND approval_status='approved'
+                  AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL));
+            END IF;
+          END $$",
     ];
 
     private static readonly string[] CredentialHardening =

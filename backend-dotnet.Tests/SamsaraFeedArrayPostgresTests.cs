@@ -25,8 +25,8 @@ public sealed class SamsaraFeedArrayPostgresTests
         try
         {
             var integrationId = await db.InsertAsync(
-                @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
-                  VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+                @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
+                  VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb,'samsara-org:feed-array-test',NOW()) RETURNING id",
                 c => c.Parameters.AddWithValue("@cid", companyId));
             var operation = await ConnectorOperationLease.TryAcquireAsync(
                 db, companyId, integrationId, ["Connected"], TimeSpan.FromSeconds(180), CancellationToken.None);
@@ -55,7 +55,8 @@ public sealed class SamsaraFeedArrayPostgresTests
             using var body = JsonDocument.Parse(JsonSerializer.Serialize(new
             {
                 companyId, integrationId, operationGeneration = operation!.Generation,
-                operationLeaseToken = operation.LeaseToken.ToString(), cursor = "before-start",
+                operationLeaseToken = operation.LeaseToken.ToString(),
+                providerAccountReference = "samsara-org:feed-array-test", cursor = "before-start",
             }));
             var result = await connector.RunActionAsync("sync",
                 new Dictionary<string, string?> { ["apiToken"] = "synthetic-token" }, body.RootElement, CancellationToken.None);

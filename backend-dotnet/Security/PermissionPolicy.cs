@@ -88,14 +88,14 @@ public static class PermissionPolicy
         Manage("customers:manage", "customers:view", "customers:create", "customers:update", "customers:delete", "customer.account:create", "customer.account:update", "customer.account:delete");
         Manage("crm:manage", "crm:view", "customers:create", "customers:update", "customers:delete");
         Manage("safety:manage", "safety:view", "safety:create", "safety:update", "safety:review");
-        Manage("maintenance:manage", "maintenance:view", "maintenance:create", "maintenance:update", "maintenance:close", "maintenance:review");
+        Manage("maintenance:manage", "maintenance:view", "maintenance:create", "maintenance:update", "maintenance:close", "maintenance:review", "telematics:devices:rma");
         Manage("compliance:manage", "compliance:view", "compliance:update", "compliance:export");
         Manage("alerts:manage", "alerts:view", "alerts:acknowledge", "alerts:close", "telemetry.alerts.manage");
         Manage("reports:manage", "reports:view", "reports:export");
         Manage("users:manage", "users:view", "users:create", "users:update", "users:delete");
         Manage("roles:manage", "roles:view", "roles:create", "roles:update");
         Manage("settings:manage", "settings:view", "settings:update");
-        Manage("telemetry.devices.manage", "telemetry.devices.read", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:providers:manage");
+        Manage("telemetry.devices.manage", "telemetry.devices.read", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:devices:command", "telematics:providers:manage");
         Add("telematics:providers:manage", "telemetry.devices.manage");
         Manage("telemetry.alerts.manage", "telemetry.alerts.read", "alerts:acknowledge", "alerts:close");
         Manage("telemetry.rules.manage", "telemetry.rules.read");

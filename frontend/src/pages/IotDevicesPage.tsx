@@ -43,13 +43,27 @@ import {
   getInstallationIntent,
   type DeviceCommandRecord,
   type DeviceCommissioningInput,
+  type DeviceConnectivityProfileInput,
   type DeviceCredentialRotationResult,
   type DeviceDetailRecord,
+  type DeviceFirmwareCampaignInput,
+  type DeviceRmaCaseInput,
+  type DeviceRmaEventInput,
+  type DeviceRmaReplacementInput,
+  type DeviceRmaSupportActionInput,
+  type DeviceSparePoolActionInput,
+  type DeviceSupportTierActionInput,
+  type DeviceSupportTierEventRecord,
+  type DeviceRemoteCommandInput,
+  type DeviceRetirementInput,
   type DeviceIdentityQuarantineRecord,
   type DeviceInstallationInput,
+  type DeviceInstallationArtifactReferenceInput,
+  type DeviceInstallationChecklistObservationInput,
   type DeviceInstallationIntent,
   type DeviceInstallationReceipt,
   type DeviceInstallationRemovalInput,
+  type DeviceInstallationWorkPackageInput,
   type DeviceProvisionResult,
 } from "@/services/telematicsService";
 import type { AnyRecord } from "@/types";
@@ -69,6 +83,7 @@ type DeviceTab =
   | "quarantine"
   | "installations"
   | "data-health"
+  | "readiness"
   | "providers";
 
 type InstallationFormState = {
@@ -121,13 +136,197 @@ type CommissioningRecordedOutcome = {
   rowVersion: number;
 };
 
+type ConnectivityProfileFormState = {
+  profileKind: DeviceConnectivityProfileInput["profileKind"];
+  carrierName: string;
+  iccid: string;
+  msisdn: string;
+  apn: string;
+  effectiveAt: string;
+  changeReason: string;
+  sourceReference: string;
+  idempotencyKey: string;
+};
+
+type InstallationWorkPackageFormState = Omit<DeviceInstallationWorkPackageInput, "appointmentStart" | "appointmentEnd"> & {
+  vehicleId: string;
+  appointmentStart: string;
+  appointmentEnd: string;
+};
+
+type InstallationChecklistFormState = Omit<DeviceInstallationChecklistObservationInput, "observedAt"> & {
+  workPackageId: string;
+  observedAt: string;
+};
+
+type InstallationArtifactFormState = Omit<DeviceInstallationArtifactReferenceInput, "capturedAt"> & {
+  workPackageId: string;
+  capturedAt: string;
+};
+
+function newConnectivityProfileForm(): ConnectivityProfileFormState {
+  return {
+    profileKind: "PhysicalSIM",
+    carrierName: "",
+    iccid: "",
+    msisdn: "",
+    apn: "",
+    effectiveAt: currentLocalMinute(),
+    changeReason: "",
+    sourceReference: "",
+    idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+function newInstallationWorkPackageForm(vehicleId = ""): InstallationWorkPackageFormState {
+  return {
+    vehicleId, workOrderReference: "", appointmentStart: localMinuteAfter(24), appointmentEnd: localMinuteAfter(26),
+    serviceLocation: "", workScope: "", idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+function newInstallationChecklistForm(workPackageId = ""): InstallationChecklistFormState {
+  return {
+    workPackageId, checklistItem: "DeviceIdentity", observedResult: "NotObserved", evidenceReference: "",
+    observationNotes: "", observedAt: currentLocalMinute(), idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+function newInstallationArtifactForm(workPackageId = ""): InstallationArtifactFormState {
+  return {
+    workPackageId, artifactType: "InstallationPhoto", objectKey: "", sha256: "",
+    capturedAt: currentLocalMinute(), idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+type FirmwareCampaignFormState = {
+  campaignName: string;
+  targetFirmwareVersion: string;
+  rollbackFirmwareVersion: string;
+  rolloutStrategy: DeviceFirmwareCampaignInput["rolloutStrategy"];
+  scheduledFor: string;
+  maintenanceWindowMinutes: string;
+  changeReason: string;
+  sourceReference: string;
+  idempotencyKey: string;
+};
+
+function newFirmwareCampaignForm(): FirmwareCampaignFormState {
+  return {
+    campaignName: "",
+    targetFirmwareVersion: "",
+    rollbackFirmwareVersion: "",
+    rolloutStrategy: "Canary",
+    scheduledFor: currentLocalMinute(),
+    maintenanceWindowMinutes: "60",
+    changeReason: "",
+    sourceReference: "",
+    idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+type RmaCaseFormState = Omit<DeviceRmaCaseInput, "observedAt" | "responseDueAt"> & { observedAt: string; responseDueAt: string; warrantyReference: string };
+type RmaEventFormState = Omit<DeviceRmaEventInput, "occurredAt"> & { occurredAt: string; custodyLocation: string; trackingReference: string };
+type RmaReplacementFormState = DeviceRmaReplacementInput;
+type RmaSupportFormState = Omit<DeviceRmaSupportActionInput, "effectiveAt"> & { effectiveAt: string };
+
+function localMinuteAfter(hours: number) {
+  const date = new Date(Date.now() + hours * 60 * 60_000);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function newRmaCaseForm(): RmaCaseFormState {
+  return {
+    severity: "P2", failureCategory: "Other", failureDescription: "", observedAt: currentLocalMinute(),
+    warrantyPosture: "Unknown", warrantyReference: "", supportSlaReference: "", responseDueAt: localMinuteAfter(4),
+    sourceReference: "", idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+function newRmaEventForm(): RmaEventFormState {
+  return {
+    eventType: "ReturnAuthorized", occurredAt: currentLocalMinute(), custodyLocation: "", trackingReference: "",
+    evidenceReference: "", notes: "", idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+function newRmaReplacementForm(): RmaReplacementFormState {
+  return { replacementDeviceSerial: "", changeReason: "", sourceReference: "", idempotencyKey: crypto.randomUUID() };
+}
+
+function newRmaSupportForm(actionType: DeviceRmaSupportActionInput["actionType"], supportQueue = "Device Support"): RmaSupportFormState {
+  return {
+    actionType, supportQueue, escalationSeverity: actionType === "Escalate" ? "P2" : undefined,
+    actionReason: "", sourceReference: "", effectiveAt: currentLocalMinute(), idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+type SparePoolFormState = Omit<DeviceSparePoolActionInput, "effectiveAt"> & { effectiveAt: string; poolName: string; rmaCaseId: string };
+
+function newSparePoolForm(actionType: DeviceSparePoolActionInput["actionType"], poolName = "Primary Spares"): SparePoolFormState {
+  return {
+    actionType, poolName: actionType === "Add" ? poolName : "", rmaCaseId: "", actionReason: "",
+    sourceReference: "", effectiveAt: currentLocalMinute(), idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+type SupportTierFormState = Omit<DeviceSupportTierActionInput, "effectiveAt"> & {
+  effectiveAt: string;
+  tierCode: DeviceSupportTierEventRecord["tierCode"];
+  coverageWindow: DeviceSupportTierEventRecord["coverageWindow"];
+  routingResponseTargetMinutes: number;
+  escalationPolicyReference: string;
+  commercialReference: string;
+};
+
+function newSupportTierForm(actionType: DeviceSupportTierActionInput["actionType"], current?: DeviceSupportTierEventRecord): SupportTierFormState {
+  return {
+    actionType,
+    tierCode: current?.tierCode ?? "Standard",
+    coverageWindow: current?.coverageWindow ?? "BusinessHours",
+    routingResponseTargetMinutes: current?.routingResponseTargetMinutes ?? 240,
+    escalationPolicyReference: current?.escalationPolicyReference ?? "Device Support",
+    commercialReference: current?.commercialReference ?? "",
+    actionReason: "", sourceReference: "", effectiveAt: currentLocalMinute(),
+    idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+type RemoteCommandFormState = {
+  commandType: DeviceRemoteCommandInput["commandType"];
+  purpose: string;
+  sourceReference: string;
+  safetyConfirmation: string;
+  delaySeconds: string;
+  idempotencyKey: string;
+};
+
+function newRemoteCommandForm(commandType: DeviceRemoteCommandInput["commandType"]): RemoteCommandFormState {
+  return { commandType, purpose: "", sourceReference: "", safetyConfirmation: "", delaySeconds: "0", idempotencyKey: crypto.randomUUID() };
+}
+
+type RetirementFormState = Pick<DeviceRetirementInput,
+  "retirementReason" | "dispositionPlan" | "sourceReference" | "safetyConfirmation"> & {
+  idempotencyKey: string;
+};
+
+function newRetirementForm(): RetirementFormState {
+  return {
+    retirementReason: "",
+    dispositionPlan: "ReturnToVendor",
+    sourceReference: "",
+    safetyConfirmation: "",
+    idempotencyKey: crypto.randomUUID(),
+  };
+}
+
 type SuspensionMutationVariables = { deviceId: string; sessionGeneration: number; target: ConfirmActionTarget };
 type ActivationMutationVariables = { deviceId: string; sessionGeneration: number; target: DeviceCommandRecord };
 
 // DEF-023: destructive/lifecycle actions confirm through the in-app accessible
 // ConfirmDialog (native window.confirm cannot be completed by automation and is
 // invisible to assistive technology).
-type ConfirmableLifecycleAction = "archive" | "suspend" | "rotate-credentials";
+type ConfirmableLifecycleAction = "suspend" | "rotate-credentials";
 
 type ConfirmActionTarget = {
   action: ConfirmableLifecycleAction;
@@ -142,12 +341,6 @@ const CONFIRM_ACTION_COPY: Record<
   ConfirmableLifecycleAction,
   { title: string; confirmLabel: string; variant: "default" | "danger"; message: (deviceName: string) => string }
 > = {
-  archive: {
-    title: "Revoke and archive device",
-    confirmLabel: "Revoke & Archive",
-    variant: "danger",
-    message: (deviceName) => `Permanently revoke and archive ${deviceName}? All device credentials are invalidated, future ingestion is blocked, and this action cannot be reactivated. Its lifecycle history remains visible. Use Suspend for a reversible stop.`,
-  },
   suspend: {
     title: "Suspend device",
     confirmLabel: "Suspend Device",
@@ -295,6 +488,9 @@ type ConnectFormState = {
   deviceCategory: string;
   provider: string;
   deviceModel: string;
+  manufacturer: string;
+  hardwareRevision: string;
+  firmwareVersion: string;
 };
 
 const defaultConnectForm: ConnectFormState = {
@@ -303,6 +499,9 @@ const defaultConnectForm: ConnectFormState = {
   deviceCategory: "",
   provider: "",
   deviceModel: "",
+  manufacturer: "",
+  hardwareRevision: "",
+  firmwareVersion: "",
 };
 
 const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
@@ -311,21 +510,23 @@ const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
   { key: "unassigned", label: "Unassigned" },
   { key: "offline", label: "Offline" },
   { key: "attention", label: "Needs Attention" },
-  { key: "firmware", label: "Firmware (read-only)" },
+  { key: "firmware", label: "Firmware planning" },
   { key: "provisioning", label: "Provisioning" },
   { key: "diagnostics", label: "Diagnostics evidence" },
   { key: "quarantine", label: "Identity Quarantine" },
   { key: "installations", label: "Installations" },
   { key: "data-health", label: "Data Health" },
+  { key: "readiness", label: "Software Gaps" },
   { key: "providers", label: "Provider Connections" },
 ];
 
 function emptyStateForTab(tab: DeviceTab) {
   if (tab === "archived") return { title: "No archived devices", subtitle: "Revoked and retired devices remain visible here with their lifecycle history." };
   if (tab === "offline") return { title: "No offline devices", subtitle: "Every scoped device is checking in within the current monitoring window." };
-  if (tab === "firmware") return { title: "Current version only", subtitle: "OTA scheduling and firmware history are not connected in this pilot. Current versions appear when devices report them." };
+  if (tab === "firmware") return { title: "No devices available for firmware planning", subtitle: "Campaign plans require real devices with reported inventory. Planning does not dispatch an OTA command." };
   if (tab === "providers") return { title: "No providers found", subtitle: "Integrations are pulled from your connected provider catalog." };
   if (tab === "quarantine") return { title: "No unresolved identity conflicts", subtitle: "Every device and installation identity in this fleet is currently unambiguous." };
+  if (tab === "readiness") return { title: "No listed software gaps", subtitle: "No active device matches the persisted software gap rules. Hardware, provider, and certification holds remain separate." };
   return { title: "No devices found", subtitle: "Refine the search, switch tabs, or register a device for this fleet." };
 }
 
@@ -337,13 +538,14 @@ function activeTabCount(tab: DeviceTab, row: DeviceCommandRecord) {
   if (tab === "unassigned") return !row.assignedVehicleCode;
   if (tab === "offline") return /offline/i.test(row.connectionStatus);
   if (tab === "attention") return /attention|offline/i.test(row.connectionStatus) || row.openAlertCount > 0;
-  if (tab === "firmware") return true; // read-only current-version listing; no OTA/target diff exists in this pilot
+  if (tab === "firmware") return true;
   if (tab === "provisioning") return /provision|awaiting/i.test(row.connectionStatus) || /awaiting|warning/i.test(row.installStatus);
   // Diagnostics is a separate evidence feed, not a device-inventory filter.
   // Never count every registered device as though it had diagnostic evidence.
   if (tab === "diagnostics") return false;
   if (tab === "installations") return true;
   if (tab === "data-health") return true;
+  if (tab === "readiness") return row.deviceOpsAssessmentAvailable && row.deviceOpsGaps.length > 0;
   return false;
 }
 
@@ -371,13 +573,12 @@ function buildActionContracts(
   device: DeviceCommandRecord,
   {
     canUpdate,
-    canDelete,
     canAssign,
     canManageLifecycle,
     canRecover,
     onAssign,
     onUnassign,
-    onArchive,
+    onRetire,
     onMarkInstalled,
     onRefresh,
     onFlagAttention,
@@ -387,13 +588,12 @@ function buildActionContracts(
     onRotateSecret,
   }: {
     canUpdate: boolean;
-    canDelete: boolean;
     canAssign: boolean;
     canManageLifecycle: boolean;
     canRecover: boolean;
     onAssign: () => void;
     onUnassign: () => void;
-    onArchive: () => void;
+    onRetire: () => void;
     onMarkInstalled: () => void;
     onRefresh: () => void;
     onFlagAttention: () => void;
@@ -542,13 +742,22 @@ function buildActionContracts(
       onClick: inRecovery ? onResolve : onFlagAttention,
     },
     {
-      key: "archive",
-      label: "Revoke & Archive",
+      key: "retire",
+      label: "Retire device",
       icon: <Trash2 className="h-4 w-4" />,
-      visible: canDelete,
-      state: archived ? "state-blocked" : canDelete ? "ready" : "permission-blocked",
-      reason: archived ? "This device is already revoked and archived." : canDelete ? "Permanently revokes credentials and archives the device. Use Suspend for a reversible stop." : "Requires TELEMATICS_DEVICES_DELETE.",
-      onClick: onArchive,
+      visible: canManageLifecycle,
+      state: archived ? "state-blocked"
+        : !canManageLifecycle ? "permission-blocked"
+        : hasCurrentVehicle || device.currentInstallationId ? "state-blocked"
+        : device.rowVersion == null ? "state-blocked"
+        : "ready",
+      reason: archived ? "This device is already retired or revoked."
+        : !canManageLifecycle ? "Requires TELEMETRY_DEVICES_MANAGE."
+        : hasCurrentVehicle || device.currentInstallationId
+          ? "Record physical removal from the current installation before retirement."
+          : device.rowVersion == null ? "Reload the device to obtain its current revision."
+          : "Records software retirement, ends the current connectivity profile, and permanently invalidates device credentials.",
+      onClick: onRetire,
     },
   ];
 
@@ -589,12 +798,14 @@ export function IotDevicesPage() {
   const { session } = useAuth();
 
   const canDiagnostics = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DIAGNOSTICS);
-  // Provision, import, revoke/archive, installation, commissioning, suspension,
+  // Provision, import, retirement, installation, commissioning, suspension,
   // activation, and credential rotation all share this exact server guard.
   const canManageDeviceLifecycle = hasPermission(PERMISSIONS.TELEMETRY_DEVICES_MANAGE);
+  const canPlanFirmware = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_FIRMWARE);
+  const canManageRma = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_RMA);
+  const canRequestRemoteCommand = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_COMMAND);
   const canCreate = canManageDeviceLifecycle;
   const canUpdate = canManageDeviceLifecycle;
-  const canDelete = canManageDeviceLifecycle;
   const canGovernInstallations = canManageDeviceLifecycle;
   const lifecyclePermissionRef = useRef(canManageDeviceLifecycle);
   lifecyclePermissionRef.current = canManageDeviceLifecycle;
@@ -691,6 +902,8 @@ export function IotDevicesPage() {
   const [confirmTarget, setConfirmTarget] = useState<ConfirmActionTarget | null>(null);
   const confirmTargetRef = useRef<ConfirmActionTarget | null>(null);
   confirmTargetRef.current = confirmTarget;
+  const [retirementTarget, setRetirementTarget] = useState<DeviceCommandRecord | null>(null);
+  const [retirementForm, setRetirementForm] = useState<RetirementFormState>(newRetirementForm);
 
   useEffect(() => {
     if (canManageDeviceLifecycle) return;
@@ -704,7 +917,7 @@ export function IotDevicesPage() {
     commissioningRefreshContext.current = { record: null, generation: commissioningRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
     suspensionRefreshContext.current = { deviceId: null, generation: suspensionRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
     activationRefreshContext.current = { deviceId: null, generation: activationRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
-    setAssignTarget(null); setRemovalTarget(null); setCommissionTarget(null); setConfirmTarget(null);
+    setAssignTarget(null); setRemovalTarget(null); setCommissionTarget(null); setConfirmTarget(null); setRetirementTarget(null);
     setAssignmentError(null); setRemovalError(null); setCommissioningError(null); setSuspensionError(null); setActivationError(null);
     setAssignmentRecord(null); setRemovalRecord(null); setCommissioningRecord(null); setSuspensionReceiptId(null); setActivationReceiptId(null);
     setAssignmentRefreshWarning(false); setRemovalRefreshWarning(false); setCommissioningRefreshWarning(false); setSuspensionRefreshWarning(false); setActivationRefreshWarning(false);
@@ -892,8 +1105,11 @@ export function IotDevicesPage() {
         imei: payload.imei.trim(),
         deviceCategory: payload.deviceCategory,
         provider: payload.provider.trim(),
-        deviceName: payload.deviceModel.trim() || payload.serialNumber.trim(),
-        deviceType: payload.deviceModel.trim() || "Device",
+        deviceName: payload.deviceModel.trim(),
+        deviceType: payload.deviceModel.trim(),
+        manufacturer: payload.manufacturer.trim(),
+        hardwareRevision: payload.hardwareRevision.trim(),
+        firmwareVersion: payload.firmwareVersion.trim(),
       }),
     onSuccess: async (result) => {
       setProvisionResult(result);
@@ -903,12 +1119,22 @@ export function IotDevicesPage() {
       await refreshAll();
     },
   });
-  const archiveMut = useMutation({
-    mutationFn: (id: string | number) => telematicsService.archiveDevice(id),
-    onSuccess: async () => {
-      setConfirmTarget(null);
-      setSelectedId(null);
-      setNotice("Device credentials revoked and device archived permanently.");
+  const retirementMut = useMutation({
+    mutationFn: ({ device, form }: { device: DeviceCommandRecord; form: RetirementFormState }) => {
+      if (device.rowVersion == null) throw new Error("Reload the device to obtain its current revision before retirement.");
+      return telematicsService.retireDevice(device.id, {
+        ...form,
+        expectedRowVersion: device.rowVersion,
+        effectiveAt: new Date().toISOString(),
+      });
+    },
+    retry: false,
+    onSuccess: async (result) => {
+      setRetirementTarget(null);
+      setRetirementForm(newRetirementForm());
+      setNotice(result.idempotentReplay
+        ? `Retirement receipt ${result.retirement.id} was already recorded.`
+        : `Device retired with receipt ${result.retirement.id}. Physical disposition remains unverified.`);
       await refreshAll();
     },
   });
@@ -1127,11 +1353,27 @@ export function IotDevicesPage() {
     });
   };
 
+  const openRetirement = (target: DeviceCommandRecord) => {
+    if (!canManageDeviceLifecycle || target.currentInstallationId || target.assignedVehicleId || target.rowVersion == null) return;
+    retirementMut.reset();
+    setRetirementForm(newRetirementForm());
+    setRetirementTarget(target);
+  };
+
+  const submitRetirement = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageDeviceLifecycle || !retirementTarget || retirementMut.isPending) return;
+    const reason = retirementForm.retirementReason.trim();
+    const source = retirementForm.sourceReference.trim();
+    const confirmation = retirementForm.safetyConfirmation.trim();
+    retirementMut.mutate({ device: retirementTarget, form: { ...retirementForm,
+      retirementReason: reason, sourceReference: source, safetyConfirmation: confirmation } });
+  };
+
   // DEF-023: run/cancel the confirmed lifecycle action through the existing mutations.
   const runConfirmedAction = () => {
     if (!confirmTarget) return;
-    if (confirmTarget.action === "archive" && canDelete) archiveMut.mutate(confirmTarget.device.id);
-    else if (confirmTarget.action === "suspend" && canManageDeviceLifecycle && lifecyclePermissionRef.current && !suspensionSession.current.pending) {
+    if (confirmTarget.action === "suspend" && canManageDeviceLifecycle && lifecyclePermissionRef.current && !suspensionSession.current.pending) {
       if (confirmTargetRef.current !== confirmTarget) return;
       const target = confirmTarget;
       const admitted = { deviceId: String(target.device.id), generation: suspensionSession.current.generation + 1, pending: true, target };
@@ -1144,8 +1386,7 @@ export function IotDevicesPage() {
   };
   const cancelConfirmedAction = () => {
     if (!confirmTarget) return;
-    if (confirmTarget.action === "archive") archiveMut.reset();
-    else if (confirmTarget.action === "suspend") {
+    if (confirmTarget.action === "suspend") {
       if (suspensionSession.current.pending) return;
       suspensionSession.current = { deviceId: null, generation: suspensionSession.current.generation + 1, pending: false, target: null };
       setSuspensionError(null); suspendMut.reset();
@@ -1154,18 +1395,14 @@ export function IotDevicesPage() {
     setConfirmTarget(null);
   };
   const confirmBusy =
-    confirmTarget?.action === "archive" ? archiveMut.isPending
-    : confirmTarget?.action === "suspend" ? suspendMut.isPending
+    confirmTarget?.action === "suspend" ? suspendMut.isPending
     : confirmTarget?.action === "rotate-credentials" ? rotateSecretMut.isPending
     : false;
   const confirmActionError =
-    confirmTarget?.action === "archive" ? archiveMut.error
-    : confirmTarget?.action === "suspend" ? suspensionError
+    confirmTarget?.action === "suspend" ? suspensionError
     : confirmTarget?.action === "rotate-credentials" ? rotateSecretMut.error
     : null;
-  const confirmAllowed = confirmTarget?.action === "archive"
-    ? canDelete
-    : confirmTarget?.action === "suspend" || confirmTarget?.action === "rotate-credentials"
+  const confirmAllowed = confirmTarget?.action === "suspend" || confirmTarget?.action === "rotate-credentials"
       ? canManageDeviceLifecycle
       : false;
 
@@ -1331,6 +1568,7 @@ export function IotDevicesPage() {
   const archivedCount = devicesQ.data?.summary.archived ?? 0;
   const offlineCount = devicesQ.data?.summary.offline ?? 0;
   const attentionCount = devicesQ.data?.summary.attention ?? 0;
+  const readinessGapCount = devicesQ.data?.summary.readinessGaps ?? null;
   const measuredHealth = currentPageActiveDevices.filter((row) => row.dataHealthAvailable);
   const managedCount = devicesQ.data?.summary.active ?? 0;
   const avgHealth = measuredHealth.length
@@ -1384,7 +1622,7 @@ export function IotDevicesPage() {
               canExport={false}
               config={{
                 entity: "devices",
-                columns: ["deviceSerial", "branchCode", "imei", "deviceCategory", "deviceModel", "provider", "firmwareVersion", "notes"],
+                columns: ["deviceSerial", "branchCode", "imei", "deviceCategory", "manufacturer", "deviceModel", "hardwareRevision", "provider", "firmwareVersion", "notes"],
                 requiredColumns: ["deviceSerial", "deviceCategory"],
                 templateEndpoint: "/api/telemetry/devices/import-template",
                 importPreview: telematicsService.previewDeviceImport,
@@ -1454,17 +1692,18 @@ export function IotDevicesPage() {
         <AssignmentRefreshNotice record={assignmentRecord} busy={assignmentRefreshPending} onRetry={() => { void refreshAssignmentDisplay(assignmentRecord); }} />
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard label="Active Managed Devices" value={managedCount} status={managedCount ? "Active" : "Pending"} icon={<RadioTower className="h-4 w-4" />} />
         <KpiCard label="Offline" value={offlineCount} status={!managedCount ? "Pending" : offlineCount ? "Critical" : "Healthy"} icon={<WifiOff className="h-4 w-4" />} />
         <KpiCard label="Needs Attention" value={attentionCount} status={!managedCount ? "Pending" : attentionCount ? "Watch" : "Healthy"} icon={<Activity className="h-4 w-4" />} />
         <KpiCard label="Page Data Health" value={avgHealth == null ? "Unknown" : `${avgHealth}%`} status={avgHealth == null ? "Pending" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<Cpu className="h-4 w-4" />} />
+        <KpiCard label="Devices with gaps" value={readinessGapCount ?? "Unknown"} status={!managedCount || readinessGapCount == null ? "Pending" : readinessGapCount ? "Watch" : "Healthy"} icon={<ShieldCheck className="h-4 w-4" />} />
       </div>
-      <p className="text-xs text-slate-500">Data health is a derived signal score for active devices: stale check-in, malfunction state, open telemetry alerts, and active faults reduce the score. Devices without evidence remain Unknown. <button type="button" className="font-semibold text-teal-700 hover:underline" onClick={() => setTab("archived")}>{archivedCount} archived</button> devices are retained separately.</p>
+      <p className="text-xs text-slate-500">Data health is a derived signal score for active devices: stale check-in, malfunction state, open telemetry alerts, and active faults reduce the score. Software gaps are persisted operational facts: incomplete exact identity, missing installation or SIM/eSIM profile, stale or absent telemetry, or an open RMA. Neither measure is certification evidence. <button type="button" className="font-semibold text-teal-700 hover:underline" onClick={() => setTab("archived")}>{archivedCount} archived</button> devices are retained separately.</p>
 
-      <div className="panel space-y-4 p-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="relative xl:min-w-[360px]">
+      <div className="panel space-y-3 p-3">
+        <div className="grid gap-2 xl:grid-cols-[minmax(280px,1fr)_auto] xl:items-center">
+          <div className="relative">
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
             <input
               className="field w-full pl-9"
@@ -1473,39 +1712,41 @@ export function IotDevicesPage() {
               aria-label="Search devices by provider, serial, IMEI, vehicle, driver, or tenant"
             />
           </div>
-          <div className="flex flex-wrap gap-2">
-            <select
-              aria-label="Sort devices"
-              className="field min-w-36"
-              value={deviceSort}
-              onChange={(event) => { setDeviceSort(event.target.value as typeof deviceSort); setDevicePage(1); }}
-            >
-              <option value="serial">Serial</option>
-              <option value="provider">Provider</option>
-              <option value="model">Model</option>
-              <option value="status">Status</option>
-              <option value="lastCheckIn">Last check-in</option>
-              <option value="vehicle">Vehicle</option>
-            </select>
+          <div className="flex flex-wrap gap-1.5 xl:justify-end">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-slate-500">Sort
+              <select
+                aria-label="Sort devices"
+                className="field min-w-32"
+                value={deviceSort}
+                onChange={(event) => { setDeviceSort(event.target.value as typeof deviceSort); setDevicePage(1); }}
+              >
+                <option value="serial">Serial</option>
+                <option value="provider">Provider</option>
+                <option value="model">Model</option>
+                <option value="status">Status</option>
+                <option value="lastCheckIn">Last check-in</option>
+                <option value="vehicle">Vehicle</option>
+              </select>
+            </label>
             <button type="button" className="btn-ghost py-2 text-xs" onClick={() => { setDeviceDirection((current) => current === "asc" ? "desc" : "asc"); setDevicePage(1); }}>
-              {deviceDirection === "asc" ? "Ascending" : "Descending"}
+              {deviceDirection === "asc" ? "A–Z" : "Z–A"}
             </button>
-          </div>
-          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Device workspace views">
-            {DEVICE_TABS.map((item) => (
-              <button key={item.key} role="tab" aria-selected={tab === item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item.key); setDevicePage(1); }}>
-                {item.label}
-              </button>
-            ))}
+            <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Device workspace views">
+              {DEVICE_TABS.map((item) => (
+                <button key={item.key} role="tab" aria-selected={tab === item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item.key); setDevicePage(1); }}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         {tab === "diagnostics" ? (
-          <section role="region" aria-labelledby="diagnostics-evidence-title" className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <section role="region" aria-labelledby="diagnostics-evidence-title" className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="max-w-3xl">
                 <h2 id="diagnostics-evidence-title" className="text-lg font-semibold text-slate-900">Diagnostics evidence is separate from device inventory</h2>
-                <p className="mt-2 text-sm text-slate-600">
+                <p className="mt-1 text-sm text-slate-600">
                   Only devices with received OBD, J1939, or CAN evidence appear in Diagnostics. Device Health does not infer diagnostic coverage for every registered device.
                 </p>
                 {!canDiagnostics ? <p role="status" className="mt-3 text-sm font-medium text-amber-700">Diagnostics evidence is not available for this role. Ask a tenant administrator for diagnostics access.</p> : null}
@@ -1570,9 +1811,9 @@ export function IotDevicesPage() {
           ) : !(providersQ.data ?? []).length ? (
             <EmptyState title={emptyState.title} subtitle={emptyState.subtitle} />
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-3 lg:grid-cols-2">
               {(providersQ.data ?? []).map((provider) => (
-                <div key={String(provider.id)} className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                <div key={String(provider.id)} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-lg font-semibold text-slate-900">{String(provider.name)}</p>
@@ -1580,12 +1821,12 @@ export function IotDevicesPage() {
                     </div>
                     <RiskBadge risk={String(provider.integrationStatus)} />
                   </div>
-                  <div className="mt-4 grid gap-2 text-sm text-slate-700">
+                  <div className="mt-3 grid gap-1.5 text-sm text-slate-700">
                     <div className="flex justify-between"><span>Last sync</span><span>{String(provider.lastSyncAt)}</span></div>
                     <div className="flex justify-between"><span>Scoped devices</span><span>{measuredCount(provider.deviceCount)}</span></div>
                     <div className="flex justify-between"><span>Needs follow-up</span><span>{measuredCount((provider as AnyRecord).pendingDevices)}</span></div>
                   </div>
-                  {canManageProviders ? <div className="mt-4 flex flex-wrap gap-2">
+                  {canManageProviders ? <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       className="btn-ghost"
                       title="Open provider management settings."
@@ -1613,44 +1854,44 @@ export function IotDevicesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
-                  {["Device", "Provider", "Identifier", "Vehicle", "Driver", "Firmware", "Check-in", "Connection", "Lifecycle", "Power", "Signal", "Health", "Install", "Compliance", "Support", "Actions"].map((header) => (
-                    <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
+                  {["Device", "Provider", "Identifier", "Vehicle", "Driver", "Firmware", "Check-in", "Connection", "Lifecycle", "Power", "Signal", "Health", "Install", "Compliance", "Operations gaps", "Actions"].map((header) => (
+                    <th key={header} className="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {deviceRows.map((row) => (
                   <tr key={String(row.id)} className="transition hover:bg-slate-50">
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-2.5">
                       <button className="text-left" onClick={() => setSelectedId(row.id)}>
                         <p className="font-semibold text-slate-900">{row.deviceName}</p>
                         <p className="text-xs text-slate-400">{row.deviceCategory} · {row.deviceType} · {row.serialNumber || row.identifier}</p>
                       </button>
                     </td>
-                    <td className="px-4 py-3 text-slate-700">{row.provider}</td>
-                    <td className="px-4 py-3 text-slate-700">
+                    <td className="px-3 py-2.5 text-slate-700">{row.provider}</td>
+                    <td className="px-3 py-2.5 text-slate-700">
                       <div>{row.serialNumber}</div>
                       <div className="text-xs text-slate-500">{row.imei || row.identifier}</div>
                     </td>
-                    <td className="px-4 py-3 text-slate-700">{row.assignedVehicleCode || "Unassigned"}</td>
-                    <td className="px-4 py-3 text-slate-700">{row.assignedDriverName || "Unassigned"}</td>
-                    <td className="px-4 py-3 text-slate-700">
+                    <td className="px-3 py-2.5 text-slate-700">{row.assignedVehicleCode || "Unassigned"}</td>
+                    <td className="px-3 py-2.5 text-slate-700">{row.assignedDriverName || "Unassigned"}</td>
+                    <td className="px-3 py-2.5 text-slate-700">
                       <div>{row.firmwareVersion}</div>
                       {row.firmwareVersion !== row.targetFirmwareVersion ? <div className="text-xs text-amber-700">Target {row.targetFirmwareVersion}</div> : null}
                     </td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{row.lastCheckIn}</td>
-                    <td className="px-4 py-3"><StatusBadge status={row.connectionStatus} /></td>
-                    <td className="px-4 py-3"><StatusBadge status={row.lifecycleStatus} />{row.archivedAt ? <div className="mt-1 text-xs text-slate-500">{new Date(row.archivedAt).toLocaleString()}</div> : null}</td>
-                    <td className="px-4 py-3 text-slate-700">{row.powerStatus}</td>
-                    <td className="px-4 py-3"><RiskBadge risk={row.signalStrength} /></td>
-                    <td className="px-4 py-3 text-slate-700">{row.dataHealthAvailable ? `${row.dataHealthScore}%` : "Unknown"}</td>
-                    <td className="px-4 py-3"><StatusBadge status={row.installStatus} /></td>
-                    <td className="px-4 py-3"><StatusBadge status={row.complianceStatus} /></td>
-                    <td className="px-4 py-3 text-slate-700">
-                      <div>{row.warrantyStatus}</div>
-                      <div className="text-xs text-slate-500">{row.supportStatus}</div>
+                    <td className="px-3 py-2.5 text-xs text-slate-400">{row.lastCheckIn}</td>
+                    <td className="px-3 py-2.5"><StatusBadge status={row.connectionStatus} /></td>
+                    <td className="px-3 py-2.5"><StatusBadge status={row.lifecycleStatus} />{row.archivedAt ? <div className="mt-1 text-xs text-slate-500">{new Date(row.archivedAt).toLocaleString()}</div> : null}</td>
+                    <td className="px-3 py-2.5 text-slate-700">{row.powerStatus}</td>
+                    <td className="px-3 py-2.5"><RiskBadge risk={row.signalStrength} /></td>
+                    <td className="px-3 py-2.5 text-slate-700">{row.dataHealthAvailable ? `${row.dataHealthScore}%` : "Unknown"}</td>
+                    <td className="px-3 py-2.5"><StatusBadge status={row.installStatus} /></td>
+                    <td className="px-3 py-2.5"><StatusBadge status={row.complianceStatus} /></td>
+                    <td className="px-3 py-2.5 text-slate-700">
+                      <div>{row.supportStatus}</div>
+                      <div className="text-xs text-slate-500">{!row.deviceOpsAssessmentAvailable ? "Reload after the DeviceOps assessment API is available" : row.openRmaCount > 0 ? `${row.highestOpenRmaSeverity} · ${row.openRmaCount} open RMA${row.openRmaCount === 1 ? "" : "s"}` : row.deviceOpsGaps.join(" · ") || "Hardware/provider certification holds tracked separately"}</div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-2.5">
                       <button
                         type="button"
                         className="btn-ghost h-8 px-3"
@@ -1678,7 +1919,7 @@ export function IotDevicesPage() {
 
       {selectedId ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelectedId(null)}>
-          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-4 sm:p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <button className="float-right icon-btn" aria-label="Close device details" onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></button>
             {canManageDeviceLifecycle && suspensionRefreshWarning && suspensionReceiptId && suspensionRefreshContext.current.target ? (
               <SuspensionRefreshNotice deviceId={suspensionReceiptId} busy={suspensionRefreshPending} onRetry={() => { void refreshSuspensionDisplay(suspensionReceiptId); }} />
@@ -1702,19 +1943,23 @@ export function IotDevicesPage() {
 	            ) : (
 	              <DeviceDetailDrawer
 	                detail={detailQ.data}
+	                vehicleOptions={vehicleOptions}
+	                canManageConnectivity={canManageDeviceLifecycle}
+	                canPlanFirmware={canPlanFirmware}
+	                canManageRma={canManageRma}
+	                canRequestRemoteCommand={canRequestRemoteCommand}
 	                lifecycleError={lifecycleError}
 	                onDismissLifecycleError={clearLifecycleError}
 	                actionContracts={
 	                  selectedRecord
 	                    ? buildActionContracts(selectedRecord, {
 	                      canUpdate,
-	                      canDelete,
 	                      canAssign: canGovernInstallations,
 	                      canManageLifecycle: canManageDeviceLifecycle,
 	                      canRecover,
 	                      onAssign: () => openInstallation(selectedRecord),
 	                      onUnassign: () => openRemoval(selectedRecord),
-	                      onArchive: () => canDelete && openConfirm({ action: "archive", device: selectedRecord }),
+	                      onRetire: () => openRetirement(selectedRecord),
 	                      onMarkInstalled: () => openCommissioning(selectedRecord),
 	                      onRefresh: () => selectedRecord && void refreshMut.mutate(selectedRecord.id),
 	                      onFlagAttention: () => canRecover && setAttentionTarget(selectedRecord),
@@ -1909,6 +2154,56 @@ export function IotDevicesPage() {
         </ModalForm>
       ) : null}
 
+      {retirementTarget && canManageDeviceLifecycle ? (
+        <ModalForm
+          title={`Retire ${retirementTarget.deviceName}`}
+          onClose={() => { if (!retirementMut.isPending) { setRetirementTarget(null); retirementMut.reset(); } }}
+          onSubmit={submitRetirement}
+          submitLabel="Retire device permanently"
+          busy={retirementMut.isPending}
+          error={retirementMut.error instanceof Error ? retirementMut.error.message : null}
+        >
+          <p className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+            This records software retirement, invalidates all device credentials, and ends the current SIM/eSIM profile. The disposition selection is a plan only; physical disposal and certification remain unverified.
+          </p>
+          <InfoBlock title="Retirement preconditions" items={[
+            ["Device serial", retirementTarget.serialNumber],
+            ["Current installation", "None recorded"],
+            ["Device revision", String(retirementTarget.rowVersion ?? "Unavailable")],
+            ["Connectivity profile", "Will end at the retirement time if one is active"],
+          ]} />
+          <FormField label="Disposition plan">
+            <select className="field w-full" required value={retirementForm.dispositionPlan}
+              onChange={event => setRetirementForm(form => ({ ...form, dispositionPlan: event.target.value as RetirementFormState["dispositionPlan"] }))}
+              disabled={retirementMut.isPending}>
+              <option value="ReturnToVendor">Return to vendor</option>
+              <option value="Recycle">Recycle</option>
+              <option value="SecureStorage">Secure storage</option>
+              <option value="Other">Other</option>
+            </select>
+          </FormField>
+          <FormField label="Retirement reason">
+            <textarea className="field h-24 w-full resize-none" required minLength={5} maxLength={500}
+              value={retirementForm.retirementReason}
+              onChange={event => setRetirementForm(form => ({ ...form, retirementReason: event.target.value }))}
+              disabled={retirementMut.isPending} />
+          </FormField>
+          <FormField label="Source reference">
+            <input className="field w-full" required minLength={3} maxLength={240}
+              value={retirementForm.sourceReference}
+              onChange={event => setRetirementForm(form => ({ ...form, sourceReference: event.target.value }))}
+              disabled={retirementMut.isPending} />
+          </FormField>
+          <FormField label={`Type RETIRE ${retirementTarget.serialNumber} to confirm`}>
+            <input className="field w-full font-mono" required autoComplete="off"
+              pattern={(`RETIRE ${retirementTarget.serialNumber}`).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}
+              value={retirementForm.safetyConfirmation}
+              onChange={event => setRetirementForm(form => ({ ...form, safetyConfirmation: event.target.value }))}
+              disabled={retirementMut.isPending} />
+          </FormField>
+        </ModalForm>
+      ) : null}
+
       {confirmTarget && confirmAllowed ? (
         <ConfirmDialog
           title={CONFIRM_ACTION_COPY[confirmTarget.action].title}
@@ -1928,21 +2223,437 @@ export function IotDevicesPage() {
 
 function DeviceDetailDrawer({
   detail,
+  vehicleOptions,
+  canManageConnectivity,
+  canPlanFirmware,
+  canManageRma,
+  canRequestRemoteCommand,
   actionContracts,
   lifecycleError,
   onDismissLifecycleError,
 }: {
   detail: DeviceDetailRecord;
+  vehicleOptions: AnyRecord[];
+  canManageConnectivity: boolean;
+  canPlanFirmware: boolean;
+  canManageRma: boolean;
+  canRequestRemoteCommand: boolean;
   actionContracts: DeviceActionContract[];
   lifecycleError?: unknown;
   onDismissLifecycleError: () => void;
 }) {
   const { device } = detail;
+  const queryClient = useQueryClient();
+  const [workPackageOpen, setWorkPackageOpen] = useState(false);
+  const [workPackageForm, setWorkPackageForm] = useState<InstallationWorkPackageFormState>(() =>
+    newInstallationWorkPackageForm(detail.currentInstallation?.vehicleId ?? ""));
+  const [checklistForm, setChecklistForm] = useState<InstallationChecklistFormState | null>(null);
+  const [artifactForm, setArtifactForm] = useState<InstallationArtifactFormState | null>(null);
+  const [installationEvidenceError, setInstallationEvidenceError] = useState<string | null>(null);
+  const [installationEvidenceNotice, setInstallationEvidenceNotice] = useState<string | null>(null);
+  const installationEvidenceSubmitting = useRef(false);
+  const refreshInstallationEvidence = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+  };
+  const workPackageMut = useMutation({
+    mutationFn: (input: DeviceInstallationWorkPackageInput) => telematicsService.createInstallationWorkPackage(device.id, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setWorkPackageForm(newInstallationWorkPackageForm(detail.currentInstallation?.vehicleId ?? ""));
+      setWorkPackageOpen(false); setInstallationEvidenceError(null); setInstallationEvidenceNotice(result.note);
+      await refreshInstallationEvidence();
+    },
+    onError: (error) => setInstallationEvidenceError(apiErrorMessage(error, "The installation work package was not recorded.")),
+    onSettled: () => { installationEvidenceSubmitting.current = false; },
+  });
+  const checklistMut = useMutation({
+    mutationFn: ({ workPackageId, input }: { workPackageId: string; input: DeviceInstallationChecklistObservationInput }) =>
+      telematicsService.recordInstallationChecklistObservation(device.id, workPackageId, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setChecklistForm(null); setInstallationEvidenceError(null); setInstallationEvidenceNotice(result.note);
+      await refreshInstallationEvidence();
+    },
+    onError: (error) => setInstallationEvidenceError(apiErrorMessage(error, "The checklist observation was not recorded.")),
+    onSettled: () => { installationEvidenceSubmitting.current = false; },
+  });
+  const artifactMut = useMutation({
+    mutationFn: ({ workPackageId, input }: { workPackageId: string; input: DeviceInstallationArtifactReferenceInput }) =>
+      telematicsService.recordInstallationArtifactReference(device.id, workPackageId, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setArtifactForm(null); setInstallationEvidenceError(null); setInstallationEvidenceNotice(result.note);
+      await refreshInstallationEvidence();
+    },
+    onError: (error) => setInstallationEvidenceError(apiErrorMessage(error, "The artifact reference was not recorded.")),
+    onSettled: () => { installationEvidenceSubmitting.current = false; },
+  });
+  const linkWorkPackageMut = useMutation({
+    mutationFn: ({ workPackageId, installationId }: { workPackageId: string; installationId: string }) =>
+      telematicsService.linkInstallationWorkPackage(device.id, workPackageId, installationId),
+    retry: false,
+    onSuccess: async (result) => {
+      setInstallationEvidenceError(null); setInstallationEvidenceNotice(result.note);
+      await refreshInstallationEvidence();
+    },
+    onError: (error) => setInstallationEvidenceError(apiErrorMessage(error, "The work package was not linked to the installation.")),
+    onSettled: () => { installationEvidenceSubmitting.current = false; },
+  });
+  const installationEvidenceBusy = workPackageMut.isPending || checklistMut.isPending || artifactMut.isPending || linkWorkPackageMut.isPending;
+  const submitWorkPackage = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageConnectivity || installationEvidenceSubmitting.current || installationEvidenceBusy) return;
+    setInstallationEvidenceError(null);
+    try {
+      installationEvidenceSubmitting.current = true;
+      workPackageMut.mutate({
+        ...workPackageForm,
+        vehicleId: workPackageForm.vehicleId,
+        appointmentStart: toUtcIso(workPackageForm.appointmentStart, "appointment start"),
+        appointmentEnd: toUtcIso(workPackageForm.appointmentEnd, "appointment end"),
+      });
+    } catch (error) {
+      installationEvidenceSubmitting.current = false;
+      setInstallationEvidenceError(error instanceof Error ? error.message : "Installation work-package validation failed.");
+    }
+  };
+  const submitChecklistObservation = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageConnectivity || !checklistForm || installationEvidenceSubmitting.current || installationEvidenceBusy) return;
+    setInstallationEvidenceError(null);
+    try {
+      installationEvidenceSubmitting.current = true;
+      const { workPackageId, ...form } = checklistForm;
+      checklistMut.mutate({ workPackageId, input: { ...form, observedAt: toUtcIso(form.observedAt, "checklist observation time") } });
+    } catch (error) {
+      installationEvidenceSubmitting.current = false;
+      setInstallationEvidenceError(error instanceof Error ? error.message : "Checklist validation failed.");
+    }
+  };
+  const submitArtifactReference = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageConnectivity || !artifactForm || installationEvidenceSubmitting.current || installationEvidenceBusy) return;
+    setInstallationEvidenceError(null);
+    try {
+      installationEvidenceSubmitting.current = true;
+      const { workPackageId, ...form } = artifactForm;
+      artifactMut.mutate({ workPackageId, input: { ...form, capturedAt: toUtcIso(form.capturedAt, "artifact capture time") } });
+    } catch (error) {
+      installationEvidenceSubmitting.current = false;
+      setInstallationEvidenceError(error instanceof Error ? error.message : "Artifact-reference validation failed.");
+    }
+  };
+  const [connectivityOpen, setConnectivityOpen] = useState(false);
+  const [connectivityForm, setConnectivityForm] = useState<ConnectivityProfileFormState>(newConnectivityProfileForm);
+  const [connectivityError, setConnectivityError] = useState<string | null>(null);
+  const [connectivityNotice, setConnectivityNotice] = useState<string | null>(null);
+  const connectivitySubmitting = useRef(false);
+  const connectivityMut = useMutation({
+    mutationFn: (input: DeviceConnectivityProfileInput) => telematicsService.replaceDeviceConnectivityProfile(device.id, input),
+    retry: false,
+    onSuccess: async (result) => {
+      // Clear plaintext SIM inventory immediately after the server acknowledges it.
+      setConnectivityForm(newConnectivityProfileForm());
+      setConnectivityOpen(false);
+      setConnectivityError(null);
+      setConnectivityNotice(result.note);
+      await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+    },
+    onError: (error) => setConnectivityError(apiErrorMessage(error, "The connectivity profile was not recorded.")),
+    onSettled: () => { connectivitySubmitting.current = false; },
+  });
+  const openConnectivityForm = () => {
+    setConnectivityForm(newConnectivityProfileForm());
+    setConnectivityError(null);
+    setConnectivityNotice(null);
+    connectivityMut.reset();
+    setConnectivityOpen(true);
+  };
+  const submitConnectivityProfile = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageConnectivity || connectivitySubmitting.current || connectivityMut.isPending) return;
+    setConnectivityError(null);
+    try {
+      const effectiveAt = toUtcIso(connectivityForm.effectiveAt, "connectivity profile effective time");
+      if (Date.parse(effectiveAt) > Date.now() + 5 * 60_000)
+        throw new Error("Connectivity profile effective time cannot be more than five minutes in the future.");
+      connectivitySubmitting.current = true;
+      connectivityMut.mutate({
+        ...connectivityForm,
+        effectiveAt,
+        carrierName: connectivityForm.carrierName.trim(),
+        iccid: connectivityForm.iccid.trim(),
+        msisdn: connectivityForm.msisdn.trim() || undefined,
+        apn: connectivityForm.apn.trim() || undefined,
+        changeReason: connectivityForm.changeReason.trim(),
+        sourceReference: connectivityForm.sourceReference.trim(),
+      });
+    } catch (error) {
+      connectivitySubmitting.current = false;
+      setConnectivityError(error instanceof Error ? error.message : "Connectivity profile validation failed.");
+    }
+  };
+  const [firmwareOpen, setFirmwareOpen] = useState(false);
+  const [firmwareForm, setFirmwareForm] = useState<FirmwareCampaignFormState>(newFirmwareCampaignForm);
+  const [firmwareError, setFirmwareError] = useState<string | null>(null);
+  const [firmwareNotice, setFirmwareNotice] = useState<string | null>(null);
+  const firmwareSubmitting = useRef(false);
+  const firmwareMut = useMutation({
+    mutationFn: (input: DeviceFirmwareCampaignInput) => telematicsService.createFirmwareCampaign(input),
+    retry: false,
+    onSuccess: async (result) => {
+      setFirmwareForm(newFirmwareCampaignForm());
+      setFirmwareOpen(false);
+      setFirmwareError(null);
+      setFirmwareNotice(result.note);
+      await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+    },
+    onError: (error) => setFirmwareError(apiErrorMessage(error, "The firmware plan was not recorded.")),
+    onSettled: () => { firmwareSubmitting.current = false; },
+  });
+  const openFirmwareForm = () => {
+    setFirmwareForm(newFirmwareCampaignForm());
+    setFirmwareError(null);
+    setFirmwareNotice(null);
+    firmwareMut.reset();
+    setFirmwareOpen(true);
+  };
+  const submitFirmwareCampaign = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canPlanFirmware || firmwareSubmitting.current || firmwareMut.isPending) return;
+    setFirmwareError(null);
+    try {
+      const scheduledFor = toUtcIso(firmwareForm.scheduledFor, "firmware campaign schedule");
+      const maintenanceWindowMinutes = Number(firmwareForm.maintenanceWindowMinutes);
+      if (!Number.isInteger(maintenanceWindowMinutes) || maintenanceWindowMinutes < 15 || maintenanceWindowMinutes > 720)
+        throw new Error("Maintenance window must be between 15 and 720 minutes.");
+      firmwareSubmitting.current = true;
+      firmwareMut.mutate({
+        campaignName: firmwareForm.campaignName.trim(),
+        targetFirmwareVersion: firmwareForm.targetFirmwareVersion.trim(),
+        rollbackFirmwareVersion: firmwareForm.rollbackFirmwareVersion.trim() || undefined,
+        rolloutStrategy: firmwareForm.rolloutStrategy,
+        scheduledFor,
+        maintenanceWindowMinutes,
+        batchSize: 1,
+        deviceIds: [device.id],
+        changeReason: firmwareForm.changeReason.trim(),
+        sourceReference: firmwareForm.sourceReference.trim(),
+        idempotencyKey: firmwareForm.idempotencyKey,
+      });
+    } catch (error) {
+      firmwareSubmitting.current = false;
+      setFirmwareError(error instanceof Error ? error.message : "Firmware campaign validation failed.");
+    }
+  };
+  const [rmaCaseOpen, setRmaCaseOpen] = useState(false);
+  const [rmaCaseForm, setRmaCaseForm] = useState<RmaCaseFormState>(newRmaCaseForm);
+  const [rmaEventCaseId, setRmaEventCaseId] = useState<string | null>(null);
+  const [rmaEventForm, setRmaEventForm] = useState<RmaEventFormState>(newRmaEventForm);
+  const [rmaReplacementCaseId, setRmaReplacementCaseId] = useState<string | null>(null);
+  const [rmaReplacementForm, setRmaReplacementForm] = useState<RmaReplacementFormState>(newRmaReplacementForm);
+  const [rmaSupportCaseId, setRmaSupportCaseId] = useState<string | null>(null);
+  const [rmaSupportForm, setRmaSupportForm] = useState<RmaSupportFormState>(() => newRmaSupportForm("TakeOwnership"));
+  const [rmaError, setRmaError] = useState<string | null>(null);
+  const [rmaNotice, setRmaNotice] = useState<string | null>(null);
+  const rmaSubmitting = useRef(false);
+  const refreshRma = async () => { await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] }); };
+  const rmaCaseMut = useMutation({
+    mutationFn: (input: DeviceRmaCaseInput) => telematicsService.createDeviceRmaCase(device.id, input), retry: false,
+    onSuccess: async (result) => { setRmaCaseForm(newRmaCaseForm()); setRmaCaseOpen(false); setRmaError(null); setRmaNotice(result.note); await refreshRma(); },
+    onError: (error) => setRmaError(apiErrorMessage(error, "The RMA case was not recorded.")),
+    onSettled: () => { rmaSubmitting.current = false; },
+  });
+  const rmaEventMut = useMutation({
+    mutationFn: ({ caseId, input }: { caseId: string; input: DeviceRmaEventInput }) => telematicsService.appendDeviceRmaEvent(caseId, input), retry: false,
+    onSuccess: async (result) => { setRmaEventForm(newRmaEventForm()); setRmaEventCaseId(null); setRmaError(null); setRmaNotice(result.note); await refreshRma(); },
+    onError: (error) => setRmaError(apiErrorMessage(error, "The custody event was not recorded.")),
+    onSettled: () => { rmaSubmitting.current = false; },
+  });
+  const rmaReplacementMut = useMutation({
+    mutationFn: ({ caseId, input }: { caseId: string; input: DeviceRmaReplacementInput }) => telematicsService.planDeviceRmaReplacement(caseId, input), retry: false,
+    onSuccess: async (result) => { setRmaReplacementForm(newRmaReplacementForm()); setRmaReplacementCaseId(null); setRmaError(null); setRmaNotice(result.note); await refreshRma(); },
+    onError: (error) => setRmaError(apiErrorMessage(error, "The replacement plan was not recorded.")),
+    onSettled: () => { rmaSubmitting.current = false; },
+  });
+  const rmaSupportMut = useMutation({
+    mutationFn: ({ caseId, input }: { caseId: string; input: DeviceRmaSupportActionInput }) =>
+      telematicsService.recordDeviceRmaSupportAction(caseId, input), retry: false,
+    onSuccess: async (result) => {
+      setRmaSupportForm(newRmaSupportForm("TakeOwnership")); setRmaSupportCaseId(null);
+      setRmaError(null); setRmaNotice(result.note); await refreshRma();
+    },
+    onError: (error) => setRmaError(apiErrorMessage(error, "The RMA support action was not recorded.")),
+    onSettled: () => { rmaSubmitting.current = false; },
+  });
+  const rmaBusy = rmaCaseMut.isPending || rmaEventMut.isPending || rmaReplacementMut.isPending || rmaSupportMut.isPending;
+  const submitRmaCase = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageRma || rmaSubmitting.current || rmaBusy) return;
+    setRmaError(null);
+    try {
+      rmaSubmitting.current = true;
+      rmaCaseMut.mutate({
+        ...rmaCaseForm,
+        observedAt: toUtcIso(rmaCaseForm.observedAt, "failure observation time"),
+        responseDueAt: toUtcIso(rmaCaseForm.responseDueAt, "support response due time"),
+        warrantyReference: rmaCaseForm.warrantyReference.trim() || undefined,
+      });
+    } catch (error) { rmaSubmitting.current = false; setRmaError(error instanceof Error ? error.message : "RMA validation failed."); }
+  };
+  const submitRmaEvent = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageRma || !rmaEventCaseId || rmaSubmitting.current || rmaBusy) return;
+    setRmaError(null);
+    try {
+      rmaSubmitting.current = true;
+      rmaEventMut.mutate({ caseId: rmaEventCaseId, input: {
+        ...rmaEventForm, occurredAt: toUtcIso(rmaEventForm.occurredAt, "custody event time"),
+        custodyLocation: rmaEventForm.custodyLocation.trim() || undefined,
+        trackingReference: rmaEventForm.trackingReference.trim() || undefined,
+      } });
+    } catch (error) { rmaSubmitting.current = false; setRmaError(error instanceof Error ? error.message : "Custody event validation failed."); }
+  };
+  const submitRmaReplacement = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageRma || !rmaReplacementCaseId || rmaSubmitting.current || rmaBusy) return;
+    rmaSubmitting.current = true;
+    setRmaError(null);
+    rmaReplacementMut.mutate({ caseId: rmaReplacementCaseId, input: rmaReplacementForm });
+  };
+  const submitRmaSupport = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageRma || !rmaSupportCaseId || rmaSubmitting.current || rmaBusy) return;
+    setRmaError(null);
+    try {
+      rmaSubmitting.current = true;
+      rmaSupportMut.mutate({ caseId: rmaSupportCaseId, input: {
+        ...rmaSupportForm,
+        effectiveAt: toUtcIso(rmaSupportForm.effectiveAt, "support action time"),
+        escalationSeverity: rmaSupportForm.actionType === "Escalate" ? rmaSupportForm.escalationSeverity : undefined,
+      } });
+    } catch (error) {
+      rmaSubmitting.current = false;
+      setRmaError(error instanceof Error ? error.message : "RMA support action validation failed.");
+    }
+  };
+  const [sparePoolForm, setSparePoolForm] = useState<SparePoolFormState | null>(null);
+  const [sparePoolError, setSparePoolError] = useState<string | null>(null);
+  const [sparePoolNotice, setSparePoolNotice] = useState<string | null>(null);
+  const sparePoolSubmitting = useRef(false);
+  const sparePoolMut = useMutation({
+    mutationFn: (input: DeviceSparePoolActionInput) => telematicsService.recordDeviceSparePoolAction(device.id, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setSparePoolForm(null); setSparePoolError(null); setSparePoolNotice(result.note);
+      await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+    },
+    onError: (error) => setSparePoolError(apiErrorMessage(error, "The spare-pool action was not recorded.")),
+    onSettled: () => { sparePoolSubmitting.current = false; },
+  });
+  const submitSparePool = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageRma || !sparePoolForm || sparePoolSubmitting.current || sparePoolMut.isPending) return;
+    setSparePoolError(null);
+    try {
+      sparePoolSubmitting.current = true;
+      sparePoolMut.mutate({
+        actionType: sparePoolForm.actionType,
+        poolName: sparePoolForm.actionType === "Add" ? sparePoolForm.poolName : undefined,
+        rmaCaseId: sparePoolForm.actionType === "Reserve" ? sparePoolForm.rmaCaseId : undefined,
+        actionReason: sparePoolForm.actionReason,
+        sourceReference: sparePoolForm.sourceReference,
+        effectiveAt: toUtcIso(sparePoolForm.effectiveAt, "spare-pool action time"),
+        idempotencyKey: sparePoolForm.idempotencyKey,
+      });
+    } catch (error) {
+      sparePoolSubmitting.current = false;
+      setSparePoolError(error instanceof Error ? error.message : "Spare-pool validation failed.");
+    }
+  };
+  const latestSupportTier = detail.supportTierEvents[0] ?? null;
+  const activeSupportTier = latestSupportTier?.stateAfter === "Assigned" ? latestSupportTier : null;
+  const [supportTierForm, setSupportTierForm] = useState<SupportTierFormState | null>(null);
+  const [supportTierError, setSupportTierError] = useState<string | null>(null);
+  const [supportTierNotice, setSupportTierNotice] = useState<string | null>(null);
+  const supportTierSubmitting = useRef(false);
+  const supportTierMut = useMutation({
+    mutationFn: (input: DeviceSupportTierActionInput) => telematicsService.recordDeviceSupportTierAction(device.id, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setSupportTierForm(null); setSupportTierError(null); setSupportTierNotice(result.note);
+      await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+    },
+    onError: (error) => setSupportTierError(apiErrorMessage(error, "The support-tier action was not recorded.")),
+    onSettled: () => { supportTierSubmitting.current = false; },
+  });
+  const submitSupportTier = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageRma || !supportTierForm || supportTierSubmitting.current || supportTierMut.isPending) return;
+    setSupportTierError(null);
+    try {
+      supportTierSubmitting.current = true;
+      const hasPlan = supportTierForm.actionType !== "End";
+      supportTierMut.mutate({
+        actionType: supportTierForm.actionType,
+        tierCode: hasPlan ? supportTierForm.tierCode : undefined,
+        coverageWindow: hasPlan ? supportTierForm.coverageWindow : undefined,
+        routingResponseTargetMinutes: hasPlan ? supportTierForm.routingResponseTargetMinutes : undefined,
+        escalationPolicyReference: hasPlan ? supportTierForm.escalationPolicyReference : undefined,
+        commercialReference: hasPlan ? supportTierForm.commercialReference : undefined,
+        actionReason: supportTierForm.actionReason,
+        sourceReference: supportTierForm.sourceReference,
+        effectiveAt: toUtcIso(supportTierForm.effectiveAt, "support-tier action time"),
+        idempotencyKey: supportTierForm.idempotencyKey,
+      });
+    } catch (error) {
+      supportTierSubmitting.current = false;
+      setSupportTierError(error instanceof Error ? error.message : "Support-tier validation failed.");
+    }
+  };
+  const [remoteCommandForm, setRemoteCommandForm] = useState<RemoteCommandFormState | null>(null);
+  const [remoteCommandError, setRemoteCommandError] = useState<string | null>(null);
+  const [remoteCommandNotice, setRemoteCommandNotice] = useState<string | null>(null);
+  const remoteCommandSubmitting = useRef(false);
+  const remoteCommandMut = useMutation({
+    mutationFn: (input: DeviceRemoteCommandInput) => telematicsService.requestDeviceRemoteCommand(device.id, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setRemoteCommandForm(null); setRemoteCommandError(null); setRemoteCommandNotice(result.note);
+      await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+    },
+    onError: (error) => setRemoteCommandError(apiErrorMessage(error, "The command request was not recorded.")),
+    onSettled: () => { remoteCommandSubmitting.current = false; },
+  });
+  const submitRemoteCommand = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canRequestRemoteCommand || !remoteCommandForm || remoteCommandSubmitting.current || remoteCommandMut.isPending) return;
+    setRemoteCommandError(null);
+    const delaySeconds = Number(remoteCommandForm.delaySeconds);
+    if (remoteCommandForm.commandType === "RestartDevice" &&
+        (!Number.isInteger(delaySeconds) || delaySeconds < 0 || delaySeconds > 300)) {
+      setRemoteCommandError("Restart delay must be a whole number from 0 to 300 seconds.");
+      return;
+    }
+    remoteCommandSubmitting.current = true;
+    remoteCommandMut.mutate({
+      commandType: remoteCommandForm.commandType,
+      payload: remoteCommandForm.commandType === "RestartDevice" ? { delaySeconds } : {},
+      purpose: remoteCommandForm.purpose,
+      sourceReference: remoteCommandForm.sourceReference,
+      safetyConfirmation: remoteCommandForm.safetyConfirmation,
+      idempotencyKey: remoteCommandForm.idempotencyKey,
+    });
+  };
+  const selectedRemoteCommandCapability = remoteCommandForm
+    ? detail.remoteCommandCapabilities.find(capability => capability.commandType === remoteCommandForm.commandType) ?? null
+    : null;
   // Guard every [0] access — these live sub-feeds are frequently empty. `telemetry`
   // is a single live position point (or none), and `diagnostics` are active fault codes.
   const latestTelemetry = detail.telemetry[0] ?? null;
   const latestDiagnostic = detail.diagnostics[0] ?? null;
   const latestSensor = detail.sensorReadings[0] ?? null;
+  const latestConnectivityObservation = detail.connectivityObservations[0] ?? null;
   // Values from the live position are already normalized to "—" upstream when null,
   // so a value is meaningful only when it is a non-empty, non-"—" string.
   const cell = (value: unknown): string => {
@@ -2112,6 +2823,8 @@ function DeviceDetailDrawer({
               ["Battery voltage", cell(latestDiagnostic.batteryVoltage)],
               ["Modem status", cell(latestDiagnostic.modemStatus)],
               ["GNSS status", cell(latestDiagnostic.gnssStatus)],
+              ["Evidence", cell(latestDiagnostic.evidenceClassification)],
+              ["Safety action", cell(latestDiagnostic.safetyActionStatus)],
             ]} />
           ) : (
             <p className="text-sm text-slate-400">No active fault codes for this device.</p>
@@ -2120,13 +2833,28 @@ function DeviceDetailDrawer({
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
-        <PanelSection title="Assignment History">
-          <TimelineList rows={detail.assignmentHistory.map((row) => ({
-            id: String(row.id ?? ""),
-            title: `${cell(row.fromState)} → ${cell(row.toState)}`,
-            subtitle: cell(row.reason) !== "—" ? cell(row.reason) : cell(row.reasonCode),
-            meta: cell(row.occurredAt) === "—" ? "" : String(row.occurredAt),
-          }))} emptyText="No assignment history available for this device." />
+        {detail.retirementRecord ? (
+          <PanelSection title="Retirement Receipt">
+            <MiniGrid rows={[
+              ["Receipt", detail.retirementRecord.id],
+              ["Effective", new Date(detail.retirementRecord.effectiveAt).toLocaleString()],
+              ["Reason", detail.retirementRecord.retirementReason],
+              ["Disposition plan", detail.retirementRecord.dispositionPlan.replace(/([a-z])([A-Z])/g, "$1 $2")],
+              ["Source", detail.retirementRecord.sourceReference],
+              ["Credentials", detail.retirementRecord.credentialsRevoked ? "Revoked" : "Unverified"],
+              ["Physical disposition", detail.retirementRecord.physicalDispositionStatus],
+              ["Certification", detail.retirementRecord.certificationClaim ? "Claimed" : "Not claimed"],
+            ]} />
+            <p className="mt-3 text-xs text-amber-200">The disposition is an operator plan. This receipt does not prove return, recycling, storage, destruction, or hardware certification.</p>
+          </PanelSection>
+        ) : null}
+        <PanelSection title="Device Lifecycle History">
+          <TimelineList rows={detail.lifecycleHistory.map((row) => ({
+            id: row.id,
+            title: `${row.fromState ?? "Initial"} → ${row.toState}`,
+            subtitle: row.reason || row.reasonCode,
+            meta: row.occurredAt,
+          }))} emptyText="No lifecycle history is available for this device." />
         </PanelSection>
         <PanelSection title="Health Timeline">
           {/* Live: real telemetry alerts for this device (empty when none exist). */}
@@ -2155,9 +2883,516 @@ function DeviceDetailDrawer({
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
-        <PanelSection title="Reported Firmware (read-only)">
-          <MiniGrid rows={[["Current reported version", cell(device.firmwareVersion)]]} />
-          <p className="mt-3 text-sm text-slate-400">OTA scheduling and firmware history are not connected. No firmware operation is available from this page.</p>
+        <PanelSection title="SIM / eSIM inventory">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-white">
+                {detail.currentConnectivityProfile
+                  ? `${detail.currentConnectivityProfile.profileKind} · ${detail.currentConnectivityProfile.carrierName}`
+                  : "No current connectivity profile"}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">Inventory assignment only. Network attachment and live telemetry require separate observed evidence.</p>
+            </div>
+            {canManageConnectivity ? (
+              <button type="button" className="btn-secondary shrink-0" onClick={openConnectivityForm} disabled={connectivityMut.isPending}>
+                {detail.currentConnectivityProfile ? "Change profile" : "Record profile"}
+              </button>
+            ) : null}
+          </div>
+          {connectivityNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-300/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{connectivityNotice}</p> : null}
+          {detail.currentConnectivityProfile ? (
+            <div className="mt-4">
+              <MiniGrid rows={[
+                ["ICCID", `•••• ${detail.currentConnectivityProfile.iccidLast4}`],
+                ["MSISDN", detail.currentConnectivityProfile.msisdnLast4 ? `•••• ${detail.currentConnectivityProfile.msisdnLast4}` : "—"],
+                ["APN", detail.currentConnectivityProfile.apnConfigured ? "Configured · protected" : "Not recorded"],
+                ["Effective", cell(detail.currentConnectivityProfile.effectiveFrom)],
+                ["Source", cell(detail.currentConnectivityProfile.sourceReference)],
+                ["Assignment", detail.currentConnectivityProfile.assignmentStatus],
+              ]} />
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-slate-400">No operator-recorded SIM or eSIM assignment exists for this device.</p>
+          )}
+          <div className="mt-4 rounded-xl border border-white/[0.08] bg-black/10 p-4">
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Latest carrier/provider observation</p>
+            {latestConnectivityObservation?.softwareObservationAvailable ? (
+              <>
+                <div className="mt-3">
+                  <MiniGrid rows={[
+                    ["Source", latestConnectivityObservation.sourceProvider],
+                    ["Source authentication", latestConnectivityObservation.sourceAuthenticationStatus],
+                    ["ICCID", `•••• ${latestConnectivityObservation.profileIccidLast4}`],
+                    ["Reported subscription", latestConnectivityObservation.subscriptionStatus],
+                    ["Reported network", latestConnectivityObservation.networkRegistrationStatus],
+                    ["Reported data session", latestConnectivityObservation.dataSessionStatus],
+                    ["Reported roaming", latestConnectivityObservation.roaming == null ? "Unknown" : latestConnectivityObservation.roaming ? "Yes" : "No"],
+                    ["Reported usage", latestConnectivityObservation.usageBytes == null ? "Unknown" : `${latestConnectivityObservation.usageBytes.toLocaleString()} bytes`],
+                    ["Observed", new Date(latestConnectivityObservation.observedAt).toLocaleString()],
+                  ]} />
+                </div>
+                <p className="mt-3 text-xs text-amber-200">Provider-reported software status only. It does not prove radio attachment, telemetry delivery, physical operation, or certification.</p>
+              </>
+            ) : (
+              <p className="mt-3 text-sm text-slate-400">No exact-profile observation from an authenticated carrier/provider adapter is available.</p>
+            )}
+          </div>
+          {connectivityOpen && canManageConnectivity ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitConnectivityProfile} autoComplete="off">
+              <p className="text-xs text-slate-400">ICCID, MSISDN and APN are encrypted and will only be shown here as masked/configured values after submission.</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="field-label">Profile type
+                  <select className="field mt-1 w-full" value={connectivityForm.profileKind} onChange={(event) => setConnectivityForm((form) => ({ ...form, profileKind: event.target.value as DeviceConnectivityProfileInput["profileKind"] }))} disabled={connectivityMut.isPending}>
+                    <option value="PhysicalSIM">Physical SIM</option>
+                    <option value="eSIM">eSIM</option>
+                  </select>
+                </label>
+                <label className="field-label">Carrier
+                  <input className="field mt-1 w-full" value={connectivityForm.carrierName} onChange={(event) => setConnectivityForm((form) => ({ ...form, carrierName: event.target.value }))} minLength={2} maxLength={120} required disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label">ICCID
+                  <input className="field mt-1 w-full" inputMode="numeric" pattern="[0-9]{18,22}" value={connectivityForm.iccid} onChange={(event) => setConnectivityForm((form) => ({ ...form, iccid: event.target.value }))} required disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label">MSISDN · optional E.164
+                  <input className="field mt-1 w-full" inputMode="tel" placeholder="+14165550123" value={connectivityForm.msisdn} onChange={(event) => setConnectivityForm((form) => ({ ...form, msisdn: event.target.value }))} disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label">APN · optional
+                  <input className="field mt-1 w-full" value={connectivityForm.apn} onChange={(event) => setConnectivityForm((form) => ({ ...form, apn: event.target.value }))} maxLength={253} disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label">Effective time
+                  <input className="field mt-1 w-full" type="datetime-local" max={currentLocalMinute()} value={connectivityForm.effectiveAt} onChange={(event) => setConnectivityForm((form) => ({ ...form, effectiveAt: event.target.value }))} required disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label md:col-span-2">Change reason
+                  <input className="field mt-1 w-full" value={connectivityForm.changeReason} onChange={(event) => setConnectivityForm((form) => ({ ...form, changeReason: event.target.value }))} minLength={5} maxLength={500} placeholder="Initial assignment, carrier change, or SIM replacement" required disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label md:col-span-2">Source reference
+                  <input className="field mt-1 w-full" value={connectivityForm.sourceReference} onChange={(event) => setConnectivityForm((form) => ({ ...form, sourceReference: event.target.value }))} minLength={3} maxLength={240} placeholder="Carrier portal, purchase order, or installer record" required disabled={connectivityMut.isPending} />
+                </label>
+              </div>
+              {connectivityError ? <p role="alert" className="text-sm text-red-300">{connectivityError}</p> : null}
+              <div className="flex justify-end gap-2">
+                <button type="button" className="btn-ghost" disabled={connectivityMut.isPending} onClick={() => { setConnectivityForm(newConnectivityProfileForm()); setConnectivityOpen(false); setConnectivityError(null); }}>Cancel</button>
+                <button type="submit" className="btn-primary" disabled={connectivityMut.isPending}>{connectivityMut.isPending ? "Recording…" : "Record inventory change"}</button>
+              </div>
+            </form>
+          ) : null}
+          {detail.connectivityProfiles.length > 1 ? (
+            <div className="mt-4">
+              <p className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Assignment history</p>
+              <TimelineList rows={detail.connectivityProfiles.map((profile) => ({
+                id: profile.id,
+                title: `${profile.profileKind} · ${profile.carrierName} · •••• ${profile.iccidLast4}`,
+                subtitle: `${profile.assignmentStatus} · ${profile.sourceReference}${profile.endReason ? ` · ${profile.endReason}` : ""}`,
+                meta: `${profile.effectiveFrom}${profile.effectiveTo ? ` → ${profile.effectiveTo}` : " → current"}`,
+              }))} emptyText="No connectivity profile history recorded." />
+            </div>
+          ) : null}
+        </PanelSection>
+        <PanelSection title="Hardware compatibility truth">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-amber-300">Certification status</p>
+              <p className="mt-1 text-lg font-semibold text-white">External hold</p>
+            </div>
+            <StatusBadge status={detail.compatibility.registryStatus} />
+          </div>
+          <div className="mt-4">
+            <MiniGrid rows={[
+              ["Manufacturer", cell(detail.compatibility.manufacturer)],
+              ["Exact model", cell(detail.compatibility.deviceModel)],
+              ["Hardware revision", cell(detail.compatibility.hardwareRevision)],
+              ["Reported firmware", cell(detail.compatibility.firmwareVersion)],
+              ["Frozen software candidate", detail.compatibility.candidateSha ? detail.compatibility.candidateSha.slice(0, 12) : "—"],
+              ["Maximum certified tier", detail.compatibility.maximumTier],
+              ["Capability declaration", detail.compatibility.capabilityDeclarationStatus === "EngineeringDeclaredUnverified" ? "Engineering-declared / unverified" : "Not recorded"],
+              ["Protocols", detail.compatibility.protocols.length > 0 ? detail.compatibility.protocols.join(", ") : "Not recorded"],
+              ["Supported fields", detail.compatibility.supportedFields.length > 0 ? detail.compatibility.supportedFields.join(", ") : "Not recorded"],
+              ["Supported events", detail.compatibility.supportedEvents.length > 0 ? detail.compatibility.supportedEvents.join(", ") : "Not recorded"],
+              ["Supported commands", detail.compatibility.supportedCommands.length > 0 ? detail.compatibility.supportedCommands.join(", ") : "None declared"],
+              ["Catalog support tier", detail.compatibility.catalogSupportTier],
+              ["Certification reference", detail.compatibility.certificationReference ?? "Not issued"],
+              ["Certification date", detail.compatibility.certificationDate ?? "Not issued"],
+            ]} />
+          </div>
+          <p className="mt-3 text-sm text-slate-200"><span className="font-semibold text-white">Known limitations:</span> {detail.compatibility.knownLimitations}</p>
+          {detail.compatibility.declarationSourceReference ? (
+            <p className="mt-2 text-xs text-slate-400">Declaration source: {detail.compatibility.declarationSourceReference}{detail.compatibility.declaredAt ? ` · ${detail.compatibility.declaredAt}` : ""}</p>
+          ) : null}
+          <p className="mt-3 text-sm text-amber-100">{detail.compatibility.externalHoldReason}</p>
+          {detail.compatibility.missingIdentityFields.length > 0 ? (
+            <p className="mt-2 text-xs text-slate-400">Missing exact identity: {detail.compatibility.missingIdentityFields.join(", ")}.</p>
+          ) : null}
+          <p className="mt-2 text-xs text-slate-400">Engineering-declared capabilities describe intended software behavior only. Registration, installation, commissioning, or live data never certifies hardware. Physical bench, route, recovery, soak, security, provider, and independent acceptance evidence is still required.</p>
+        </PanelSection>
+        <PanelSection title="Firmware campaign planning">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Current reported version</p>
+              <p className="mt-1 text-lg font-semibold text-white">{cell(device.firmwareVersion)}</p>
+            </div>
+            {canPlanFirmware ? (
+              <button type="button" className="btn-secondary" onClick={openFirmwareForm} disabled={firmwareMut.isPending}>
+                Plan campaign
+              </button>
+            ) : null}
+          </div>
+          <p className="mt-3 rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+            Planning record only. OpsTrax does not dispatch an OTA command from this workflow. Provider capability and physical upgrade, recovery, rollback, and soak evidence remain on external hold.
+          </p>
+          {firmwareNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">{firmwareNotice}</p> : null}
+          {firmwareOpen && canPlanFirmware ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitFirmwareCampaign}>
+              <div className="grid gap-3 md:grid-cols-2">
+                <FormField label="Campaign name"><input className="field w-full" required minLength={3} maxLength={160} value={firmwareForm.campaignName} onChange={(event) => setFirmwareForm((form) => ({ ...form, campaignName: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Rollout strategy">
+                  <select className="field w-full" value={firmwareForm.rolloutStrategy} onChange={(event) => setFirmwareForm((form) => ({ ...form, rolloutStrategy: event.target.value as DeviceFirmwareCampaignInput["rolloutStrategy"] }))} disabled={firmwareMut.isPending}>
+                    <option value="Canary">Canary</option><option value="Staged">Staged</option><option value="Manual">Manual</option>
+                  </select>
+                </FormField>
+                <FormField label="Target firmware"><input className="field w-full" required maxLength={120} placeholder="e.g. v2.4.1" value={firmwareForm.targetFirmwareVersion} onChange={(event) => setFirmwareForm((form) => ({ ...form, targetFirmwareVersion: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Rollback version (optional)"><input className="field w-full" maxLength={120} value={firmwareForm.rollbackFirmwareVersion} onChange={(event) => setFirmwareForm((form) => ({ ...form, rollbackFirmwareVersion: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Planned window start"><input className="field w-full" type="datetime-local" required value={firmwareForm.scheduledFor} onChange={(event) => setFirmwareForm((form) => ({ ...form, scheduledFor: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Window minutes"><input className="field w-full" type="number" min={15} max={720} required value={firmwareForm.maintenanceWindowMinutes} onChange={(event) => setFirmwareForm((form) => ({ ...form, maintenanceWindowMinutes: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} placeholder="Change ticket or vendor release" value={firmwareForm.sourceReference} onChange={(event) => setFirmwareForm((form) => ({ ...form, sourceReference: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Planning reason"><input className="field w-full" required minLength={5} maxLength={500} value={firmwareForm.changeReason} onChange={(event) => setFirmwareForm((form) => ({ ...form, changeReason: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+              </div>
+              {firmwareError ? <p role="alert" className="text-sm text-red-300">{firmwareError}</p> : null}
+              <div className="flex justify-end gap-2">
+                <button type="button" className="btn-ghost" disabled={firmwareMut.isPending} onClick={() => { setFirmwareForm(newFirmwareCampaignForm()); setFirmwareOpen(false); setFirmwareError(null); }}>Cancel</button>
+                <button type="submit" className="btn-primary" disabled={firmwareMut.isPending}>{firmwareMut.isPending ? "Recording…" : "Record firmware plan"}</button>
+              </div>
+            </form>
+          ) : null}
+          <div className="mt-4 space-y-3">
+            {detail.firmwareCampaigns.length === 0 ? <p className="text-sm text-slate-400">No firmware campaign plans recorded for this device.</p> : detail.firmwareCampaigns.map((plan) => (
+              <div key={`${plan.campaignId}-${plan.targetId}`} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div><p className="font-semibold text-white">{plan.campaignName}</p><p className="mt-1 text-xs text-slate-400">Target {cell(plan.targetFirmwareVersion)} · Batch {plan.rolloutBatch || "—"} · {plan.rolloutStrategy}</p></div>
+                  <StatusBadge status={plan.deliveryStatus} />
+                </div>
+                <MiniGrid rows={[
+                  ["Reported at planning", cell(plan.reportedFirmwareVersion)],
+                  ["Target", cell(plan.targetFirmwareVersion)],
+                  ["Rollback", cell(plan.rollbackFirmwareVersion)],
+                  ["Planning eligibility", plan.planningStatus],
+                  ["Provider capability", plan.providerCapabilityStatus],
+                  ["Scheduled", cell(plan.scheduledFor)],
+                  ["Window", plan.maintenanceWindowMinutes ? `${plan.maintenanceWindowMinutes} minutes` : "—"],
+                  ["Source", cell(plan.sourceReference)],
+                ]} />
+                <p className="mt-3 text-sm text-slate-300">{plan.planningReason}</p>
+                <p className="mt-2 text-xs text-amber-200">{plan.externalHoldReason}</p>
+              </div>
+            ))}
+          </div>
+        </PanelSection>
+        <PanelSection title="Capability-governed remote commands">
+          <p className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+            A command can be recorded only when current provider or device evidence verifies that exact command for this exact hardware, firmware, provider, and serial. Recording does not prove provider dispatch, device acknowledgement, application, or any physical outcome.
+          </p>
+          {remoteCommandNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">{remoteCommandNotice}</p> : null}
+          {remoteCommandError ? <p role="alert" className="mt-3 text-sm text-red-300">{remoteCommandError}</p> : null}
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            {detail.remoteCommandCapabilities.map(capability => (
+              <div key={capability.commandType} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+                <div className="flex items-start justify-between gap-2"><div><p className="font-semibold text-white">{capability.displayName}</p><p className="mt-1 text-xs text-slate-400">{capability.commandClass}</p></div><StatusBadge status={capability.requestAdmissionAvailable ? "Evidence verified" : "External hold"} /></div>
+                <MiniGrid rows={[["Capability", capability.capabilityStatus], ["Evidence", cell(capability.evidenceReference)], ["Observed", cell(capability.observedAt)], ["Expires", cell(capability.expiresAt)]]} />
+                {capability.externalHoldReason ? <p className="mt-2 text-xs text-amber-200">{capability.externalHoldReason}</p> : null}
+                {canRequestRemoteCommand ? <button type="button" className="btn-ghost mt-3" disabled={!capability.requestAdmissionAvailable || remoteCommandMut.isPending} title={!capability.requestAdmissionAvailable ? capability.externalHoldReason ?? "Verified capability evidence is required." : `Request ${capability.displayName}`} onClick={() => { setRemoteCommandForm(newRemoteCommandForm(capability.commandType)); setRemoteCommandError(null); setRemoteCommandNotice(null); }}>Request command</button> : null}
+              </div>
+            ))}
+          </div>
+          {remoteCommandForm && selectedRemoteCommandCapability?.requestAdmissionAvailable && canRequestRemoteCommand ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitRemoteCommand}>
+              <div><p className="font-semibold text-white">{selectedRemoteCommandCapability.displayName}</p><p className="mt-1 text-xs text-slate-400">Type the exact safety phrase shown below. The phrase is hashed before storage.</p></div>
+              {remoteCommandForm.commandType === "RestartDevice" ? <FormField label="Delay seconds"><input className="field w-full" type="number" min={0} max={300} required value={remoteCommandForm.delaySeconds} onChange={event => setRemoteCommandForm(form => form ? { ...form, delaySeconds: event.target.value } : form)} disabled={remoteCommandMut.isPending} /></FormField> : null}
+              <FormField label="Operational purpose"><textarea className="field h-20 w-full resize-none" required minLength={10} maxLength={500} value={remoteCommandForm.purpose} onChange={event => setRemoteCommandForm(form => form ? { ...form, purpose: event.target.value } : form)} disabled={remoteCommandMut.isPending} /></FormField>
+              <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} placeholder="Approved ticket or work order" value={remoteCommandForm.sourceReference} onChange={event => setRemoteCommandForm(form => form ? { ...form, sourceReference: event.target.value } : form)} disabled={remoteCommandMut.isPending} /></FormField>
+              <FormField label={`Safety confirmation — ${selectedRemoteCommandCapability.confirmationText}`}><input className="field w-full font-mono" required autoComplete="off" value={remoteCommandForm.safetyConfirmation} onChange={event => setRemoteCommandForm(form => form ? { ...form, safetyConfirmation: event.target.value } : form)} disabled={remoteCommandMut.isPending} /></FormField>
+              <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={remoteCommandMut.isPending} onClick={() => { setRemoteCommandForm(null); setRemoteCommandError(null); }}>Cancel</button><button type="submit" className="btn-primary" disabled={remoteCommandMut.isPending}>{remoteCommandMut.isPending ? "Recording…" : "Record command request"}</button></div>
+            </form>
+          ) : null}
+          <div className="mt-4 space-y-3">
+            {detail.remoteCommandHistory.length === 0 ? <p className="text-sm text-slate-400">No governed remote-command requests recorded for this device.</p> : detail.remoteCommandHistory.map(command => (
+              <div key={command.id} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+                <div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-white">{command.commandType}</p><p className="mt-1 text-sm text-slate-300">{command.purpose || "Legacy command purpose unavailable"}</p></div><StatusBadge status={command.status} /></div>
+                <MiniGrid rows={[["Governance", command.governanceStatus], ["Source", cell(command.sourceReference)], ["Recorded", cell(command.createdAt)], ["Dispatched", cell(command.dispatchedAt)], ["Acknowledged", cell(command.acknowledgedAt)], ["Applied", cell(command.appliedAt)]]} />
+                <p className="mt-2 text-xs text-slate-400">Provider delivery claim: No · Physical outcome claim: No</p>
+              </div>
+            ))}
+          </div>
+        </PanelSection>
+        <PanelSection title="Device support tier">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Operator-recorded routing plan</p>
+              <p className="mt-1 text-lg font-semibold text-white">{activeSupportTier?.tierCode ?? "Not assigned"}</p>
+            </div>
+            {canManageRma && !supportTierForm ? (
+              <div className="flex flex-wrap gap-2">
+                {!activeSupportTier ? <button type="button" className="btn-secondary" disabled={supportTierMut.isPending} onClick={() => { setSupportTierForm(newSupportTierForm("Assign")); setSupportTierError(null); setSupportTierNotice(null); }}>Assign tier</button> : null}
+                {activeSupportTier ? <><button type="button" className="btn-secondary" disabled={supportTierMut.isPending} onClick={() => { setSupportTierForm(newSupportTierForm("Change", activeSupportTier)); setSupportTierError(null); setSupportTierNotice(null); }}>Change tier</button><button type="button" className="btn-ghost" disabled={supportTierMut.isPending} onClick={() => { setSupportTierForm(newSupportTierForm("End", activeSupportTier)); setSupportTierError(null); setSupportTierNotice(null); }}>End coverage</button></> : null}
+              </div>
+            ) : null}
+          </div>
+          <p className="mt-3 rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+            This is a service-routing target recorded by an operator. It does not verify a commercial entitlement, provider support, hardware supportability, or certification.
+          </p>
+          {supportTierNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">{supportTierNotice}</p> : null}
+          {supportTierError ? <p role="alert" className="mt-3 text-sm text-red-300">{supportTierError}</p> : null}
+          {activeSupportTier ? <div className="mt-4"><MiniGrid rows={[["Tier", activeSupportTier.tierCode], ["Coverage window", activeSupportTier.coverageWindow], ["Routing response target", `${activeSupportTier.routingResponseTargetMinutes} minutes`], ["Escalation policy", activeSupportTier.escalationPolicyReference], ["Commercial reference", activeSupportTier.commercialReference], ["Assurance", activeSupportTier.recordStatus]]} /></div> : null}
+          {supportTierForm && canManageRma ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitSupportTier}>
+              <p className="font-semibold text-white">{supportTierForm.actionType === "Assign" ? "Assign support tier" : supportTierForm.actionType === "Change" ? "Change support tier" : "End support coverage"}</p>
+              {supportTierForm.actionType !== "End" ? <div className="grid gap-3 md:grid-cols-2">
+                <FormField label="Tier"><select className="field w-full" value={supportTierForm.tierCode} onChange={event => setSupportTierForm(form => form ? ({ ...form, tierCode: event.target.value as DeviceSupportTierEventRecord["tierCode"] }) : form)} disabled={supportTierMut.isPending}><option value="Standard">Standard</option><option value="Priority">Priority</option><option value="CriticalOps">Critical operations</option><option value="Custom">Custom</option></select></FormField>
+                <FormField label="Coverage window"><select className="field w-full" value={supportTierForm.coverageWindow} onChange={event => setSupportTierForm(form => form ? ({ ...form, coverageWindow: event.target.value as DeviceSupportTierEventRecord["coverageWindow"] }) : form)} disabled={supportTierMut.isPending}><option value="BusinessHours">Business hours</option><option value="ExtendedHours">Extended hours</option><option value="AlwaysOn">Always on</option><option value="Custom">Custom</option></select></FormField>
+                <FormField label="Routing response target (minutes)"><input className="field w-full" type="number" min={15} max={10080} required value={supportTierForm.routingResponseTargetMinutes} onChange={event => setSupportTierForm(form => form ? ({ ...form, routingResponseTargetMinutes: Number(event.target.value) }) : form)} disabled={supportTierMut.isPending} /></FormField>
+                <FormField label="Escalation policy reference"><input className="field w-full" required minLength={3} maxLength={240} value={supportTierForm.escalationPolicyReference} onChange={event => setSupportTierForm(form => form ? ({ ...form, escalationPolicyReference: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>
+                <FormField label="Commercial reference"><input className="field w-full" required minLength={3} maxLength={240} placeholder="Contract, order, or approved plan reference" value={supportTierForm.commercialReference} onChange={event => setSupportTierForm(form => form ? ({ ...form, commercialReference: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>
+                <FormField label="Effective at"><input className="field w-full" type="datetime-local" required max={currentLocalMinute()} value={supportTierForm.effectiveAt} onChange={event => setSupportTierForm(form => form ? ({ ...form, effectiveAt: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>
+              </div> : <FormField label="Effective at"><input className="field w-full" type="datetime-local" required max={currentLocalMinute()} value={supportTierForm.effectiveAt} onChange={event => setSupportTierForm(form => form ? ({ ...form, effectiveAt: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>}
+              <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} value={supportTierForm.sourceReference} onChange={event => setSupportTierForm(form => form ? ({ ...form, sourceReference: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>
+              <FormField label="Action reason"><textarea className="field h-20 w-full resize-none" required minLength={5} maxLength={500} value={supportTierForm.actionReason} onChange={event => setSupportTierForm(form => form ? ({ ...form, actionReason: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>
+              <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={supportTierMut.isPending} onClick={() => setSupportTierForm(null)}>Cancel</button><button type="submit" className="btn-primary" disabled={supportTierMut.isPending}>{supportTierMut.isPending ? "Recording…" : "Record support-tier action"}</button></div>
+            </form>
+          ) : null}
+          {detail.supportTierEvents.length > 0 ? <div className="mt-4"><TimelineList rows={detail.supportTierEvents.map(item => ({ id: `support-tier-${item.id}`, title: `${item.actionType} · ${item.tierCode}`, subtitle: `${item.coverageWindow} · ${item.routingResponseTargetMinutes} min target · ${item.actionReason} · ${item.recordStatus}`, meta: item.effectiveAt }))} emptyText="No support-tier history recorded." /></div> : null}
+        </PanelSection>
+        <PanelSection title="RMA, custody & replacement">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Support record</p>
+              <p className="mt-1 text-lg font-semibold text-white">{detail.rmaCases.filter(rmaCase => rmaCase.currentStatus !== "Resolved").length} open case(s)</p>
+            </div>
+            {canManageRma ? <button type="button" className="btn-secondary" disabled={rmaBusy} onClick={() => { setRmaCaseForm(newRmaCaseForm()); setRmaCaseOpen(true); setRmaError(null); setRmaNotice(null); }}>Open RMA case</button> : null}
+          </div>
+          <p className="mt-3 rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+            OpsTrax records the operator-supplied support, custody, warranty, and replacement references. It does not verify physical receipt, vendor warranty acceptance, replacement installation, or device readiness.
+          </p>
+          {rmaNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">{rmaNotice}</p> : null}
+          {rmaError ? <p role="alert" className="mt-3 text-sm text-red-300">{rmaError}</p> : null}
+          {rmaCaseOpen && canManageRma ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitRmaCase}>
+              <p className="font-semibold text-white">New support case</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <FormField label="Severity"><select className="field w-full" value={rmaCaseForm.severity} onChange={event => setRmaCaseForm(form => ({ ...form, severity: event.target.value as DeviceRmaCaseInput["severity"] }))} disabled={rmaBusy}><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></FormField>
+                <FormField label="Failure category"><select className="field w-full" value={rmaCaseForm.failureCategory} onChange={event => setRmaCaseForm(form => ({ ...form, failureCategory: event.target.value as DeviceRmaCaseInput["failureCategory"] }))} disabled={rmaBusy}>{["Power","Connectivity","GNSS","CAN","Camera","Firmware","PhysicalDamage","Intermittent","Other"].map(value => <option key={value}>{value}</option>)}</select></FormField>
+                <FormField label="Observed at"><input className="field w-full" type="datetime-local" required value={rmaCaseForm.observedAt} onChange={event => setRmaCaseForm(form => ({ ...form, observedAt: event.target.value }))} disabled={rmaBusy} /></FormField>
+                <FormField label="Response due"><input className="field w-full" type="datetime-local" required value={rmaCaseForm.responseDueAt} onChange={event => setRmaCaseForm(form => ({ ...form, responseDueAt: event.target.value }))} disabled={rmaBusy} /></FormField>
+                <FormField label="Warranty posture"><select className="field w-full" value={rmaCaseForm.warrantyPosture} onChange={event => setRmaCaseForm(form => ({ ...form, warrantyPosture: event.target.value as DeviceRmaCaseInput["warrantyPosture"] }))} disabled={rmaBusy}><option value="Unknown">Unknown</option><option value="ClaimedInWarranty">Claimed in warranty</option><option value="ClaimedOutOfWarranty">Claimed out of warranty</option><option value="NotApplicable">Not applicable</option></select></FormField>
+                <FormField label="Warranty reference"><input className="field w-full" maxLength={240} required={rmaCaseForm.warrantyPosture === "ClaimedInWarranty" || rmaCaseForm.warrantyPosture === "ClaimedOutOfWarranty"} value={rmaCaseForm.warrantyReference} onChange={event => setRmaCaseForm(form => ({ ...form, warrantyReference: event.target.value }))} placeholder="Vendor policy or claim reference" disabled={rmaBusy} /></FormField>
+                <FormField label="Support SLA reference"><input className="field w-full" required minLength={3} maxLength={240} value={rmaCaseForm.supportSlaReference} onChange={event => setRmaCaseForm(form => ({ ...form, supportSlaReference: event.target.value }))} placeholder="Contract / support tier" disabled={rmaBusy} /></FormField>
+                <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} value={rmaCaseForm.sourceReference} onChange={event => setRmaCaseForm(form => ({ ...form, sourceReference: event.target.value }))} placeholder="Support ticket or inspection" disabled={rmaBusy} /></FormField>
+              </div>
+              <FormField label="Failure description"><textarea className="field h-24 w-full resize-none" required minLength={10} maxLength={1000} value={rmaCaseForm.failureDescription} onChange={event => setRmaCaseForm(form => ({ ...form, failureDescription: event.target.value }))} disabled={rmaBusy} /></FormField>
+              <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => { setRmaCaseOpen(false); setRmaError(null); }}>Cancel</button><button type="submit" className="btn-primary" disabled={rmaBusy}>{rmaCaseMut.isPending ? "Recording…" : "Record RMA case"}</button></div>
+            </form>
+          ) : null}
+          <div className="mt-4 space-y-4">
+            {detail.rmaCases.length === 0 ? <p className="text-sm text-slate-400">No RMA cases recorded for this device.</p> : detail.rmaCases.map(rmaCase => (
+              <div key={rmaCase.id} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold text-white">RMA #{rmaCase.id} · {rmaCase.failureCategory}</p><p className="mt-1 text-sm text-slate-300">{rmaCase.failureDescription}</p></div><div className="flex gap-2"><RiskBadge risk={rmaCase.severity} /><StatusBadge status={rmaCase.currentStatus} /></div></div>
+                <div className="mt-3"><MiniGrid rows={[["Observed", rmaCase.observedAt], ["Response due", rmaCase.responseDueAt], ["SLA", rmaCase.supportSlaReference], ["Current owner", rmaCase.supportActions[0]?.ownerNameSnapshot ?? "Unassigned"], ["Support queue", rmaCase.supportActions[0]?.supportQueue ?? "Unassigned"], ["Latest escalation", rmaCase.supportActions.find(action => action.actionType === "Escalated")?.escalationSeverity ?? "None"], ["Warranty posture", rmaCase.warrantyPosture], ["Warranty evidence", rmaCase.warrantyEvidenceStatus], ["Source", rmaCase.sourceReference]]} /></div>
+                {rmaCase.replacement ? (
+                  <p className="mt-3 rounded-lg border border-sky-400/20 bg-sky-500/10 p-3 text-sm text-sky-100">Replacement planned: {rmaCase.replacement.replacementDeviceSerial} · physical swap {rmaCase.replacement.physicalSwapStatus}. No installation is claimed.</p>
+                ) : null}
+                {canManageRma && rmaCase.currentStatus !== "Resolved" ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => { setRmaEventForm(newRmaEventForm()); setRmaEventCaseId(rmaCase.id); setRmaReplacementCaseId(null); setRmaSupportCaseId(null); setRmaError(null); }}>Add custody event</button>
+                    {!rmaCase.replacement ? <button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => { setRmaReplacementForm(newRmaReplacementForm()); setRmaReplacementCaseId(rmaCase.id); setRmaEventCaseId(null); setRmaSupportCaseId(null); setRmaError(null); }}>Plan replacement</button> : null}
+                    <button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => { setRmaSupportForm(newRmaSupportForm("TakeOwnership", rmaCase.supportActions[0]?.supportQueue)); setRmaSupportCaseId(rmaCase.id); setRmaEventCaseId(null); setRmaReplacementCaseId(null); setRmaError(null); }}>Take ownership</button>
+                    {rmaCase.supportActions.length > 0 ? <button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => { setRmaSupportForm(newRmaSupportForm("Escalate", rmaCase.supportActions[0]?.supportQueue)); setRmaSupportCaseId(rmaCase.id); setRmaEventCaseId(null); setRmaReplacementCaseId(null); setRmaError(null); }}>Escalate</button> : null}
+                  </div>
+                ) : null}
+                {rmaEventCaseId === rmaCase.id && canManageRma ? (
+                  <form className="mt-4 space-y-3 rounded-lg border border-white/[0.08] bg-black/10 p-3" onSubmit={submitRmaEvent}>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <FormField label="Event"><select className="field w-full" value={rmaEventForm.eventType} onChange={event => setRmaEventForm(form => ({ ...form, eventType: event.target.value as DeviceRmaEventInput["eventType"] }))} disabled={rmaBusy}><option value="ReturnAuthorized">Return authorized</option><option value="Shipped">Shipped</option><option value="Received">Received</option><option value="VendorDisposition">Vendor disposition</option><option value="CaseClosed">Close case</option></select></FormField>
+                      <FormField label="Occurred at"><input className="field w-full" type="datetime-local" required value={rmaEventForm.occurredAt} onChange={event => setRmaEventForm(form => ({ ...form, occurredAt: event.target.value }))} disabled={rmaBusy} /></FormField>
+                      <FormField label="Custody location"><input className="field w-full" maxLength={240} required={rmaEventForm.eventType === "Shipped" || rmaEventForm.eventType === "Received"} value={rmaEventForm.custodyLocation} onChange={event => setRmaEventForm(form => ({ ...form, custodyLocation: event.target.value }))} disabled={rmaBusy} /></FormField>
+                      <FormField label="Tracking reference"><input className="field w-full" maxLength={240} value={rmaEventForm.trackingReference} onChange={event => setRmaEventForm(form => ({ ...form, trackingReference: event.target.value }))} disabled={rmaBusy} /></FormField>
+                      <FormField label="Evidence reference"><input className="field w-full" required minLength={3} maxLength={240} value={rmaEventForm.evidenceReference} onChange={event => setRmaEventForm(form => ({ ...form, evidenceReference: event.target.value }))} disabled={rmaBusy} /></FormField>
+                      <FormField label="Notes"><input className="field w-full" required minLength={5} maxLength={1000} value={rmaEventForm.notes} onChange={event => setRmaEventForm(form => ({ ...form, notes: event.target.value }))} disabled={rmaBusy} /></FormField>
+                    </div>
+                    <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => setRmaEventCaseId(null)}>Cancel</button><button type="submit" className="btn-primary" disabled={rmaBusy}>{rmaEventMut.isPending ? "Recording…" : "Record referenced event"}</button></div>
+                  </form>
+                ) : null}
+                {rmaReplacementCaseId === rmaCase.id && canManageRma ? (
+                  <form className="mt-4 space-y-3 rounded-lg border border-white/[0.08] bg-black/10 p-3" onSubmit={submitRmaReplacement}>
+                    <p className="text-sm text-amber-100">Enter the exact serial of an existing, visible inventory device. This links a plan only.</p>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <FormField label="Replacement device serial"><input className="field w-full" required minLength={3} maxLength={120} value={rmaReplacementForm.replacementDeviceSerial} onChange={event => setRmaReplacementForm(form => ({ ...form, replacementDeviceSerial: event.target.value }))} disabled={rmaBusy} /></FormField>
+                      <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} value={rmaReplacementForm.sourceReference} onChange={event => setRmaReplacementForm(form => ({ ...form, sourceReference: event.target.value }))} disabled={rmaBusy} /></FormField>
+                    </div>
+                    <FormField label="Replacement reason"><input className="field w-full" required minLength={5} maxLength={500} value={rmaReplacementForm.changeReason} onChange={event => setRmaReplacementForm(form => ({ ...form, changeReason: event.target.value }))} disabled={rmaBusy} /></FormField>
+                    <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => setRmaReplacementCaseId(null)}>Cancel</button><button type="submit" className="btn-primary" disabled={rmaBusy}>{rmaReplacementMut.isPending ? "Recording…" : "Record replacement plan"}</button></div>
+                  </form>
+                ) : null}
+                {rmaSupportCaseId === rmaCase.id && canManageRma ? (
+                  <form className="mt-4 space-y-3 rounded-lg border border-white/[0.08] bg-black/10 p-3" onSubmit={submitRmaSupport}>
+                    <p className="text-sm font-semibold text-white">{rmaSupportForm.actionType === "Escalate" ? "Escalate support case" : "Take support ownership"}</p>
+                    <p className="text-xs text-amber-200">This records operator routing only. It does not claim a support response, warranty acceptance, or physical outcome.</p>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <FormField label="Support queue"><input className="field w-full" required minLength={3} maxLength={120} value={rmaSupportForm.supportQueue} onChange={event => setRmaSupportForm(form => ({ ...form, supportQueue: event.target.value }))} disabled={rmaBusy} /></FormField>
+                      {rmaSupportForm.actionType === "Escalate" ? <FormField label="Escalation severity"><select className="field w-full" value={rmaSupportForm.escalationSeverity} onChange={event => setRmaSupportForm(form => ({ ...form, escalationSeverity: event.target.value as DeviceRmaSupportActionInput["escalationSeverity"] }))} disabled={rmaBusy}><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></FormField> : null}
+                      <FormField label="Effective at"><input className="field w-full" type="datetime-local" required max={currentLocalMinute()} value={rmaSupportForm.effectiveAt} onChange={event => setRmaSupportForm(form => ({ ...form, effectiveAt: event.target.value }))} disabled={rmaBusy} /></FormField>
+                      <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} placeholder="Support ticket or incident" value={rmaSupportForm.sourceReference} onChange={event => setRmaSupportForm(form => ({ ...form, sourceReference: event.target.value }))} disabled={rmaBusy} /></FormField>
+                    </div>
+                    <FormField label="Action reason"><textarea className="field h-20 w-full resize-none" required minLength={5} maxLength={500} value={rmaSupportForm.actionReason} onChange={event => setRmaSupportForm(form => ({ ...form, actionReason: event.target.value }))} disabled={rmaBusy} /></FormField>
+                    <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={rmaBusy} onClick={() => setRmaSupportCaseId(null)}>Cancel</button><button type="submit" className="btn-primary" disabled={rmaBusy}>{rmaSupportMut.isPending ? "Recording…" : rmaSupportForm.actionType === "Escalate" ? "Record escalation" : "Take ownership"}</button></div>
+                  </form>
+                ) : null}
+                {rmaCase.supportActions.length > 0 ? <div className="mt-4"><TimelineList rows={rmaCase.supportActions.map(action => ({ id: `support-${action.id}`, title: `${action.actionType.replace(/([a-z])([A-Z])/g, "$1 $2")} · ${action.ownerNameSnapshot}`, subtitle: `${action.supportQueue}${action.escalationSeverity ? ` · ${action.escalationSeverity}` : ""} · ${action.actionReason} · ${action.supportActionStatus}`, meta: action.effectiveAt }))} emptyText="No support ownership history recorded." /></div> : null}
+                <div className="mt-4"><TimelineList rows={rmaCase.events.map(rmaEvent => ({ id: rmaEvent.id, title: `${rmaEvent.sequenceNumber}. ${rmaEvent.eventType}`, subtitle: `${rmaEvent.caseStatusAfter} · Evidence ${rmaEvent.evidenceStatus} · ${rmaEvent.evidenceReference}${rmaEvent.custodyLocation ? ` · ${rmaEvent.custodyLocation}` : ""}`, meta: rmaEvent.occurredAt }))} emptyText="No RMA events recorded." /></div>
+              </div>
+            ))}
+          </div>
+        </PanelSection>
+        <PanelSection title="Spare-device pool planning">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Software inventory plan</p>
+              <p className="mt-1 text-lg font-semibold text-white">{detail.sparePool?.currentState ?? "Not in a spare pool"}</p>
+            </div>
+            {canManageRma && !sparePoolForm ? (
+              <div className="flex flex-wrap gap-2">
+                {!detail.sparePool && !detail.currentInstallation ? <button type="button" className="btn-secondary" disabled={sparePoolMut.isPending} onClick={() => { setSparePoolForm(newSparePoolForm("Add")); setSparePoolError(null); setSparePoolNotice(null); }}>Add to pool</button> : null}
+                {detail.sparePool?.currentState === "Available" ? <><button type="button" className="btn-secondary" disabled={sparePoolMut.isPending} onClick={() => { setSparePoolForm(newSparePoolForm("Reserve", detail.sparePool!.poolName)); setSparePoolError(null); setSparePoolNotice(null); }}>Reserve for RMA</button><button type="button" className="btn-ghost" disabled={sparePoolMut.isPending} onClick={() => { setSparePoolForm(newSparePoolForm("Remove", detail.sparePool!.poolName)); setSparePoolError(null); setSparePoolNotice(null); }}>Remove from plan</button></> : null}
+                {detail.sparePool?.currentState === "Reserved" ? <button type="button" className="btn-secondary" disabled={sparePoolMut.isPending} onClick={() => { setSparePoolForm(newSparePoolForm("Release", detail.sparePool!.poolName)); setSparePoolError(null); setSparePoolNotice(null); }}>Release reservation</button> : null}
+              </div>
+            ) : null}
+          </div>
+          <p className="mt-3 rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+            Pool availability and reservation are operator-recorded planning facts. They do not prove physical possession, device condition, compatibility, installation, or certification.
+          </p>
+          {!detail.sparePool && detail.currentInstallation ? <p className="mt-3 text-sm text-slate-400">Record removal from the current installation before adding this device to a spare-pool plan.</p> : null}
+          {sparePoolNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">{sparePoolNotice}</p> : null}
+          {sparePoolError ? <p role="alert" className="mt-3 text-sm text-red-300">{sparePoolError}</p> : null}
+          {detail.sparePool ? <div className="mt-4"><MiniGrid rows={[["Pool", detail.sparePool.poolName], ["Current state", detail.sparePool.currentState], ["Inventory assurance", detail.sparePool.inventoryAssuranceStatus], ["Physical possession", "Unverified"], ["Condition", "Unverified"], ["Certification", "Not claimed"], ["Entry source", detail.sparePool.sourceReference]]} /></div> : null}
+          {sparePoolForm && canManageRma ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitSparePool}>
+              <p className="font-semibold text-white">{sparePoolForm.actionType === "Add" ? "Add device to spare-pool plan" : sparePoolForm.actionType === "Reserve" ? "Reserve spare for an RMA case" : sparePoolForm.actionType === "Release" ? "Release spare reservation" : "Remove device from spare-pool plan"}</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                {sparePoolForm.actionType === "Add" ? <FormField label="Pool name"><input className="field w-full" required minLength={3} maxLength={120} value={sparePoolForm.poolName} onChange={event => setSparePoolForm(form => form ? ({ ...form, poolName: event.target.value }) : form)} disabled={sparePoolMut.isPending} /></FormField> : null}
+                {sparePoolForm.actionType === "Reserve" ? <FormField label="RMA case number"><input className="field w-full" required inputMode="numeric" pattern="[0-9]+" value={sparePoolForm.rmaCaseId} onChange={event => setSparePoolForm(form => form ? ({ ...form, rmaCaseId: event.target.value }) : form)} placeholder="Case number shown as RMA #" disabled={sparePoolMut.isPending} /></FormField> : null}
+                <FormField label="Effective at"><input className="field w-full" type="datetime-local" required max={currentLocalMinute()} value={sparePoolForm.effectiveAt} onChange={event => setSparePoolForm(form => form ? ({ ...form, effectiveAt: event.target.value }) : form)} disabled={sparePoolMut.isPending} /></FormField>
+                <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} value={sparePoolForm.sourceReference} onChange={event => setSparePoolForm(form => form ? ({ ...form, sourceReference: event.target.value }) : form)} placeholder="Inventory ticket or RMA reference" disabled={sparePoolMut.isPending} /></FormField>
+              </div>
+              <FormField label="Action reason"><textarea className="field h-20 w-full resize-none" required minLength={5} maxLength={500} value={sparePoolForm.actionReason} onChange={event => setSparePoolForm(form => form ? ({ ...form, actionReason: event.target.value }) : form)} disabled={sparePoolMut.isPending} /></FormField>
+              <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={sparePoolMut.isPending} onClick={() => setSparePoolForm(null)}>Cancel</button><button type="submit" className="btn-primary" disabled={sparePoolMut.isPending}>{sparePoolMut.isPending ? "Recording…" : "Record planning action"}</button></div>
+            </form>
+          ) : null}
+          {detail.sparePool ? <div className="mt-4"><TimelineList rows={detail.sparePool.events.map(poolEvent => ({ id: `spare-${poolEvent.id}`, title: `${poolEvent.actionType} · ${poolEvent.stateAfter}`, subtitle: `${poolEvent.actionReason} · ${poolEvent.sourceReference}${poolEvent.rmaCaseId ? ` · RMA #${poolEvent.rmaCaseId}` : ""} · ${poolEvent.eventStatus}`, meta: poolEvent.effectiveAt }))} emptyText="No spare-pool history recorded." /></div> : null}
+        </PanelSection>
+        <PanelSection title="Installer work packages">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-white">Appointment, checklist, and artifact references</p>
+              <p className="mt-1 text-xs text-slate-400">Every result is an operator-recorded assertion. Attendance, artifact content, physical work, and certification remain unverified until independent evidence review.</p>
+            </div>
+            {canManageConnectivity ? (
+              <button type="button" className="btn-secondary shrink-0" disabled={installationEvidenceBusy} onClick={() => {
+                setInstallationEvidenceError(null); setInstallationEvidenceNotice(null);
+                setWorkPackageForm(newInstallationWorkPackageForm(detail.currentInstallation?.vehicleId ?? ""));
+                setWorkPackageOpen(true);
+              }}>Schedule work</button>
+            ) : null}
+          </div>
+          {installationEvidenceNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-300/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{installationEvidenceNotice}</p> : null}
+          {installationEvidenceError ? <p role="alert" className="mt-3 rounded-lg border border-red-300/30 bg-red-500/10 p-3 text-sm text-red-100">{installationEvidenceError}</p> : null}
+
+          {workPackageOpen && canManageConnectivity ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitWorkPackage}>
+              <p className="text-xs text-amber-200">The signed-in operator is recorded as the assigned installer. Scheduling does not claim that the appointment occurred.</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <FormField label="Vehicle">
+                  <select className="field w-full" required value={workPackageForm.vehicleId} onChange={event => setWorkPackageForm(form => ({ ...form, vehicleId: event.target.value }))} disabled={installationEvidenceBusy}>
+                    <option value="">Select a vehicle</option>
+                    {vehicleOptions.map(vehicle => <option key={String(vehicle.id ?? vehicle.vehicleId)} value={String(vehicle.id ?? vehicle.vehicleId)}>{String(vehicle.vehicleCode ?? vehicle.vehicleId)}</option>)}
+                  </select>
+                </FormField>
+                <FormField label="Work-order reference"><input className="field w-full" required minLength={2} maxLength={120} value={workPackageForm.workOrderReference} onChange={event => setWorkPackageForm(form => ({ ...form, workOrderReference: event.target.value }))} disabled={installationEvidenceBusy} /></FormField>
+                <FormField label="Appointment start"><input className="field w-full" required type="datetime-local" value={workPackageForm.appointmentStart} onChange={event => setWorkPackageForm(form => ({ ...form, appointmentStart: event.target.value }))} disabled={installationEvidenceBusy} /></FormField>
+                <FormField label="Appointment end"><input className="field w-full" required type="datetime-local" value={workPackageForm.appointmentEnd} onChange={event => setWorkPackageForm(form => ({ ...form, appointmentEnd: event.target.value }))} disabled={installationEvidenceBusy} /></FormField>
+                <FormField label="Service location"><input className="field w-full" required minLength={2} maxLength={160} value={workPackageForm.serviceLocation} onChange={event => setWorkPackageForm(form => ({ ...form, serviceLocation: event.target.value }))} disabled={installationEvidenceBusy} /></FormField>
+                <FormField label="Work scope"><input className="field w-full" required minLength={5} maxLength={1000} value={workPackageForm.workScope} onChange={event => setWorkPackageForm(form => ({ ...form, workScope: event.target.value }))} disabled={installationEvidenceBusy} /></FormField>
+              </div>
+              <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" onClick={() => setWorkPackageOpen(false)} disabled={installationEvidenceBusy}>Cancel</button><button type="submit" className="btn-primary" disabled={installationEvidenceBusy}>{workPackageMut.isPending ? "Recording…" : "Record appointment plan"}</button></div>
+            </form>
+          ) : null}
+
+          <div className="mt-4 space-y-4">
+            {detail.installationWorkPackages.length === 0 ? <p className="text-sm text-slate-400">No installer work package has been recorded for this device.</p> : null}
+            {detail.installationWorkPackages.map(workPackage => {
+              const observed = new Map(workPackage.latestChecklist.map(row => [row.checklistItem, row]));
+              const matchingInstallation = detail.currentInstallation &&
+                String(detail.currentInstallation.vehicleId ?? "") === workPackage.vehicleId
+                ? detail.currentInstallation
+                : detail.installations.find(installation =>
+                  String(installation.vehicleId ?? "") === workPackage.vehicleId) ?? null;
+              return (
+                <div key={workPackage.id} className="rounded-xl border border-white/[0.08] bg-black/10 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div><p className="font-semibold text-white">{workPackage.workOrderReference}</p><p className="mt-1 text-xs text-slate-400">{workPackage.vehicleCode || `Vehicle ${workPackage.vehicleId}`} · Installer {workPackage.installerName || `User ${workPackage.assignedInstallerUserId}`}</p></div>
+                    <StatusBadge status={workPackage.readinessStatus.replace(/([a-z])([A-Z])/g, "$1 $2")} />
+                  </div>
+                  <div className="mt-3"><MiniGrid rows={[
+                    ["Appointment plan", `${new Date(workPackage.appointmentStart).toLocaleString()} → ${new Date(workPackage.appointmentEnd).toLocaleString()}`],
+                    ["Service location", workPackage.serviceLocation], ["Scope", workPackage.workScope],
+                    ["Physical attendance", "Unverified"], ["Physical work", "Unverified"], ["Certification", "Not claimed"],
+                  ]} /></div>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                    {workPackage.requiredChecklistItems.map(item => {
+                      const observation = observed.get(item);
+                      return <div key={item} className="rounded-lg border border-white/[0.07] bg-black/10 p-2 text-xs"><div className="flex items-center justify-between gap-2"><span className="font-medium text-slate-200">{item.replace(/([a-z])([A-Z])/g, "$1 $2")}</span><span className="text-slate-400">{observation?.observedResult ?? "Not recorded"}</span></div>{observation ? <p className="mt-1 text-slate-500">{observation.evidenceReference} · {observation.assuranceStatus}</p> : null}</div>;
+                    })}
+                  </div>
+                  {workPackage.artifactReferences.length ? <div className="mt-4"><TimelineList rows={workPackage.artifactReferences.map(artifact => ({ id: artifact.id, title: artifact.artifactType.replace(/([a-z])([A-Z])/g, "$1 $2"), subtitle: `${artifact.objectKey} · SHA-256 ${artifact.sha256.slice(0, 12)}… · ${artifact.contentVerificationStatus}`, meta: artifact.capturedAt }))} emptyText="No artifact references recorded." /></div> : null}
+                  {workPackage.linkedInstallationId ? (
+                    <p className="mt-3 rounded-lg border border-sky-400/20 bg-sky-500/10 p-3 text-xs text-sky-100">Linked to persisted installation #{workPackage.linkedInstallationId} ({workPackage.linkedInstallationStatus}) · {workPackage.linkAssuranceStatus}. This link does not verify physical work.</p>
+                  ) : matchingInstallation && workPackage.readinessStatus === "RecordedAwaitingIndependentVerification" ? (
+                    <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-500/10 p-3 text-xs text-amber-100">
+                      <p>Matching installation #{matchingInstallation.id} is recorded for this vehicle. Linking records traceability only; physical work and certification remain unverified.</p>
+                      {canManageConnectivity ? <button type="button" className="btn-secondary mt-2" disabled={installationEvidenceBusy} onClick={() => {
+                        if (installationEvidenceSubmitting.current) return;
+                        installationEvidenceSubmitting.current = true; setInstallationEvidenceError(null);
+                        linkWorkPackageMut.mutate({ workPackageId: workPackage.id, installationId: matchingInstallation.id });
+                      }}>{linkWorkPackageMut.isPending ? "Linking…" : "Link recorded installation"}</button> : null}
+                    </div>
+                  ) : null}
+                  {canManageConnectivity ? <div className="mt-4 flex flex-wrap gap-2"><button type="button" className="btn-secondary" disabled={installationEvidenceBusy} onClick={() => { setInstallationEvidenceError(null); setChecklistForm(newInstallationChecklistForm(workPackage.id)); setArtifactForm(null); }}>Record checklist observation</button><button type="button" className="btn-secondary" disabled={installationEvidenceBusy} onClick={() => { setInstallationEvidenceError(null); setArtifactForm(newInstallationArtifactForm(workPackage.id)); setChecklistForm(null); }}>Record artifact reference</button></div> : null}
+
+                  {checklistForm?.workPackageId === workPackage.id ? (
+                    <form className="mt-4 space-y-3 rounded-lg border border-white/[0.08] bg-black/10 p-3" onSubmit={submitChecklistObservation}>
+                      <p className="text-xs text-amber-200">Choose only the result actually observed. This record stays unverified and cannot certify the installation.</p>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <FormField label="Checklist item"><select className="field w-full" value={checklistForm.checklistItem} onChange={event => setChecklistForm(form => form ? ({ ...form, checklistItem: event.target.value as DeviceInstallationChecklistObservationInput["checklistItem"] }) : form)} disabled={installationEvidenceBusy}>{["DeviceIdentity","VehicleIdentity","Mounting","PrimaryPower","Ground","Ignition","GNSSAntenna","CellularAntenna","Harness","CANBus","CameraAlignment","SensorPlacement"].map(item => <option key={item} value={item}>{item.replace(/([a-z])([A-Z])/g, "$1 $2")}</option>)}</select></FormField>
+                        <FormField label="Observed result"><select className="field w-full" value={checklistForm.observedResult} onChange={event => setChecklistForm(form => form ? ({ ...form, observedResult: event.target.value as DeviceInstallationChecklistObservationInput["observedResult"] }) : form)} disabled={installationEvidenceBusy}><option value="NotObserved">Not observed</option><option value="Fail">Fail</option><option value="Pass">Pass</option><option value="NotApplicable">Not applicable</option></select></FormField>
+                        <FormField label="Observation time"><input className="field w-full" required type="datetime-local" max={currentLocalMinute()} value={checklistForm.observedAt} onChange={event => setChecklistForm(form => form ? ({ ...form, observedAt: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                        <FormField label="Evidence reference"><input className="field w-full" required minLength={3} maxLength={240} placeholder="Work note, meter reading, or artifact key" value={checklistForm.evidenceReference} onChange={event => setChecklistForm(form => form ? ({ ...form, evidenceReference: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                        <FormField label="Observation notes"><input className="field w-full" required minLength={3} maxLength={1000} value={checklistForm.observationNotes} onChange={event => setChecklistForm(form => form ? ({ ...form, observationNotes: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                      </div>
+                      <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" onClick={() => setChecklistForm(null)} disabled={installationEvidenceBusy}>Cancel</button><button type="submit" className="btn-primary" disabled={installationEvidenceBusy}>{checklistMut.isPending ? "Recording…" : "Record unverified observation"}</button></div>
+                    </form>
+                  ) : null}
+
+                  {artifactForm?.workPackageId === workPackage.id ? (
+                    <form className="mt-4 space-y-3 rounded-lg border border-white/[0.08] bg-black/10 p-3" onSubmit={submitArtifactReference}>
+                      <p className="text-xs text-amber-200">Record a key from governed storage and its independently calculated SHA-256. OpsTrax stores the reference, not an upload or verification claim.</p>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <FormField label="Artifact type"><select className="field w-full" value={artifactForm.artifactType} onChange={event => setArtifactForm(form => form ? ({ ...form, artifactType: event.target.value as DeviceInstallationArtifactReferenceInput["artifactType"] }) : form)} disabled={installationEvidenceBusy}>{["InstallationPhoto","SerialLabel","WiringPhoto","PowerReading","TechnicianChecklist","CommissioningReport","RemovalPhoto","OtherDocument"].map(type => <option key={type} value={type}>{type.replace(/([a-z])([A-Z])/g, "$1 $2")}</option>)}</select></FormField>
+                        <FormField label="Capture time"><input className="field w-full" required type="datetime-local" max={currentLocalMinute()} value={artifactForm.capturedAt} onChange={event => setArtifactForm(form => form ? ({ ...form, capturedAt: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                        <FormField label="Governed-storage object key"><input className="field w-full" required maxLength={1024} placeholder="installations/work-order/photo.jpg" value={artifactForm.objectKey} onChange={event => setArtifactForm(form => form ? ({ ...form, objectKey: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                        <FormField label="SHA-256"><input className="field w-full font-mono" required minLength={64} maxLength={64} pattern="[0-9a-fA-F]{64}" value={artifactForm.sha256} onChange={event => setArtifactForm(form => form ? ({ ...form, sha256: event.target.value }) : form)} disabled={installationEvidenceBusy} /></FormField>
+                      </div>
+                      <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" onClick={() => setArtifactForm(null)} disabled={installationEvidenceBusy}>Cancel</button><button type="submit" className="btn-primary" disabled={installationEvidenceBusy}>{artifactMut.isPending ? "Recording…" : "Record unverified reference"}</button></div>
+                    </form>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
         </PanelSection>
         <PanelSection title="Installation History">
           {detail.currentInstallation ? (
@@ -2302,9 +3537,42 @@ function ConnectDeviceDialog({
               aria-label="Device model or friendly name"
             />
           </FormField>
+          <FormField label="Manufacturer (optional)">
+            <input
+              className="field w-full"
+              value={form.manufacturer}
+              onChange={(event) => onChange({ ...form, manufacturer: event.target.value })}
+              placeholder="Exact label from the device"
+              maxLength={120}
+              aria-label="Exact device manufacturer"
+            />
+          </FormField>
+          <FormField label="Hardware revision (optional)">
+            <input
+              className="field w-full"
+              value={form.hardwareRevision}
+              onChange={(event) => onChange({ ...form, hardwareRevision: event.target.value })}
+              placeholder="Exact revision from the device"
+              maxLength={120}
+              aria-label="Exact hardware revision"
+            />
+          </FormField>
+          <FormField label="Reported firmware version (optional)">
+            <input
+              className="field w-full"
+              value={form.firmwareVersion}
+              onChange={(event) => onChange({ ...form, firmwareVersion: event.target.value })}
+              placeholder="Exact version reported by the device"
+              maxLength={120}
+              aria-label="Reported firmware version"
+            />
+          </FormField>
           <p className="text-xs text-slate-500">
             The device is registered uninstalled. After copying its one-time credentials,
             use Install on vehicle to create the governed effective-dated installation.
+          </p>
+          <p className="text-xs text-slate-500 md:col-span-2">
+            Hardware identity fields are operator-recorded candidate data. They do not prove physical identity, compatibility, or certification.
           </p>
         </div>
 

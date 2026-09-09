@@ -10,7 +10,6 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
-  Sparkles,
   Wrench,
 } from "lucide-react";
 import { alertsApi } from "@/services/alertsApi";
@@ -268,7 +267,7 @@ function AlertCard({
             </div>
             <h3 className="mt-3 text-sm font-semibold text-slate-900">{alert.title}</h3>
           </div>
-          <span className="text-xs font-semibold text-slate-400">{alert.age ?? "Live"}</span>
+          <span className="text-xs font-semibold text-slate-400">{alert.age ?? "Age unavailable"}</span>
         </div>
         <p className="mt-2 text-sm text-slate-600">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
         <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
@@ -320,20 +319,13 @@ function DetailPanel({
   if (!record) {
     return (
       <div className="panel p-5">
-        <EmptyState title="No alert selected" subtitle="Choose an alert from the live queue to inspect it in context." />
+        <EmptyState title="No alert selected" subtitle="Choose an alert from the current queue to inspect its recorded context." />
       </div>
     );
   }
 
   const actionRoute = record.entityRoute || routeForCategory(record.category);
-  const rationale =
-    record.severity === "Critical"
-      ? "Immediate action is warranted because this signal can turn into a safety, compliance or service event if it sits in the queue."
-      : record.severity === "High"
-        ? "High severity means the issue is not catastrophic yet, but delay increases the chance of cascading dispatch or customer impact."
-        : record.severity === "Warning"
-          ? "This is an early-warning signal. The best teams reduce critical volume by clearing these before shift handoff."
-          : "Informational signals should still stay linked to operational context so they can be audited later.";
+  const evidenceNote = `Severity is recorded as ${record.severity}. Review the source event and current asset context before deciding the operational response.`;
 
   return (
     <aside className="panel p-4 lg:p-5">
@@ -354,7 +346,7 @@ function DetailPanel({
 
       <div className="mt-4 grid grid-cols-2 gap-3">
         <MetaCard label="Entity type" value={record.entityType || "Not tagged"} />
-        <MetaCard label="Age" value={record.age || "Live"} />
+        <MetaCard label="Age" value={record.age || "Unavailable"} />
         <MetaCard label="Acknowledged by" value={record.acknowledgedBy || "Unowned"} />
         <MetaCard label="Created" value={record.createdAt ? new Date(record.createdAt).toLocaleString() : "Unknown"} />
       </div>
@@ -365,8 +357,8 @@ function DetailPanel({
       </div>
 
       <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-600">Priority rationale</p>
-        <p className="mt-2 text-sm text-slate-600">{rationale}</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-600">Evidence note</p>
+        <p className="mt-2 text-sm text-slate-600">{evidenceNote}</p>
       </div>
 
       <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
@@ -507,15 +499,15 @@ export function AlertsCenterPage() {
   );
 
   const summary = useMemo<AlertsSummary>(() => {
-    const live = summaryQuery.data as AnyRecord | undefined;
-    if (live) {
+    const persistedSummary = summaryQuery.data as AnyRecord | undefined;
+    if (persistedSummary) {
       return {
-        total: Number(live.total ?? alerts.length),
-        critical: Number(live.critical ?? alerts.filter((alert) => alert.severity === "Critical").length),
-        high: Number(live.high ?? alerts.filter((alert) => alert.severity === "High").length),
-        open: Number(live.open ?? alerts.filter((alert) => /open/i.test(alert.status)).length),
-        acknowledged: Number(live.acknowledged ?? alerts.filter((alert) => /ack/i.test(alert.status)).length),
-        closed: Number(live.closed ?? alerts.filter((alert) => /closed/i.test(alert.status)).length),
+        total: Number(persistedSummary.total ?? alerts.length),
+        critical: Number(persistedSummary.critical ?? alerts.filter((alert) => alert.severity === "Critical").length),
+        high: Number(persistedSummary.high ?? alerts.filter((alert) => alert.severity === "High").length),
+        open: Number(persistedSummary.open ?? alerts.filter((alert) => /open/i.test(alert.status)).length),
+        acknowledged: Number(persistedSummary.acknowledged ?? alerts.filter((alert) => /ack/i.test(alert.status)).length),
+        closed: Number(persistedSummary.closed ?? alerts.filter((alert) => /closed/i.test(alert.status)).length),
       };
     }
     return {
@@ -548,7 +540,6 @@ export function AlertsCenterPage() {
       .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9) || ageHours(b.createdAt) - ageHours(a.createdAt));
   }, [alerts, categoryFilter, statusFilter, severityFilter, search]);
 
-  const openAlerts = filtered.filter((alert) => !/closed/i.test(alert.status));
   const agingOpen = alerts.filter((alert) => /open|ack/i.test(alert.status) && ageHours(alert.createdAt) >= 24).length;
   const unownedOpen = alerts.filter((alert) => /open/i.test(alert.status) && !alert.acknowledgedBy).length;
   const categoryBuckets = CATEGORIES.filter((category) => category !== "All").map((category) => ({
@@ -605,17 +596,17 @@ export function AlertsCenterPage() {
         <div className="relative grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_0.85fr] lg:items-start">
           <div className="min-w-0">
             <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700 shadow-sm">
-              <BellRing className="h-3.5 w-3.5" /> Live alerts command room
+              <BellRing className="h-3.5 w-3.5" /> Current telemetry alerts
             </div>
             <h1 className="mt-3 text-[1.9rem] font-black tracking-tight text-slate-900 sm:text-[2.2rem]">
               Alerts Center
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              A live, backend-backed triage surface for open alerts, ownership, audit trail, and resolution actions. Tight layout, no demo queue, no fake feed, and no hidden fallback layer.
+              Persisted telemetry alerts generated by the available ingest and detection services, limited to your authorized tenant and branch scope.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-white">
-                Export live queue
+                Export current records
               </button>
               <button
                 type="button"
@@ -629,17 +620,17 @@ export function AlertsCenterPage() {
               </button>
             </div>
             <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">Connected to live backend</span>
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">Current backend records</span>
               <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Auto refresh 15s</span>
-              <span className="rounded-full border border-slate-200 bg-white px-3 py-1">No demo fallback</span>
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Persisted records only</span>
             </div>
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2 lg:self-start">
             <MiniStat label="Open queue" value={summary.open} sublabel={`${summary.critical} critical / ${summary.high} high`} />
             <MiniStat label="Aging open" value={agingOpen} sublabel="24h+ still active" />
-            <MiniStat label="Unowned" value={unownedOpen} sublabel="Needs an acknowledged owner" />
-            <MiniStat label="Closed today" value={`${summary.closed}/${summary.total || 1}`} sublabel="Visible set" />
+            <MiniStat label="Awaiting acknowledgement" value={unownedOpen} sublabel="Open records without acknowledgement" />
+            <MiniStat label="Resolved" value={`${summary.closed}/${summary.total || 1}`} sublabel="Current authorized set" />
           </div>
         </div>
 
@@ -647,8 +638,8 @@ export function AlertsCenterPage() {
           <div>
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-sm font-semibold text-slate-900">Live lanes</h2>
-                <p className="text-xs text-slate-500">Directly driven by the current queue, not static demo cards.</p>
+                <h2 className="text-sm font-semibold text-slate-900">Current categories</h2>
+                <p className="text-xs text-slate-500">Built from the current authorized telemetry alert records.</p>
               </div>
               <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                 {filtered.length} visible
@@ -677,7 +668,7 @@ export function AlertsCenterPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Queue health</h2>
-                <p className="text-xs text-slate-500">Live operating pressure from the current alert feed.</p>
+                <p className="text-xs text-slate-500">Recorded queue pressure in the current authorized scope.</p>
               </div>
               <ShieldAlert className="h-4 w-4 text-sky-500" />
             </div>
@@ -758,7 +749,7 @@ export function AlertsCenterPage() {
 
       <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
-          {openAlerts.length ? openAlerts.map((alert) => (
+          {filtered.length ? filtered.map((alert) => (
             <AlertCard
               key={String(alert.id)}
               alert={alert}
@@ -770,7 +761,7 @@ export function AlertsCenterPage() {
             />
           )) : (
             <div className="md:col-span-2">
-              <EmptyState title="No alerts match your filters" subtitle="Adjust the search or filter chips to broaden the live queue." />
+              <EmptyState title="No alerts match your filters" subtitle="Adjust the search or filters to broaden the current record set." />
             </div>
           )}
         </section>
@@ -792,7 +783,7 @@ export function AlertsCenterPage() {
 
       <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
         <Clock3 className="h-3.5 w-3.5" />
-        Refreshed every 15 seconds from the live backend. No fallback data layer is used here.
+        Refreshed every 15 seconds from persisted telemetry alert records. Missing records remain unavailable.
       </div>
 
       <ActionModal

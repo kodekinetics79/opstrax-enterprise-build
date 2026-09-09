@@ -12,7 +12,8 @@ public sealed record ConnectorOperationContext(
     string IntegrationKey,
     object? ConfigJson,
     string Status,
-    bool IsSyncOperation);
+    bool IsSyncOperation,
+    string? ProviderAccountReference = null);
 
 public sealed class StaleConnectorOperationException(string message) : InvalidOperationException(message);
 
@@ -46,7 +47,7 @@ public static class ConnectorOperationLease
                     AND status = ANY(@statuses)
                     AND (operation_lease_token IS NULL OR operation_lease_expires_at <= NOW())
                   RETURNING company_id,id,operation_generation,operation_lease_token,
-                            integration_key,config_json,status",
+                            integration_key,config_json,status,provider_account_ref",
                 c =>
                 {
                     c.Parameters.AddWithValue("@token", token);
@@ -65,7 +66,8 @@ public static class ConnectorOperationLease
                 row["integrationKey"]?.ToString() ?? "",
                 row.GetValueOrDefault("configJson"),
                 row["status"]?.ToString() ?? "",
-                isSyncOperation);
+                isSyncOperation,
+                row.GetValueOrDefault("providerAccountRef")?.ToString());
         }, ct);
     }
 
@@ -97,6 +99,8 @@ public static class ConnectorOperationLease
                 @"UPDATE integrations SET
                       status=CASE WHEN @ok THEN 'Connected' ELSE 'Error' END,
                       last_tested_at=NOW(),last_test_ok=@ok,last_test_message=@message,
+                      provider_account_ref=CASE WHEN @ok THEN @providerAccount ELSE NULL END,
+                      provider_account_verified_at=CASE WHEN @ok AND @providerAccount IS NOT NULL THEN NOW() ELSE NULL END,
                       operation_lease_token=NULL,operation_lease_expires_at=NULL,updated_at=NOW()
                   WHERE company_id=@cid AND id=@id
                     AND operation_generation=@generation
@@ -107,6 +111,10 @@ public static class ConnectorOperationLease
                     Bind(c, operation);
                     c.Parameters.AddWithValue("@ok", result.Success);
                     c.Parameters.AddWithValue("@message", (object?)result.Message ?? DBNull.Value);
+                    c.Parameters.Add(new NpgsqlParameter("@providerAccount", NpgsqlDbType.Varchar)
+                    {
+                        Value = (object?)result.ProviderAccountReference ?? DBNull.Value
+                    });
                 }, ct), ct);
 
     public static Task<int> CompleteSyncAsync(
@@ -138,6 +146,43 @@ public static class ConnectorOperationLease
                     });
                 }, ct), ct);
 
+    // Camera safety uses the same generation-bound provider-operation fence as GPS,
+    // but owns an independent cursor and outcome. A missing Safety & Cameras scope
+    // must not turn a working vehicle-statistics connection into Integration.Error.
+    public static Task<int> CompleteCameraSafetySyncAsync(
+        Database db,
+        ConnectorOperationContext operation,
+        ConnectorResult result,
+        string startTimeUtc,
+        string? nextCursor,
+        CancellationToken ct) => db.RunInSystemTransactionAsync(async () =>
+            await db.ExecuteAsync(
+                @"UPDATE integrations SET
+                      config_json=COALESCE(config_json,'{}'::jsonb)
+                        || jsonb_build_object(
+                             'cameraSafetyStartTime',@startTime::text,
+                             'cameraSafetyLastCompletedAt',@completedAt::text,
+                             'cameraSafetyLastOk',@ok,
+                             'cameraSafetyStatus',CASE WHEN @ok THEN 'ProviderDataPendingVerification' ELSE 'AttentionRequired' END)
+                        || CASE WHEN @cursor IS NULL THEN '{}'::jsonb
+                                ELSE jsonb_build_object('cameraSafetyCursor',@cursor::text) END,
+                      operation_lease_token=NULL,operation_lease_expires_at=NULL,updated_at=NOW()
+                  WHERE company_id=@cid AND id=@id
+                    AND operation_generation=@generation
+                    AND operation_lease_token=@token
+                    AND operation_lease_expires_at > NOW()",
+                c =>
+                {
+                    Bind(c, operation);
+                    c.Parameters.AddWithValue("@ok", result.Success);
+                    c.Parameters.AddWithValue("@startTime", startTimeUtc);
+                    c.Parameters.AddWithValue("@completedAt", DateTimeOffset.UtcNow.ToString("O"));
+                    c.Parameters.Add(new NpgsqlParameter("@cursor", NpgsqlDbType.Text)
+                    {
+                        Value = (object?)nextCursor ?? DBNull.Value
+                    });
+                }, ct), ct);
+
     public static Task<int> ReleaseAsErrorAsync(
         Database db,
         ConnectorOperationContext operation,
@@ -155,6 +200,21 @@ public static class ConnectorOperationLease
                     Bind(c, operation);
                     c.Parameters.AddWithValue("@isSyncOperation", operation.IsSyncOperation);
                 }, ct), ct);
+
+    // Some auxiliary provider actions own independent health state. When their
+    // eligibility changes after lease acquisition, release the fence without
+    // changing the integration's primary GPS status or freshness fields.
+    public static Task<int> ReleaseWithoutStatusChangeAsync(
+        Database db,
+        ConnectorOperationContext operation,
+        CancellationToken ct) => db.RunInSystemTransactionAsync(async () =>
+            await db.ExecuteAsync(
+                @"UPDATE integrations SET
+                      operation_lease_token=NULL,operation_lease_expires_at=NULL,updated_at=NOW()
+                  WHERE company_id=@cid AND id=@id
+                    AND operation_generation=@generation
+                    AND operation_lease_token=@token",
+                c => Bind(c, operation), ct), ct);
 
     private static void Bind(Npgsql.NpgsqlCommand command, ConnectorOperationContext operation)
     {

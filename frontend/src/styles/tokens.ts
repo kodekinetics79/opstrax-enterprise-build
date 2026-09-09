@@ -36,16 +36,25 @@ export const tokens = {
   // Text
   textPrimary: "#0f172a",
   textSecondary: "#475569",
-  textMuted: "#94a3b8",
+  textMuted: "#64748b",
+
+  // 4px spatial rhythm
+  space1: "4px",
+  space2: "8px",
+  space3: "12px",
+  space4: "16px",
+  space5: "20px",
+  space6: "24px",
+  space8: "32px",
 
   // Radii
-  rCard: "18px",
+  rCard: "16px",
   rBtn: "8px",
   rField: "8px",
-  rClay: "20px",
-  controlStandard: "34px",
-  controlCompact: "32px",
-  controlCta: "38px",
+  rClay: "16px",
+  controlStandard: "32px",
+  controlCompact: "28px",
+  controlCta: "36px",
   controlTouch: "44px",
 
   // v5.0 blur scale (mirror of --blur-*)
@@ -115,7 +124,7 @@ export const chart = {
   slate700: "#334155",
   slate600: "#475569", // alias tokens.textSecondary
   slate500: "#64748b",
-  slate400: "#94a3b8", // alias tokens.textMuted
+  slate400: "#94a3b8",
   surface: "#ffffff", // alias tokens.surface
   border: "#e2e8f0", // alias tokens.border
 } as const;

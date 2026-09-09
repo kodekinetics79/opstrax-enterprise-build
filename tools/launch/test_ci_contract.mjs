@@ -28,19 +28,17 @@ test("installed parser regressions stay outside zero-install launch tooling", ()
   }
 });
 
-test("CI reapplies Stage76 after Stage58, Stage59 and Stage67", () => {
+test("CI reapplies terminal security and migration-owned boundaries through the production runner", () => {
   const workflow = read(".github/workflows/ci.yml");
   const terminalStep = workflow.slice(
-    workflow.indexOf("Reapply mandatory terminal tenant and telemetry boundaries"),
-    workflow.indexOf("Run DB-backed integration suites"),
+    workflow.indexOf("Reapply mandatory terminal and migration-owned boundaries after schema materialization"),
+    workflow.indexOf("Apply bounded Canada and KSA HOS shadow candidate migrations"),
   );
-  assertOrdered(terminalStep, [
-    "2026_07_31_stage58_nonforgeable_tenant_ticket.sql",
-    "2026_07_31_stage59_data_protection_key_ring.sql",
-    "2026_08_02_stage67_telematics_diagnostics_integrity.sql",
-    "2026_08_11_stage76_telematics_security_hardening.sql",
-  ]);
+  assert.match(terminalStep, /\.\/tools\/apply-neon-predeploy-migrations\.sh/);
   assert.match(terminalStep, /version='2026_08_11_stage76_telematics_security_hardening'/);
+  assert.match(terminalStep, /version='2026_09_08_stage132_private_user_row_authority'/);
+  assert.match(terminalStep, /private_policy_contract_valid/);
+  assert.match(terminalStep, /migration_owned_policy_contract_valid/);
   assert.match(terminalStep, /defaclnamespace=0 OR n\.nspname='public'/);
   assert.match(terminalStep, /canonical_telemetry_events_id_seq/);
   assert.match(terminalStep, /telemetry_replay_device_state/);
@@ -168,6 +166,7 @@ test("release container Telematics tests have a hermetic Postgres service", () =
 
 test("release API image contains the required gateway and terminal migrations", () => {
   const dockerfile = read("backend-dotnet/Dockerfile");
+  const gatewayDockerfile = read("telematics/Dockerfile");
   const workflow = read(".github/workflows/ci.yml");
   const release = workflow.slice(
     workflow.indexOf("release-container-builds:"),
@@ -179,6 +178,15 @@ test("release API image contains the required gateway and terminal migrations", 
   // per-file docker cp + cmp assertions below still prove the image payload itself.
   assert.match(release, /sed -n '\/\^MIGRATIONS=\(\/,\/\^\)\/p' tools\/apply-neon-predeploy-migrations\.sh/);
   assert.match(release, /runner enrolls missing file/);
+  assert.ok(dockerfile.includes(
+    "COPY telematics/src/Opstrax.Telematics.Contracts/Opstrax.Telematics.Contracts.csproj telematics/src/Opstrax.Telematics.Contracts/",
+  ));
+  assert.ok(dockerfile.includes(
+    "COPY telematics/src/Opstrax.Telematics.Contracts/ telematics/src/Opstrax.Telematics.Contracts/",
+  ));
+  assert.ok(gatewayDockerfile.includes(
+    "COPY telematics/src/Opstrax.Telematics.Protocols.J1939/Opstrax.Telematics.Protocols.J1939.csproj telematics/src/Opstrax.Telematics.Protocols.J1939/",
+  ));
 
   for (const migration of [
     "2026_07_16_stage42_telemetry_gateways.sql",

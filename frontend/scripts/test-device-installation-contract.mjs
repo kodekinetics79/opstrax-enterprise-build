@@ -73,17 +73,19 @@ assert.match(devicesPage, /Replacement credentials/, "Rotated secrets must be sh
 assert.match(devicesPage, /setRotatedCredentials\(null\)/, "One-time rotated secrets must be cleared when the dialog closes");
 assert.match(devicesPage, /visible: canManageLifecycle/, "device lifecycle actions must carry an explicit server-permission visibility gate");
 assert.match(devicesPage, /visible: canAssign/, "device installation actions must carry an explicit assignment visibility gate");
-assert.match(devicesPage, /visible: canDelete/, "device archival must carry an explicit delete visibility gate");
+assert.match(devicesPage, /key: "retire",[\s\S]*?visible: canManageLifecycle/, "device retirement must carry an explicit lifecycle-permission visibility gate");
 assert.match(devicesPage, /const canCreate = canManageDeviceLifecycle/, "device onboarding must use the API's telemetry.devices.manage contract");
-assert.match(devicesPage, /const canDelete = canManageDeviceLifecycle/, "device archival must use the API's telemetry.devices.manage contract");
+assert.doesNotMatch(devicesPage, /const canDelete = canManageDeviceLifecycle/, "the obsolete archive/delete shortcut must stay removed");
 assert.match(devicesPage, /const canGovernInstallations = canManageDeviceLifecycle/, "device installation must use the API's telemetry.devices.manage contract");
 assert.match(devicesPage, /actionContracts\.filter\(\(contract\) => contract\.visible\)/, "permission-blocked device mutations must be omitted from the detail UI");
 assert.match(devicesPage, /\{connectOpen && canCreate \? \(/, "a stale device connection dialog must close when permission is lost");
 assert.match(devicesPage, /\{assignTarget && canGovernInstallations \? \(/, "a stale installation dialog must close when permission is lost");
 assert.match(devicesPage, /\{confirmTarget && confirmAllowed \? \(/, "destructive confirmation must fail closed if permission changes");
+assert.match(devicesPage, /\{retirementTarget && canManageDeviceLifecycle \? \(/, "a stale retirement dialog must close when lifecycle permission is lost");
 assert.doesNotMatch(devicesPage, /Schedule firmware for/, "Unsupported OTA scheduling must not be presented as an operational form");
 assert.doesNotMatch(devicesPage, /onRunDiagnostics|diagnosticsMut/, "Unsupported on-demand diagnostics must not be presented as an operational action");
-assert.match(devicesPage, /OTA scheduling and firmware history are not connected/, "Unsupported OTA must be labelled explicitly as read-only");
+assert.match(devicesPage, /OpsTrax does not dispatch an OTA command from this workflow/, "Firmware planning must state that it does not dispatch OTA commands");
+assert.match(devicesPage, /physical upgrade, recovery, rollback, and soak evidence remain on external hold/, "Firmware planning must preserve the physical-evidence hold");
 assert.doesNotMatch(devicesPage, /Metadata edits were captured/, "Unsupported metadata must not report success");
 assert.match(devicesPage, /Metadata read-only/, "Unsupported metadata must be labelled read-only");
 assert.match(devicesPage, /Installation History/, "The detail drawer must render installation history");
@@ -199,9 +201,10 @@ const confirmDialog = readFileSync(resolve(root, "src/components/ConfirmDialog.t
 assert.doesNotMatch(devicesPage, /window\.confirm\(/, "Native window.confirm blocks automation and assistive tech; lifecycle confirmations must use ConfirmDialog");
 assert.match(devicesPage, /import \{ ConfirmDialog \} from "@\/components\/ConfirmDialog";/, "The device page must import the shared accessible ConfirmDialog");
 assert.match(devicesPage, /<ConfirmDialog/, "ConfirmDialog must actually be rendered for lifecycle confirmations");
-for (const action of ['action: "archive"', 'action: "suspend"', 'action: "rotate-credentials"']) {
+for (const action of ['action: "suspend"', 'action: "rotate-credentials"']) {
   assert.match(devicesPage, new RegExp(action.replace(/[""]/g, '"')), `${action} must confirm through the in-app dialog`);
 }
+assert.match(devicesPage, /title=\{`Retire \$\{retirementTarget\.deviceName\}`\}/, "retirement must use its governed in-app form with typed confirmation and evidence fields");
 assert.match(confirmDialog, /role="dialog"/, "ConfirmDialog must expose a real dialog role");
 assert.match(confirmDialog, /aria-modal="true"/, "ConfirmDialog must be modal to assistive technology");
 assert.match(confirmDialog, /aria-labelledby=\{titleId\}/, "ConfirmDialog must be labelled by its visible title");

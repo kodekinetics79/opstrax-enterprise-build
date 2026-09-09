@@ -7,11 +7,15 @@ import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
 import { controlTowerApi } from "@/services/controlTowerApi";
 import { LiveMap } from "@/components/LiveMap";
 import { useTrips, useTripBreadcrumbs, useTripCompliance } from "@/hooks/useBatch7";
+import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import { summarizePositionFreshness } from "@/utils/telemetryProvenance";
 import { summarizeControlTowerStatus } from "@/utils/controlTowerStatus";
 import type { AnyRecord } from "@/types";
 
 export function ControlTowerPage() {
+  const hasPermission = useHasPermission();
+  const canViewDeviceEvidence = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_VIEW);
+  const canViewCameraEvidence = hasPermission(PERMISSIONS.SAFETY_EVIDENCE_VIEW);
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [activeFilter, setActiveFilter] = useState("All");
   const [activeTab, setActiveTab] = useState("Dispatch");
@@ -88,7 +92,7 @@ export function ControlTowerPage() {
   // Event data comes only from the authenticated, tenant-scoped .NET summary.
   // Live positions use the ticketed .NET telemetry stream above.
   const events = (data.events as AnyRecord[]) || [];
-  const tabs = ["Dispatch", "Active Trips", "Diagnostics", "Video Safety"];
+  const tabs = ["Dispatch", "Active Trips", ...((canViewDeviceEvidence || canViewCameraEvidence) ? ["Diagnostics"] : []), ...(canViewCameraEvidence ? ["Verified Camera Evidence"] : [])];
 
   return (
     <div className="control-tower flex h-full flex-col gap-6 overflow-y-auto">
@@ -101,7 +105,7 @@ export function ControlTowerPage() {
       <ControlStatusStrip kpis={kpis} generatedAt={data.generatedAt} alertCount={alertCount} actionCount={actionQueue.length} alertsAvailable={alerts.isSuccess} />
       <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
         <KpiCard label="Tracked Vehicles" value={String(kpis.trackedEntities ?? entities.length)} icon={<RadioTower />} status="Active" />
-        <KpiCard label="Online Device Evidence" value={kpis.onlineDevices == null ? "—" : String(kpis.onlineDevices)} icon={<Satellite />} status={kpis.onlineDevices == null ? "Unavailable" : "Reported"} />
+        {canViewDeviceEvidence && <KpiCard label="Online Device Evidence" value={kpis.onlineDevices == null ? "—" : String(kpis.onlineDevices)} icon={<Satellite />} status={kpis.onlineDevices == null ? "Unavailable" : "Reported"} />}
         <KpiCard label="Open Telemetry Alerts" value={alerts.isSuccess ? String(alertCount) : "—"} icon={<Bell />} status={!alerts.isSuccess ? "Unavailable" : alertCount > 0 ? "Review" : "Reported"} />
         <KpiCard label="Telemetry Quality" value={kpis.telemetryQuality == null ? "—" : String(kpis.telemetryQuality)} icon={<Gauge />} status={kpis.telemetryQuality == null ? "Unavailable" : "Reported"} />
         <KpiCard label="High Risk Units" value={kpis.highRiskUnits == null ? "—" : String(kpis.highRiskUnits)} icon={<ShieldAlert />} status={kpis.highRiskUnits == null ? "Unavailable" : Number(kpis.highRiskUnits) > 0 ? "Review" : "Reported"} />
@@ -120,7 +124,7 @@ export function ControlTowerPage() {
                 }
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">{["All","Speeding","Device offline","Camera offline","Fleet risk","Delayed"].map((filter) => <button type="button" key={filter} className={filter === activeFilter ? "btn-primary" : "btn-ghost"} onClick={() => setActiveFilter(filter)}>{filter}</button>)}</div>
+            <div className="flex flex-wrap gap-2">{["All","Speeding",...(canViewDeviceEvidence ? ["Device attention","Device evidence unavailable"] : []),...(canViewCameraEvidence ? ["Camera attention"] : []),"Fleet risk","Delayed"].map((filter) => <button type="button" key={filter} className={filter === activeFilter ? "btn-primary" : "btn-ghost"} onClick={() => setActiveFilter(filter)}>{filter}</button>)}</div>
           </div>
           <div className="map-surface mt-4 h-[660px]">
             <LiveMap entities={entities} geofences={geofences} onSelect={setSelected} />
@@ -161,7 +165,7 @@ export function ControlTowerPage() {
           </Panel>
           <Panel title={`Telemetry Alerts${(alerts.data?.length ?? 0) > 0 ? ` (${alerts.data!.length})` : ""}`}>
             {(!alerts.data || alerts.data.length === 0)
-              ? <p className="text-sm text-slate-500">No open alerts.</p>
+              ? <p className="text-sm text-slate-500">No open alert records in the current result.</p>
               : <div className="space-y-3">{alerts.data.slice(0, 6).map((alert) => <TelemetryAlertRow key={String(alert["id"])} alert={alert} onAck={() => ackAlert.mutate(Number(alert["id"]))} onResolve={() => resolveAlert.mutate(Number(alert["id"]))} />)}</div>
             }
           </Panel>
@@ -177,11 +181,37 @@ export function ControlTowerPage() {
           {activeTab === "Dispatch" && <DataTable rows={(data.jobs as AnyRecord[]) || []} columns={["jobNumber","customerName","status","priority","slaStatus","eta","vehicleCode","driverName","recommendedAction"]} />}
           {activeTab === "Active Trips" && <ActiveTripsTable trips={trips.data ?? []} isLoading={trips.isLoading} />}
           {activeTab === "Diagnostics" && <DataTable rows={(data.diagnostics as AnyRecord[]) || []} columns={["vehicleCode","deviceStatus","cameraStatus","readinessScore","dataQualityScore","riskScore","recommendedAction"]} />}
-          {activeTab === "Video Safety" && <div className="grid gap-4 lg:grid-cols-3">{((data.safetyVideo as AnyRecord[]) || []).map((event) => <div key={String(event.id)} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex aspect-video items-center justify-center rounded-xl border border-violet-100 bg-violet-50 text-violet-700"><Camera className="h-10 w-10" /></div><p className="mt-3 font-semibold text-slate-900">{String(event.eventNumber)}</p><p className="mt-1 text-sm text-slate-500">{String(event.aiSummary || event.eventType)}</p><div className="mt-3 flex gap-2"><RiskBadge risk={event.severity} /><StatusBadge status={event.evidenceStatus} /></div></div>)}</div>}
+          {activeTab === "Verified Camera Evidence" && <VerifiedCameraEvidence rows={(data.safetyVideo as AnyRecord[]) || []} />}
         </div>
       </Panel>
 
       <EntityDrawer detail={detail.data} loading={detail.isLoading} onClose={() => setSelected(null)} />
+    </div>
+  );
+}
+
+function VerifiedCameraEvidence({ rows }: { rows: AnyRecord[] }) {
+  return (
+    <div>
+      <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+        Only provider-authoritative records with media marked ready appear here. Manual metadata and pending provider intake are reviewed in <a className="font-semibold text-teal-700 hover:underline" href="/dashcam">Camera Safety</a>; they do not count as playable or certified evidence.
+      </div>
+      {rows.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
+          <Camera className="mx-auto h-9 w-9 text-slate-400" />
+          <p className="mt-3 font-semibold text-slate-900">No provider-verified, media-ready camera evidence is available.</p>
+          <p className="mt-1 text-sm text-slate-500">Camera provider, media, privacy, device, and certification gates remain on external hold until authentic evidence is collected.</p>
+        </div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-3">{rows.map((event) => (
+          <div key={String(event.id)} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex aspect-video items-center justify-center rounded-xl border border-violet-100 bg-violet-50 text-violet-700"><Camera className="h-10 w-10" /></div>
+            <p className="mt-3 font-semibold text-slate-900">{String(event.eventNumber)}</p>
+            <p className="mt-1 text-sm text-slate-500">{String(event.eventType || "Camera event")}</p>
+            <div className="mt-3 flex gap-2"><RiskBadge risk={event.severity} /><StatusBadge status="Media ready" /></div>
+          </div>
+        ))}</div>
+      )}
     </div>
   );
 }

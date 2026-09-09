@@ -137,6 +137,14 @@ public class FoundationPostgresSmokeTests
                 ActorTypes.AiAgent,
                 "ai-smoke");
             createdIds["ai_recommendation"] = recommendation.Id;
+            var persistedRecommendation = await db.QuerySingleAsync(
+                "SELECT module_key FROM ai_recommendations WHERE id=@id AND tenant_id=@tenantId",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@id", recommendation.Id);
+                    c.Parameters.AddWithValue("@tenantId", long.Parse(tenantId));
+                });
+            Assert.Equal("fleet.foundation", persistedRecommendation?["moduleKey"]?.ToString());
 
             var actionRequest = ai.CreateActionRequest(
                 tenantId,
