@@ -42,6 +42,7 @@ import {
   integrationsApi,
   type IntegrationCategory,
   type IntegrationRecord,
+  type IntegrationStatus,
   type IntegrationsPayload,
   type IntegrationTestResult,
   type IntegrationWriteInput,
@@ -108,6 +109,10 @@ const FALLBACK_CATEGORY_META = {
 
 function categoryMeta(category: string) {
   return CATEGORY_META[category as IntegrationCategory] ?? FALLBACK_CATEGORY_META;
+}
+
+function effectiveIntegrationStatus(record: IntegrationRecord): IntegrationStatus {
+  return record.adapterAvailable === true ? record.status : "Disconnected";
 }
 
 function categoryFields(category: string): ConfigField[] {
@@ -1509,7 +1514,16 @@ export function IntegrationsPage() {
   });
 
   const payload = q.data;
-  const integrations = payload?.records ?? [];
+  // The API normalizes catalog-only rows as Disconnected. Keep the customer-facing
+  // page fail-closed as well so an older or malformed response can never pair
+  // "adapter unavailable" with a live connection claim.
+  const integrations = useMemo(
+    () => (payload?.records ?? []).map((record) =>
+      record.adapterAvailable === true
+        ? record
+        : { ...record, status: effectiveIntegrationStatus(record) }),
+    [payload?.records],
+  );
   const motiveRecord = integrations.find((record) => record.key === "motive");
   // A URL result is a navigation hint, not proof. Success also requires the
   // server-persisted current connection verdict and OAuth verification status.
@@ -1529,13 +1543,13 @@ export function IntegrationsPage() {
       } as Record<string, string>)[motiveOAuthOutcome ?? ""]
       ?? "Motive returned to OpsTrax, but no successful current verification is recorded. Review the connector before continuing.";
   const activity = payload?.activity ?? [];
-  const summary = payload?.summary ?? {
+  const summary = {
     total: integrations.length,
-    connected: integrations.filter((item) => item.status === "Connected").length,
-    pending: integrations.filter((item) => item.status === "Pending").length,
-    errors: integrations.filter((item) => item.status === "Error").length,
+    connected: integrations.filter((item) => effectiveIntegrationStatus(item) === "Connected").length,
+    pending: integrations.filter((item) => effectiveIntegrationStatus(item) === "Pending").length,
+    errors: integrations.filter((item) => effectiveIntegrationStatus(item) === "Error").length,
     categories: new Set(integrations.map((item) => item.category)).size,
-    lastUpdated: new Date().toISOString(),
+    lastUpdated: payload?.summary.lastUpdated ?? new Date().toISOString(),
   };
 
   // Category chips ordered canonically, then any unexpected categories.

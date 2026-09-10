@@ -11981,6 +11981,8 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         var lastSyncAt = row.TryGetValue("lastSyncAt", out var ls) && ls is not null ? ls : null;
         var syncLabel = Str("syncLabel");
         var isCustom = row.TryGetValue("isCustom", out var ic) && ic is bool b && b;
+        var adapterAvailable = isCustom || connectors.HasAdapter(key);
+        var persistedStatus = string.IsNullOrWhiteSpace(Str("status")) ? "Disconnected" : Str("status");
         return new
         {
             id = row.TryGetValue("id", out var idv) && idv is not null ? Convert.ToInt64(idv) : 0L,
@@ -11991,7 +11993,12 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             logo = string.IsNullOrWhiteSpace(Str("logo"))
                 ? (name.Length >= 3 ? name[..3].ToUpperInvariant() : name.ToUpperInvariant())
                 : Str("logo"),
-            status = string.IsNullOrWhiteSpace(Str("status")) ? "Disconnected" : Str("status"),
+            // A catalog-only provider cannot truthfully be Connected, Pending, or in
+            // an adapter Error state because this build cannot contact that provider.
+            // Historical/demo rows may still carry one of those values in storage;
+            // fail closed at the API boundary so every client and summary sees the
+            // capability-backed verdict.
+            status = adapterAvailable ? persistedStatus : "Disconnected",
             sync = string.IsNullOrWhiteSpace(syncLabel) ? (lastSyncAt is null ? "—" : "Synced") : syncLabel,
             lastSyncAt,
             relatedSystems = ParseJsonStringArray(row.GetValueOrDefault("relatedSystemsJson")),
@@ -12008,7 +12015,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             isCustom,
             // Built-in catalog presence is not connector capability. Only a registered
             // provider adapter (or a tenant-created generic connector) is configurable.
-            adapterAvailable = isCustom || connectors.HasAdapter(key),
+            adapterAvailable,
             // Connector health signal from the last real handshake.
             lastTestedAt = row.GetValueOrDefault("lastTestedAt"),
             lastTestOk = row.TryGetValue("lastTestOk", out var lto) && lto is bool tb ? tb : (bool?)null,

@@ -188,6 +188,7 @@ public sealed class TelemetryLaunchHardeningTests
 
         Assert.Contains("public bool HasAdapter", registry, StringComparison.Ordinal);
         Assert.Contains("adapterAvailable = isCustom || connectors.HasAdapter(key)", endpoints, StringComparison.Ordinal);
+        Assert.Contains("status = adapterAvailable ? persistedStatus : \"Disconnected\"", endpoints, StringComparison.Ordinal);
         Assert.Contains("!connectors.HasAdapter(integrationKey)", configure, StringComparison.Ordinal);
         AssertOrdered(configure, "!connectors.HasAdapter(integrationKey)", "MergeConfigForStorage");
         Assert.Contains("No credentials were stored", configure, StringComparison.Ordinal);
@@ -198,6 +199,8 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.Contains("Adapter unavailable — evaluation only", page, StringComparison.Ordinal);
         Assert.Contains("OpsTrax will not accept credentials for it", page, StringComparison.Ordinal);
         Assert.Contains("No credentials can be stored and no connection is claimed", page, StringComparison.Ordinal);
+        Assert.Contains("record.adapterAvailable === true", page, StringComparison.Ordinal);
+        Assert.Contains("effectiveIntegrationStatus(record)", page, StringComparison.Ordinal);
     }
 
     [Fact]
