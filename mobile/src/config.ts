@@ -4,15 +4,34 @@ const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, unknown>;
 
 export type AppVariant = "driver" | "fleet" | "customer" | "unified";
 
-function parseAppVariant(value: unknown): AppVariant {
-  const normalized = String(value ?? "unified").trim().toLowerCase();
+function normalizeVariant(value: unknown): AppVariant | null {
+  const normalized = String(value ?? "").trim().toLowerCase();
   return normalized === "driver" || normalized === "fleet" || normalized === "customer" || normalized === "unified"
     ? normalized
-    : "unified";
+    : null;
 }
 
-export const APP_NAME = String(extra.appName ?? "OpsTrax Mobile");
-export const APP_VARIANT = parseAppVariant(extra.appVariant ?? process.env.EXPO_PUBLIC_APP_VARIANT);
+function inferVariant(): AppVariant {
+  const explicit = normalizeVariant(extra.appVariant)
+    ?? normalizeVariant(process.env.EXPO_PUBLIC_APP_VARIANT)
+    ?? normalizeVariant(process.env.EXPO_PUBLIC_PRODUCT);
+  if (explicit && explicit !== "unified") return explicit;
+
+  const nativeName = String(extra.appName ?? Constants.expoConfig?.name ?? "").trim().toLowerCase();
+  const bundleId = String(Constants.expoConfig?.ios?.bundleIdentifier ?? Constants.expoConfig?.android?.package ?? "")
+    .trim()
+    .toLowerCase();
+  const identity = `${nativeName} ${bundleId}`;
+
+  if (/\bdriver\b/.test(identity) || bundleId.endsWith(".driver") || bundleId.includes(".driver.")) return "driver";
+  if (/\bfleet\b/.test(identity) || bundleId.endsWith(".fleet") || bundleId.includes(".fleet.")) return "fleet";
+  if (/\bcustomer\b/.test(identity) || bundleId.endsWith(".customer") || bundleId.includes(".customer.")) return "customer";
+
+  return explicit ?? "unified";
+}
+
+export const APP_NAME = String(extra.appName ?? Constants.expoConfig?.name ?? "OpsTrax Mobile");
+export const APP_VARIANT = inferVariant();
 export const STAGE_LABEL = String(extra.stage ?? "14A");
 export const API_BASE_URL =
   String(extra.apiBaseUrl ?? process.env.EXPO_PUBLIC_API_BASE_URL ?? process.env.EXPO_PUBLIC_DOTNET_API_URL ?? "http://localhost:8088")
