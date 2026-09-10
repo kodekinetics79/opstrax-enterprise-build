@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Animated, Easing, KeyboardAvoidingView, Platform, Text, View } from "react-native";
 import {
   ActionButton,
@@ -24,10 +24,10 @@ export function LoginScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(authError);
 
-  const logoEntrance = useRef(new Animated.Value(0)).current;
-  const heroEntrance = useRef(new Animated.Value(0)).current;
-  const formEntrance = useRef(new Animated.Value(0)).current;
-  const glowPulse = useRef(new Animated.Value(0)).current;
+  const [logoEntrance] = useState(() => new Animated.Value(0));
+  const [heroEntrance] = useState(() => new Animated.Value(0));
+  const [formEntrance] = useState(() => new Animated.Value(0));
+  const [glowPulse] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     Animated.stagger(110, [
