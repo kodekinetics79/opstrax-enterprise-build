@@ -12,7 +12,7 @@ import {
   Screen,
   SectionHeader,
 } from "@/components/ui";
-import { APP_NAME, APP_PRODUCT } from "@/config";
+import { APP_NAME, APP_VARIANT } from "@/config";
 import { useSession } from "@/auth/SessionProvider";
 
 export function LoginScreen() {
@@ -108,7 +108,7 @@ export function LoginScreen() {
     ],
   });
 
-  const isDriver = APP_PRODUCT === "driver";
+  const isDriver = APP_VARIANT === "driver";
 
   return (
     <Screen>
@@ -242,6 +242,9 @@ export function LoginScreen() {
               )}
               <Text style={{ color: colors.subtle, fontSize: 11.5, lineHeight: 17.5 }}>
                 Tenant, branch, role, permissions, and account ownership are bound by the server session. The mobile client never chooses an authenticated tenant after sign-in.
+              </Text>
+              <Text style={{ color: colors.subtle, fontSize: 10.5, lineHeight: 15, textAlign: "center" }}>
+                Release: DRIVER-2026.09.10-B
               </Text>
             </View>
           </Panel>
