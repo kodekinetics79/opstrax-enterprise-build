@@ -314,6 +314,8 @@ MIGRATIONS=(
   2026_09_08_stage131_alert_source_truth
   # Canonical synthetic ELDs never imply a healthy or authenticated provider feed.
   2026_09_09_stage133_demo_eld_certification_truth
+  # Reconcile the original OPX-DEMO ELD fixture that predates Stage133's serial vocabulary.
+  2026_09_09_stage134_legacy_demo_eld_reconciliation
   # Commercial truth overlays. These fail customer-facing operational reads
   # closed unless their persisted evidence is qualified at the source.
   2026_09_08_notification_delivery_contract
@@ -524,7 +526,8 @@ BEGIN
       ('2026_09_08_stage129_latest_device_signal_projection'),
       ('2026_09_08_stage130_canonical_diagnostic_evidence_identity'),
       ('2026_09_08_stage131_alert_source_truth'),
-      ('2026_09_09_stage133_demo_eld_certification_truth')) required(version)
+      ('2026_09_09_stage133_demo_eld_certification_truth'),
+      ('2026_09_09_stage134_legacy_demo_eld_reconciliation')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -588,6 +591,32 @@ BEGIN
     WHERE company_code='ACME-TRANSPORT' AND name='Acme Transport'
   ) THEN
     RAISE EXCEPTION 'Stage133 ACME demo harness truth cleanup is incomplete';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM eld_devices d
+    JOIN companies c ON c.id=d.company_id
+    WHERE c.company_code='OPX-DEMO'
+      AND d.device_serial ~ '^(DEMO-)?ELD-[0-9]{3}-(TRK|VAN|BOX)[0-9]{3}$'
+      AND (d.device_serial NOT LIKE 'DEMO-%'
+        OR d.device_model IS DISTINCT FROM 'Synthetic demo ELD'
+        OR d.provider IS DISTINCT FROM 'Synthetic fixture — no provider account'
+        OR d.status IS DISTINCT FROM 'Diagnostic'
+        OR d.device_state IS DISTINCT FROM 'Quarantined'
+        OR d.health_status IS DISTINCT FROM 'never_connected'
+        OR d.provider_sync_status IS DISTINCT FROM 'Unverified'
+        OR d.first_connected_at IS NOT NULL
+        OR d.last_heartbeat_at IS NOT NULL
+        OR d.last_sync_at IS NOT NULL
+        OR d.provider_account_ref IS NOT NULL
+        OR d.provider_external_id IS NOT NULL
+        OR d.api_key_hash IS NOT NULL
+        OR d.api_key_previous_hash IS NOT NULL
+        OR d.hmac_secret IS NOT NULL
+        OR d.hmac_secret_encrypted IS NOT NULL
+        OR d.hmac_previous_secret_encrypted IS NOT NULL)
+  ) THEN
+    RAISE EXCEPTION 'Stage134 original OPX-DEMO ELD truth cleanup is incomplete';
   END IF;
   IF to_regclass('public.camera_provider_event_inbox') IS NULL
      OR to_regclass('public.camera_provider_media_references') IS NULL THEN

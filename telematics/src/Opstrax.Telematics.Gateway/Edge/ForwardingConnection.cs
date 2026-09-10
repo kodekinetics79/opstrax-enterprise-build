@@ -520,8 +520,10 @@ internal sealed class ForwardingConnection
             }
             else
             {
-                _edgeMetrics.IncrementNormalizationRejections();
                 _edgeMetrics.RecordNormalizationRejection(normalized.Rejection);
+                // Publish the aggregate after its cause so readers never observe a new
+                // rejection without the corresponding diagnostic counter.
+                _edgeMetrics.IncrementNormalizationRejections();
 
                 // Named, not just counted. This frame is about to be acknowledged and dropped, so
                 // the device will discard its only copy — right when the DEVICE sent something

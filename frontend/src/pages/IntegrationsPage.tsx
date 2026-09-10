@@ -100,7 +100,17 @@ const CATEGORY_META: Record<IntegrationCategory, { icon: ReactNode; accent: stri
   Compliance: { icon: <ShieldCheck className="h-3.5 w-3.5" />, accent: "bg-emerald-50 border-emerald-200 text-emerald-700", dot: "bg-emerald-500" },
 };
 
-function categoryFields(category: IntegrationCategory): ConfigField[] {
+const FALLBACK_CATEGORY_META = {
+  icon: <Plug className="h-3.5 w-3.5" />,
+  accent: "bg-slate-50 border-slate-200 text-slate-700",
+  dot: "bg-slate-500",
+};
+
+function categoryMeta(category: string) {
+  return CATEGORY_META[category as IntegrationCategory] ?? FALLBACK_CATEGORY_META;
+}
+
+function categoryFields(category: string): ConfigField[] {
   switch (category) {
     case "ERP & Accounting":
       return [
@@ -149,6 +159,12 @@ function categoryFields(category: IntegrationCategory): ConfigField[] {
         { key: "profile", label: "Compliance profile", type: "text", placeholder: "US FMCSA" },
         { key: "exportWindow", label: "Export window", type: "text", placeholder: "daily" },
         { key: "syncIntervalMinutes", label: "Sync interval (minutes)", type: "number", placeholder: "1440" },
+      ];
+    default:
+      return [
+        { key: "baseUrl", label: "Service endpoint", type: "url", placeholder: "https://provider.example.com" },
+        { key: "apiKey", label: "API key", type: "text", placeholder: "Paste a tenant-authorized key" },
+        { key: "syncIntervalMinutes", label: "Sync interval (minutes)", type: "number", placeholder: "15" },
       ];
   }
 }
@@ -207,7 +223,7 @@ function formatRelativeTime(iso?: string | null): string {
   return `${Math.round(diffSec / 86400)}d ago`;
 }
 
-function categoryText(category: IntegrationCategory) {
+function categoryText(category: string) {
   switch (category) {
     case "ERP & Accounting":
       return "Finance and ERP systems";
@@ -225,11 +241,13 @@ function categoryText(category: IntegrationCategory) {
       return "Device and sensor telemetry";
     case "Compliance":
       return "Authority and reporting workflows";
+    default:
+      return "Custom and legacy connector category";
   }
 }
 
-function CategoryBadge({ category }: { category: IntegrationCategory }) {
-  const meta = CATEGORY_META[category];
+function CategoryBadge({ category }: { category: string }) {
+  const meta = categoryMeta(category);
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[10px] font-bold uppercase tracking-[0.14em] ${meta.accent}`}>
       {meta.icon}
@@ -470,7 +488,7 @@ function ConfigDrawer({
   });
 
   const fields = integrationFields(integration);
-  const meta = CATEGORY_META[integration.category];
+  const meta = categoryMeta(integration.category);
   const adapterAvailable = integration.adapterAvailable === true;
   const canConfigure = canManage && adapterAvailable;
 
@@ -1193,7 +1211,7 @@ function ConnectorCard({
   const isConnected = integration.status === "Connected";
   const isError = integration.status === "Error";
   const adapterAvailable = integration.adapterAvailable === true;
-  const meta = CATEGORY_META[integration.category];
+  const meta = categoryMeta(integration.category);
   const primaryLabel =
     integration.status === "Pending" ? "Authorize" : isError ? "Reconnect" : "Connect";
   const attemptHealth = connectorAttemptHealth(integration);
@@ -1559,7 +1577,7 @@ export function IntegrationsPage() {
 
   // Group the filtered set by category in canonical order for section headers.
   const grouped = useMemo(() => {
-    const map = new Map<IntegrationCategory, IntegrationRecord[]>();
+    const map = new Map<string, IntegrationRecord[]>();
     for (const item of filtered) {
       const list = map.get(item.category) ?? [];
       list.push(item);
@@ -1567,7 +1585,7 @@ export function IntegrationsPage() {
     }
     const order = [
       ...CATEGORY_ORDER.filter((cat) => map.has(cat)),
-      ...Array.from(map.keys()).filter((cat) => !CATEGORY_ORDER.includes(cat)),
+      ...Array.from(map.keys()).filter((cat) => !CATEGORY_ORDER.includes(cat as IntegrationCategory)),
     ];
     return order.map((cat) => [cat, map.get(cat)!] as const);
   }, [filtered]);
@@ -1811,7 +1829,7 @@ export function IntegrationsPage() {
           {categories.map((item) => {
             const active = categoryFilter === item;
             const count = item === "All" ? integrations.length : categoryCounts.get(item) ?? 0;
-            const meta = item === "All" ? null : CATEGORY_META[item as IntegrationCategory];
+            const meta = item === "All" ? null : categoryMeta(item);
             return (
               <button
                 key={item}
@@ -1851,7 +1869,7 @@ export function IntegrationsPage() {
             />
           ) : (
             grouped.map(([category, records]) => {
-              const meta = CATEGORY_META[category];
+              const meta = categoryMeta(category);
               return (
                 <section key={category} className="flex flex-col gap-3">
                   <div className="flex items-center gap-2.5">
