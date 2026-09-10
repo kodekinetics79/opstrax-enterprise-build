@@ -14,6 +14,7 @@ import { DriverTodayScreen } from "@/screens/DriverTodayScreen";
 import { DriverTripScreen } from "@/screens/DriverTripScreen";
 import { DriverProofScreen } from "@/screens/DriverProofScreen";
 import { DriverComplianceScreen } from "@/screens/DriverComplianceScreen";
+import { DriverDispatchScreen } from "@/screens/DriverDispatchScreen";
 import { CustomerHomeScreen } from "@/screens/CustomerHomeScreen";
 import { CustomerShipmentsScreen } from "@/screens/CustomerShipmentsScreen";
 import { CustomerBillingScreen } from "@/screens/CustomerBillingScreen";
@@ -31,6 +32,7 @@ const tabIcons: Record<string, string> = {
   Trip: "↗",
   Proof: "✓",
   Compliance: "◆",
+  Dispatch: "✦",
   Home: "◉",
   Work: "↗",
   Fleet: "⌁",
@@ -80,7 +82,7 @@ function DriverTabs() {
       <Tabs.Screen name="Trip" component={DriverTripScreen} options={{ title: "Current trip", ...tabOptions("Trip") }} />
       <Tabs.Screen name="DriverProof" component={DriverProofScreen} options={{ title: "Proof", ...tabOptions("Proof") }} />
       <Tabs.Screen name="Compliance" component={DriverComplianceScreen} options={{ title: "Compliance", ...tabOptions("Compliance") }} />
-      <Tabs.Screen name="DriverMore" component={SettingsScreen} options={{ title: "Profile & security", ...tabOptions("More") }} />
+      <Tabs.Screen name="DriverDispatch" component={DriverDispatchScreen} options={{ title: "Dispatch", ...tabOptions("Dispatch") }} />
     </Tabs.Navigator>
   );
 }
