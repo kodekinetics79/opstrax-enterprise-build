@@ -29,9 +29,13 @@ function requirePublicHttpsUrl(value: string, label: string) {
 type AppVariant = "driver" | "fleet" | "customer" | "unified";
 
 function resolveVariant(): AppVariant {
-  const raw = process.env.EXPO_PUBLIC_APP_VARIANT?.trim().toLowerCase() || "unified";
+  const raw = (
+    process.env.EXPO_PUBLIC_APP_VARIANT?.trim().toLowerCase() ||
+    process.env.EXPO_PUBLIC_PRODUCT?.trim().toLowerCase() ||
+    "unified"
+  );
   if (["driver", "fleet", "customer", "unified"].includes(raw)) return raw as AppVariant;
-  throw new Error(`Unsupported EXPO_PUBLIC_APP_VARIANT: ${raw}`);
+  throw new Error(`Unsupported mobile app variant: ${raw}`);
 }
 
 const APP_VARIANT = resolveVariant();
