@@ -6,7 +6,6 @@ import {
   EmptyState,
   ErrorState,
   Field,
-  HeroPanel,
   Input,
   LoadingState,
   Panel,
@@ -16,6 +15,7 @@ import {
   SectionHeader,
   toneForStatus,
 } from "@/components/ui";
+import { DriverActionTile, DriverSceneHero } from "@/components/DriverExperience";
 import { useSession } from "@/auth/SessionProvider";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
 import { clearSecureDraft, readSecureDraft, secureDraftKey, writeSecureDraft } from "@/storage/secureDrafts";
@@ -23,11 +23,7 @@ import { textOf, titleCase } from "@/data/records";
 
 const EXCEPTION_TYPES = ["route_blocked", "late_pickup", "late_delivery", "vehicle_breakdown", "customer_hold", "safety_hold", "general"];
 
-type ExceptionDraft = {
-  exceptionType: string;
-  notes: string;
-  open: boolean;
-};
+type ExceptionDraft = { exceptionType: string; notes: string; open: boolean };
 
 export function DriverTripScreen() {
   const { api, session } = useSession();
@@ -40,9 +36,7 @@ export function DriverTripScreen() {
   const [vehicleRef, setVehicleRef] = useState("");
   const assignment = current.data?.assignment;
   const vehicleConfirmed = Boolean(assignment?.vehicleConfirmedAt);
-  const exceptionDraftKey = assignment?.id
-    ? secureDraftKey("driver-exception", session?.company.id ?? session?.company.code, session?.user.id, assignment.id)
-    : null;
+  const exceptionDraftKey = assignment?.id ? secureDraftKey("driver-exception", session?.company.id ?? session?.company.code, session?.user.id, assignment.id) : null;
   const draftReady = exceptionDraftKey !== null && hydratedDraftKey === exceptionDraftKey;
 
   useEffect(() => {
@@ -82,21 +76,16 @@ export function DriverTripScreen() {
     if (!assignment?.id) return;
     Alert.alert(`Mark ${titleCase(status)}?`, "This updates the live dispatch board and cannot be undone from the mobile app.", [
       { text: "Cancel", style: "cancel" },
-      {
-        text: "Update",
-        onPress: () => void (async () => {
-          setBusy(true);
-          try {
-            await api.updateDriverAssignmentStatus(assignment.id, status);
-            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            current.refresh();
-          } catch (error) {
-            Alert.alert("Status update failed", error instanceof Error ? error.message : "The server rejected the transition.");
-          } finally {
-            setBusy(false);
-          }
-        })(),
-      },
+      { text: "Update", onPress: () => void (async () => {
+        setBusy(true);
+        try {
+          await api.updateDriverAssignmentStatus(assignment.id, status);
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          current.refresh();
+        } catch (error) {
+          Alert.alert("Status update failed", error instanceof Error ? error.message : "The server rejected the transition.");
+        } finally { setBusy(false); }
+      })() },
     ]);
   };
 
@@ -110,9 +99,7 @@ export function DriverTripScreen() {
       current.refresh();
     } catch (error) {
       Alert.alert("Vehicle not confirmed", error instanceof Error ? error.message : "The reference did not match the assigned unit.");
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   };
 
   const reportException = async () => {
@@ -133,114 +120,80 @@ export function DriverTripScreen() {
       current.refresh();
     } catch (error) {
       Alert.alert("Exception report failed", error instanceof Error ? error.message : "The server rejected the report. Your draft remains saved on this device.");
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   };
+
+  const statusLabel = assignment ? titleCase(assignment.assignmentStatus) : "Awaiting assignment";
 
   return (
     <Screen>
-      <HeroPanel tone="teal">
-        <SectionHeader
-          eyebrow="Live trip"
-          title={textOf(assignment?.shipmentNumber, "Trip")}
-          description="Only assignment transitions allowed by the backend state machine are shown."
-          right={assignment ? <Pill label={titleCase(assignment.assignmentStatus)} tone={toneForStatus(assignment.assignmentStatus)} /> : undefined}
-        />
-      </HeroPanel>
+      <DriverSceneHero
+        eyebrow="Live trip"
+        title={textOf(assignment?.shipmentNumber, "No active trip")}
+        description={assignment ? "Move through the route with live dispatch state, vehicle confirmation, navigation, and protected exception reporting." : "Your next dispatched load will appear here automatically."}
+        status={statusLabel}
+        tone={assignment ? "teal" : "blue"}
+      >
+        <Row>
+          <DriverActionTile code="P" title="Pickup" subtitle={assignment?.pickupAddress ? "Destination ready" : "Not assigned"} tone="blue" />
+          <DriverActionTile code="D" title="Delivery" subtitle={assignment?.dropoffAddress ? "Destination ready" : "Not assigned"} tone="green" />
+          <DriverActionTile code="V" title="Vehicle" subtitle={vehicleConfirmed ? "Confirmed" : "Verify unit"} tone={vehicleConfirmed ? "teal" : "amber"} />
+          <DriverActionTile code="!" title="Exceptions" subtitle="Protected reporting" tone="red" />
+        </Row>
+      </DriverSceneHero>
 
       {current.loading ? <LoadingState label="Loading trip…" /> : null}
       {current.error ? <ErrorState title="Trip unavailable" body={current.error} /> : null}
       {!current.loading && !current.error && !assignment ? <EmptyState title="No active trip" body="A dispatch assignment will appear here when it is assigned to your driver identity." /> : null}
 
-      {assignment ? (
-        <>
-          <Panel variant="elevated" tone="blue">
-            <SectionHeader
-              eyebrow="Route"
-              title="Pickup to delivery"
-              description="Open a destination in the device maps app. OpsTrax does not fabricate route geometry."
-            />
-            <View style={{ gap: 10 }}>
-              <Field label="Pickup" value={assignment.pickupAddress} />
-              <ActionButton label="Navigate to pickup" onPress={() => void openMaps(assignment.pickupAddress)} variant="secondary" disabled={!assignment.pickupAddress} />
-              <Field label="Delivery" value={assignment.dropoffAddress} />
-              <ActionButton label="Navigate to delivery" onPress={() => void openMaps(assignment.dropoffAddress)} variant="secondary" disabled={!assignment.dropoffAddress} />
+      {assignment ? <>
+        <Panel variant="elevated" tone="blue">
+          <SectionHeader eyebrow="Route" title="Pickup to delivery" description="Open a destination in the device maps app. OpsTrax does not fabricate route geometry." />
+          <View style={{ gap: 10 }}>
+            <Field label="Pickup" value={assignment.pickupAddress} />
+            <ActionButton label="Navigate to pickup" onPress={() => void openMaps(assignment.pickupAddress)} variant="secondary" disabled={!assignment.pickupAddress} />
+            <Field label="Delivery" value={assignment.dropoffAddress} />
+            <ActionButton label="Navigate to delivery" onPress={() => void openMaps(assignment.dropoffAddress)} variant="secondary" disabled={!assignment.dropoffAddress} />
+          </View>
+        </Panel>
+
+        <Panel variant="elevated" tone="teal">
+          <SectionHeader eyebrow="Progress" title="Update live status" description="Delivery completion is never a simple status button; it requires proof on the Proof tab." right={<Pill label={statusLabel} tone={toneForStatus(assignment.assignmentStatus)} />} />
+          {!vehicleConfirmed && current.data?.driverNextStatuses?.includes("en_route_pickup") ? (
+            <View style={{ gap: 10, marginBottom: 12 }}>
+              <Field label="Assigned unit" value={textOf(assignment?.vehicleCode, "Unavailable")} />
+              <Input label="Confirm the final characters of the unit number" value={vehicleRef} onChangeText={(text: string) => setVehicleRef(text.toUpperCase().replace(/[^A-Z0-9-]/g, ""))} placeholder="e.g. 4821" autoCapitalize="characters" />
+              <ActionButton label={busy ? "Verifying…" : "Verify assigned vehicle"} onPress={() => void confirmVehicle()} disabled={busy || vehicleRef.trim().length < 3} />
             </View>
-          </Panel>
+          ) : null}
+          {current.data?.driverNextStatuses?.length ? (
+            <View style={{ gap: 10 }}>
+              {current.data.driverNextStatuses.filter((status) => status !== "exception").filter((status) => status !== "en_route_pickup" || vehicleConfirmed).map((status) => (
+                <ActionButton key={status} label={`Mark ${titleCase(status)}`} onPress={() => transition(status)} disabled={busy} />
+              ))}
+            </View>
+          ) : <EmptyState title="No transition available" body="Refresh after dispatch changes the assignment, or complete the required proof step." />}
+        </Panel>
 
-          <Panel variant="elevated" tone="teal">
-            <SectionHeader
-              eyebrow="Progress"
-              title="Update live status"
-              description="Delivery completion is never a simple status button; it requires proof on the Proof tab."
-            />
-            {!vehicleConfirmed && current.data?.driverNextStatuses?.includes("en_route_pickup") ? (
-              <View style={{ gap: 10, marginBottom: 12 }}>
-                <Field label="Assigned unit" value={textOf(assignment?.vehicleCode, "Unavailable")} />
-                <Input
-                  label="Confirm the final characters of the unit number"
-                  value={vehicleRef}
-                  onChangeText={(text: string) => setVehicleRef(text.toUpperCase().replace(/[^A-Z0-9-]/g, ""))}
-                  placeholder="e.g. 4821"
-                  autoCapitalize="characters"
-                />
-                <ActionButton label={busy ? "Verifying…" : "Verify assigned vehicle"} onPress={() => void confirmVehicle()} disabled={busy || vehicleRef.trim().length < 3} />
-              </View>
-            ) : null}
-            {current.data?.driverNextStatuses?.length ? (
-              <View style={{ gap: 10 }}>
-                {current.data.driverNextStatuses
-                  .filter((status) => status !== "exception")
-                  .filter((status) => status !== "en_route_pickup" || vehicleConfirmed)
-                  .map((status) => (
-                    <ActionButton key={status} label={`Mark ${titleCase(status)}`} onPress={() => transition(status)} disabled={busy} />
-                  ))}
-              </View>
-            ) : (
-              <EmptyState title="No transition available" body="Refresh after dispatch changes the assignment, or complete the required proof step." />
-            )}
-          </Panel>
-
-          <Panel variant="solid" tone="red">
-            <SectionHeader
-              eyebrow="Exception"
-              title="Tell operations immediately"
-              description="Exception reports notify dispatch and fleet management while preserving the prior trip state. Unsent notes are encrypted on this device."
-            />
-            {showException ? (
-              <View style={{ gap: 12 }}>
-                <TextPicker values={EXCEPTION_TYPES} selected={exceptionType} onSelect={setExceptionType} />
-                <Input
-                  label="What happened?"
-                  value={exceptionNotes}
-                  onChangeText={setExceptionNotes}
-                  placeholder="Describe what happened and what support you need."
-                  multiline
-                  autoCapitalize="sentences"
-                />
-                {exceptionNotes.trim() ? <Pill label="Draft saved securely" tone="amber" /> : null}
-                <Row>
-                  <ActionButton label="Hide draft" onPress={() => setShowException(false)} variant="ghost" disabled={busy} />
-                  <ActionButton label={busy ? "Reporting…" : "Report exception"} onPress={() => void reportException()} variant="danger" disabled={busy || exceptionNotes.trim().length < 3} />
-                </Row>
-              </View>
-            ) : (
-              <ActionButton label={exceptionNotes.trim() ? "Resume exception draft" : "Report an exception"} onPress={() => setShowException(true)} variant="danger" />
-            )}
-          </Panel>
-        </>
-      ) : null}
+        <Panel variant="solid" tone="red">
+          <SectionHeader eyebrow="Exception" title="Tell operations immediately" description="Exception reports notify dispatch and fleet management while preserving the prior trip state. Unsent notes are encrypted on this device." />
+          {showException ? (
+            <View style={{ gap: 12 }}>
+              <TextPicker values={EXCEPTION_TYPES} selected={exceptionType} onSelect={setExceptionType} />
+              <Input label="What happened?" value={exceptionNotes} onChangeText={setExceptionNotes} placeholder="Describe what happened and what support you need." multiline autoCapitalize="sentences" />
+              {exceptionNotes.trim() ? <Pill label="Draft saved securely" tone="amber" /> : null}
+              <Row>
+                <ActionButton label="Hide draft" onPress={() => setShowException(false)} variant="ghost" disabled={busy} />
+                <ActionButton label={busy ? "Reporting…" : "Report exception"} onPress={() => void reportException()} variant="danger" disabled={busy || exceptionNotes.trim().length < 3} />
+              </Row>
+            </View>
+          ) : <ActionButton label={exceptionNotes.trim() ? "Resume exception draft" : "Report an exception"} onPress={() => setShowException(true)} variant="danger" />}
+        </Panel>
+      </> : null}
     </Screen>
   );
 }
 
 function TextPicker({ values, selected, onSelect }: { values: string[]; selected: string; onSelect: (value: string) => void }) {
-  return (
-    <Row>
-      {values.map((value) => (
-        <ActionButton key={value} label={titleCase(value)} onPress={() => onSelect(value)} variant={selected === value ? "secondary" : "ghost"} />
-      ))}
-    </Row>
-  );
+  return <Row>{values.map((value) => <ActionButton key={value} label={titleCase(value)} onPress={() => onSelect(value)} variant={selected === value ? "secondary" : "ghost"} />)}</Row>;
 }
