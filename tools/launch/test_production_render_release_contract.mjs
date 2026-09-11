@@ -77,6 +77,18 @@ test("production migrations bound live DDL lock waits and retry transient conten
   assert.match(runner, /apply_migration_file "\$f" "\$m"/);
 });
 
+test("ledgered Stage55 is verified without replaying broad DDL on live tables", () => {
+  const runner = read("tools", "apply-neon-predeploy-migrations.sh");
+  const repairSelection = runner.slice(
+    runner.indexOf("repair_migration=false"),
+    runner.indexOf("if [ \"$applied\" = \"1\" ] && [ \"$repair_migration\" = false ]"),
+  );
+
+  assert.doesNotMatch(repairSelection, /2026_07_30_stage55_fleet_runtime_route_contract/);
+  assert.match(runner, /Fleet Stage55 authorization evidence contract drifted/);
+  assert.match(runner, /Stage54\/55\/56\/57 migration ledger missing or duplicated/);
+});
+
 test("migration-only databases reconcile legacy operational columns before Stage135 cleanup", () => {
   const runner = read("tools", "apply-neon-predeploy-migrations.sh");
   const podContract = read(
