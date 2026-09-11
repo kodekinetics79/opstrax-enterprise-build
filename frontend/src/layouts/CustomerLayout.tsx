@@ -50,7 +50,7 @@ export function CustomerLayout() {
       </header>
 
       {/* Portal content */}
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 md:px-6">
+      <main className="portal-workspace mx-auto w-full max-w-6xl flex-1 px-4 py-4 md:px-6">
         <Outlet />
       </main>
     </div>

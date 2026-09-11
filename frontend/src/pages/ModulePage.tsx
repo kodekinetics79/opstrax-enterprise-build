@@ -92,7 +92,7 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
   ).filter(STATUS_FILTERS[statusFilter] ?? STATUS_FILTERS.All);
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack flex h-full flex-col overflow-y-auto">
       <PageHeader
         eyebrow={module.group}
         title={module.title}
@@ -113,7 +113,7 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
           </>
         }
       />
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-4">
         <KpiCard label="Records" value={records.length} icon={<Icon />} status="Recorded" />
         <KpiCard label="Open / Active" value={String(query.data?.summary?.active ?? records.filter((x) => String(x.status).match(/open|active|progress/i)).length)} icon={<ShieldCheck />} />
         <KpiCard label="Risk Items" value={String(query.data?.summary?.riskItems ?? records.filter((x) => String(x.riskLevel).match(/high|critical/i)).length)} icon={<Target />} status="Review" />
@@ -124,7 +124,7 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
         value={statusFilter}
         onChange={setStatusFilter}
       />
-      <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
         <DataTable rows={displayRecords} columns={columns} onSelect={setSelected} />
         <div className="space-y-4">
           {(query.data?.insights || []).slice(0, 3).map((insight) => <AiInsightCard key={String(insight.id)} insight={insight} />)}

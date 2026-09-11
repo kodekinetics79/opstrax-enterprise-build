@@ -6,7 +6,6 @@ import {
   Menu, Search, Settings, ShieldAlert, User, X,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
-import { WorkspaceExperience } from "@/components/WorkspaceExperience";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
 import { useFlag } from "@/hooks/useFeatureFlags";
@@ -223,74 +222,6 @@ function matchesFilter(module: (typeof modules)[number], sectionLabel: string, q
   return haystack.includes(query);
 }
 
-type ExperienceProfile = {
-  clientOutcome: string;
-  maintenanceOutcome: string;
-  shortcuts: Array<{ label: string; route: string }>;
-};
-
-function getExperienceProfile(pathname: string, title: string): ExperienceProfile {
-  const base = {
-    clientOutcome: `Work through ${title.toLowerCase()} with clear next actions and one-click access to the surfaces that resolve each issue.`,
-    maintenanceOutcome: "",
-    shortcuts: [
-      { label: "Dashboard", route: "/command-center" },
-      { label: "Proof Center", route: "/operations/proof-center" },
-      { label: "Control Tower", route: "/control-tower" },
-    ],
-  };
-
-  if (/^\/(command-center|control-tower|live-dashboard|map-view|alerts)/.test(pathname)) {
-    return {
-      clientOutcome: "See live fleet status, risk, and exceptions immediately, then jump to the exact operational surface that resolves the issue.",
-      maintenanceOutcome: "This cluster uses the shared control-room pattern, so future ops modules can be added by configuration instead of one-off page work.",
-      shortcuts: [
-        { label: "Alerts", route: "/alerts" },
-        { label: "Fleet Health", route: "/fleet-health" },
-        { label: "Proof Center", route: "/operations/proof-center" },
-      ],
-    };
-  }
-
-  if (/^\/(vehicles|drivers|fleet-health|fleet-utilization)/.test(pathname)) {
-    return {
-      clientOutcome: "Give transport teams a fast path to readiness, service state, and the next operational decision.",
-      maintenanceOutcome: "These pages now share the same shell and action model, so new roster or readiness views can be added without inventing a new UI language.",
-      shortcuts: [
-        { label: "Vehicles", route: "/vehicles" },
-        { label: "Drivers", route: "/drivers" },
-        { label: "Fleet Health", route: "/fleet-health" },
-      ],
-    };
-  }
-
-  if (/^\/(dispatch|jobs|trips|last-mile-delivery|operations\/proof-center|proof-of-delivery)/.test(pathname)) {
-    return {
-      clientOutcome: "Keep dispatch, proof, and recovery work in one flow so operators always know what happens next.",
-      maintenanceOutcome: "Shared route shortcuts and one set of proof/action patterns make it easier to extend the dispatch spine without redoing every screen.",
-      shortcuts: [
-        { label: "Dispatch", route: "/dispatch" },
-        { label: "Trips", route: "/trips" },
-        { label: "Proof Center", route: "/operations/proof-center" },
-      ],
-    };
-  }
-
-  if (/^\/(fleet-workspace|fleet-cold-chain|fleet-assets|fleet-saudi-readiness|fleet-compliance)/.test(pathname)) {
-    return {
-      clientOutcome: "Keep fleet control surfaces professional, credible, and easy to trust during client walkthroughs.",
-      maintenanceOutcome: "The same surface language now spans fleet submodules, which reduces styling drift and makes future module delivery cheaper.",
-      shortcuts: [
-        { label: "Fleet Workspace", route: "/fleet-workspace" },
-        { label: "Cold Chain", route: "/fleet-cold-chain" },
-        { label: "Fleet Compliance", route: "/fleet-compliance" },
-      ],
-    };
-  }
-
-  return base;
-}
-
 function notificationTone(severity: unknown): "danger" | "warning" | "info" {
   const normalized = String(severity ?? "").toLowerCase();
   if (normalized === "critical" || normalized === "high") return "danger";
@@ -419,8 +350,6 @@ export function AppShell() {
       .filter((section) => section.items.length > 0);
   }, [location.pathname, normalizedSidebarQuery, visibleSections]);
 
-  const experience = useMemo(() => getExperienceProfile(location.pathname, currentPageTitle), [location.pathname, currentPageTitle]);
-
   // close transient navigation surfaces on route change
   useEffect(() => {
     setMobileOpen(false);
@@ -470,7 +399,10 @@ export function AppShell() {
   const planLabel = getSessionPlanLabel(session);
   const accessibleModuleCount = visibleSections.reduce((total, section) => total + section.items.length, 0);
   const firstFilteredRoute = filteredSections.flatMap((section) => section.items).find((module) => matchesFilter(module, module.group, normalizedSidebarQuery));
-  const backTarget = pageBreadcrumbs.length > 2 ? pageBreadcrumbs[pageBreadcrumbs.length - 2]?.to : undefined;
+  const candidateBackTarget = pageBreadcrumbs.length > 2 ? pageBreadcrumbs[pageBreadcrumbs.length - 2]?.to : undefined;
+  // Wildcard module index routes such as /vehicles/overview use /vehicles as a
+  // redirect to the same screen. Suppress that circular back action.
+  const backTarget = /\/overview\/?$/.test(location.pathname) ? undefined : candidateBackTarget;
 
   /* ── Sidebar nav content (shared between desktop + mobile) ──
      Design system: ONE quiet surface (no nested cards), hierarchy from spacing +
@@ -908,21 +840,8 @@ export function AppShell() {
               Read-only Platform support session · tenant changes are blocked · reference {session.supportAccess.grantRef}
             </div>
           )}
-          {/* The dashboard renders its own status strip; a second title/shortcut band there
-              costs ~90px of first-viewport space and duplicates the sidebar nav. */}
-          {location.pathname !== "/command-center" && (
-            <div className="mx-auto w-full max-w-[1800px] shrink-0 px-3 pt-2 md:px-4 xl:px-5">
-              <WorkspaceExperience
-                pageTitle={currentPageTitle}
-                clientOutcome={experience.clientOutcome}
-                maintenanceOutcome={experience.maintenanceOutcome}
-                shortcuts={experience.shortcuts}
-              />
-            </div>
-          )}
-
           {/* ── Content ── */}
-          <main className="mx-auto flex w-full min-h-0 max-w-[1800px] flex-1 flex-col px-3 py-4 md:px-4 xl:px-5">
+          <main className="tenant-workspace mx-auto flex w-full min-h-0 max-w-[1800px] flex-1 flex-col px-3 py-3 md:px-4 xl:px-5">
             {activeModuleEntitled ? <Outlet /> : (
               <div className="grid min-h-[55vh] place-items-center px-4">
                 <div className="panel max-w-xl p-8 text-center">

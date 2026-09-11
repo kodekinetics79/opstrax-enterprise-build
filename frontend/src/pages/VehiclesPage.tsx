@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity, ArchiveRestore, ArrowUpRight, Boxes, Camera, ChevronRight, Cpu, Download, Gauge, Info,
   MapPin, Navigation, Plus, Save, Search, ShieldAlert, Sparkles, Trash2, TrendingUp,
-  Truck, UserCheck, Video, Wrench, X, Radio,
+  UserCheck, Video, Wrench, X, Radio,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
 import { vehiclesApi } from "@/services/vehiclesApi";
@@ -15,7 +15,7 @@ import { scopeRowsForSession } from "@/auth/accessScope";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { resolveAuthorizedSummaryCount } from "@/utils/vehicleSummaryPresentation";
 import { optionsWithPersistedValue, VEHICLE_TYPE_OPTIONS } from "@/utils/vehicleEditorOptions";
-import { labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { labelize, LoadingState, ErrorState, EmptyState, PageHeader, PageStack } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { AnyRecord, UserSession } from "@/types";
 import { optionalTelemetryHeading, readSpeedMph, telemetryMotion, telemetrySpeedSummary } from "@/utils/telemetryMeasurements";
@@ -228,6 +228,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
   const moving = rows.filter(isMoving).length;
   const atRisk = resolveAuthorizedSummaryCount(summary.isSuccess, g(sum, "atRisk", "at_risk"));
   const deviceEx = resolveAuthorizedSummaryCount(summary.isSuccess, g(sum, "deviceExceptions", "device_exceptions"));
+  const pageScopeSummary = `${rows.length} on this page · ${moving} moving on page · ${available} available on page · ${atRisk == null ? "attention unavailable in authorized scope" : `${atRisk} need attention in authorized scope`}`;
 
   useEffect(() => {
     if (searchParams.get("new") !== "1") return;
@@ -376,49 +377,30 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
   };
 
   return (
-    <div className="fleet-console flex h-full min-h-0 flex-col gap-3">
+    <PageStack className="fleet-console h-full min-h-0">
 
-      {/* ── Console rail — brushed header with screws + primary actions ───── */}
-      {!embedded && <header className="fc-rail relative shrink-0 px-5 py-3.5 pl-7 pr-7">
-        <Screw className="left-2.5 top-2.5" slot="20deg" />
-        <Screw className="right-2.5 top-2.5" slot="-38deg" />
-        <Screw className="bottom-2.5 left-2.5" slot="62deg" />
-        <Screw className="bottom-2.5 right-2.5" slot="-14deg" />
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <div className="min-w-0">
-            <span className="section-title inline-flex items-center gap-2">
-              <Truck className="h-3.5 w-3.5 text-teal-700" />
-              Fleet · Master Data
-            </span>
-            <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Vehicles</h1>
-            <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
-              <span className="font-bold text-slate-700 tabular-nums">{rows.length}</span> on this page ·{" "}
-              <span className="font-bold text-emerald-600 tabular-nums">{moving}</span> moving on page ·{" "}
-              <span className="font-bold text-sky-600 tabular-nums">{available}</span> available on page ·{" "}
-              {atRisk == null ? (
-                <span className="font-bold text-slate-500">attention unavailable in authorized scope</span>
-              ) : (
-                <><span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> need attention in authorized scope</>
-              )}
-            </p>
-          </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2.5">
+      {!embedded && <PageHeader
+        eyebrow="Fleet · Master Data"
+        title="Vehicles"
+        description={pageScopeSummary}
+        actions={
+          <>
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
               <Activity className="h-3 w-3 text-teal-600" /> Registry · 30 s
             </span>
             <button type="button" disabled={!canExport}
               onClick={() => { if (!canExport) return; setExportError(null); void downloadServerExport("/api/vehicles/export", `vehicles_${new Date().toISOString().slice(0, 10)}.csv`).catch((error: unknown) => setExportError(error instanceof Error ? error.message : "Full fleet export failed.")); }}
-              title="Export the full fleet (all pages)" className="btn-ghost h-10">
+              title="Export the full fleet (all pages)" className="btn-ghost min-h-11 sm:min-h-8">
               <Download className="h-4 w-4" /> Export
             </button>
             {canCreate ? (
-              <button type="button" onClick={() => { setIsCreating(true); setEditing({ type: "Truck", status: "Available" }); }} className="btn-primary h-10">
+              <button type="button" onClick={() => { setIsCreating(true); setEditing({ type: "Truck", status: "Available" }); }} className="btn-primary min-h-11 sm:min-h-8">
                 <Plus className="h-4 w-4" /> New vehicle
               </button>
             ) : null}
-          </div>
-        </div>
-      </header>}
+          </>
+        }
+      />}
 
       {actionError instanceof Error ? (
         <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
@@ -433,30 +415,32 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
       ) : null}
       {exportError ? <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{exportError} No partial-page fallback was downloaded.</div> : null}
 
-      {/* ── Clay KPI tiles ───────────────────────────────────────────────── */}
-      <div className="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-4">
+      {/* Compact operating summary keeps the roster in the first viewport. */}
+      <dl className="panel grid shrink-0 grid-cols-2 gap-2 p-2 xl:grid-cols-4" aria-label="Vehicle operating summary">
         <ClayStat Icon={Gauge}      tone="fc-clay-teal"    iconCls="text-teal-700"    label="Page readiness"      value={readiness == null ? "Unknown" : `${readiness}%`} meter={readiness ?? undefined} caption={`${readinessRows.length} assessed on this page · ${rows.length - readinessRows.length} unknown`} />
         <ClayStat Icon={Navigation} tone="fc-clay-emerald" iconCls="text-emerald-700" label="Moving on page"      value={moving}          meter={rows.length ? (moving / rows.length) * 100 : 0} caption={`${available} available on this page`} />
         <ClayStat Icon={ShieldAlert} tone="fc-clay-red"    iconCls="text-rose-700"    label="Authorized scope at risk" value={atRisk == null ? "Unknown" : atRisk} alert={atRisk != null && atRisk > 0} caption="Tenant or permitted branch summary" />
         <ClayStat Icon={Cpu}        tone="fc-clay-amber"   iconCls="text-amber-700"   label="Authorized scope device / camera gaps" value={deviceEx == null ? "Unknown" : deviceEx} alert={deviceEx != null && deviceEx > 0} caption="Tenant or permitted branch summary" />
-      </div>
+      </dl>
 
       {/* ── Lifecycle band — replacement pressure + operational gaps ──────── */}
       <LifecycleBand data={planning.data as AnyRecord} loading={planning.isLoading} />
 
-      {/* ── Roster console — neumorphic chassis, inset bezel screen ───────── */}
-      <section className="fc-neumo flex min-h-[460px] flex-col overflow-hidden xl:min-h-0 xl:flex-1">
-        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pb-3 pt-3.5">
+      {/* The roster is the primary task surface. */}
+      <section className="panel flex min-h-[460px] flex-col overflow-hidden xl:min-h-0 xl:flex-1">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2">
           <div className="relative w-full sm:max-w-xs">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input value={search} onChange={(e) => { setSearch(e.target.value); setOffset(0); }}
+              aria-label="Search vehicles"
               placeholder="Search code, make, plate, driver…"
-              className="fc-search w-full py-2.5 pl-10 pr-3 text-sm text-slate-800 outline-none placeholder:text-slate-400" />
+              className="fc-search min-h-11 w-full py-2 pl-10 pr-3 text-sm text-slate-800 outline-none placeholder:text-slate-400 sm:min-h-8 sm:py-1.5" />
           </div>
-          <div className="fc-seg flex flex-wrap items-center gap-1 p-1">
+          <div className="flex min-w-0 max-w-full items-center gap-1 overflow-x-auto" aria-label="Vehicle roster filters">
             {FILTERS.map((f) => (
               <button key={f} type="button" onClick={() => { if (archiveTarget || lifecycleInFlight.current) return; setFilter(f); setOffset(0); setSelectedId(null); }}
-                className={`fc-seg-btn ${filter === f ? "fc-seg-btn-active" : ""}`}>
+                aria-pressed={filter === f}
+                className={`min-h-11 shrink-0 rounded-lg border px-2.5 text-xs font-semibold transition sm:min-h-8 ${filter === f ? "border-teal-300 bg-teal-50 text-teal-800" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"}`}>
                 {f}
               </button>
             ))}
@@ -466,21 +450,21 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
           </span>
         </div>
 
-        <div className="fc-bezel mx-3 mb-1 flex min-h-0 flex-1 flex-col">
-          <div className="fc-screen min-h-0 flex-1 overflow-auto">
+        <div className="mx-2 mb-1 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <div className="min-h-0 flex-1 overflow-auto">
             {filtered.length ? (
-              <table className="w-full text-left text-sm">
+              <table className="w-full min-w-[720px] text-left text-sm">
                 <thead className="sticky top-0 z-10 bg-[#fcfdff]">
                   <tr className="border-b border-slate-200/80 text-[10px] uppercase tracking-[0.12em] text-slate-400">
-                    <th className="px-5 py-3 font-bold">Vehicle</th>
-                    <th className="px-4 py-3 font-bold">Status</th>
-                    <th className="px-4 py-3 font-bold">Live speed</th>
-                    <th className="hidden px-4 py-3 font-bold lg:table-cell">Last seen</th>
-                    <th className="px-4 py-3 font-bold">Readiness</th>
-                    <th className="px-4 py-3 font-bold">Risk</th>
-                    <th className="hidden px-4 py-3 font-bold md:table-cell">Driver</th>
-                    <th className="hidden px-4 py-3 font-bold xl:table-cell">Health</th>
-                    <th className="px-4 py-3"><span className="sr-only">Open</span></th>
+                    <th className="px-3 py-2.5 font-bold">Vehicle</th>
+                    <th className="px-3 py-2.5 font-bold">Status</th>
+                    <th className="px-3 py-2.5 font-bold">Live speed</th>
+                    <th className="hidden px-3 py-2.5 font-bold lg:table-cell">Last seen</th>
+                    <th className="px-3 py-2.5 font-bold">Readiness</th>
+                    <th className="px-3 py-2.5 font-bold">Risk</th>
+                    <th className="hidden px-3 py-2.5 font-bold md:table-cell">Driver</th>
+                    <th className="hidden px-3 py-2.5 font-bold xl:table-cell">Health</th>
+                    <th className="px-3 py-2.5"><span className="sr-only">Open</span></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100/90">
@@ -492,7 +476,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
                     return (
                       <tr key={String(row.id)} onClick={() => { if (!archiveTarget && !lifecycleInFlight.current) setSelectedId(row.id as string); }}
                         className="group cursor-pointer transition hover:bg-sky-50/50">
-                        <td className="px-5 py-3">
+                        <td className="px-3 py-2.5">
                           <div className="flex items-center gap-2.5">
                             <span className={`h-2 w-2 shrink-0 rounded-full ${moving ? "bg-emerald-500 animate-pulse" : fresh?.live ? "bg-sky-400" : "bg-slate-300"}`} />
                             <div className="min-w-0">
@@ -501,8 +485,8 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3"><StatusPill status={g(row, "status")} /></td>
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-2.5"><StatusPill status={g(row, "status")} /></td>
+                        <td className="px-3 py-2.5">
                           {fresh && speed != null ? (
                             <span className="inline-flex items-baseline gap-1">
                               <span className={`text-[15px] font-bold tabular-nums ${moving ? "text-emerald-600" : "text-slate-400"}`}>{Math.round(speed)}</span>
@@ -514,7 +498,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
                             <span className="text-xs italic text-slate-400">No GPS</span>
                           )}
                         </td>
-                        <td className="hidden px-4 py-3 lg:table-cell">
+                        <td className="hidden px-3 py-2.5 lg:table-cell">
                           {fresh ? (
                             <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${fresh.live ? "text-emerald-600" : "text-slate-500"}`}>
                               {fresh.live && <span className="live-dot h-1.5 w-1.5" />}
@@ -522,17 +506,19 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
                             </span>
                           ) : <span className="text-xs italic text-slate-400">—</span>}
                         </td>
-                        <td className="px-4 py-3"><Meter value={ready} /></td>
-                        <td className="px-4 py-3"><RiskChip tier={riskTier(row)} /></td>
-                        <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{String(g(row, "assignedDriver", "assigned_driver", "driverName") ?? "—")}</td>
-                        <td className="hidden px-4 py-3 xl:table-cell">
+                        <td className="px-3 py-2.5"><Meter value={ready} /></td>
+                        <td className="px-3 py-2.5"><RiskChip tier={riskTier(row)} /></td>
+                        <td className="hidden px-3 py-2.5 text-slate-600 md:table-cell">{String(g(row, "assignedDriver", "assigned_driver", "driverName") ?? "—")}</td>
+                        <td className="hidden px-3 py-2.5 xl:table-cell">
                           <div className="flex items-center gap-3">
                           <HealthDot status={vehicleDeviceStatus(row)} icon={<Cpu className="h-3.5 w-3.5" />} />
                           <HealthDot status={vehicleCameraStatus(row)} icon={<Camera className="h-3.5 w-3.5" />} />
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <ChevronRight className="ml-auto h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
+                        <td className="px-3 py-2.5 text-right">
+                          <button type="button" className="ml-auto grid min-h-11 min-w-11 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 sm:min-h-8 sm:min-w-8" aria-label={`Open ${String(g(row, "vehicleCode", "vehicle_code") ?? `vehicle ${row.id}`)}`} onClick={(event) => { event.stopPropagation(); setSelectedId(row.id as string); }}>
+                            <ChevronRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+                          </button>
                         </td>
                       </tr>
                     );
@@ -549,22 +535,22 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
 
         {/* Pager / instrument footer */}
         {totalRows > PAGE_SIZE ? (
-          <div className="flex shrink-0 items-center justify-between px-5 py-3 text-[12px] text-slate-600">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-2 text-[12px] text-slate-600">
             <span className="tabular-nums">
               Showing <strong>{totalRows === 0 ? 0 : offset + 1}–{Math.min(offset + PAGE_SIZE, totalRows)}</strong> of <strong>{totalRows.toLocaleString()}</strong>
             </span>
             <div className="flex items-center gap-2">
               <button type="button" disabled={offset === 0 || list.isFetching}
                 onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-                className="fc-pager-btn">← Prev</button>
+                className="fc-pager-btn min-h-11 sm:min-h-8">← Prev</button>
               <span className="text-xs text-slate-400 tabular-nums">Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(totalRows / PAGE_SIZE))}</span>
               <button type="button" disabled={offset + PAGE_SIZE >= totalRows || list.isFetching}
                 onClick={() => setOffset(offset + PAGE_SIZE)}
-                className="fc-pager-btn">Next →</button>
+                className="fc-pager-btn min-h-11 sm:min-h-8">Next →</button>
             </div>
           </div>
         ) : (
-          <div className="flex shrink-0 items-center gap-4 px-5 py-3 text-[11.5px] font-semibold text-slate-500">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2 text-[11.5px] font-semibold text-slate-500">
             <span className="inline-flex items-center gap-2"><span className="deck-led deck-led-emerald" /> {moving} moving on page</span>
             <span className="inline-flex items-center gap-2"><span className={`deck-led ${deviceEx != null && deviceEx > 0 ? "deck-led-amber" : "deck-led-slate"}`} /> {deviceEx == null ? "Device gaps unavailable" : `${deviceEx} device gaps in authorized scope`}</span>
             <button type="button" onClick={() => navigate("/iot-devices")} className="ml-auto inline-flex items-center gap-1 font-bold text-teal-700 hover:underline">
@@ -623,32 +609,37 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
           onSave={(driverId) => assign.mutate({ vehicleId: String(assignmentVehicle.id), driverId })}
         />
       ) : null}
-    </div>
+    </PageStack>
   );
 }
 
 /* ------------------------------------------------------------------ primitives */
 
-function Screw({ className, slot }: { className: string; slot: string }) {
-  return <span aria-hidden className={`deck-screw absolute ${className}`} style={{ "--slot": slot } as React.CSSProperties} />;
-}
-
 function ClayStat({ Icon, tone, iconCls, label, value, meter, caption, alert }:
   { Icon: React.ElementType; tone: string; iconCls: string; label: string; value: React.ReactNode; meter?: number; caption?: string; alert?: boolean }) {
   const valueColor = alert && num(value) > 0 ? (tone.includes("red") ? "text-rose-600" : "text-amber-600") : "text-slate-900";
+  const surfaceTone = tone.includes("red")
+    ? "border-rose-100 bg-rose-50/45"
+    : tone.includes("amber")
+      ? "border-amber-100 bg-amber-50/45"
+      : tone.includes("emerald")
+        ? "border-emerald-100 bg-emerald-50/45"
+        : "border-teal-100 bg-teal-50/45";
   return (
-    <div className={`fc-clay ${tone} p-4`}>
-      <div className="flex items-center justify-between">
-        <span className="text-[12px] font-bold text-slate-600">{label}</span>
-        <span className="fc-blob"><Icon className={`h-4 w-4 ${iconCls}`} /></span>
-      </div>
-      <div className={`mt-2 text-[30px] font-black leading-none tracking-tight tabular-nums ${valueColor}`}>{value}</div>
+    <div className={`min-w-0 rounded-lg border px-3 py-2 ${surfaceTone}`}>
+      <dt className="flex min-w-0 items-center gap-2 text-[11px] font-bold leading-tight text-slate-600">
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${iconCls}`} />
+        <span className="min-w-0 flex-1">{label}</span>
+      </dt>
+      <dd className="mt-1 flex min-w-0 items-baseline gap-2">
+        <strong className={`shrink-0 text-base font-black leading-none tracking-tight tabular-nums ${valueColor}`}>{value}</strong>
+        {caption ? <span className="min-w-0 truncate text-[10px] font-medium text-slate-500" title={caption}>{caption}</span> : null}
+      </dd>
       {meter != null ? (
-        <div className="deck-track mt-3">
+        <div className="deck-track mt-1.5" aria-hidden="true">
           <div className="deck-fill deck-fill-teal" style={{ width: `${Math.min(100, meter)}%` }} />
         </div>
       ) : null}
-      {caption ? <p className="mt-2 text-[11px] font-medium text-slate-500">{caption}</p> : null}
     </div>
   );
 }
@@ -693,43 +684,46 @@ function HealthDot({ status, icon }: { status: string; icon: React.ReactNode }) 
 function LifecycleBand({ data, loading }: { data?: AnyRecord; loading: boolean }) {
   const forecast = ((data?.replacementForecast as AnyRecord[]) || []).slice(0, 4);
   const gaps = ((data?.operationalGaps as AnyRecord[]) || []).slice(0, 4);
-  if (loading) return <div className="fc-neumo h-24 shrink-0 animate-pulse" />;
+  if (loading) return <div className="panel h-14 shrink-0 animate-pulse" aria-label="Loading replacement planning" />;
   if (!forecast.length && !gaps.length) return null;
   return (
-    <div className="grid shrink-0 gap-3 lg:grid-cols-[1.4fr_1fr]">
-      <div className="fc-neumo p-4">
-        <div className="flex items-center justify-between">
-          <div className="section-title inline-flex items-center gap-2"><TrendingUp className="h-3.5 w-3.5 text-teal-700" /> Replacement priority</div>
-          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">CapEx forecast</span>
+    <section className="panel flex shrink-0 flex-col gap-2 p-2.5 lg:flex-row lg:items-center" aria-label="Replacement planning and operational gaps">
+      <div className="flex shrink-0 items-center gap-2 lg:w-40">
+        <TrendingUp className="h-4 w-4 text-teal-700" />
+        <div>
+          <h2 className="text-xs font-bold text-slate-800">Replacement priority</h2>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">CapEx forecast</p>
         </div>
-        <div className="mt-3 space-y-2.5">
-          {forecast.map((row, i) => {
-            const score = num(g(row, "capexPriorityScore", "capex_priority_score"));
-            const pct = Math.min(100, Math.round(score / 2.6));
-            const color = score > 180 ? "deck-fill-red" : score > 90 ? "deck-fill-amber" : "deck-fill-teal";
-            return (
-              <div key={String(row.id ?? i)} className="flex items-center gap-3">
-                <span className="w-5 text-xs font-bold text-slate-400 tabular-nums">#{i + 1}</span>
-                <div className="w-24 shrink-0 truncate text-sm font-semibold text-slate-800">{String(g(row, "vehicleCode", "vehicle_code") ?? "—")}</div>
-                <div className="deck-track flex-1"><div className={`deck-fill ${color}`} style={{ width: `${pct}%` }} /></div>
-                <span className="hidden w-28 truncate text-right text-xs text-slate-500 sm:block">{String(g(row, "replacementWindow", "replacement_window") ?? "")}</span>
+      </div>
+      <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-0.5">
+        {forecast.map((row, i) => {
+          const score = num(g(row, "capexPriorityScore", "capex_priority_score"));
+          const pct = Math.min(100, Math.round(score / 2.6));
+          const color = score > 180 ? "deck-fill-red" : score > 90 ? "deck-fill-amber" : "deck-fill-teal";
+          const window = String(g(row, "replacementWindow", "replacement_window") ?? "Window unavailable");
+          return (
+            <div key={String(row.id ?? i)} className="min-w-44 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="text-[10px] font-bold text-slate-400 tabular-nums">#{i + 1}</span>
+                <span className="min-w-0 flex-1 truncate text-xs font-bold text-slate-800">{String(g(row, "vehicleCode", "vehicle_code") ?? "—")}</span>
+                <span className="max-w-20 truncate text-[10px] text-slate-500" title={window}>{window}</span>
               </div>
-            );
-          })}
-        </div>
-      </div>
-      <div className="fc-neumo p-4">
-        <div className="section-title inline-flex items-center gap-2"><Sparkles className="h-3.5 w-3.5 text-teal-700" /> Operational gaps</div>
-        <div className="mt-3 grid grid-cols-2 gap-2.5">
-          {gaps.map((gap, i) => (
-            <div key={i} className="deck-inset rounded-xl p-3">
-              <div className="text-xl font-black tabular-nums text-slate-900">{num(g(gap, "affectedRecords", "affected_records"))}</div>
-              <div className="mt-0.5 text-[11px] font-semibold leading-tight text-slate-500">{String(g(gap, "gapName", "gap_name") ?? "")}</div>
+              <div className="deck-track mt-1" aria-hidden="true"><div className={`deck-fill ${color}`} style={{ width: `${pct}%` }} /></div>
             </div>
-          ))}
-        </div>
+          );
+        })}
+        {gaps.map((gap, i) => {
+          const gapName = String(g(gap, "gapName", "gap_name") ?? "Operational gap");
+          return (
+            <div key={`gap-${i}`} className="flex min-w-40 items-center gap-2 rounded-lg border border-amber-100 bg-amber-50/60 px-2.5 py-1.5">
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+              <strong className="text-sm tabular-nums text-slate-900">{num(g(gap, "affectedRecords", "affected_records"))}</strong>
+              <span className="min-w-0 truncate text-[10px] font-semibold leading-tight text-slate-600" title={gapName}>{gapName}</span>
+            </div>
+          );
+        })}
       </div>
-    </div>
+    </section>
   );
 }
 

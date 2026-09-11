@@ -402,7 +402,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const mutationError = saveMutation.error || deleteMutation.error || reactivateMutation.error || assignMutation.error || exportMutation.error;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack flex h-full flex-col overflow-y-auto">
       <PageHeader
         eyebrow={cfg.eyebrow}
         title={cfg.title}
@@ -465,7 +465,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
 
       {kind === "vehicles" && !isScopedViewer ? <VehiclePlanningForecast data={planningInsights.data} loading={planningInsights.isLoading} /> : null}
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-4">
           {cfg.kpis.map(([label, key, suffix]) => (
           <KpiCard key={label} label={label} value={`${visibleSummary?.[key] ?? (key === "aiSignals" ? recommendations.length || "Select" : 0)}${suffix}`} icon={<Target />} status={Number(visibleSummary?.[key] ?? 0) > 0 && /risk|exception|watch/i.test(label) ? "Review" : "Healthy"} />
         ))}
@@ -488,7 +488,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
           {rows.length ? <DataTable rows={rows} columns={cfg.columns} onSelect={setSelected} /> : <EmptyState title={`No ${cfg.title.toLowerCase()} found`} subtitle="Try another search or filter, or create a new record if you have permission." />}
         <div className="space-y-4">
           {kind !== "drivers" ? (

@@ -194,7 +194,7 @@ export function WorkforceManagementPage() {
   if (isLoading) return <LoadingState />;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="page-stack h-full overflow-y-auto">
       <AssignModal cell={cell} onClose={() => setCell(null)} onSave={handleSave} />
 
       {/* Header */}

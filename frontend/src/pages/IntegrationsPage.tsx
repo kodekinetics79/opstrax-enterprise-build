@@ -31,7 +31,6 @@ import {
   exportCsv,
   EmptyState,
   ErrorState,
-  KpiCard,
   LoadingState,
   PageHeader,
   StatusBadge,
@@ -1544,10 +1543,13 @@ export function IntegrationsPage() {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const motiveOAuthOutcome = searchParams.get("motiveOAuth");
+  const requestedProvider = searchParams.get("provider")?.trim() ?? "";
+  const requestedIntent = searchParams.get("intent")?.trim() ?? "";
+  const handledProviderSelection = useRef("");
 
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [statusFilter, setStatusFilter] = useState<string>("All");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(requestedProvider);
   const [connectorView, setConnectorView] = useState<ConnectorView>("available");
   const [configTarget, setConfigTarget] = useState<IntegrationRecord | null>(null);
   // Provider operations surface their exact backend verdict and counts; success is
@@ -1606,6 +1608,34 @@ export function IntegrationsPage() {
     () => integrations.filter((item) => item.adapterAvailable !== true),
     [integrations],
   );
+
+  useEffect(() => {
+    if (!requestedProvider) return;
+    const selectionKey = requestedProvider.toLowerCase();
+    const normalized = requestedProvider.toLowerCase();
+    const target = integrations.find((record) =>
+      record.key.toLowerCase() === normalized
+      || record.name.toLowerCase() === normalized
+      || record.name.toLowerCase().includes(normalized),
+    );
+    if (!requestedIntent && handledProviderSelection.current === selectionKey) return;
+    setSearch(target?.name ?? requestedProvider);
+    if (!target) return;
+    setConnectorView(target.adapterAvailable === true ? "available" : "evaluation");
+    setCategoryFilter("All");
+    setStatusFilter("All");
+    if (canManage && target.adapterAvailable === true && requestedIntent) {
+      setConfigTarget(target);
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete("intent");
+        return next;
+      }, { replace: true });
+      return;
+    }
+    if (!requestedIntent) handledProviderSelection.current = selectionKey;
+  }, [canManage, integrations, requestedIntent, requestedProvider, setSearchParams]);
+
   const scopedIntegrations = connectorView === "available" ? availableIntegrations : evaluationIntegrations;
   const summary = {
     total: availableIntegrations.length,
@@ -1776,7 +1806,7 @@ export function IntegrationsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="page-stack h-full overflow-y-auto">
       <PageHeader
         eyebrow="Connector marketplace"
         title="Integrations"
@@ -1814,13 +1844,20 @@ export function IntegrationsPage() {
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <KpiCard label="Available adapters" value={summary.total} icon={<Layers className="h-5 w-5" />} delta={`${summary.categories} categories`} />
-        <KpiCard label="Connected" value={summary.connected} status="Verified" icon={<Link2 className="h-5 w-5" />} />
-        <KpiCard label="Pending" value={summary.pending} status={summary.pending > 0 ? "Pending" : undefined} icon={<PlugZap className="h-5 w-5" />} />
-        <KpiCard label="Errors" value={summary.errors} status={summary.errors > 0 ? "Critical" : undefined} icon={<AlertTriangle className="h-5 w-5" />} />
-        <KpiCard label="Evaluation only" value={summary.evaluation} icon={<Warehouse className="h-5 w-5" />} />
-      </div>
+      <section className="panel flex flex-wrap items-center gap-x-6 gap-y-2 px-3 py-2" aria-label="Connector status summary">
+        {[
+          { label: "Available", value: summary.total, note: `${summary.categories} categories`, tone: "text-slate-900", icon: Layers },
+          { label: "Connected", value: summary.connected, note: "verified", tone: "text-emerald-700", icon: Link2 },
+          { label: "Pending", value: summary.pending, note: "setup", tone: summary.pending ? "text-amber-700" : "text-slate-700", icon: PlugZap },
+          { label: "Errors", value: summary.errors, note: "attention", tone: summary.errors ? "text-red-700" : "text-emerald-700", icon: AlertTriangle },
+          { label: "Evaluation", value: summary.evaluation, note: "catalog only", tone: "text-slate-700", icon: Warehouse },
+        ].map(({ label, value, note, tone, icon: Icon }) => (
+          <div key={label} className="flex min-w-[110px] items-center gap-2">
+            <Icon className="h-3.5 w-3.5 text-slate-400" aria-hidden />
+            <div><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">{label}</p><p className={`text-sm font-black tabular-nums ${tone}`}>{value} <span className="text-[10px] font-medium text-slate-400">{note}</span></p></div>
+          </div>
+        ))}
+      </section>
 
       {summary.errors > 0 && (
         <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
@@ -1959,8 +1996,8 @@ export function IntegrationsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="flex min-w-0 flex-col gap-6">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="flex min-w-0 flex-col gap-3">
           {filtered.length === 0 ? (
             <EmptyState
               title="No connectors match your filters"

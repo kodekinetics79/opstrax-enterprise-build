@@ -157,33 +157,24 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
   ];
 
   return (
-    <section className="panel p-4" aria-label="Fleet health evidence summary">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-900">Evidence summary</h2>
-          <p className="mt-0.5 text-xs text-slate-500">Qualified operational records for the current fleet scope</p>
+    <section className="panel flex flex-wrap items-center gap-x-5 gap-y-2 px-3 py-2" aria-label="Fleet health evidence summary">
+      {metrics.map((metric) => (
+        <div key={metric.label} className="min-w-[105px]">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">{metric.label}</p>
+          <p className={`text-sm font-black leading-tight tabular-nums ${metric.tone}`}>{metric.value} <span className="text-[10px] font-medium text-slate-400">{metric.detail}</span></p>
         </div>
-        <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${evidenceReady ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-          {evidenceReady ? "Coverage ready" : "Coverage incomplete"}
-        </span>
-      </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-        {metrics.map((metric) => (
-          <div key={metric.label} className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{metric.label}</p>
-            <p className={`mt-1 text-xl font-bold leading-none ${metric.tone}`}>{metric.value}</p>
-            <p className="mt-1 text-[11px] text-slate-500">{metric.detail}</p>
-          </div>
-        ))}
-      </div>
+      ))}
+      <span className={`ml-auto rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] ${evidenceReady ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+        {evidenceReady ? "Coverage ready" : "Coverage incomplete"}
+      </span>
       {!evidenceReady && (
-        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
-          <p className="font-semibold">Fleet health score unavailable until qualified evidence covers the current fleet.</p>
-          <p className="mt-0.5 text-amber-700">
-            Vehicle readiness coverage: {readinessCoverage == null ? "unavailable" : `${readinessCoverage}%`}
-            {" · "}Driver score coverage: {driverCoverage == null ? "unavailable" : `${driverCoverage}%`}
-          </p>
-        </div>
+        <details className="relative text-xs text-amber-800">
+          <summary className="cursor-pointer font-semibold">Coverage details</summary>
+          <div className="absolute right-0 z-20 mt-2 w-80 max-w-[80vw] rounded-lg border border-amber-200 bg-amber-50 p-3 shadow-lg">
+            <p className="font-semibold">Fleet health score unavailable until qualified evidence covers the current fleet.</p>
+            <p className="mt-1">Vehicle readiness: {readinessCoverage == null ? "unavailable" : `${readinessCoverage}%`} · Driver scores: {driverCoverage == null ? "unavailable" : `${driverCoverage}%`}</p>
+          </div>
+        </details>
       )}
     </section>
   );
@@ -1017,7 +1008,7 @@ export function FleetHealthPage() {
   }
 
   return (
-    <div className="control-tower space-y-4">
+    <div className="control-tower space-y-3">
       {/* Drawers */}
       <VehicleDrawer
         vehicleId={vehicleDrawerId}
@@ -1031,7 +1022,7 @@ export function FleetHealthPage() {
         onActionTaken={() => qc.invalidateQueries({ queryKey: ["fleet-health"] })}
       />
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         {/* Page header */}
         <PageHeader
           eyebrow="Operations"
@@ -1057,20 +1048,21 @@ export function FleetHealthPage() {
 
         {/* Urgent actions — top critical/high risks */}
         {topUrgent.length > 0 && (
-          <div className="bg-red-50 border border-red-200 rounded-xl overflow-hidden">
-            <div className="flex items-center gap-2 px-5 py-3 border-b border-red-200">
+          <details className="rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+            <summary className="flex cursor-pointer list-none items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-red-600" />
               <span className="text-xs font-bold uppercase tracking-widest text-red-700">
                 Urgent Actions Required
               </span>
-              <span className="ml-auto text-xs text-red-500">{topUrgent.length} item{topUrgent.length > 1 ? "s" : ""}</span>
-            </div>
-            <div className="px-5 py-3 space-y-2">
+              <span className="min-w-0 flex-1 truncate text-xs text-red-700">{String(topUrgent[0]?.displayName ?? "")} · {((topUrgent[0]?.reasons as string[]) ?? []).slice(0, 1).join("")}</span>
+              <span className="text-xs font-semibold text-red-600">{topUrgent.length} item{topUrgent.length > 1 ? "s" : ""}</span>
+            </summary>
+            <div className="mt-2 space-y-2 border-t border-red-200 pt-2">
               {topUrgent.map((item, i) => {
                 const isVehicle = item.entityType === "vehicle";
                 const id        = num(item.entityId);
                 return (
-                  <div key={i} className="flex items-center gap-3 bg-white border border-red-200 rounded-lg px-4 py-2.5">
+                  <div key={i} className="flex items-center gap-3 rounded-lg border border-red-200 bg-white px-3 py-2">
                     <span className={`h-2 w-2 rounded-full shrink-0 ${sevDot(String(item.severity))}`} />
                     {isVehicle
                       ? <Truck className="h-4 w-4 text-slate-400 shrink-0" />
@@ -1095,7 +1087,7 @@ export function FleetHealthPage() {
                 );
               })}
             </div>
-          </div>
+          </details>
         )}
 
         {/* Filters */}
@@ -1131,7 +1123,7 @@ export function FleetHealthPage() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             {/* Vehicle risks */}
             {(categoryFilter === "all" || categoryFilter === "vehicle") && vehicleRisks.length > 0 && (
               <div className="space-y-3">

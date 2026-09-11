@@ -42,6 +42,17 @@ const FLEET_CFG = [
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+function exceptionActionRoute(exception: AnyRecord) {
+  const route = String(exception.actionRoute ?? "/alerts");
+  if (route !== "/active-shipments") return route;
+  const jobId = String(exception.jobId ?? "").trim();
+  if (jobId) return `${route}?jobId=${encodeURIComponent(jobId)}`;
+  const context = [exception.shipmentNumber, exception.vehicle, exception.driver]
+    .map((value) => String(value ?? "").trim())
+    .find(Boolean);
+  return context ? `${route}?search=${encodeURIComponent(context)}` : route;
+}
+
 /* Three-state doctrine for every metric line:
    measured value (incl. 0) → the number; absent → "—" + a named reason. Fetch
    failures are handled at column level. Never a default number. */
@@ -223,7 +234,7 @@ export function CommandCenterPage() {
                         {entity || "Unassigned"}<span className="text-slate-300"> · </span>{String(exc.timestamp ?? exc.time ?? "")}
                       </p>
                     </div>
-                    <button type="button" onClick={() => navigate(String(exc.actionRoute ?? "/alerts"))}
+                    <button type="button" onClick={() => navigate(exceptionActionRoute(exc))}
                       className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-teal-300 hover:text-teal-700">
                       {String(exc.actionLabel ?? "View")}
                     </button>

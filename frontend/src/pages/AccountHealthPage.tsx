@@ -260,7 +260,7 @@ export function AccountHealthPage() {
   };
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="page-stack">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">{titles[tab]}</h1>

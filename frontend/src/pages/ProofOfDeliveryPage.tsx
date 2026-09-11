@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { tokens } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
-import { LoadingState, ErrorState, EmptyState, StatusBadge, KpiCard, ProgressBar } from "@/components/ui";
+import { LoadingState, ErrorState, EmptyState, PageHeader, StatusBadge, ProgressBar } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { shipmentsApi } from "@/services/shipmentsApi";
 import type { AnyRecord } from "@/types";
@@ -593,12 +593,11 @@ export function ProofOfDeliveryPage() {
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Proof of Delivery</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Delivery evidence surface tied directly to job status, shipment promise, and invoice readiness</p>
-        </div>
-        <button
+      <PageHeader
+        eyebrow="Delivery evidence"
+        title="Proof of Delivery"
+        description="Delivery evidence tied directly to job status, shipment promise, and invoice readiness."
+        actions={<button
           type="button"
           className="btn-secondary text-sm"
           disabled={!canExport || exporting}
@@ -606,45 +605,23 @@ export function ProofOfDeliveryPage() {
           onClick={handleExport}
         >
           {exporting ? "Exporting…" : "Export CSV"}
-        </button>
-      </div>
+        </button>}
+      />
       {!canExport && <div role="status" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">Read-only POD view. A direct export permission is required to download evidence metadata.</div>}
       {exportError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{exportError}</div>}
 
-      {/* KPI grid */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <KpiCard
-          label="Total Records"
-          value={String(totalRecords)}
-          trend={`${filteredTotal} matching`}
-        />
-        <KpiCard
-          label="Captured"
-          value={String(capturedCount)}
-          status="Complete"
-          delta={totalRecords ? `${captureRate}% capture rate` : undefined}
-        />
-        <KpiCard
-          label="Pending"
-          value={String(pendingCount)}
-          status={pendingCount > 0 ? "Pending" : undefined}
-        />
-        <KpiCard
-          label="Awaiting Review"
-          value={String(submittedCount)}
-          status={submittedCount > 0 ? "Pending" : undefined}
-        />
-        <KpiCard
-          label="Digital Signatures"
-          value={String(digitalSignatures)}
-          trend={capturedCount ? `${signatureRate}% of captures` : undefined}
-        />
-        <KpiCard
-          label="Jobs Pending POD"
-          value={String(jobsPendingProof)}
-          status={jobsPendingProof > 0 ? "Missing" : undefined}
-        />
-      </div>
+      <section className="panel flex flex-wrap items-center gap-x-6 gap-y-2 px-3 py-2" aria-label="Proof of delivery summary">
+        {[
+          { label: "Records", value: totalRecords, note: `${filteredTotal} matching`, tone: "text-slate-900" },
+          { label: "Captured", value: capturedCount, note: `${captureRate}% rate`, tone: "text-emerald-700" },
+          { label: "Pending", value: pendingCount, note: "capture", tone: pendingCount ? "text-amber-700" : "text-slate-700" },
+          { label: "Review", value: submittedCount, note: "submitted", tone: submittedCount ? "text-amber-700" : "text-slate-700" },
+          { label: "Signatures", value: digitalSignatures, note: `${signatureRate}% of captures`, tone: "text-slate-900" },
+          { label: "POD blocked", value: jobsPendingProof, note: "jobs", tone: jobsPendingProof ? "text-red-700" : "text-emerald-700" },
+        ].map(({ label, value, note, tone }) => (
+          <div key={label} className="min-w-[102px]"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">{label}</p><p className={`text-sm font-black tabular-nums ${tone}`}>{value} <span className="text-[10px] font-medium text-slate-400">{note}</span></p></div>
+        ))}
+      </section>
 
 
       {/* Filters */}

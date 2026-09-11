@@ -504,7 +504,7 @@ export function LiveMapPage() {
     : Math.round((positionFreshness.recent / positionFreshness.located) * 1000) / 10;
 
   return (
-    <div className="control-tower flex h-full min-w-0 max-w-full flex-col gap-4 overflow-x-hidden overflow-y-auto">
+    <div className="control-tower flex h-full min-w-0 max-w-full flex-col gap-3 overflow-x-hidden overflow-y-auto">
       <PageHeader
         eyebrow="Operations"
         title="Fleet Position Map"
@@ -558,71 +558,26 @@ export function LiveMapPage() {
             </div>
           </div>
 
-          <div className="mt-3 grid min-w-0 gap-2 lg:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Route intelligence</p>
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-slate-900">{String(selectedRoute?.routeCode ?? selectedRoute?.routeName ?? selectedRoute?.name ?? "No route selected")}</p>
-                  <p className="truncate text-xs text-slate-500">{routeTrail[0]?.summary ?? "No geocoded route trail yet"}</p>
-                </div>
-                <Route className="h-4 w-4 shrink-0 text-sky-500" />
-              </div>
-              <div className="mt-3 flex items-center gap-2">
-                <select
-                  className="field min-w-0 flex-1 py-2 text-sm"
-                  value={selectedRouteId ?? ""}
-                  onChange={(e) => setSelectedRouteId(e.target.value || null)}
-                >
-                  <option value="">Select a route</option>
-                  {routeRows.map((route) => (
-                    <option key={String(route.id)} value={String(route.id)}>
-                      {String(route.routeCode ?? route.routeName ?? route.name ?? `Route ${route.id}`)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Route optimization</p>
-              {routePreviewQ.data ? (
-                <>
-                  <p className="mt-2 text-2xl font-black text-slate-950">{String(routePreviewQ.data.efficiencyScore ?? "--")}%</p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Saves {String(routePreviewQ.data.estimatedSavingsMinutes ?? 0)} min · {String(routePreviewQ.data.costLeakageReduction ?? "--")} leakage reduction
-                  </p>
-                </>
-              ) : (
-                <p className="mt-2 text-sm text-slate-500">Select a route with stops to generate a geospatial optimization preview.</p>
-              )}
-            </div>
-
-            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Asset health</p>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 pt-2">
+            <label className="flex min-w-[220px] items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+              <Route className="h-3.5 w-3.5 text-sky-500" aria-hidden /> Route
+              <select className="field min-w-0 flex-1 py-1.5 text-xs normal-case tracking-normal" value={selectedRouteId ?? ""} onChange={(e) => setSelectedRouteId(e.target.value || null)}>
+                <option value="">Select a route</option>
+                {routeRows.map((route) => <option key={String(route.id)} value={String(route.id)}>{String(route.routeCode ?? route.routeName ?? route.name ?? `Route ${route.id}`)}</option>)}
+              </select>
+            </label>
+            <span className="max-w-72 truncate text-xs text-slate-500" title={routeTrail[0]?.summary ?? "No geocoded route trail yet"}>{routeTrail[0]?.summary ?? "No geocoded route trail yet"}</span>
+            {routePreviewQ.data ? <span className="text-xs font-semibold text-slate-700">Efficiency {String(routePreviewQ.data.efficiencyScore ?? "--")}% · saves {String(routePreviewQ.data.estimatedSavingsMinutes ?? 0)} min</span> : null}
+            <details className="relative ml-auto text-xs">
+              <summary className="cursor-pointer font-semibold text-teal-700">Health details</summary>
+              <div className="absolute right-0 z-20 mt-2 grid w-80 max-w-[80vw] grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
                 <MetricPill label="Geocoded" value={`${assetHealth.geocoded}/${assetHealth.total}`} />
-                <MetricPill label="Stale" value={String(assetHealth.stale)} tone="rose" />
                 <MetricPill label="At risk" value={String(assetHealth.highRisk)} tone="amber" />
-                <MetricPill label="Watch" value={String(assetHealth.watch)} tone="sky" />
-              </div>
-              <p className="mt-2 text-[11px] text-slate-500">
-                Avg receipt age {freshnessLabel(assetHealth.avgFreshness)} · authoritative fix freshness is reported separately
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Position currency</p>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                 <MetricPill label="Recent fixes" value={String(positionFreshness.recent)} tone="sky" />
                 <MetricPill label="Stale fixes" value={String(positionFreshness.stale)} tone="amber" />
-                <MetricPill label="Unknown age" value={String(positionFreshness.offline)} tone="rose" />
-                <MetricPill label="Located" value={String(positionFreshness.located)} />
+                <p className="col-span-2 text-[11px] text-slate-500">Avg receipt age {freshnessLabel(assetHealth.avgFreshness)} · {positionFreshness.located} located · {positionFreshness.offline} unknown age.</p>
               </div>
-              <p className="mt-2 text-[11px] text-slate-500">
-                Counts use authoritative fix freshness for coordinate-bearing positions in the current authorized stream snapshot
-              </p>
-            </div>
+            </details>
           </div>
 
           <div className="-mx-1 mt-3 overflow-x-auto px-1 pb-1">
@@ -664,7 +619,7 @@ export function LiveMapPage() {
             </span>
           </div>
 
-          <div className="map-surface relative mt-2 min-h-[400px] flex-1 overflow-hidden rounded-xl border border-slate-200 sm:min-h-[460px] xl:min-h-[520px]">
+          <div className="map-surface relative mt-2 min-h-[380px] flex-1 overflow-hidden rounded-xl border border-slate-200 sm:min-h-[420px] xl:min-h-[460px]">
             <LiveMap
               entities={mapEntities}
               geofences={geofences}
@@ -675,7 +630,7 @@ export function LiveMapPage() {
               replayMarker={replayOpen ? replayMarker : null}
             />
             {locatedEntityCount === 0 ? (
-              <div className="pointer-events-none absolute inset-x-4 top-4 z-[500] rounded-2xl border border-amber-300 bg-amber-50/95 p-4 shadow-lg backdrop-blur">
+              <div className="pointer-events-none absolute inset-x-3 top-3 z-[500] rounded-xl border border-amber-300 bg-amber-50/95 px-3 py-2 shadow-sm backdrop-blur">
                 <div className="flex items-start gap-3">
                   <Satellite className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
                   <div>
@@ -716,7 +671,7 @@ export function LiveMapPage() {
         </section>
 
         {/* Unified right rail: roster (scrolls) over a pinned alerts strip. */}
-        <aside className="panel flex min-w-0 max-h-[700px] flex-col overflow-hidden p-0">
+        <aside className="panel flex min-w-0 max-h-[640px] flex-col overflow-hidden p-0">
           <div className="border-b border-slate-100 px-4 pb-3 pt-4">
             <div className="flex items-center justify-between">
               <h2 className="section-title">Geospatial Health</h2>
@@ -1051,7 +1006,7 @@ function StatusBoardCard({ label, count, tone, meaning, active, onClick }: { lab
       onClick={onClick}
       aria-pressed={active ? "true" : "false"}
       aria-label={`${label}: ${count}. ${meaning}`}
-      className={`flex min-h-11 items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left shadow-sm transition ${
+      className={`flex min-h-9 items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition ${
         active ? `${t.activeBorder} ${t.activeBg} shadow-sm` : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
       }`}
     >
@@ -1060,7 +1015,7 @@ function StatusBoardCard({ label, count, tone, meaning, active, onClick }: { lab
         <span className="truncate text-xs font-semibold text-slate-700">{label}</span>
         <span className="hidden truncate text-[10px] font-medium text-slate-400 2xl:inline">{meaning}</span>
       </div>
-      <span className={`text-xl font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
+      <span className={`text-base font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
     </button>
   );
 }

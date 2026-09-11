@@ -12,6 +12,7 @@ import {
   Cpu,
   Download,
   KeyRound,
+  MoreHorizontal,
   PlugZap,
   Plus,
   RadioTower,
@@ -26,7 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { useNavigate } from "react-router";
-import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EntityImportExport } from "@/components/EntityImportExport";
 import { PERMISSIONS } from "@/auth/rbacConfig";
@@ -1619,41 +1620,48 @@ export function IotDevicesPage() {
         description="Evidence-backed device connectivity, assignment, reported firmware, and active diagnostic exceptions. Unsupported controls are labelled explicitly."
         actions={
           <>
-            <EntityImportExport
-              canImport={canCreate}
-              canExport={false}
-              config={{
-                entity: "devices",
-                columns: ["deviceSerial", "branchCode", "imei", "deviceCategory", "manufacturer", "deviceModel", "hardwareRevision", "provider", "firmwareVersion", "notes"],
-                requiredColumns: ["deviceSerial", "deviceCategory"],
-                templateEndpoint: "/api/telemetry/devices/import-template",
-                importPreview: telematicsService.previewDeviceImport,
-                importCommit: telematicsService.commitDeviceImport,
-                invalidateKey: "telematics",
-                onImported: refreshAll,
-                toolbarLabel: "Device",
-              }}
-            />
-            {canBulkInstall ? <EntityImportExport
-              canImport={canBulkInstall}
-              canExport={false}
-              config={{
-                entity: "device installations",
-                columns: ["deviceSerial", "branchCode", "vehicleCode", "deviceRole", "isPrimary", "effectiveFrom", "installationLocation", "odometerAtInstallation", "commissioningMethod", "assignmentReason", "idempotencyKey"],
-                requiredColumns: ["deviceSerial", "branchCode", "vehicleCode", "deviceRole", "isPrimary", "effectiveFrom", "assignmentReason", "idempotencyKey"],
-                templateEndpoint: "/api/telemetry/device-installations/import-template",
-                importPreview: telematicsService.previewDeviceInstallationImport,
-                importCommit: telematicsService.commitDeviceInstallationImport,
-                invalidateKey: "telematics",
-                onImported: refreshAll,
-                atomic: true,
-                toolbarLabel: "Installation",
-                importHelp: "Up to 500 rows. This create-only workflow records new installations. Exact idempotent replays are skipped; use the governed Transfer action for reassignment.",
-              }}
-            /> : null}
-            {canExport ? <button className="btn-ghost" title="Export the current device inventory to CSV." onClick={() => void exportCurrent()}>
-              <Download className="h-4 w-4" /> Export Devices CSV
-            </button> : null}
+            {(canCreate || canBulkInstall || canExport) ? <details className="group relative">
+              <summary className="btn-ghost cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                <MoreHorizontal className="h-4 w-4" /> Bulk tools
+              </summary>
+              <div className="panel absolute right-0 z-40 mt-2 w-[min(22rem,calc(100vw-2rem))] space-y-3 p-3 shadow-xl">
+                <EntityImportExport
+                  canImport={canCreate}
+                  canExport={false}
+                  config={{
+                    entity: "devices",
+                    columns: ["deviceSerial", "branchCode", "imei", "deviceCategory", "manufacturer", "deviceModel", "hardwareRevision", "provider", "firmwareVersion", "notes"],
+                    requiredColumns: ["deviceSerial", "deviceCategory"],
+                    templateEndpoint: "/api/telemetry/devices/import-template",
+                    importPreview: telematicsService.previewDeviceImport,
+                    importCommit: telematicsService.commitDeviceImport,
+                    invalidateKey: "telematics",
+                    onImported: refreshAll,
+                    toolbarLabel: "Device",
+                  }}
+                />
+                {canBulkInstall ? <EntityImportExport
+                  canImport={canBulkInstall}
+                  canExport={false}
+                  config={{
+                    entity: "device installations",
+                    columns: ["deviceSerial", "branchCode", "vehicleCode", "deviceRole", "isPrimary", "effectiveFrom", "installationLocation", "odometerAtInstallation", "commissioningMethod", "assignmentReason", "idempotencyKey"],
+                    requiredColumns: ["deviceSerial", "branchCode", "vehicleCode", "deviceRole", "isPrimary", "effectiveFrom", "assignmentReason", "idempotencyKey"],
+                    templateEndpoint: "/api/telemetry/device-installations/import-template",
+                    importPreview: telematicsService.previewDeviceInstallationImport,
+                    importCommit: telematicsService.commitDeviceInstallationImport,
+                    invalidateKey: "telematics",
+                    onImported: refreshAll,
+                    atomic: true,
+                    toolbarLabel: "Installation",
+                    importHelp: "Up to 500 rows. This create-only workflow records new installations. Exact idempotent replays are skipped; use the governed Transfer action for reassignment.",
+                  }}
+                /> : null}
+                {canExport ? <button className="btn-ghost" title="Export the current device inventory to CSV." onClick={() => void exportCurrent()}>
+                  <Download className="h-4 w-4" /> Export Devices CSV
+                </button> : null}
+              </div>
+            </details> : null}
             {canCreate ? <button className="btn-primary" title="Connect a new device and generate its live credentials." onClick={openConnect}>
               <PlugZap className="h-4 w-4" /> Connect Device
             </button> : null}
@@ -1662,14 +1670,14 @@ export function IotDevicesPage() {
       />
 
       {notice ? (
-        <div className="panel flex items-center justify-between gap-4 border border-emerald-400/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+        <div className="panel flex items-center justify-between gap-4 border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800">
           <span>{notice}</span>
           <button className="icon-btn" onClick={() => setNotice(null)}><X className="h-4 w-4" /></button>
         </div>
       ) : null}
 
       {lifecycleError ? (
-        <div role="alert" className="panel flex items-start justify-between gap-4 border border-red-300/30 bg-red-500/10 p-4 text-sm text-red-100">
+        <div role="alert" className="panel flex items-start justify-between gap-4 border border-red-200 bg-red-50 p-3 text-sm text-red-800">
           <span>
             <strong className="block">{lifecycleFailureHeading(lifecycleError)}</strong>
             {lifecycleError instanceof Error ? lifecycleError.message : "The installation change was not completed. Reload the device and try again."}
@@ -1694,14 +1702,25 @@ export function IotDevicesPage() {
         <AssignmentRefreshNotice record={assignmentRecord} busy={assignmentRefreshPending} onRetry={() => { void refreshAssignmentDisplay(assignmentRecord); }} />
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <KpiCard label="Active Managed Devices" value={managedCount} status={managedCount ? "Active" : "Pending"} icon={<RadioTower className="h-4 w-4" />} />
-        <KpiCard label="Offline" value={offlineCount} status={!managedCount ? "Pending" : offlineCount ? "Critical" : "Healthy"} icon={<WifiOff className="h-4 w-4" />} />
-        <KpiCard label="Needs Attention" value={attentionCount} status={!managedCount ? "Pending" : attentionCount ? "Watch" : "Healthy"} icon={<Activity className="h-4 w-4" />} />
-        <KpiCard label="Page Data Health" value={avgHealth == null ? "Unknown" : `${avgHealth}%`} status={avgHealth == null ? "Pending" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<Cpu className="h-4 w-4" />} />
-        <KpiCard label="Devices with gaps" value={readinessGapCount ?? "Unknown"} status={!managedCount || readinessGapCount == null ? "Pending" : readinessGapCount ? "Watch" : "Healthy"} icon={<ShieldCheck className="h-4 w-4" />} />
-      </div>
-      <p className="text-xs text-slate-500">Data health is a derived signal score for active devices: stale check-in, malfunction state, open telemetry alerts, and active faults reduce the score. Software gaps are persisted operational facts: incomplete exact identity, missing installation or SIM/eSIM profile, stale or absent telemetry, or an open RMA. Neither measure is certification evidence. <button type="button" className="font-semibold text-teal-700 hover:underline" onClick={() => setTab("archived")}>{archivedCount} archived</button> devices are retained separately.</p>
+      <section className="panel flex flex-wrap items-center gap-x-5 gap-y-2 px-3 py-2" aria-label="Device health summary">
+        {[
+          { label: "Managed", value: managedCount, tone: "text-slate-900", icon: RadioTower },
+          { label: "Offline", value: offlineCount, tone: offlineCount ? "text-red-700" : "text-emerald-700", icon: WifiOff },
+          { label: "Attention", value: attentionCount, tone: attentionCount ? "text-amber-700" : "text-emerald-700", icon: Activity },
+          { label: "Data health", value: avgHealth == null ? "Unknown" : `${avgHealth}%`, tone: avgHealth == null ? "text-slate-500" : avgHealth >= 85 ? "text-emerald-700" : avgHealth >= 70 ? "text-amber-700" : "text-red-700", icon: Cpu },
+          { label: "Readiness gaps", value: readinessGapCount ?? "Unknown", tone: readinessGapCount == null ? "text-slate-500" : readinessGapCount ? "text-amber-700" : "text-emerald-700", icon: ShieldCheck },
+        ].map(({ label, value, tone, icon: Icon }) => (
+          <div key={label} className="flex min-w-[108px] items-center gap-2">
+            <Icon className="h-3.5 w-3.5 text-slate-400" aria-hidden />
+            <div><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">{label}</p><p className={`text-sm font-black tabular-nums ${tone}`}>{value}</p></div>
+          </div>
+        ))}
+        <button type="button" className="btn-ghost ml-auto text-xs" onClick={() => setTab("archived")}>{archivedCount} archived</button>
+        <details className="relative text-xs text-slate-500">
+          <summary className="cursor-pointer font-semibold text-teal-700">How calculated</summary>
+          <p className="absolute right-0 z-20 mt-2 w-80 max-w-[80vw] rounded-lg border border-slate-200 bg-white p-3 shadow-lg">Data health derives from check-in freshness, malfunction state, telemetry alerts, and active faults. Readiness gaps reflect incomplete identity, installation, SIM/eSIM, telemetry, or open RMA records. Neither measure is certification evidence.</p>
+        </details>
+      </section>
 
       <div className="panel space-y-3 p-3">
         <div className="grid gap-2 xl:grid-cols-[minmax(280px,1fr)_auto] xl:items-center">
@@ -1837,7 +1856,7 @@ export function IotDevicesPage() {
                     <button
                       className="btn-ghost"
                       title="Open provider management settings."
-                      onClick={() => navigate("/integrations")}
+                      onClick={() => navigate(`/integrations?provider=${encodeURIComponent(String(provider.name ?? provider.id))}&intent=provider-management`)}
                     >
                       <Settings2 className="h-4 w-4" /> Manage Provider
                     </button>

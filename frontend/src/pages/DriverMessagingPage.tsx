@@ -99,7 +99,7 @@ export function DriverMessagingPage() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack h-full overflow-y-auto">
       <PageHeader
         eyebrow="Driver Messaging"
         title="Direct communication with your fleet"

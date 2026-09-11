@@ -680,22 +680,16 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
 
   return (
     <>
-      <div className="fleet-console relative min-h-[100svh] overflow-hidden text-slate-900">
+      <div className="fleet-console page-stack text-slate-900">
 
-        <div className="relative z-10 mx-auto flex min-h-[100svh] w-full max-w-[1600px] flex-col px-4 py-3 sm:px-6 lg:px-8 lg:py-4">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 rounded-[22px] border border-white/80 bg-white/74 px-4 py-3 shadow-[0_18px_40px_rgba(37,99,235,0.08)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-white/[0.04]">
-              <div className="rounded-[18px] bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.45),transparent_45%),linear-gradient(160deg,rgba(29,78,216,0.98),rgba(8,47,122,0.98))] p-1.5 shadow-[0_12px_24px_rgba(37,99,235,0.22)]">
-                <span className="text-sm font-black tracking-tight text-white">OpsTrax</span>
-              </div>
-              <div className="h-9 w-px bg-slate-300/60" />
-              <div>
-                <p className="text-[10px] font-bold tracking-[0.28em] uppercase text-blue-500/70">Dispatch & Delivery</p>
-                <p className="text-[11px] text-slate-500">{config.label}</p>
-              </div>
+        <div className="page-stack relative z-10 w-full">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="section-title">Dispatch &amp; Delivery</p>
+              <h1 className="mt-1 text-[22px] font-black leading-tight tracking-tight text-slate-950">{config.title}</h1>
+              <p className="mt-1 text-[13px] text-slate-500">{config.subtitle}</p>
             </div>
-
-            <nav aria-label="Logistics workspace views" className="hidden items-center gap-2 rounded-full border border-white/70 bg-white/72 p-1 shadow-[0_14px_30px_rgba(37,99,235,0.05)] backdrop-blur-xl md:flex dark:border-white/[0.08] dark:bg-white/[0.04]">
+            <nav aria-label="Logistics workspace views" className="hidden items-center gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-sm md:flex">
               {MODE_ORDER.map((item) => {
                 const active = item === mode;
                 return (
@@ -704,7 +698,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                     type="button"
                     aria-pressed={active}
                     onClick={() => setMode(item)}
-                    className={`rounded-full px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] transition ${
+                    className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition ${
                       active
                         ? 'bg-slate-950 text-white shadow-lg dark:bg-white dark:text-slate-950'
                         : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-white/[0.05]'
@@ -717,13 +711,13 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
             </nav>
           </div>
 
-          <label className="mb-4 md:hidden">
+          <label className="md:hidden">
             <span className="sr-only">Workspace view</span>
             <select
               aria-label="Workspace view"
               value={mode}
               onChange={(event) => setMode(event.target.value as DispatchMode)}
-              className="w-full rounded-2xl border border-white/80 bg-white/90 px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm dark:border-white/10 dark:bg-slate-900 dark:text-white"
+              className="field w-full font-semibold"
             >
               {MODE_ORDER.map((item) => <option key={item} value={item}>{MODULES[item].label}</option>)}
             </select>
@@ -748,8 +742,8 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
             </div>
           )}
 
-          <section className="grid flex-1 gap-4 lg:grid-cols-[1.05fr_0.95fr]">
-            <div className="rounded-[32px] border border-white/75 bg-[linear-gradient(160deg,rgba(251,253,255,0.92),rgba(239,245,255,0.74))] p-5 shadow-[0_24px_80px_rgba(37,99,235,0.12)] backdrop-blur-3xl dark:border-white/[0.08] dark:bg-[linear-gradient(160deg,rgba(11,18,34,0.96),rgba(7,12,24,0.92))]">
+          <section className="grid flex-1 gap-3 lg:grid-cols-[1.05fr_0.95fr]">
+            <div className="panel p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center gap-2 rounded-full border border-blue-300/30 bg-white/78 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-blue-600 shadow-sm backdrop-blur`}>
                   <span className="live-dot h-1.5 w-1.5" />
@@ -761,17 +755,11 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                 </span>
               </div>
 
-              <div className="mt-5 max-w-3xl">
-                <h1 className="text-[40px] font-black leading-[1.02] tracking-tight text-slate-950 xl:text-[54px] dark:text-white">
-                  {config.title}
-                </h1>
-                <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-slate-600 dark:text-slate-400">
-                  {config.subtitle}
-                </p>
-                <p className="mt-3 max-w-2xl text-[13px] leading-relaxed text-slate-500 dark:text-slate-500">
+              <div className="mt-3 max-w-3xl">
+                <p className="max-w-2xl text-[13px] leading-5 text-slate-500 dark:text-slate-500">
                   {config.summary}
                 </p>
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-2 flex flex-wrap gap-2">
                   {valuePillars.map((pillar) => (
                     <span key={pillar} className="rounded-full border border-white/80 bg-white/78 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">
                       {pillar}
@@ -779,7 +767,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                   ))}
                 </div>
 
-                <div className="mt-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200/70 bg-white/65 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                <div className="mt-3 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200/70 bg-white/65 p-3 dark:border-white/10 dark:bg-white/[0.03]">
                   {mode === 'orders' && (
                     <label className="min-w-48 text-xs font-semibold text-slate-600 dark:text-slate-300">
                       Order status
@@ -814,12 +802,12 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                 </div>
               </div>
 
-              <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 {loading ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <div
                       key={index}
-                      className="rounded-[24px] border border-white/80 bg-white/78 p-4 shadow-[0_12px_26px_rgba(37,99,235,0.05)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]"
+                      className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
                     >
                       <div className="space-y-3">
                         <div className="h-3 w-20 animate-pulse rounded bg-slate-200/80 dark:bg-white/10" />
@@ -832,13 +820,13 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                   stats.map((stat) => (
                     <div
                       key={stat.label}
-                      className="rounded-[24px] border border-white/80 bg-white/78 p-4 shadow-[0_12px_26px_rgba(37,99,235,0.05)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]"
+                      className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
                     >
                       <div className="flex items-center justify-between">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">{stat.label}</p>
                         <stat.icon className="h-4 w-4 text-blue-500/70" />
                       </div>
-                      <p className="mt-2 text-[28px] font-black tracking-tight text-slate-950 dark:text-white">{stat.value}</p>
+                      <p className="mt-1 text-[24px] font-black tracking-tight text-slate-950 dark:text-white">{stat.value}</p>
                       <p className="mt-1 text-[12px] text-slate-500 dark:text-slate-500">{stat.hint}</p>
                     </div>
                   ))

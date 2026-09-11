@@ -159,7 +159,7 @@ assert.doesNotMatch(
 );
 assert.doesNotMatch(controlTower, /kpis\.onlineCameras/, "Default-contaminated camera status must not be presented as online evidence");
 assert.match(controlTower, /canViewDeviceEvidence = hasPermission\(PERMISSIONS\.TELEMATICS_DEVICES_VIEW\)/, "Control Tower device evidence must use the dedicated permission");
-assert.match(controlTower, /canViewDeviceEvidence && <KpiCard label="Online Device Evidence"/, "Online-device evidence must be hidden without device permission");
+assert.match(controlTower, /canViewDeviceEvidence \? \[\["Online devices"/, "Online-device evidence must be hidden without device permission");
 assert.doesNotMatch(controlTower, /Device offline/, "Control Tower must not present the legacy vehicle default as an offline-device fact");
 assert.match(controlTower, /Verified Camera Evidence/, "Control Tower must label the camera collection as verified evidence");
 assert.match(controlTower, /Only provider-authoritative records with media marked ready appear here/, "Control Tower must disclose the camera evidence threshold");

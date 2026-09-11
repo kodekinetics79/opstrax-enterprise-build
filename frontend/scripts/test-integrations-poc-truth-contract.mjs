@@ -30,12 +30,12 @@ assert.match(
 );
 assert.doesNotMatch(
   integrations,
-  /<KpiCard label="Connected"[^>]*status="Live"/,
+  /label: "Connected"[^\n]*note: "live"/,
   "The connector summary must not describe a verified credential handshake as live data flow",
 );
 assert.match(
   integrations,
-  /<KpiCard label="Connected"[^>]*status="Verified"/,
+  /label: "Connected"[^\n]*note: "verified"/,
   "The connector summary must describe evidence-backed provider handshakes as verified",
 );
 assert.match(

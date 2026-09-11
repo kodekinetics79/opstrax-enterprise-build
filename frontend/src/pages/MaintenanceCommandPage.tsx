@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import {
   AlertTriangle, CheckCircle, Clock, ClipboardList,
   Plus, Settings, ShieldAlert, Truck, Wrench, X, XCircle, Zap,
@@ -16,17 +16,45 @@ const TABS = ["Overview", "Defects", "Inspections", "Work Orders", "PM Rules", "
 type Tab = (typeof TABS)[number];
 
 export function MaintenanceCommandPage() {
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedVehicleId = searchParams.get("vehicleId") ?? "";
   const requestedTab = searchParams.get("tab");
-  const initialTab = TABS.find((tab) => tab === requestedTab) ?? (requestedVehicleId ? "Work Orders" : "Overview");
+  const routeTab: Tab = location.pathname === "/work-orders"
+    ? "Work Orders"
+    : location.pathname === "/inspections"
+      ? "Inspections"
+      : "Overview";
+  const initialTab = TABS.find((tab) => tab === requestedTab) ?? (requestedVehicleId ? "Work Orders" : routeTab);
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [createOpen, setCreateOpen] = useState(Boolean(requestedVehicleId));
+  const handledVehicleIntent = useRef(requestedVehicleId);
   const [completionTarget, setCompletionTarget] = useState<AnyRecord | null>(null);
   const [resolveTarget, setResolveTarget] = useState<AnyRecord | null>(null);
   const [resolveHoldTarget, setResolveHoldTarget] = useState<AnyRecord | null>(null);
   const [notice, setNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const qc = useQueryClient();
+
+  useEffect(() => {
+    const nextTab = TABS.find((tab) => tab === requestedTab) ?? (requestedVehicleId ? "Work Orders" : routeTab);
+    setActiveTab(nextTab);
+    if (!requestedVehicleId) {
+      handledVehicleIntent.current = "";
+      return;
+    }
+    if (handledVehicleIntent.current !== requestedVehicleId) {
+      handledVehicleIntent.current = requestedVehicleId;
+      setCreateOpen(true);
+    }
+  }, [requestedTab, requestedVehicleId, routeTab]);
+
+  const selectTab = (tab: Tab) => {
+    setActiveTab(tab);
+    const next = new URLSearchParams(searchParams);
+    if (tab === routeTab) next.delete("tab");
+    else next.set("tab", tab);
+    setSearchParams(next, { replace: true });
+  };
 
   const dashboard = useQuery<AnyRecord>({
     queryKey: ["maintenance", "dashboard"],
@@ -177,7 +205,7 @@ export function MaintenanceCommandPage() {
       )}
 
       {/* KPI Strip */}
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
         <KpiCard
           label="Fleet Available"
           value={`${String(kpis["fleetAvailabilityPct"] ?? "--")}%`}
@@ -211,10 +239,10 @@ export function MaintenanceCommandPage() {
       </div>
 
       {/* System Maintenance Insights */}
-      {insights.length > 0 && (
-        <section className="panel p-5">
+      {activeTab === "Overview" && insights.length > 0 && (
+        <section className="panel p-4">
           <h2 className="section-title">System Maintenance Insights</h2>
-          <div className="mt-4 space-y-3">
+          <div className="mt-3 space-y-2">
             {insights.map((ins, i) => (
               <InsightRow key={i} insight={ins} />
             ))}
@@ -223,21 +251,21 @@ export function MaintenanceCommandPage() {
       )}
 
       {/* Tabs */}
-      <section className="panel p-5">
-        <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-4">
+      <section className="panel p-3">
+        <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
           {TABS.map((tab) => (
             <button
               key={tab}
               type="button"
               className={tab === activeTab ? "control-tab control-tab-active" : "control-tab"}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => selectTab(tab)}
             >
               {tab}
             </button>
           ))}
         </div>
 
-        <div className="mt-5">
+        <div className="mt-3">
           {activeTab === "Overview" && (
             <OverviewTab
               openDefects={openDefectsList}
@@ -316,6 +344,7 @@ export function MaintenanceCommandPage() {
       </section>
 
       {createOpen && canManage && <CreateWorkOrderDialog
+        key={requestedVehicleId || "manual"}
         initialVehicleId={requestedVehicleId}
         vehicles={vehicles.data ?? []}
         vehiclesLoading={vehicles.isLoading}
@@ -323,7 +352,14 @@ export function MaintenanceCommandPage() {
         pending={createWo.isPending}
         error={createWo.isError ? errorMessage(createWo.error, "Work order could not be created.") : null}
         onRetryVehicles={() => void vehicles.refetch()}
-        onClose={() => { if (!createWo.isPending) { setCreateOpen(false); setSearchParams({}, { replace: true }); } }}
+        onClose={() => {
+          if (createWo.isPending) return;
+          handledVehicleIntent.current = requestedVehicleId;
+          setCreateOpen(false);
+          const next = new URLSearchParams(searchParams);
+          next.delete("vehicleId");
+          setSearchParams(next, { replace: true });
+        }}
         onSubmit={(payload) => createWo.mutate(payload)}
       />}
       {completionTarget && <CompleteWorkOrderDialog
@@ -378,7 +414,7 @@ function InsightRow({ insight }: { insight: AnyRecord }) {
   };
   const Icon = icons[level] ?? Zap;
   return (
-    <div className={`rounded-xl border p-4 ${styles[level] ?? styles.info}`}>
+    <div className={`rounded-xl border p-3 ${styles[level] ?? styles.info}`}>
       <div className="flex items-start gap-3">
         <Icon className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
@@ -406,7 +442,7 @@ function OverviewTab({
   onCompleteWo: (record: AnyRecord) => void;
 }) {
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="grid gap-3 lg:grid-cols-2">
       <section>
         <h3 className="section-title mb-3">Open Defects Queue</h3>
         {openDefects.length === 0
@@ -424,7 +460,7 @@ function OverviewTab({
         }
       </section>
 
-      <div className="space-y-6">
+      <div className="space-y-3">
         <section>
           <h3 className="section-title mb-3">PM Due / Overdue</h3>
           {duePm.length === 0
@@ -667,7 +703,7 @@ function DefectCard({
   const status = String(defect["status"] ?? "Open");
 
   return (
-    <div className={`mb-3 rounded-xl border p-4 ${style}`}>
+    <div className={`mb-2 rounded-xl border p-3 ${style}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -710,7 +746,7 @@ function WorkOrderCard({
   const isOpen = !["Completed","completed","Cancelled","cancelled"].includes(status);
 
   return (
-    <div className="mb-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="mb-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

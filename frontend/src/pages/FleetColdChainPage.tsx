@@ -229,8 +229,8 @@ export function FleetColdChainPage() {
   if (loading || !summary) {
     if (error) {
       return (
-        <main className="min-h-screen bg-[linear-gradient(135deg,_#f8fbff_0%,_#e8f2ff_50%,_#eff6ff_100%)] px-6 py-8 text-slate-900">
-          <section className="mx-auto flex w-full max-w-4xl flex-col gap-4 rounded-[30px] border border-rose-200 bg-white/85 p-8 shadow-xl backdrop-blur">
+        <div className="page-stack text-slate-900">
+          <section className="panel flex w-full flex-col gap-3 border-rose-200 p-4">
             <p className="text-xs font-bold uppercase tracking-[0.24em] text-rose-500">Cold chain workspace</p>
             <h1 className="text-3xl font-black tracking-tight text-slate-950">Cold-chain data is unavailable.</h1>
             <p className="max-w-2xl text-slate-600">{error}</p>
@@ -243,33 +243,33 @@ export function FleetColdChainPage() {
               </Link>
             </div>
           </section>
-        </main>
+        </div>
       );
     }
     return (
-      <main className="min-h-screen bg-[linear-gradient(135deg,_#f8fbff_0%,_#e8f2ff_50%,_#eff6ff_100%)] px-6 py-8 text-slate-900">
-        <div className="mx-auto grid w-full max-w-7xl gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <section className="space-y-4 rounded-[30px] border border-white/80 bg-white/70 p-6 shadow-xl backdrop-blur">
+      <div className="page-stack text-slate-900">
+        <div className="grid w-full gap-3 lg:grid-cols-[1.15fr_0.85fr]">
+          <section className="panel space-y-3 p-4">
             <div className="h-3 w-40 animate-pulse rounded-full bg-slate-200" />
             <div className="h-14 w-3/4 animate-pulse rounded-3xl bg-slate-200/80" />
             <div className="h-6 w-full animate-pulse rounded-full bg-slate-200/70" />
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {Array.from({ length: 4 }).map((_, index) => (
-                <div key={index} className="h-28 animate-pulse rounded-3xl bg-slate-200/70" />
+                <div key={index} className="h-20 animate-pulse rounded-xl bg-slate-200/70" />
               ))}
             </div>
           </section>
           <aside className="space-y-4">
-            <div className="h-72 animate-pulse rounded-[28px] bg-slate-200/70" />
-            <div className="h-72 animate-pulse rounded-[28px] bg-slate-200/70" />
+            <div className="h-56 animate-pulse rounded-xl bg-slate-200/70" />
+            <div className="h-56 animate-pulse rounded-xl bg-slate-200/70" />
           </aside>
         </div>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="fleet-console text-slate-900">
+    <div className="fleet-console page-stack text-slate-900">
       <section className="relative mx-auto flex w-full max-w-7xl flex-col gap-3">
         <ConsoleRail
           eyebrow="Fleet · Cold Chain"
@@ -360,8 +360,8 @@ export function FleetColdChainPage() {
               ))}
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[1fr_0.95fr]">
-              <section className="rounded-[28px] border border-white/75 bg-white/75 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+            <div className="grid gap-3 xl:grid-cols-[1fr_0.95fr]">
+              <section className="panel p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Temperature devices</p>
@@ -424,7 +424,7 @@ export function FleetColdChainPage() {
                 </div>
               </section>
 
-              <section className="rounded-[28px] border border-white/75 bg-white/75 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+              <section className="panel p-4">
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Control inputs</p>
                 <h2 className="mt-2 text-2xl font-black text-slate-950">Register a device</h2>
                 <p className="mt-2 text-sm text-slate-600">Registration and calibration fields are operator-reported metadata. Live measurements require authenticated sensor or gateway ingest.</p>
@@ -469,7 +469,7 @@ export function FleetColdChainPage() {
           </div>
 
           <aside className="space-y-6">
-            <section className="rounded-[28px] border border-white/75 bg-slate-950/95 p-6 text-white shadow-[0_28px_60px_rgba(15,23,42,0.32)]">
+            <section className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-white shadow-lg">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.24em] text-cyan-200/70">Zones</p>
@@ -494,7 +494,7 @@ export function FleetColdChainPage() {
               </div>
             </section>
 
-              <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+              <section className="panel p-4">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Alerts</p>
@@ -529,7 +529,7 @@ export function FleetColdChainPage() {
               </div>
               </section>
 
-              <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+              <section className="panel p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Event log</p>
@@ -564,7 +564,7 @@ export function FleetColdChainPage() {
                 </div>
               </section>
 
-              <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+              <section className="panel p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Reports</p>
@@ -617,7 +617,7 @@ export function FleetColdChainPage() {
           </aside>
         </div>
       </section>
-    </main>
+    </div>
   );
 }
 

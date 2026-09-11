@@ -56,7 +56,7 @@ export function DetentionPage() {
   const history = rows.filter((r) => ["charged", "dismissed", "below_free_time"].includes(String(r.status)));
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="page-stack">
       <PageHeader
         title="Detention Recovery"
         description="Turn dock time into paid invoices — GPS-proven, appointment-aware, approved by you before anything bills."

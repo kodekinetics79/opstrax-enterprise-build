@@ -530,7 +530,7 @@ function LiveDashboardPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <PageHeader
         eyebrow="Control Tower"
         title="Operations Dashboard"
@@ -546,8 +546,8 @@ function LiveDashboardPage() {
         <KpiCard label="Critical Alert Records" value={criticalAlerts.length} status={criticalAlerts.length ? "Critical" : undefined} />
         <KpiCard label="Acknowledged Open Records" value={acknowledgedAlerts.length} status="Recorded" />
       </div>
-      <div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
-        <div className="panel p-5">
+      <div className="grid gap-3 xl:grid-cols-[1.15fr_.85fr]">
+        <div className="panel p-4">
           <p className="section-title">Open Alert Register</p>
           <div className="mt-4 space-y-3">
             {topAlerts.length ? topAlerts.map((alert) => (
@@ -687,7 +687,7 @@ function AlertsPage() {
   if (isError) return <EmptyState title="Alerts unavailable" subtitle="Unable to load the alert register right now. Refresh to try again." />;
 
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <PageHeader
         eyebrow="Control Tower"
         title="Alerts"
@@ -902,7 +902,7 @@ function exportCsv(name: string, rows: AnyRecord[]) {
 
 function PriceSimulationPage() {
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <PageHeader
         eyebrow="Commercial"
         title="Price Simulation"
@@ -973,7 +973,7 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
 
   if (!definition) {
     return (
-      <div className="control-tower space-y-6">
+      <div className="control-tower page-stack">
         <PageHeader
           eyebrow="OpsTrax"
           title="Module Workspace"
@@ -992,7 +992,7 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
   }
 
   return (
-    <div className="control-tower space-y-6">
+    <div className="control-tower page-stack">
       <PageHeader
         eyebrow={definition.eyebrow}
         title={definition.title}

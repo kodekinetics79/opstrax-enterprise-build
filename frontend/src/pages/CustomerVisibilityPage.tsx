@@ -211,7 +211,7 @@ export function CustomerVisibilityPage() {
   const insightStats: AnyRecord = (insights.data?.["stats"] as AnyRecord) ?? {};
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack h-full overflow-y-auto">
       <PageHeader
         eyebrow="Customer Visibility"
         title="Shipment Tracking & ETA Risk Engine"

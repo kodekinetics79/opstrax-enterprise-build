@@ -45,7 +45,7 @@
   --space-8: 32px;
 
   /* Radii */
-  --r-card:  16px;
+  --r-card:  12px;
   --r-btn:   8px;
   --r-field: 8px;
   --control-standard: 32px;
@@ -55,7 +55,7 @@
 
   /* Shadows – clean, not glow */
   --shadow-card:     0 1px 2px rgba(15,23,42,.04),
-                     0 10px 32px rgba(15,23,42,.07),
+                     0 5px 18px rgba(15,23,42,.055),
                      0 0 0 1px rgba(148,163,184,.1);
   --shadow-card-hover: 0 10px 24px rgba(15,23,42,.08),
                        0 22px 54px rgba(15,23,42,.10),
@@ -87,18 +87,18 @@
   --blur-lg: 22px;
 
   /* Clay — soft-molded surface (inset light top, inset shade bottom) */
-  --r-clay:            16px;
+  --r-clay:            12px;
   --clay-bg:           linear-gradient(145deg, #ffffff 0%, #f3f7fc 100%);
   --clay-border:       rgba(255,255,255,.72);
   --clay-shadow:       inset 0 1.5px 0 rgba(255,255,255,.95),
                        inset 0 -2px 6px rgba(148,163,184,.15),
                        0 2px 4px rgba(15,23,42,.04),
-                       0 12px 28px rgba(15,23,42,.08),
+                       0 6px 18px rgba(15,23,42,.065),
                        0 0 0 1px rgba(148,163,184,.14);
   --clay-shadow-hover: inset 0 1.5px 0 rgba(255,255,255,.95),
                        inset 0 -2px 6px rgba(148,163,184,.12),
-                       0 14px 30px rgba(15,23,42,.10),
-                       0 26px 56px rgba(15,23,42,.10),
+                       0 8px 22px rgba(15,23,42,.08),
+                       0 14px 34px rgba(15,23,42,.07),
                        0 0 0 1px rgba(148,163,184,.16);
 
   /* Liquid glass — translucent panel with specular edge highlight */
@@ -106,7 +106,7 @@
   --lg-border:         rgba(255,255,255,.6);
   --lg-highlight:      inset 0 1px 0 rgba(255,255,255,.9);
   --lg-shadow:         0 1px 2px rgba(15,23,42,.05),
-                       0 16px 40px rgba(15,23,42,.09);
+                       0 6px 20px rgba(15,23,42,.07);
 
   /* Glass navigation (fixed chrome: sidebar / header) */
   --glass-nav-bg:        rgba(255,255,255,.84);
@@ -281,8 +281,8 @@ body {
     padding: 6px 10px;
     font-size: 13px;
     line-height: 18px;
-    white-space: normal;
-    overflow-wrap: anywhere;
+    white-space: nowrap;
+    overflow-wrap: normal;
   }
   .btn-compact { min-height: var(--control-compact); padding: 4px 10px; }
   .btn-cta { min-height: var(--control-cta); padding: 8px 14px; }
@@ -295,6 +295,11 @@ body {
     font-size: 13px;
     line-height: 18px;
   }
+}
+
+.btn-wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .btn-primary, .btn-secondary, .btn-ghost, .btn-danger {
@@ -584,7 +589,60 @@ body {
   padding: var(--space-2);
 }
 
+/* ---------- APPLICATION WORKSPACE CONTRACT ----------
+   The shell owns outer spacing. Pages own information hierarchy, so route
+   roots do not add a second vertical gutter. PageStack is the default rhythm
+   for dashboard, register, settings, and command surfaces. */
+.page-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.tenant-workspace > [class~="py-6"] {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.tenant-workspace > [class~="gap-6"] {
+  gap: var(--space-3);
+}
+
+/* Legacy pages still carry local form and CTA recipes. Compact controls
+   without changing the deliberate full-width actions in forms, drawers,
+   cards, or the driver's touch-first workspace. */
+@media (min-width: 640px) {
+  .tenant-workspace .page-header__actions > :is(button, a).w-full {
+    width: auto;
+  }
+}
+
+@media (min-width: 640px) {
+  .tenant-workspace button[class*="rounded-2xl"][class*="py-3"]:not(.text-left),
+  .tenant-workspace button[class*="rounded-3xl"][class*="py-3"]:not(.text-left) {
+    min-height: var(--control-standard);
+    border-radius: var(--r-btn);
+    padding: 6px 10px;
+    font-size: 13px;
+    line-height: 18px;
+    white-space: nowrap;
+  }
+
+  .tenant-workspace :is(input, select)[class*="rounded-2xl"][class*="py-3"] {
+    min-height: var(--control-standard);
+    border-radius: var(--r-field);
+    padding-top: 6px;
+    padding-bottom: 6px;
+    font-size: 13px;
+    line-height: 18px;
+  }
+}
+
 @media (any-pointer: coarse) {
+  .tenant-workspace :is(.btn-primary, .btn-secondary, .btn-ghost, .icon-btn, .field) {
+    min-height: var(--control-touch);
+  }
   .filter-chip { min-height: var(--control-touch); }
   .data-table__sort { min-height: var(--control-touch); }
   tr[data-interactive="true"] .data-table__cell {

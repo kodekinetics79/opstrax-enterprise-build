@@ -287,7 +287,7 @@ export function CameraProviderStatusPanel({ status }: { status: CameraProviderSt
         <dd className="text-lg font-semibold tabular-nums text-slate-900">{value}</dd>
       </div>)}
     </dl>
-    <div className="mt-2 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-600">Provider verified: No · Media available: No · Expired media references: {status.expiredMediaCount}</p><a className="btn-ghost inline-flex text-xs" href="/integrations">Open Samsara camera intake setup</a></div>
+    <div className="mt-2 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-600">Provider verified: No · Media available: No · Expired media references: {status.expiredMediaCount}</p><a className="btn-ghost inline-flex text-xs" href="/integrations?provider=samsara&intent=camera-intake">Open Samsara camera intake setup</a></div>
   </section>;
 }
 

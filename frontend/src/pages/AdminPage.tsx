@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronUp, ClipboardCheck, Copy, Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Trash2, UserCog, Users, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -227,6 +228,8 @@ function ActivationLinkPanel({
 }
 
 export function AdminPage() {
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const hasPermission = useHasPermission();
   const canViewUsers = hasPermission(PERMISSIONS.USERS_VIEW);
@@ -244,7 +247,10 @@ export function AdminPage() {
   const canViewAccessReviews = hasPermission("access_review:view");
   const canManageAccessReviews = hasPermission("access_review:manage");
 
-  const [tab, setTab] = useState<AdminTab>("dashboard");
+  const routeDefaultTab: AdminTab = location.pathname === "/user-management" ? "users" : "dashboard";
+  const requestedTab = searchParams.get("tab") as AdminTab | null;
+  const initialTab = TAB_OPTIONS.some((option) => option.key === requestedTab) ? requestedTab as AdminTab : routeDefaultTab;
+  const [tab, setTab] = useState<AdminTab>(initialTab);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -283,6 +289,19 @@ export function AdminPage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkNotice, setBulkNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [rolesView, setRolesView] = useState<"cards" | "matrix">("cards");
+
+  useEffect(() => {
+    const next = TAB_OPTIONS.some((option) => option.key === requestedTab) ? requestedTab as AdminTab : routeDefaultTab;
+    setTab(next);
+  }, [requestedTab, routeDefaultTab]);
+
+  const selectTab = (nextTab: AdminTab) => {
+    setTab(nextTab);
+    const next = new URLSearchParams(searchParams);
+    if (nextTab === routeDefaultTab) next.delete("tab");
+    else next.set("tab", nextTab);
+    setSearchParams(next, { replace: true });
+  };
 
   const queryClient = useQueryClient();
 
@@ -648,15 +667,15 @@ export function AdminPage() {
         description="Manage the people, roles, permissions and audit posture of this workspace."
         actions={
           <>
-            <button className="btn-ghost" onClick={() => setTab("audit")} disabled={!canViewAudit} title={!canViewAudit ? "You do not have permission to perform this action." : undefined}>
+            <button className="btn-ghost" onClick={() => selectTab("audit")} disabled={!canViewAudit} title={!canViewAudit ? "You do not have permission to perform this action." : undefined}>
               <KeyRound className="h-4 w-4" />
               Audit Logs
             </button>
-            <button className="btn-ghost" onClick={() => setTab("settings")} disabled={!canViewSettings} title={!canViewSettings ? "You do not have permission to perform this action." : undefined}>
+            <button className="btn-ghost" onClick={() => selectTab("settings")} disabled={!canViewSettings} title={!canViewSettings ? "You do not have permission to perform this action." : undefined}>
               <ShieldCheck className="h-4 w-4" />
               Settings
             </button>
-            <button className="btn-primary" onClick={() => setTab("users")} disabled={!canViewUsers} title={!canViewUsers ? "You do not have permission to perform this action." : undefined}>
+            <button className="btn-primary" onClick={() => selectTab("users")} disabled={!canViewUsers} title={!canViewUsers ? "You do not have permission to perform this action." : undefined}>
               <LayoutDashboard className="h-4 w-4" />
               Open Users
             </button>
@@ -693,7 +712,7 @@ export function AdminPage() {
             <button
             key={option.key}
             aria-pressed={tab === option.key}
-            onClick={() => setTab(option.key)}
+            onClick={() => selectTab(option.key)}
             disabled={
               (option.key === "users" && !canViewUsers) ||
               (option.key === "roles" && !canViewRoles) ||
@@ -727,7 +746,7 @@ export function AdminPage() {
             <div className="iam-card space-y-3 p-5">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-bold text-slate-900">Admin Activity</h2>
-                <button className="btn-ghost h-9 px-3 shrink-0" onClick={() => setTab("audit")} disabled={!canViewAudit}>Open audit trail</button>
+                <button className="btn-ghost h-9 px-3 shrink-0" onClick={() => selectTab("audit")} disabled={!canViewAudit}>Open audit trail</button>
               </div>
             {((Array.isArray(auditLogsQ.data) ? auditLogsQ.data : []) as AnyRecord[]).slice(0, 6).map((entry: AnyRecord) => (
               <div key={String(entry.id)} className="iam-kv">
@@ -746,10 +765,10 @@ export function AdminPage() {
             <div className="iam-card p-5">
               <h3 className="font-bold text-slate-900">Quick Actions</h3>
               <div className="mt-4 grid gap-2">
-                <button className="btn-primary" onClick={() => setTab("users")} disabled={!canViewUsers}>Manage Users</button>
-                <button className="btn-ghost" onClick={() => setTab("roles")} disabled={!canViewRoles}>Review Roles</button>
-                <button className="btn-ghost" onClick={() => setTab("permissions")} disabled={!(canViewUsers || canViewRoles)}>View Permissions</button>
-                <button className="btn-ghost" onClick={() => setTab("settings")} disabled={!canViewSettings}>Open Settings</button>
+                <button className="btn-primary" onClick={() => selectTab("users")} disabled={!canViewUsers}>Manage Users</button>
+                <button className="btn-ghost" onClick={() => selectTab("roles")} disabled={!canViewRoles}>Review Roles</button>
+                <button className="btn-ghost" onClick={() => selectTab("permissions")} disabled={!(canViewUsers || canViewRoles)}>View Permissions</button>
+                <button className="btn-ghost" onClick={() => selectTab("settings")} disabled={!canViewSettings}>Open Settings</button>
               </div>
             </div>
             <div className="iam-card p-5">

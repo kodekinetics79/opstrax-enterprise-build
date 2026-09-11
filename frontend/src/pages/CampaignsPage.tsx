@@ -139,7 +139,7 @@ export function CampaignsPage() {
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="page-stack h-full overflow-y-auto">
       {showCreate && <CreateCampaignModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
 
       <div className="flex items-start justify-between gap-4 flex-wrap">

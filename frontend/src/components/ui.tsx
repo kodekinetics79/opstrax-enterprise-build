@@ -85,6 +85,13 @@ export function GlassPanel({ className = "", ...rest }: HTMLAttributes<HTMLDivEl
   return <div className={`liquid-glass ${className}`.trim()} {...rest} />;
 }
 
+/** Canonical page rhythm for tenant workspaces. It removes the repeated
+    per-page padding and oversized gaps that previously pushed records below
+    the first viewport. */
+export function PageStack({ className = "", ...rest }: HTMLAttributes<HTMLDivElement>) {
+  return <div className={`page-stack ${className}`.trim()} {...rest} />;
+}
+
 /* ============================================================
    FORM FIELD  (v5.0 primitive — label + control + hint/error wiring)
    ============================================================ */
@@ -647,7 +654,7 @@ export function ErrorState({ message, onRetry }: { message?: string; onRetry?: (
 
 export function EmptyState({ title = "No records found", subtitle, action }: { title?: string; subtitle?: string; action?: ReactNode }) {
   return (
-    <div className="panel flex flex-col items-center justify-center px-5 py-8 text-center">
+    <div className="panel flex flex-col items-center justify-center px-4 py-6 text-center">
       <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white text-slate-400 shadow-sm">
         <Search className="h-5 w-5" />
       </div>
@@ -707,8 +714,8 @@ const priorityDot: Record<string, string> = {
 
 export function ActionQueue({ actions }: { actions: AnyRecord[] }) {
   return (
-    <div className="panel p-5">
-      <div className="flex items-center justify-between mb-4">
+    <div className="panel p-4">
+      <div className="mb-3 flex items-center justify-between">
         <h2 className="section-title">Priority Action Queue</h2>
         <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
           {actions.length}
@@ -747,8 +754,8 @@ const timelineDot: Record<string, string> = {
 
 export function Timeline({ items }: { items: AnyRecord[] }) {
   return (
-    <div className="panel p-5">
-      <div className="flex items-center gap-2 mb-5">
+    <div className="panel p-4">
+      <div className="mb-3 flex items-center gap-2">
         <TrendingUp className="h-4 w-4 text-teal-400" />
         <h2 className="section-title">Mission Control Timeline</h2>
       </div>

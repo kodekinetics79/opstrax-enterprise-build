@@ -230,7 +230,7 @@ export function AuditLogsPage() {
   const maxModule = stats.topModules.length ? stats.topModules[0][1] : 0;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack h-full overflow-y-auto">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>

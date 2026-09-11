@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { Archive, Barcode, Boxes, CheckCheck, ChevronLeft, ChevronRight, Search, SquareStack, Truck } from 'lucide-react';
-import { ClayStat, ConsoleRail } from '@/components/console';
+import { Archive, Barcode, Boxes, CheckCheck, ChevronLeft, ChevronRight, Search, Truck } from 'lucide-react';
+import { ConsoleRail } from '@/components/console';
 import { notifyApiError } from '@/services/fleetTmsApi';
 import { fleetApi, fleetAssetApi, type Asset, type AssetAssignment, type AssetEvent, type AssetType } from '@/services/fleetTmsApi';
 import { LoadingState } from '@/components/ui';
@@ -264,8 +264,7 @@ export function FleetAssetManagementPage() {
   if (loading) return <LoadingState />;
 
   return (
-    <main className="fleet-console text-slate-900">
-      <section className="relative mx-auto flex w-full max-w-7xl flex-col gap-3">
+    <div className="fleet-console page-stack text-slate-900">
         <ConsoleRail
           eyebrow="Fleet · Returnable Assets"
           icon={<Boxes className="h-3.5 w-3.5 text-teal-700" />}
@@ -292,7 +291,7 @@ export function FleetAssetManagementPage() {
                   onImported: refresh,
                 }}
               />
-              <Link to="/fleet-workspace" className="btn-ghost h-10">Fleet Workspace</Link>
+              <Link to="/fleet-workspace" className="btn-ghost btn-compact">Fleet Workspace</Link>
             </>
           }
         />
@@ -304,84 +303,36 @@ export function FleetAssetManagementPage() {
           </div>
         )}
 
-        <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="space-y-3">
-            {loadWarnings.length ? (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                <p className="font-semibold">Some asset workspace sections were not available.</p>
-                <ul className="mt-2 space-y-1 text-xs text-amber-800">
-                  {loadWarnings.slice(0, 3).map((warning) => <li key={warning}>• {warning}</li>)}
-                </ul>
-              </div>
-            ) : null}
-
-            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-              {metrics.map((metric, i) => (
-                <ClayStat key={metric.label} Icon={SquareStack}
-                  tone={["fc-clay-sky", "fc-clay-teal", "fc-clay-emerald", "fc-clay-amber"][i % 4]}
-                  iconCls={metric.tone}
-                  label={metric.label} value={metric.value}
-                  alert={metric.label === "Needs review"} />
-              ))}
-            </div>
-
-            <div className="grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
-              <section className="rounded-[28px] border border-white/75 bg-white/75 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
-                <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Asset types</p>
-                <h2 className="mt-2 text-2xl font-black text-slate-950">Categories in the tenant</h2>
-                <div className="mt-5 space-y-3">
-                  {assetTypes.map((type) => (
-                    <div key={type.id} className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-bold text-slate-950">{type.name}</p>
-                          <p className="text-sm text-slate-500">{type.code} · {type.description}</p>
-                        </div>
-                        <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-bold text-cyan-700">{type.isReturnable ? 'Returnable' : 'Consumable'}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              {canManageFleet ? <section className="rounded-[28px] border border-white/75 bg-white/75 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
-                <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Create asset</p>
-                <h2 className="mt-2 text-2xl font-black text-slate-950">Inventory intake</h2>
-                <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                  <select value={selectedTypeId} onChange={(e) => setSelectedTypeId(e.target.value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400 sm:col-span-2">
-                    {assetTypes.map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}
-                  </select>
-                  <input value={forms.assetTag} onChange={(e) => setForms((current) => ({ ...current, assetTag: e.target.value }))} placeholder="Asset tag" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                  <input value={forms.assetName} onChange={(e) => setForms((current) => ({ ...current, assetName: e.target.value }))} placeholder="Asset name" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                  <input value={forms.assetLocation} onChange={(e) => setForms((current) => ({ ...current, assetLocation: e.target.value }))} placeholder="Location" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                  <input value={forms.assetCondition} onChange={(e) => setForms((current) => ({ ...current, assetCondition: e.target.value }))} placeholder="Condition" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                  <input value={forms.assetQuantity} onChange={(e) => setForms((current) => ({ ...current, assetQuantity: e.target.value }))} placeholder="Quantity" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                  <input value={forms.typeCode} onChange={(e) => setForms((current) => ({ ...current, typeCode: e.target.value }))} placeholder="New type code" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                  <input value={forms.typeName} onChange={(e) => setForms((current) => ({ ...current, typeName: e.target.value }))} placeholder="New type name" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                  <textarea value={forms.typeDescription} onChange={(e) => setForms((current) => ({ ...current, typeDescription: e.target.value }))} rows={3} placeholder="Type description" className="sm:col-span-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <button disabled={saving} onClick={createAsset} className="rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white shadow-lg transition hover:from-blue-500 hover:to-cyan-500 disabled:opacity-60">
-                    {saving ? 'Saving...' : 'Create asset'}
-                  </button>
-                  <button disabled={saving} onClick={createAssetType} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:opacity-60">
-                    Add asset type
-                  </button>
-                </div>
-              </section> : null}
-            </div>
+        {loadWarnings.length ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <p className="font-semibold">Some asset workspace sections were not available.</p>
+            <ul className="mt-1 space-y-1 text-xs text-amber-800">
+              {loadWarnings.slice(0, 3).map((warning) => <li key={warning}>• {warning}</li>)}
+            </ul>
           </div>
+        ) : null}
 
-          <aside className="space-y-6">
-            <section className="rounded-[28px] border border-white/75 bg-slate-950/95 p-6 text-white shadow-[0_28px_60px_rgba(15,23,42,0.32)]">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.24em] text-cyan-200/70">Assets</p>
-                  <h2 className="mt-2 text-2xl font-black">Inventory list</h2>
-                </div>
-                <Archive className="h-5 w-5 text-cyan-300" />
+        <section className="panel p-3" aria-label="Asset inventory summary">
+          <dl className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            {metrics.map((metric) => (
+              <div key={metric.label} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2">
+                <dt className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">{metric.label}</dt>
+                <dd className={`mt-0.5 text-lg font-bold leading-none tabular-nums ${metric.tone}`}>{metric.value}</dd>
               </div>
-              <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+            ))}
+          </dl>
+        </section>
+
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.65fr)]">
+          <section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950 p-3 text-white shadow-lg" aria-labelledby="asset-inventory-heading">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-200/70">Assets</p>
+                <h2 id="asset-inventory-heading" className="mt-0.5 text-lg font-bold">Inventory list</h2>
+              </div>
+              <Archive className="h-4 w-4 text-cyan-300" aria-hidden="true" />
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
                 <label className="relative">
                   <span className="sr-only">Search returnable assets</span>
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -389,14 +340,14 @@ export function FleetAssetManagementPage() {
                     value={assetSearch}
                     onChange={(event) => { setAssetSearch(event.target.value); setAssetPage(1); }}
                     placeholder="Search tag, name, type, status, location…"
-                    className="w-full rounded-xl border border-white/15 bg-white/10 py-2 pl-9 pr-3 text-sm text-white placeholder:text-slate-400"
+                    className="min-h-11 w-full rounded-xl border border-white/15 bg-white/10 py-2 pl-9 pr-3 text-sm text-white placeholder:text-slate-400 sm:min-h-9"
                   />
                 </label>
                 <select
                   aria-label="Sort assets"
                   value={assetSort}
                   onChange={(event) => { setAssetSort(event.target.value as typeof assetSort); setAssetPage(1); }}
-                  className="rounded-xl border border-white/15 bg-slate-900 px-3 py-2 text-sm text-white"
+                  className="min-h-11 w-full rounded-xl border border-white/15 bg-slate-900 px-3 py-2 text-sm text-white sm:min-h-9 sm:w-auto"
                 >
                   <option value="assetTag">Asset tag</option>
                   <option value="name">Name</option>
@@ -406,101 +357,65 @@ export function FleetAssetManagementPage() {
                   <option value="condition">Condition</option>
                   <option value="lastSeen">Last seen</option>
                 </select>
-                <button type="button" className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold" onClick={() => { setAssetDirection((current) => current === 'asc' ? 'desc' : 'asc'); setAssetPage(1); }}>
+                <button type="button" className="min-h-11 w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold sm:min-h-9 sm:w-auto" onClick={() => { setAssetDirection((current) => current === 'asc' ? 'desc' : 'asc'); setAssetPage(1); }}>
                   {assetDirection === 'asc' ? 'Ascending' : 'Descending'}
                 </button>
-              </div>
-              <div className="mt-5 space-y-3">
+            </div>
+            <div className="mt-3 space-y-2 xl:max-h-[34rem] xl:overflow-y-auto xl:pr-1">
                 {assets.map((asset) => (
-                  <button key={asset.id} onClick={() => setSelectedAssetId(asset.id)} className={`w-full rounded-2xl border p-4 text-left transition ${selectedAssetId === asset.id ? 'border-cyan-300 bg-white/10' : 'border-white/10 bg-white/5 hover:bg-white/8'}`}>
-                    <div className="flex items-center justify-between">
+                <button key={asset.id} onClick={() => setSelectedAssetId(asset.id)} className={`min-h-11 w-full rounded-xl border p-3 text-left transition ${selectedAssetId === asset.id ? 'border-cyan-300 bg-white/10' : 'border-white/10 bg-white/5 hover:bg-white/8'}`}>
+                    <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="font-bold">{asset.assetTag}</p>
                         <p className="text-sm text-slate-300">{asset.name} · {asset.currentLocation}</p>
                       </div>
-                      <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold">{asset.status}</span>
+                      <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-bold">{asset.status}</span>
                     </div>
                   </button>
                 ))}
-              </div>
-              <div className="mt-4 flex items-center justify-between border-t border-white/10 pt-4 text-sm text-slate-300">
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-xs text-slate-300">
                 <span>Page {assetPage} of {assetPageCount} · {assets.length} shown · {assetTotal} total</span>
                 <div className="flex gap-2">
-                  <button type="button" aria-label="Previous asset page" disabled={assetPage <= 1} className="rounded-lg border border-white/15 p-2 disabled:opacity-40" onClick={() => setAssetPage((current) => Math.max(1, current - 1))}><ChevronLeft className="h-4 w-4" /></button>
-                  <button type="button" aria-label="Next asset page" disabled={assetPage >= assetPageCount} className="rounded-lg border border-white/15 p-2 disabled:opacity-40" onClick={() => setAssetPage((current) => Math.min(assetPageCount, current + 1))}><ChevronRight className="h-4 w-4" /></button>
+                <button type="button" aria-label="Previous asset page" disabled={assetPage <= 1} className="grid min-h-11 min-w-11 place-items-center rounded-lg border border-white/15 disabled:opacity-40 sm:min-h-8 sm:min-w-8" onClick={() => setAssetPage((current) => Math.max(1, current - 1))}><ChevronLeft className="h-4 w-4" /></button>
+                <button type="button" aria-label="Next asset page" disabled={assetPage >= assetPageCount} className="grid min-h-11 min-w-11 place-items-center rounded-lg border border-white/15 disabled:opacity-40 sm:min-h-8 sm:min-w-8" onClick={() => setAssetPage((current) => Math.min(assetPageCount, current + 1))}><ChevronRight className="h-4 w-4" /></button>
                 </div>
-              </div>
-            </section>
+            </div>
+          </section>
 
-            {canManageFleet ? <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
-              <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Scan & custody</p>
-              <h2 className="mt-2 text-2xl font-black text-slate-950">Barcode / RFID actions</h2>
-              <div className="mt-5 space-y-3">
-                <input value={forms.scanValue} onChange={(e) => { setForms((current) => ({ ...current, scanValue: e.target.value })); if (actionMessage) setActionMessage(''); }} placeholder="Scan value / tag" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                <textarea value={forms.scanNotes} onChange={(e) => setForms((current) => ({ ...current, scanNotes: e.target.value }))} rows={3} placeholder="Scan notes" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                {actionMessage && <p className="text-sm font-medium text-rose-600" role="alert">{actionMessage}</p>}
-                <button onClick={scan} disabled={!forms.scanValue.trim()} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
-                  <Barcode className="h-4 w-4" />
-                  Capture barcode scan
-                </button>
-              </div>
-            </section> : null}
-
-            {canManageFleet ? <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
-              <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Assignment</p>
-              <h2 className="mt-2 text-2xl font-black text-slate-950">Move selected asset</h2>
-              <div className="mt-5 space-y-3">
-                <input value={forms.assignName} onChange={(e) => setForms((current) => ({ ...current, assignName: e.target.value }))} placeholder="Assignee name" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                <input value={forms.assignLocation} onChange={(e) => setForms((current) => ({ ...current, assignLocation: e.target.value }))} placeholder="Current location" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                <select value={selectedShipmentId} onChange={(e) => setSelectedShipmentId(e.target.value)} aria-label="Shipment" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400">
-                  {shipments.map((shipment) => <option key={shipment.id} value={shipment.id}>{shipment.shipmentNumber}</option>)}
-                </select>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <button onClick={() => assign('checkOut')} disabled={!selectedAssetId} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white transition hover:from-blue-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50">
-                    <CheckCheck className="h-4 w-4" />
-                    Check out
-                  </button>
-                  <button onClick={() => assign('checkIn')} disabled={!selectedAssetId} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">
-                    <Truck className="h-4 w-4" />
-                    Check in
-                  </button>
-                </div>
-                <textarea value={forms.movementNotes} onChange={(e) => setForms((current) => ({ ...current, movementNotes: e.target.value }))} rows={3} placeholder="Movement notes" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-              </div>
-            </section> : null}
-
-            <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
-              <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Selected asset</p>
+          <aside className="space-y-3">
+            <section className="panel p-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Selected asset</p>
               {detail ? (
-                <div className="mt-4 space-y-4">
+                <div className="mt-2 space-y-3">
                   <div>
-                    <p className="text-xl font-black text-slate-950">{detail.asset.assetTag}</p>
+                    <p className="text-lg font-bold text-slate-950">{detail.asset.assetTag}</p>
                     <p className="text-sm text-slate-500">{detail.asset.name} · {detail.asset.currentLocation}</p>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div className="rounded-2xl bg-slate-50 p-3">
-                      <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Status</p>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="rounded-xl bg-slate-50 p-2">
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Status</p>
                       <p className="font-bold text-slate-900">{detail.asset.status}</p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 p-3">
-                      <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Condition</p>
+                    <div className="rounded-xl bg-slate-50 p-2">
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Condition</p>
                       <p className="font-bold text-slate-900">{detail.asset.condition}</p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 p-3">
-                      <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Quantity</p>
+                    <div className="rounded-xl bg-slate-50 p-2">
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Quantity</p>
                       <p className="font-bold text-slate-900">{detail.asset.quantity}</p>
                     </div>
-                    <div className="rounded-2xl bg-slate-50 p-3">
-                      <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Assignments</p>
+                    <div className="rounded-xl bg-slate-50 p-2">
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Assignments</p>
                       <p className="font-bold text-slate-900">{detail.assignments.length}</p>
                     </div>
                   </div>
 
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Assignments</p>
-                    <div className="mt-3 space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Assignments</p>
+                    <div className="mt-2 space-y-2">
                       {detail.assignments.slice(0, 3).map((assignment) => (
-                        <div key={assignment.id} className="rounded-2xl border border-slate-200 bg-white p-3 text-sm">
+                        <div key={assignment.id} className="rounded-xl border border-slate-200 bg-white p-2 text-sm">
                           <div className="flex items-center justify-between">
                             <p className="font-bold text-slate-950">{assignment.assigneeType}</p>
                             <span className="text-xs font-bold text-cyan-700">{assignment.status}</span>
@@ -512,10 +427,10 @@ export function FleetAssetManagementPage() {
                   </div>
 
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Events</p>
-                    <div className="mt-3 space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Events</p>
+                    <div className="mt-2 space-y-2">
                       {detail.events.slice(0, 4).map((event) => (
-                        <div key={event.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                        <div key={event.id} className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-sm">
                           <div className="flex items-center justify-between">
                             <p className="font-bold text-slate-950">{event.type}</p>
                             <span className="text-xs text-slate-500">{event.occurredAtUtc}</span>
@@ -527,13 +442,99 @@ export function FleetAssetManagementPage() {
                   </div>
                 </div>
               ) : (
-                <p className="mt-4 text-sm text-slate-500">Select an asset to inspect custody, scan history, and assignment records.</p>
+                <p className="mt-2 text-sm text-slate-500">Select an asset to inspect custody, scan history, and assignment records.</p>
               )}
             </section>
+
+            {canManageFleet ? <section className="panel p-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Scan & custody</p>
+              <h2 className="mt-0.5 text-base font-bold text-slate-950">Barcode / RFID actions</h2>
+              <div className="mt-2 grid gap-2">
+                <label><span className="sr-only">Scan value or tag</span><input value={forms.scanValue} onChange={(e) => { setForms((current) => ({ ...current, scanValue: e.target.value })); if (actionMessage) setActionMessage(''); }} placeholder="Scan value / tag" className="field" /></label>
+                <label><span className="sr-only">Scan notes</span><textarea value={forms.scanNotes} onChange={(e) => setForms((current) => ({ ...current, scanNotes: e.target.value }))} rows={2} placeholder="Scan notes" className="field" /></label>
+                {actionMessage && <p className="text-sm font-medium text-rose-600" role="alert">{actionMessage}</p>}
+                <button onClick={scan} disabled={!forms.scanValue.trim()} className="btn-primary min-h-11 w-full gap-2 sm:min-h-9 sm:w-auto">
+                  <Barcode className="h-4 w-4" />
+                  Capture scan
+                </button>
+              </div>
+            </section> : null}
+
+            {canManageFleet ? <section className="panel p-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Assignment</p>
+              <h2 className="mt-0.5 text-base font-bold text-slate-950">Move selected asset</h2>
+              <div className="mt-2 grid gap-2">
+                <label><span className="sr-only">Assignee name</span><input value={forms.assignName} onChange={(e) => setForms((current) => ({ ...current, assignName: e.target.value }))} placeholder="Assignee name" className="field" /></label>
+                <label><span className="sr-only">Current location</span><input value={forms.assignLocation} onChange={(e) => setForms((current) => ({ ...current, assignLocation: e.target.value }))} placeholder="Current location" className="field" /></label>
+                <label><span className="sr-only">Shipment</span><select value={selectedShipmentId} onChange={(e) => setSelectedShipmentId(e.target.value)} aria-label="Shipment" className="field">
+                  {shipments.map((shipment) => <option key={shipment.id} value={shipment.id}>{shipment.shipmentNumber}</option>)}
+                </select></label>
+                <label><span className="sr-only">Movement notes</span><textarea value={forms.movementNotes} onChange={(e) => setForms((current) => ({ ...current, movementNotes: e.target.value }))} rows={2} placeholder="Movement notes" className="field" /></label>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button onClick={() => assign('checkOut')} disabled={!selectedAssetId} className="btn-primary min-h-11 w-full gap-2 sm:min-h-9">
+                    <CheckCheck className="h-4 w-4" />
+                    Check out
+                  </button>
+                  <button onClick={() => assign('checkIn')} disabled={!selectedAssetId} className="btn-ghost min-h-11 w-full gap-2 sm:min-h-9">
+                    <Truck className="h-4 w-4" />
+                    Check in
+                  </button>
+                </div>
+              </div>
+            </section> : null}
           </aside>
         </div>
-      </section>
-    </main>
+
+        <div className="grid gap-3 xl:grid-cols-[0.8fr_1.2fr]">
+          <section className="panel p-3">
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Asset types</p>
+            <h2 className="mt-0.5 text-base font-bold text-slate-950">Categories in the tenant</h2>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+              {assetTypes.map((type) => (
+                <div key={type.id} className="rounded-xl border border-slate-200 bg-white p-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-950">{type.name}</p>
+                      <p className="truncate text-xs text-slate-500" title={`${type.code} · ${type.description}`}>{type.code} · {type.description}</p>
+                    </div>
+                    <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-[11px] font-bold text-cyan-700">{type.isReturnable ? 'Returnable' : 'Consumable'}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {canManageFleet ? <section className="panel p-3">
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Create asset</p>
+            <h2 className="mt-0.5 text-base font-bold text-slate-950">Inventory intake</h2>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="sm:col-span-2 lg:col-span-1"><span className="sr-only">Asset type</span><select aria-label="Asset type" value={selectedTypeId} onChange={(e) => setSelectedTypeId(e.target.value)} className="field">
+                {assetTypes.map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}
+              </select></label>
+              <label><span className="sr-only">Asset tag</span><input value={forms.assetTag} onChange={(e) => setForms((current) => ({ ...current, assetTag: e.target.value }))} placeholder="Asset tag" className="field" /></label>
+              <label><span className="sr-only">Asset name</span><input value={forms.assetName} onChange={(e) => setForms((current) => ({ ...current, assetName: e.target.value }))} placeholder="Asset name" className="field" /></label>
+              <label><span className="sr-only">Asset location</span><input value={forms.assetLocation} onChange={(e) => setForms((current) => ({ ...current, assetLocation: e.target.value }))} placeholder="Location" className="field" /></label>
+              <label><span className="sr-only">Asset condition</span><input value={forms.assetCondition} onChange={(e) => setForms((current) => ({ ...current, assetCondition: e.target.value }))} placeholder="Condition" className="field" /></label>
+              <label><span className="sr-only">Asset quantity</span><input value={forms.assetQuantity} onChange={(e) => setForms((current) => ({ ...current, assetQuantity: e.target.value }))} placeholder="Quantity" className="field" /></label>
+            </div>
+            <div className="mt-2 flex justify-end">
+              <button disabled={saving} onClick={createAsset} className="btn-primary min-h-11 w-full sm:min-h-9 sm:w-auto">
+                {saving ? 'Saving...' : 'Create asset'}
+              </button>
+            </div>
+
+            <div className="mt-3 border-t border-slate-200 pt-3">
+              <p className="text-xs font-semibold text-slate-700">Add asset type</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-[0.7fr_1fr_1.5fr_auto]">
+                <label><span className="sr-only">New type code</span><input value={forms.typeCode} onChange={(e) => setForms((current) => ({ ...current, typeCode: e.target.value }))} placeholder="Type code" className="field" /></label>
+                <label><span className="sr-only">New type name</span><input value={forms.typeName} onChange={(e) => setForms((current) => ({ ...current, typeName: e.target.value }))} placeholder="Type name" className="field" /></label>
+                <label><span className="sr-only">Type description</span><input value={forms.typeDescription} onChange={(e) => setForms((current) => ({ ...current, typeDescription: e.target.value }))} placeholder="Description" className="field" /></label>
+                <button disabled={saving} onClick={createAssetType} className="btn-ghost min-h-11 w-full sm:min-h-9 sm:w-auto">Add type</button>
+              </div>
+            </div>
+          </section> : null}
+        </div>
+    </div>
   );
 }
 

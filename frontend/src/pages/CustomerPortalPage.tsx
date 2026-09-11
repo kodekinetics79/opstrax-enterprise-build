@@ -75,7 +75,7 @@ export function CustomerPortalPage() {
   );
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack h-full overflow-y-auto">
       <PageHeader
         eyebrow="Your account"
         title="Customer Portal"

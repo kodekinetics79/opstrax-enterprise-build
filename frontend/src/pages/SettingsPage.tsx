@@ -335,7 +335,7 @@ export function SettingsPage() {
   const health = (healthQ.data ?? null) as AnyRecord | null;
 
   return (
-    <div className="iam flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="iam page-stack h-full overflow-y-auto">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
