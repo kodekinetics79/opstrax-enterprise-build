@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Linking, Text, View } from "react-native";
 import {
   ActionButton,
@@ -27,6 +27,11 @@ import {
   PRIVACY_URL,
   SUPPORT_URL,
 } from "@/config";
+import {
+  getPushRegistrationStatus,
+  registerNativePush,
+  type PushRegistrationStatus,
+} from "@/notifications/push";
 
 function notificationId(item: JsonRecord) {
   return String(item.id ?? item.notificationId ?? item.notification_id ?? "").trim();
@@ -50,10 +55,30 @@ async function openExternalUrl(url: string, label: string) {
   }
 }
 
+function pushTone(status: PushRegistrationStatus | null) {
+  if (!status) return "blue" as const;
+  if (status.state === "registered") return "green" as const;
+  if (status.state === "denied" || status.state === "error") return "amber" as const;
+  if (status.state === "unconfigured") return "violet" as const;
+  return "blue" as const;
+}
+
+function pushLabel(status: PushRegistrationStatus | null) {
+  if (!status) return "Checking";
+  if (status.state === "registered") return "Enabled";
+  if (status.state === "denied") return "Permission denied";
+  if (status.state === "unconfigured") return "Setup pending";
+  if (status.state === "unsupported") return "Not supported";
+  if (status.state === "error") return "Needs attention";
+  return "Available";
+}
+
 export function SettingsScreen() {
   const { session, roleModel, logout, refresh, api } = useSession();
   const { selectedJobId } = useWorkflow();
   const [updatingNotificationId, setUpdatingNotificationId] = useState<string | null>(null);
+  const [pushStatus, setPushStatus] = useState<PushRegistrationStatus | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
 
   const notifications = useAsyncResource(
     async () => api.request.get<JsonRecord[]>("/api/notifications"),
@@ -66,8 +91,35 @@ export function SettingsScreen() {
   const notificationRows = useMemo(() => asRecords(notifications.data).slice(0, 12), [notifications.data]);
   const unreadCount = Number(unread.data?.count ?? notificationRows.filter((item) => notificationStatus(item) === "unread").length) || 0;
 
+  useEffect(() => {
+    let active = true;
+    void getPushRegistrationStatus().then((status) => {
+      if (active) setPushStatus(status);
+    });
+    return () => { active = false; };
+  }, [session?.user.id]);
+
+  const enablePush = async () => {
+    setPushBusy(true);
+    try {
+      const status = await registerNativePush(api, { requestPermission: true });
+      setPushStatus(status);
+      if (status.state === "registered") {
+        Alert.alert("Notifications enabled", "This device is registered for OpsTrax operational notifications.");
+      } else if (status.state === "denied") {
+        Alert.alert("Notifications not enabled", "Notification permission is denied. You can still use the in-app operational inbox.");
+      } else if (status.state === "unconfigured") {
+        Alert.alert("Push setup pending", status.detail ?? "This build is not yet linked to its Expo/EAS push project.");
+      } else if (status.state === "error") {
+        Alert.alert("Notifications unavailable", status.detail ?? "The device could not be registered for push notifications.");
+      }
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
   const signOut = () => {
-    Alert.alert("Sign out of this device?", "Local tenant data and the saved secure session will be cleared.", [
+    Alert.alert("Sign out of this device?", "The device notification token and local secure session will be revoked or cleared before access ends.", [
       { text: "Cancel", style: "cancel" },
       { text: "Sign out", style: "destructive", onPress: () => void logout() },
     ]);
@@ -152,6 +204,28 @@ export function SettingsScreen() {
         ) : null}
       </Panel>
 
+      <Panel variant="elevated" tone={pushTone(pushStatus)}>
+        <SectionHeader
+          eyebrow="Device notifications"
+          title="Native operational alerts"
+          description="Push permission is optional. OpsTrax never exposes the raw device token and the in-app inbox remains available when push is disabled."
+          right={<Pill label={pushBusy ? "Working" : pushLabel(pushStatus)} tone={pushTone(pushStatus)} />}
+        />
+        <View style={{ gap: 10 }}>
+          <Field label="Permission" value={pushStatus?.permission ?? "Checking"} />
+          <Field label="Device registration" value={pushStatus?.registered ? "Registered to this authenticated account" : "Not registered"} />
+          {pushStatus?.detail ? <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 18 }}>{pushStatus.detail}</Text> : null}
+          {pushStatus?.state !== "registered" && pushStatus?.state !== "unsupported" ? (
+            <ActionButton
+              label={pushBusy ? "Enabling…" : "Enable device notifications"}
+              onPress={() => void enablePush()}
+              disabled={pushBusy}
+              variant="secondary"
+            />
+          ) : null}
+        </View>
+      </Panel>
+
       <Panel variant="elevated" tone="teal">
         <SectionHeader
           eyebrow="Security"
@@ -212,7 +286,7 @@ export function SettingsScreen() {
         <SectionHeader
           eyebrow="Device"
           title="End this session"
-          description="Local secure data is removed before server revocation is attempted, so an offline force-close cannot restore the account."
+          description="OpsTrax attempts to revoke this device’s notification token and server session before clearing local secure access. Local sign-out still completes if the network is unavailable."
         />
         <ActionButton label="Sign out securely" onPress={signOut} variant="danger" />
       </Panel>
