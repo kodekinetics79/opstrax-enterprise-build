@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Text, View } from "react-native";
 import {
   ActionButton,
@@ -8,13 +8,12 @@ import {
   Input,
   LoadingState,
   Panel,
-  Pill,
   Row,
   Screen,
   SectionHeader,
   colors,
 } from "@/components/ui";
-import { DriverHero, DriverStatusStrip, TelemetryRail } from "@/components/DriverExperience";
+import { DriverSceneHero, DriverStatusStrip, TelemetryRail } from "@/components/DriverExperience";
 import { useSession } from "@/auth/SessionProvider";
 import { asRecords, textOf } from "@/data/records";
 import type { JsonRecord } from "@/types";
@@ -48,7 +47,7 @@ export function DriverDispatchScreen() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
 
-  const loadConversations = async () => {
+  const loadConversations = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -59,19 +58,16 @@ export function DriverDispatchScreen() {
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    void loadConversations();
-    const timer = setInterval(() => void loadConversations(), 15_000);
-    return () => clearInterval(timer);
   }, [api]);
 
   useEffect(() => {
-    if (!activeId) {
-      setThread(null);
-      return;
-    }
+    const initial = setTimeout(() => void loadConversations(), 0);
+    const timer = setInterval(() => void loadConversations(), 15_000);
+    return () => { clearTimeout(initial); clearInterval(timer); };
+  }, [loadConversations]);
+
+  useEffect(() => {
+    if (!activeId) return;
     let alive = true;
     const load = async () => {
       setThreadLoading(true);
@@ -86,9 +82,9 @@ export function DriverDispatchScreen() {
         if (alive) setThreadLoading(false);
       }
     };
-    void load();
+    const initial = setTimeout(() => void load(), 0);
     const timer = setInterval(() => void load(), 10_000);
-    return () => { alive = false; clearInterval(timer); };
+    return () => { alive = false; clearTimeout(initial); clearInterval(timer); };
   }, [activeId, api]);
 
   const activeConversation = useMemo(
@@ -124,7 +120,7 @@ export function DriverDispatchScreen() {
 
   return (
     <Screen>
-      <DriverHero
+      <DriverSceneHero
         eyebrow="Dispatch link"
         title={activeId ? "Stay in the loop." : "Your line to operations."}
         description={activeId
@@ -145,7 +141,7 @@ export function DriverDispatchScreen() {
                 (thread?.conversation as JsonRecord | undefined)?.dispatchAssignmentId ?? activeConversation?.dispatchAssignmentId,
                 "Driver-to-dispatch secure thread",
               )}
-              right={<ActionButton label="Back" onPress={() => setActiveId(null)} variant="ghost" />}
+              right={<ActionButton label="Back" onPress={() => { setActiveId(null); setThread(null); }} variant="ghost" />}
             />
             {threadLoading && messages.length === 0 ? <LoadingState label="Loading conversation…" /> : null}
             {!threadLoading && messages.length === 0 ? <EmptyState title="No messages yet" body="Send a message to dispatch when you need operational support." /> : null}
@@ -211,7 +207,7 @@ export function DriverDispatchScreen() {
                   <ActionButton
                     key={id || String(index)}
                     label={`${unread ? "● " : ""}${textOf(item.subject, "Dispatch message")}${loadRef ? ` · Load ${String(loadRef)}` : ""}`}
-                    onPress={() => id && setActiveId(id)}
+                    onPress={() => { if (id) { setThread(null); setActiveId(id); } }}
                     variant={unread ? "secondary" : "ghost"}
                     disabled={!id}
                   />

@@ -83,6 +83,7 @@ function DriverTabs() {
       <Tabs.Screen name="DriverProof" component={DriverProofScreen} options={{ title: "Proof", ...tabOptions("Proof") }} />
       <Tabs.Screen name="Compliance" component={DriverComplianceScreen} options={{ title: "Compliance", ...tabOptions("Compliance") }} />
       <Tabs.Screen name="DriverDispatch" component={DriverDispatchScreen} options={{ title: "Dispatch", ...tabOptions("Dispatch") }} />
+      <Tabs.Screen name="DriverMore" component={SettingsScreen} options={{ title: "Profile & security", ...tabOptions("More") }} />
     </Tabs.Navigator>
   );
 }

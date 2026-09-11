@@ -1,6 +1,6 @@
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   ArrowRight,
   CheckCircle2,
@@ -102,6 +102,7 @@ function JSONSummary({ value }: { value: unknown }) {
 
 export function OperationsProofCenterPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const permissions = usePermissions();
   const directPermissions = new Set(permissions.map((permission) => permission.trim().toLowerCase().replaceAll(".", ":")));
   const hasPermission = (permission: string) => directPermissions.has("*") || directPermissions.has(permission.toLowerCase().replaceAll(".", ":"));
@@ -117,6 +118,14 @@ export function OperationsProofCenterPage() {
     proofPackage: { proofType: "proof_of_delivery", receiverName: "", receiverPhone: "" },
     proofArtifact: { artifactType: "photo", fileId: "", notes: "" },
   });
+
+  useEffect(() => {
+    const requested = searchParams.get("jobId");
+    const parsed = requested == null ? Number.NaN : Number.parseInt(requested, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    setJobInput(String(parsed));
+    setJobId(parsed);
+  }, [searchParams]);
 
   const summaryQuery = useQuery({
     queryKey: ["operations", "execution-summary", jobId],

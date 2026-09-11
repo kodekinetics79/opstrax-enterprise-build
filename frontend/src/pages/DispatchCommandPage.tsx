@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router";
 import { AlertTriangle, CheckCircle, ChevronRight, Clock, MapPin, Radio, ShieldAlert, Truck, User, XCircle, Zap } from "lucide-react";
 import { DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
 import { ClayStat, ConsoleRail } from "@/components/console";
@@ -63,6 +64,9 @@ function nextStatusOptions(row: AnyRecord): string[] {
 }
 
 export function DispatchCommandPage() {
+  const [searchParams] = useSearchParams();
+  const requestedJobId = searchParams.get("jobId");
+  const requestedJobOpened = useRef<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("Board");
   const [selectedAssignment, setSelectedAssignment] = useState<AnyRecord | null>(null);
   const [eligVehicleId, setEligVehicleId] = useState("");
@@ -84,10 +88,23 @@ export function DispatchCommandPage() {
     refetchInterval: 30_000,
   });
   const assignments = useQuery<AnyRecord[]>({
-    queryKey: ["dispatch", "assignments"],
-    queryFn: () => dispatchApi.assignments({ limit: 100 }),
+    queryKey: ["dispatch", "assignments", requestedJobId],
+    queryFn: () => dispatchApi.assignments({
+      limit: 100,
+      jobId: requestedJobId && Number.isInteger(Number(requestedJobId)) && Number(requestedJobId) > 0
+        ? Number(requestedJobId)
+        : undefined,
+    }),
     staleTime: 15_000,
   });
+
+  useEffect(() => {
+    if (!requestedJobId || requestedJobOpened.current === requestedJobId || !assignments.data) return;
+    const linked = assignments.data.find((row) => String(row.jobId ?? row.job_id ?? "") === requestedJobId);
+    setActiveTab("Assignments");
+    if (linked) setSelectedAssignment(linked);
+    requestedJobOpened.current = requestedJobId;
+  }, [assignments.data, requestedJobId]);
   const exceptions = useQuery<AnyRecord[]>({
     queryKey: ["dispatch", "exceptions"],
     queryFn: () => dispatchApi.exceptions(),

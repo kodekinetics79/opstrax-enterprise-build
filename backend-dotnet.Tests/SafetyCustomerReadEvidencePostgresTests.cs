@@ -63,7 +63,13 @@ public sealed class SafetyCustomerReadEvidencePostgresTests
             Assert.Contains("\"geofenceEvents\":0", dashboard);
             Assert.Contains("\"openCoachingTasks\":1", dashboard);
             Assert.Contains("\"overdueCoachingTasks\":1", dashboard);
-            Assert.DoesNotContain("45", dashboard);
+            using (var dashboardDocument = JsonDocument.Parse(dashboard))
+            {
+                var riskDrivers = dashboardDocument.RootElement.GetProperty("riskDrivers");
+                Assert.DoesNotContain(
+                    riskDrivers.EnumerateArray(),
+                    driver => driver.GetProperty("driverId").GetInt64() == unverifiedDriver);
+            }
 
             var events = Assert.IsAssignableFrom<IEnumerable>(Data(await Invoke(
                 "SafetyEventsList", http, db, CancellationToken.None)))

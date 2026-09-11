@@ -88,11 +88,36 @@ public static class BusinessSpineEndpoints
         {
             return Results.BadRequest(ApiResponse<object>.Fail("effectiveDate is required"));
         }
+        var rateCardName = Str(body, "rateCardName")?.Trim();
+        if (string.IsNullOrWhiteSpace(rateCardName))
+            return Results.BadRequest(ApiResponse<object>.Fail("rateCardName is required"));
+        var currency = Str(body, "currency")?.Trim().ToUpperInvariant();
+        if (currency is null || currency.Length != 3 || !currency.All(char.IsLetter))
+            return Results.BadRequest(ApiResponse<object>.Fail("currency must be a three-letter code"));
+        if (!TryDecimal(body, "baseRate", out var baseRate) || baseRate < 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("baseRate must be a non-negative number"));
+        var expiryDate = TryDateN(body, "expiryDate");
+        if (expiryDate.HasValue && expiryDate.Value <= effectiveDate)
+            return Results.BadRequest(ApiResponse<object>.Fail("expiryDate must be after effectiveDate"));
+        decimal? minimumCharge = null;
+        if (!string.IsNullOrWhiteSpace(Str(body, "minimumCharge")))
+        {
+            if (!TryDecimal(body, "minimumCharge", out var parsedMinimum) || parsedMinimum < 0)
+                return Results.BadRequest(ApiResponse<object>.Fail("minimumCharge must be a non-negative number"));
+            minimumCharge = parsedMinimum;
+        }
+        decimal? fuelSurchargePercent = null;
+        if (!string.IsNullOrWhiteSpace(Str(body, "fuelSurchargePercent")))
+        {
+            if (!TryDecimal(body, "fuelSurchargePercent", out var parsedFuel) || parsedFuel is < 0 or > 100)
+                return Results.BadRequest(ApiResponse<object>.Fail("fuelSurchargePercent must be between 0 and 100"));
+            fuelSurchargePercent = parsedFuel;
+        }
 
         var rateCard = await svc.CreateRateCardAsync(
             EndpointMappings.GetCompanyId(http),
             Str(body, "rateCardCode") ?? $"RC-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
-            Str(body, "rateCardName") ?? "Rate Card",
+            rateCardName,
             Long(body, "customerId"),
             Long(body, "contractId"),
             Str(body, "billingBasis"),
@@ -100,13 +125,13 @@ public static class BusinessSpineEndpoints
             Str(body, "originZone"),
             Str(body, "destinationZone"),
             Str(body, "vehicleType"),
-            Str(body, "currency"),
-            Dec(body, "baseRate", 0m),
-            DecN(body, "minimumCharge"),
-            DecN(body, "fuelSurchargePercent"),
+            currency,
+            baseRate,
+            minimumCharge,
+            fuelSurchargePercent,
             Str(body, "accessorialType"),
             effectiveDate,
-            TryDateN(body, "expiryDate"),
+            expiryDate,
             Str(body, "status"),
             Str(body, "correlationId"),
             Str(body, "causationId"),
@@ -448,6 +473,17 @@ public static class BusinessSpineEndpoints
         => body.TryGetValue(key, out var value) && value is not null && value is not DBNull
             ? value is JsonElement element && element.TryGetDecimal(out var parsed) ? parsed : Convert.ToDecimal(value, CultureInfo.InvariantCulture)
             : null;
+
+    private static bool TryDecimal(Dictionary<string, object?> body, string key, out decimal value)
+    {
+        value = default;
+        if (!body.TryGetValue(key, out var raw) || raw is null || raw is DBNull) return false;
+        if (raw is JsonElement element)
+            return element.ValueKind == JsonValueKind.Number
+                ? element.TryGetDecimal(out value)
+                : decimal.TryParse(element.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out value);
+        return decimal.TryParse(Convert.ToString(raw, CultureInfo.InvariantCulture), NumberStyles.Number, CultureInfo.InvariantCulture, out value);
+    }
 
     private static bool Bool(Dictionary<string, object?> body, string key, bool fallback = false)
         => body.TryGetValue(key, out var value) && value is not null && value is not DBNull

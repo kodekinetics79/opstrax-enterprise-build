@@ -4,7 +4,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { useTenantCurrency } from "@/hooks/useTenantRegion";
 import type { AnyRecord } from "@/types";
+
+function persistedNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 const oppApi = {
   list: () =>
@@ -13,15 +20,17 @@ const oppApi = {
         ...r,
         opportunityId: r.opportunityId ?? r.code ?? `OPP-${String(r.id)}`,
         customerLead: r.customerLead ?? r.customer_lead ?? r.title ?? "",
-        estimatedContractValue: Number(r.estimatedContractValue ?? r.amount ?? 0),
-        currency: r.currency ?? "SAR",
-        probability: Number(r.probability ?? 50),
-        expectedCloseDate: r.expectedCloseDate ?? r.due_at ?? "",
+        estimatedContractValue: persistedNumber(r.estimatedContractValue ?? r.amount),
+        currency: r.currency ?? "",
+        probability: persistedNumber(r.probability),
+        expectedCloseDate: r.expectedCloseDate ?? r.dueAt ?? "",
         stage: r.stage ?? r.status ?? "Discovery",
-        owner: r.owner ?? "",
+        owner: r.owner ?? r.ownerName ?? "",
         competitor: r.competitor ?? "",
-        weightedValue: Math.round(Number(r.estimatedContractValue ?? r.amount ?? 0) * Number(r.probability ?? 50) / 100),
-        riskLevel: Number(r.probability ?? 50) < 40 ? "High" : Number(r.probability ?? 50) < 60 ? "Medium" : "Low",
+        weightedValue: persistedNumber(r.estimatedContractValue ?? r.amount) != null && persistedNumber(r.probability) != null
+          ? Math.round(Number(r.estimatedContractValue ?? r.amount) * Number(r.probability) / 100)
+          : null,
+        riskLevel: persistedNumber(r.probability) == null ? "Not assessed" : Number(r.probability) < 40 ? "High" : Number(r.probability) < 60 ? "Medium" : "Low",
       }))
     ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/opportunities", body)),
@@ -42,7 +51,8 @@ function StageBadge({ stage }: { stage: string }) {
   return <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{stage}</span>;
 }
 
-function ProbabilityBar({ pct }: { pct: number }) {
+function ProbabilityBar({ pct }: { pct: number | null }) {
+  if (pct == null) return <span className="text-xs text-slate-500">Not recorded</span>;
   const color = pct >= 70 ? "bg-teal-500" : pct >= 50 ? "bg-amber-400" : "bg-red-400";
   return (
     <div className="flex items-center gap-2 text-xs">
@@ -54,14 +64,15 @@ function ProbabilityBar({ pct }: { pct: number }) {
   );
 }
 
-function fmtCurrency(val: number, currency: string): string {
+function fmtCurrency(val: number | null, currency: string): string {
+  if (val == null || !currency) return "—";
   return `${currency} ${val >= 1_000_000 ? `${(val / 1_000_000).toFixed(2)}M` : val.toLocaleString()}`;
 }
 
 // ── Create Opportunity Modal ──────────────────────────────────────────────────
 
-function CreateOppModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ title: "", probability: "50", expectedCloseDate: "", owner: "" });
+function CreateOppModal({ onClose, onSaved, defaultCurrency }: { onClose: () => void; onSaved: () => void; defaultCurrency: string }) {
+  const [form, setForm] = useState({ title: "", estimatedContractValue: "", currency: defaultCurrency, probability: "50", expectedCloseDate: "", owner: "" });
   const qc = useQueryClient();
   const mut = useMutation({
     mutationFn: () => oppApi.create({ ...form, status: "Discovery" } as unknown as AnyRecord),
@@ -75,6 +86,7 @@ function CreateOppModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
         <div className="grid grid-cols-2 gap-3">
           {[
             { label: "Customer / Lead*", key: "title", placeholder: "Jeddah Fresh Foods", full: true },
+            { label: "Estimated Contract Value", key: "estimatedContractValue", placeholder: "250000", type: "number" },
             { label: "Probability (%)", key: "probability", placeholder: "50" },
             { label: "Expected Close", key: "expectedCloseDate", placeholder: "2026-07-15", type: "date" },
             { label: "Owner", key: "owner", placeholder: "Maya Patel", full: true },
@@ -86,6 +98,14 @@ function CreateOppModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
                 onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))} />
             </div>
           ))}
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Currency</label>
+            <select title="Currency" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+              value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}>
+              <option value="">Select currency</option>
+              {["USD", "CAD", "SAR", "AED", "PKR", "EUR", "GBP"].map((currency) => <option key={currency}>{currency}</option>)}
+            </select>
+          </div>
         </div>
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}
         <div className="flex justify-end gap-2 mt-2">
@@ -102,6 +122,7 @@ function CreateOppModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function OpportunitiesPage() {
+  const tenantCurrency = useTenantCurrency() ?? "";
   const [stageFilter, setStageFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AnyRecord | null>(null);
@@ -111,9 +132,15 @@ export function OpportunitiesPage() {
   const opps = (listQ.data ?? []) as AnyRecord[];
 
   const active = opps.filter((o) => !["Closed Won", "Closed Lost"].includes(String(o.stage)));
-  const totalPipeline = active.reduce((s, o) => s + Number(o.estimatedContractValue ?? 0), 0);
-  const weightedPipeline = active.reduce((s, o) => s + Number(o.weightedValue ?? 0), 0);
-  const wonThisMonth = opps.filter((o) => o.stage === "Closed Won").length;
+  const valuedActive = active.filter((o) => o.estimatedContractValue != null && o.currency);
+  const activeCurrencies = [...new Set(valuedActive.map((o) => String(o.currency)))];
+  const totalPipeline = valuedActive.reduce((sum, o) => sum + Number(o.estimatedContractValue), 0);
+  const weightedActive = active.filter((o) => o.weightedValue != null && o.currency);
+  const weightedCurrencies = [...new Set(weightedActive.map((o) => String(o.currency)))];
+  const weightedPipeline = weightedActive.reduce((sum, o) => sum + Number(o.weightedValue), 0);
+  const totalPipelineLabel = activeCurrencies.length === 1 ? fmtCurrency(totalPipeline, activeCurrencies[0]) : activeCurrencies.length > 1 ? "Multiple currencies" : "—";
+  const weightedPipelineLabel = weightedCurrencies.length === 1 ? fmtCurrency(weightedPipeline, weightedCurrencies[0]) : weightedCurrencies.length > 1 ? "Multiple currencies" : "—";
+  const won = opps.filter((o) => o.stage === "Closed Won").length;
 
   const filtered = opps.filter((o) => {
     if (stageFilter !== "All" && o.stage !== stageFilter) return false;
@@ -131,7 +158,6 @@ export function OpportunitiesPage() {
   const chartData = STAGES.slice(0, 5).map((s) => ({
     stage: s.replace("Requirements Collected", "Req. Collected").replace("Rate Proposal Sent", "Proposal Sent"),
     count: opps.filter((o) => o.stage === s).length,
-    value: opps.filter((o) => o.stage === s).reduce((acc, o) => acc + Number(o.estimatedContractValue ?? 0), 0) / 1000,
   }));
 
   if (listQ.isLoading) return <LoadingState />;
@@ -145,12 +171,12 @@ export function OpportunitiesPage() {
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
-      {showCreate && <CreateOppModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
+      {showCreate && <CreateOppModal defaultCurrency={tenantCurrency} onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
 
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Opportunities</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Active deal pipeline — weighted revenue forecast, probability tracking, and competitor intelligence</p>
+          <p className="text-sm text-slate-500 mt-0.5">Persisted opportunity pipeline with recorded value, probability, close date and ownership</p>
         </div>
         <div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("opportunities", filtered)}>Export CSV</button>
@@ -160,26 +186,26 @@ export function OpportunitiesPage() {
 
       <div className="panel grid gap-3 md:grid-cols-3">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Deal bridge</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Qualified opportunities stay connected to live contract and pricing work.</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Workflow boundary</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Opportunity-to-contract and pricing conversion is not automated in this build.</p>
         </div>
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Live pipeline</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">This board reflects your current opportunities in real time.</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Persisted pipeline</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">This board reflects the latest opportunity records returned by the service.</p>
         </div>
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Risk visibility</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Probability and competitor pressure remain visible for each live deal.</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Probability and competitor pressure appear only when they have been recorded.</p>
         </div>
       </div>
 
       {/* KPI strip */}
       <div className="flex flex-wrap gap-3">
         {[
-          { label: "Total Pipeline",    val: `SAR ${(totalPipeline / 1_000_000).toFixed(2)}M`, accent: "text-teal-600" },
-          { label: "Weighted Pipeline", val: `SAR ${(weightedPipeline / 1_000_000).toFixed(2)}M`, accent: "text-violet-600" },
+          { label: "Total Pipeline",    val: totalPipelineLabel, accent: "text-teal-600" },
+          { label: "Weighted Pipeline", val: weightedPipelineLabel, accent: "text-violet-600" },
           { label: "Active Deals",      val: active.length, accent: "text-blue-600" },
-          { label: "Closed Won",        val: wonThisMonth, accent: "text-teal-600" },
+          { label: "Closed Won",        val: won, accent: "text-teal-600" },
         ].map(({ label, val, accent }) => (
           <div key={label} className="panel flex flex-col gap-1 min-w-36">
             <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
@@ -190,14 +216,14 @@ export function OpportunitiesPage() {
 
       {/* Pipeline funnel chart */}
       <div className="panel p-5">
-        <h2 className="text-sm font-semibold text-slate-900 mb-4">Pipeline by Stage (count · value SAR 000s)</h2>
+        <h2 className="text-sm font-semibold text-slate-900 mb-4">Opportunities by stage (count)</h2>
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 4 }}>
             <CartesianGrid stroke="rgba(0,0,0,0.05)" strokeDasharray="3 3" />
             <XAxis dataKey="stage" tick={{ fontSize: 10 }} />
             <YAxis tick={{ fontSize: 10 }} />
             <Tooltip contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8, fontSize: 12 }}
-              formatter={(val, name) => [String(val), name === "count" ? "Deals" : "Value (000s)"]} />
+              formatter={(val) => [String(val), "Deals"]} />
             <Bar dataKey="count" fill={chart.teal500} radius={[3, 3, 0, 0]} name="count" />
           </BarChart>
         </ResponsiveContainer>
@@ -209,7 +235,9 @@ export function OpportunitiesPage() {
           {["All", ...STAGES.slice(0, 5)].map((f) => (
             <button key={f} type="button" onClick={() => setStageFilter(f)}
               className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                stageFilter === f ? "bg-teal-50 border-teal-300 text-teal-700" : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                stageFilter === f
+                  ? "bg-teal-50 border-teal-300 text-teal-700"
+                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
               }`}>{f}</button>
           ))}
         </div>
@@ -238,9 +266,9 @@ export function OpportunitiesPage() {
                       <p className="text-xs text-slate-400">{String(o.opportunityId ?? "")}</p>
                     </td>
                     <td className="px-4 py-3"><StageBadge stage={String(o.stage ?? "Discovery")} /></td>
-                    <td className="px-4 py-3 font-medium text-slate-900">{fmtCurrency(Number(o.estimatedContractValue ?? 0), String(o.currency ?? "SAR"))}</td>
-                    <td className="px-4 py-3 text-teal-700 font-medium text-xs">{fmtCurrency(Number(o.weightedValue ?? 0), String(o.currency ?? "SAR"))}</td>
-                    <td className="px-4 py-3"><ProbabilityBar pct={Number(o.probability ?? 0)} /></td>
+                    <td className="px-4 py-3 font-medium text-slate-900">{fmtCurrency(o.estimatedContractValue == null ? null : Number(o.estimatedContractValue), String(o.currency ?? ""))}</td>
+                    <td className="px-4 py-3 text-teal-700 font-medium text-xs">{fmtCurrency(o.weightedValue == null ? null : Number(o.weightedValue), String(o.currency ?? ""))}</td>
+                    <td className="px-4 py-3"><ProbabilityBar pct={o.probability == null ? null : Number(o.probability)} /></td>
                     <td className="px-4 py-3 text-xs text-slate-600">{String(o.expectedCloseDate ?? "—")}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(o.competitor ?? "—")}</td>
                     <td className="px-4 py-3 text-xs text-slate-600">{String(o.owner ?? "—")}</td>
@@ -263,13 +291,13 @@ export function OpportunitiesPage() {
             <div className="px-5 py-4 border-b border-white/6"><StageBadge stage={String(selected.stage ?? "Discovery")} /></div>
             <div className="px-5 py-4 flex flex-col gap-3 border-b border-white/6">
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Win Probability</p>
-              <ProbabilityBar pct={Number(selected.probability ?? 0)} />
+              <ProbabilityBar pct={selected.probability == null ? null : Number(selected.probability)} />
             </div>
             <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-white/6">
               {[
                 ["Opp. ID", String(selected.opportunityId ?? "")],
-                ["Est. Value", fmtCurrency(Number(selected.estimatedContractValue ?? 0), String(selected.currency ?? "SAR"))],
-                ["Weighted", fmtCurrency(Number(selected.weightedValue ?? 0), String(selected.currency ?? "SAR"))],
+                ["Est. Value", fmtCurrency(selected.estimatedContractValue == null ? null : Number(selected.estimatedContractValue), String(selected.currency ?? ""))],
+                ["Weighted", fmtCurrency(selected.weightedValue == null ? null : Number(selected.weightedValue), String(selected.currency ?? ""))],
                 ["Loads/Mo", String(selected.expectedLoadsMonth ?? "—")],
                 ["Close Date", String(selected.expectedCloseDate ?? "—")],
                 ["Competitor", String(selected.competitor ?? "—")],
@@ -282,9 +310,9 @@ export function OpportunitiesPage() {
               ))}
             </div>
             <div className="px-5 py-4">
-              <p className="text-xs font-semibold text-teal-400 uppercase tracking-wide mb-1.5">Strategic Insight</p>
+              <p className="text-xs font-semibold text-teal-400 uppercase tracking-wide mb-1.5">Workflow guidance</p>
               <p className="text-sm text-slate-300 leading-relaxed">
-                {String(selected.stage) === "Negotiation" ? `Competitor is ${String(selected.competitor)}. Focus on SLA and reliability differentiation to win.` :
+                {String(selected.stage) === "Negotiation" && selected.competitor ? `Recorded competitor: ${String(selected.competitor)}. Review SLA and reliability evidence before the next discussion.` :
                  String(selected.stage) === "Rate Proposal Sent" ? "Proposal is out — schedule a follow-up within 48 hours to address objections." :
                  String(selected.stage) === "Contracting" ? "Close to closed — escalate any legal blockers to accelerate contract signing." :
                  "Move this deal forward to the next stage to maintain pipeline velocity."}

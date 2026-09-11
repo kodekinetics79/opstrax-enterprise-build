@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import {
   Bell, ChevronDown, ChevronLeft, ChevronRight, Filter, LogOut,
@@ -14,6 +15,7 @@ import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { moduleAvailableForCountry, useTenantCountry } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useRuntimeDiagnostics } from "@/services/runtimeDiagnostics";
+import { notificationsApi } from "@/services/notificationsApi";
 import type { AnyRecord, UserSession } from "@/types";
 
 const NAV_SECTIONS = [
@@ -289,7 +291,18 @@ function getExperienceProfile(pathname: string, title: string): ExperienceProfil
   return base;
 }
 
-const NOTIFS: Array<{ text: string; time: string; type: "danger" | "warning" | "info" }> = [];
+function notificationTone(severity: unknown): "danger" | "warning" | "info" {
+  const normalized = String(severity ?? "").toLowerCase();
+  if (normalized === "critical" || normalized === "high") return "danger";
+  if (normalized === "medium" || normalized === "warning") return "warning";
+  return "info";
+}
+
+function notificationTime(value: unknown): string {
+  if (!value) return "Time unavailable";
+  const parsed = new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? "Time unavailable" : parsed.toLocaleString();
+}
 
 export function AppShell() {
   const { session, logout } = useAuth();
@@ -297,6 +310,7 @@ export function AppShell() {
   const navigate = useNavigate();
   const hasPermission = useHasPermission();
   const hasDirectPermission = useHasDirectPermission();
+  const canViewNotifications = hasPermission("notifications:view");
   const canViewSettings = hasPermission(PERMISSIONS.SETTINGS_VIEW);
   const canViewUserManagement = [
     PERMISSIONS.USERS_VIEW,
@@ -308,6 +322,16 @@ export function AppShell() {
   const tenantIsExplicitlySynthetic = /\b(demo|synthetic|test)\b/i.test(String(session?.company?.name ?? ""));
   const runtimeState = tenantIsExplicitlySynthetic ? "Demo Data" : (runtimeQuery.data?.state ?? "Unavailable");
   const runtimeIsVerified = runtimeState === "Live" || runtimeState === "Staging";
+  const notificationsQuery = useQuery({
+    queryKey: ["notifications"],
+    queryFn: notificationsApi.list,
+    enabled: canViewNotifications,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+  const recentNotifications = ((notificationsQuery.data ?? []) as AnyRecord[]).slice(0, 5);
+  const unreadNotificationCount = ((notificationsQuery.data ?? []) as AnyRecord[])
+    .filter((item) => String(item.status ?? item.recipientStatus ?? "").toLowerCase() === "unread").length;
 
   const navStateKey = useMemo(() => getSessionIdentityKey(session), [session?.company?.id, session?.company?.companyId, session?.role, session?.user?.email, session?.user?.id, session?.user?.name]);
   const [sectionOpen, setSectionOpen] = useState<NavState | null>(null);
@@ -691,7 +715,7 @@ export function AppShell() {
                 </div>
 
                 {/* Notifications */}
-                <div className="relative" ref={notifRef}>
+                {canViewNotifications ? <div className="relative" ref={notifRef}>
                   <button
                     type="button"
                     aria-label="Notifications"
@@ -699,7 +723,7 @@ export function AppShell() {
                     onClick={() => setNotifOpen((v) => !v)}
                   >
                     <Bell className="h-3.5 w-3.5" />
-                    {NOTIFS.length > 0 ? <span className="notif-badge">{NOTIFS.length}</span> : null}
+                    {unreadNotificationCount > 0 ? <span className="notif-badge">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span> : null}
                   </button>
 
                   {notifOpen && (
@@ -707,43 +731,58 @@ export function AppShell() {
                       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
                         <p className="section-title">Notifications</p>
                         <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
-                          {NOTIFS.length} new
+                          {unreadNotificationCount} unread
                         </span>
                       </div>
                       <div className="max-h-[320px] overflow-y-auto divide-y divide-slate-100">
-                        {NOTIFS.length === 0 ? (
+                        {notificationsQuery.isLoading ? (
+                          <div className="px-4 py-8 text-center">
+                            <p className="text-sm font-semibold text-slate-700">Loading notifications…</p>
+                          </div>
+                        ) : notificationsQuery.isError ? (
+                          <div className="px-4 py-8 text-center" role="alert">
+                            <p className="text-sm font-semibold text-rose-700">Notifications unavailable</p>
+                            <p className="mt-1 text-xs text-slate-500">Open Notification Center or retry after the service recovers.</p>
+                          </div>
+                        ) : recentNotifications.length === 0 ? (
                           <div className="px-4 py-8 text-center">
                             <p className="text-sm font-semibold text-slate-700">No notifications yet</p>
-                            <p className="mt-1 text-xs text-slate-500">Live alerts will appear here when the backend emits them.</p>
+                            <p className="mt-1 text-xs text-slate-500">No persisted notification is assigned to this user or role.</p>
                           </div>
                         ) : (
-                          NOTIFS.map((n, i) => (
-                            <div key={i} className="flex items-start gap-3 px-4 py-3 transition hover:bg-slate-50 cursor-pointer">
+                          recentNotifications.map((item, i) => {
+                            const tone = notificationTone(item.severity);
+                            return <button
+                              type="button"
+                              key={String(item.id ?? i)}
+                              className="flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-slate-50"
+                              onClick={() => { navigate("/notifications"); setNotifOpen(false); }}
+                            >
                               <span
                                 className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${
-                                  n.type === "danger" ? "bg-red-400" : n.type === "warning" ? "bg-amber-400" : "bg-sky-400"
+                                  tone === "danger" ? "bg-red-400" : tone === "warning" ? "bg-amber-400" : "bg-sky-400"
                                 }`}
                               />
                               <div className="min-w-0 flex-1">
-                                <p className="text-[13px] text-slate-700 leading-snug">{n.text}</p>
-                                <p className="mt-0.5 text-xs text-slate-500">{n.time}</p>
+                                <p className="text-[13px] leading-snug text-slate-700">{String(item.title ?? item.message ?? "Notification")}</p>
+                                <p className="mt-0.5 text-xs text-slate-500">{notificationTime(item.createdAt ?? item.created_at)}</p>
                               </div>
-                            </div>
-                          ))
+                            </button>;
+                          })
                         )}
                       </div>
                       <div className="border-t border-slate-200 px-4 py-2.5">
                         <button
                           type="button"
                           className="text-xs font-semibold text-teal-700 hover:text-teal-600 transition"
-                          onClick={() => navigate("/audit-logs")}
+                          onClick={() => { navigate("/notifications"); setNotifOpen(false); }}
                         >
                           View all notifications
                         </button>
                       </div>
                     </div>
                   )}
-                </div>
+                </div> : null}
 
                 {/* Avatar / profile dropdown */}
                 <div className="relative" ref={profileRef}>

@@ -121,9 +121,11 @@ public sealed class TenantIsolationAdversarialTests
 
         Assert.Contains("WHERE company_id=@companyId AND module_key=@key", load, StringComparison.Ordinal);
         Assert.Contains("WHERE {ownership}=@companyId", load, StringComparison.Ordinal);
-        Assert.Contains("WHERE id=@id AND company_id=@companyId AND module_key=@key", detail, StringComparison.Ordinal);
+        Assert.Contains("WHERE mr.id=@id AND mr.company_id=@companyId AND mr.module_key=@key", detail, StringComparison.Ordinal);
         Assert.Contains("WHERE id=@id AND {ownership}=@companyId", detail, StringComparison.Ordinal);
         Assert.Contains("INSERT INTO module_records (company_id, module_key", create, StringComparison.Ordinal);
+        Assert.Contains("NpgsqlDbType.Jsonb", create, StringComparison.Ordinal);
+        Assert.Contains("BuildGenericModuleMetadata", create, StringComparison.Ordinal);
         Assert.Contains("WHERE company_id=@companyId AND module_key=@key AND id=@id", update, StringComparison.Ordinal);
     }
 

@@ -65,6 +65,35 @@ public class Stage16ASourceRegressionTests
     }
 
     [Fact]
+    public void CommercialRegisters_PersistTheirVisibleFields_AndDiscloseConversionBoundaries()
+    {
+        var endpoints = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var leads = ReadSource("frontend", "src", "pages", "LeadsPage.tsx");
+        var opportunities = ReadSource("frontend", "src", "pages", "OpportunitiesPage.tsx");
+        var quotations = ReadSource("frontend", "src", "pages", "QuotationsPage.tsx");
+        var rateCards = ReadSource("frontend", "src", "pages", "RateCardsPage.tsx");
+        var campaigns = ReadSource("frontend", "src", "pages", "CampaignsPage.tsx");
+
+        Assert.Contains("BuildGenericModuleMetadata", endpoints);
+        Assert.Contains("NpgsqlDbType.Jsonb", endpoints);
+        Assert.Contains("IsBlank(Get(body, \"riskLevel\")) ? \"Medium\"", endpoints);
+        Assert.Contains("\"estimatedMonthlyLoads\"", endpoints);
+        Assert.Contains("\"probability\"", endpoints);
+        Assert.Contains("\"quoteAmount\"", endpoints);
+        Assert.Contains("\"startDate\"", endpoints);
+
+        Assert.Contains("conversion is not automated", leads);
+        Assert.Contains("conversion is not automated", opportunities);
+        Assert.Contains("Automated quote-to-contract or booking conversion is not available", quotations);
+        Assert.DoesNotContain("r.currency ?? \"SAR\"", opportunities);
+        Assert.Contains("rateCardName: form.title", rateCards);
+        Assert.Contains("billingBasis: form.pricingMethod", rateCards);
+        Assert.Contains("fuelSurchargePercent: form.fuelSurcharge", rateCards);
+        Assert.Contains("Campaign-to-lead creation and revenue attribution are not automated", campaigns);
+        Assert.DoesNotContain("r.currency ?? \"SAR\"", campaigns);
+    }
+
+    [Fact]
     public void FleetDriversDispatchAndReports_Surfaces_Remain_Live_And_Recommendation_Only()
     {
         var vehicles = ReadSource("frontend", "src", "pages", "VehiclesModulePage.tsx");

@@ -4,6 +4,12 @@ import { apiClient, unwrap } from "@/services/apiClient";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
+function persistedNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 const campaignsApi = {
   list: () => unwrap<AnyRecord[]>(apiClient.get("/api/campaigns")).then((rows) =>
     rows.map((r) => ({
@@ -11,13 +17,13 @@ const campaignsApi = {
       campaignName: r.campaignName ?? r.title ?? "",
       segment: r.segment ?? "",
       channel: r.channel ?? "",
-      audienceSize: Number(r.audienceSize ?? r.amount ?? 0),
+      audienceSize: persistedNumber(r.audienceSize),
       openRate: r.openRate ?? "—",
       responseRate: r.responseRate ?? "—",
-      leadsGenerated: Number(r.leadsGenerated ?? 0),
-      revenueInfluenced: Number(r.revenueInfluenced ?? 0),
-      currency: r.currency ?? "SAR",
-      startDate: r.startDate ?? r.due_at ?? "",
+      leadsGenerated: persistedNumber(r.leadsGenerated),
+      revenueInfluenced: persistedNumber(r.revenueInfluenced),
+      currency: r.currency ?? "",
+      startDate: r.startDate ?? r.dueAt ?? "",
     }))
   ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/campaigns", body)),
@@ -106,8 +112,14 @@ export function CampaignsPage() {
   const listQ = useQuery({ queryKey: ["campaigns", "list"], queryFn: campaignsApi.list, refetchInterval: 60_000 });
   const campaigns = (listQ.data ?? []) as AnyRecord[];
 
-  const totalLeads = campaigns.reduce((s, c) => s + Number(c.leadsGenerated ?? 0), 0);
-  const totalRevenue = campaigns.reduce((s, c) => s + Number(c.revenueInfluenced ?? 0), 0);
+  const measuredLeadRows = campaigns.filter((campaign) => campaign.leadsGenerated != null);
+  const totalLeads = measuredLeadRows.reduce((sum, campaign) => sum + Number(campaign.leadsGenerated), 0);
+  const measuredRevenueRows = campaigns.filter((campaign) => campaign.revenueInfluenced != null && campaign.currency);
+  const revenueCurrencies = [...new Set(measuredRevenueRows.map((campaign) => String(campaign.currency)))];
+  const totalRevenue = measuredRevenueRows.reduce((sum, campaign) => sum + Number(campaign.revenueInfluenced), 0);
+  const revenueLabel = revenueCurrencies.length === 1
+    ? `${revenueCurrencies[0]} ${totalRevenue.toLocaleString()}`
+    : revenueCurrencies.length > 1 ? "Multiple currencies" : "—";
   const active = campaigns.filter((c) => c.status === "Active").length;
 
   const filtered = campaigns.filter((c) => {
@@ -133,11 +145,22 @@ export function CampaignsPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Campaigns</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Outbound marketing campaigns — audience targeting, channel engagement, leads generated and revenue influenced</p>
+          <p className="text-sm text-slate-500 mt-0.5">Persisted campaign register with recorded targeting and performance evidence</p>
         </div>
         <div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("campaigns", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>New Campaign</button>
+        </div>
+      </div>
+
+      <div className="panel grid gap-3 md:grid-cols-2">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Attribution boundary</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Campaign-to-lead creation and revenue attribution are not automated in this build.</p>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Evidence rule</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Audience, engagement, leads and revenue remain unavailable until persisted measurements exist.</p>
         </div>
       </div>
 
@@ -146,8 +169,8 @@ export function CampaignsPage() {
         {[
           { label: "Total Campaigns",     val: campaigns.length },
           { label: "Active",              val: active, accent: "text-teal-600" },
-          { label: "Leads Generated",     val: totalLeads, accent: "text-blue-600" },
-          { label: "Revenue Influenced",  val: `SAR ${(totalRevenue / 1_000_000).toFixed(2)}M`, accent: "text-violet-600" },
+          { label: "Leads Generated",     val: measuredLeadRows.length ? totalLeads : "—", accent: "text-blue-600" },
+          { label: "Revenue Influenced",  val: revenueLabel, accent: "text-violet-600" },
         ].map(({ label, val, accent }) => (
           <div key={label} className="panel flex flex-col gap-1 min-w-36">
             <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
@@ -162,7 +185,9 @@ export function CampaignsPage() {
           {(["All", "Active", "Scheduled", "Completed"] as const).map((f) => (
             <button key={f} type="button" onClick={() => setStatusFilter(f)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                statusFilter === f ? "bg-teal-50 border-teal-300 text-teal-700" : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                statusFilter === f
+                  ? "bg-teal-50 border-teal-300 text-teal-700"
+                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
               }`}>{f}</button>
           ))}
         </div>
@@ -192,13 +217,13 @@ export function CampaignsPage() {
                     <td className="px-4 py-3 text-xs text-slate-600 max-w-32">{String(c.segment ?? "—")}</td>
                     <td className="px-4 py-3"><ChannelBadge channel={String(c.channel ?? "")} /></td>
                     <td className="px-4 py-3"><StatusBadge status={String(c.status ?? "Active")} /></td>
-                    <td className="px-4 py-3 text-slate-700">{Number(c.audienceSize ?? 0).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-slate-700">{c.audienceSize == null ? "—" : Number(c.audienceSize).toLocaleString()}</td>
                     <td className="px-4 py-3 font-medium text-slate-700">{String(c.openRate ?? "—")}</td>
                     <td className="px-4 py-3 font-medium text-teal-700">{String(c.responseRate ?? "—")}</td>
                     <td className="px-4 py-3 text-slate-700">{String(c.leadsGenerated ?? "—")}</td>
                     <td className="px-4 py-3 text-slate-700 text-xs">
-                      {Number(c.revenueInfluenced ?? 0) > 0
-                        ? `${String(c.currency ?? "SAR")} ${Number(c.revenueInfluenced).toLocaleString()}`
+                      {c.revenueInfluenced != null && c.currency
+                        ? `${String(c.currency)} ${Number(c.revenueInfluenced).toLocaleString()}`
                         : "—"}
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(c.startDate ?? "—")}</td>
@@ -225,11 +250,11 @@ export function CampaignsPage() {
             <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-white/6">
               {[
                 ["Segment", String(selected.segment ?? "—")],
-                ["Audience", Number(selected.audienceSize ?? 0).toLocaleString()],
+                ["Audience", selected.audienceSize == null ? "—" : Number(selected.audienceSize).toLocaleString()],
                 ["Open Rate", String(selected.openRate ?? "—")],
                 ["Response Rate", String(selected.responseRate ?? "—")],
-                ["Leads Generated", String(selected.leadsGenerated ?? "0")],
-                ["Revenue Influenced", `${String(selected.currency ?? "SAR")} ${Number(selected.revenueInfluenced ?? 0).toLocaleString()}`],
+                ["Leads Generated", String(selected.leadsGenerated ?? "—")],
+                ["Revenue Influenced", selected.revenueInfluenced == null || !selected.currency ? "—" : `${String(selected.currency)} ${Number(selected.revenueInfluenced).toLocaleString()}`],
                 ["Start Date", String(selected.startDate ?? "—")],
               ].map(([k, v]) => (
                 <div key={String(k)}>
@@ -239,13 +264,13 @@ export function CampaignsPage() {
               ))}
             </div>
             <div className="px-5 py-4">
-              <p className="text-xs font-semibold text-teal-400 uppercase tracking-wide mb-1.5">Performance Insight</p>
+              <p className="text-xs font-semibold text-teal-400 uppercase tracking-wide mb-1.5">Performance status</p>
               <p className="text-sm text-slate-300 leading-relaxed">
-                {String(selected.status) === "Active"
-                  ? `Campaign is live. Response rate of ${String(selected.responseRate)} indicates ${parseFloat(String(selected.responseRate ?? "0")) > 10 ? "strong" : "moderate"} engagement.`
+                {String(selected.status) === "Active" && selected.responseRate !== "—"
+                  ? `Recorded response rate: ${String(selected.responseRate)}. Review the source measurement before changing spend or targeting.`
                   : String(selected.status) === "Scheduled"
                   ? "Campaign is queued. Verify audience list and creative assets before launch."
-                  : "Campaign completed. Analyze lead quality and revenue attribution to inform next campaign."}
+                  : "No persisted response measurement is available for this campaign."}
               </p>
             </div>
           </div>

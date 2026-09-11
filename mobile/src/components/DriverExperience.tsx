@@ -140,6 +140,27 @@ export function DriverSceneHero({
   );
 }
 
+export function DriverStatusStrip({
+  items,
+}: {
+  items: { label: string; value: string; tone?: DriverTone }[];
+}) {
+  return (
+    <View style={styles.statusStrip}>
+      {items.map((item) => {
+        const color = toneColor(item.tone ?? "teal");
+        return (
+          <View key={`${item.label}:${item.value}`} style={[styles.statusItem, { borderColor: `${color}32` }]}>
+            <View style={[styles.statusAccent, { backgroundColor: color }]} />
+            <Text numberOfLines={1} style={[styles.statusLabel, { color }]}>{item.label}</Text>
+            <Text numberOfLines={1} style={styles.statusValue}>{item.value}</Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 export function DriverActionTile({
   code,
   title,
@@ -189,6 +210,11 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: 34, lineHeight: 37, fontWeight: "900", letterSpacing: -1.45, maxWidth: 560 },
   description: { color: colors.muted, fontSize: 14.5, lineHeight: 21, maxWidth: 560 },
   heroChildren: { marginTop: 4 },
+  statusStrip: { flexDirection: "row", gap: 8 },
+  statusItem: { flex: 1, minWidth: 0, overflow: "hidden", borderWidth: 1, borderRadius: 14, backgroundColor: "rgba(8,24,42,0.88)", paddingHorizontal: 11, paddingVertical: 9 },
+  statusAccent: { position: "absolute", top: 0, bottom: 0, left: 0, width: 2 },
+  statusLabel: { fontSize: 8.5, lineHeight: 11, fontWeight: "900", letterSpacing: 1.1, textTransform: "uppercase" },
+  statusValue: { color: colors.text, fontSize: 11.5, lineHeight: 16, fontWeight: "800", marginTop: 2 },
   actionTile: { minWidth: 140, flex: 1, minHeight: 110, borderWidth: 1, borderRadius: 22, padding: 14, justifyContent: "center", alignItems: "center", gap: 5 },
   actionCode: { width: 36, height: 36, borderRadius: 12, borderWidth: 1, alignItems: "center", justifyContent: "center", marginBottom: 2 },
   actionCodeText: { fontSize: 16, fontWeight: "900" },
