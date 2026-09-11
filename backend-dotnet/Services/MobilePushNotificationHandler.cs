@@ -10,8 +10,9 @@ namespace Opstrax.Api.Services;
 /// Delivers recipient-scoped OpsTrax notifications to active Expo device tokens.
 /// The outbox aggregate id is a notification_recipients row, so tenant/user routing
 /// is resolved entirely from server-owned rows; no mobile payload can select another
-/// tenant or user. The notification payload contains no URL, tenant id, auth data, or
-/// privileged navigation instruction. Tapping a push only wakes the authenticated app.
+/// tenant or user. The provider payload intentionally contains no customer/load detail,
+/// URL, tenant id, auth data, or privileged navigation instruction. Tapping a push only
+/// wakes the authenticated app, which then refreshes server-scoped data.
 /// </summary>
 public sealed class MobilePushNotificationHandler(
     Database db,
@@ -35,7 +36,7 @@ public sealed class MobilePushNotificationHandler(
     {
         var recipient = await db.QuerySingleAsync(
             @"SELECT nr.id, nr.user_id, nr.status AS recipient_status, nr.external_ref,
-                     n.id AS notification_id, n.title, n.message, n.severity, n.event_type
+                     n.id AS notification_id
                 FROM notification_recipients nr
                 JOIN notifications n ON n.id=nr.notification_id AND n.company_id=nr.company_id
                WHERE nr.id=@rid AND nr.company_id=@cid
@@ -58,7 +59,7 @@ public sealed class MobilePushNotificationHandler(
         if (recipientStatus is "read" or "acknowledged") return;
 
         var devices = await db.QueryAsync(
-            @"SELECT id, push_token, token_fingerprint, product, platform
+            @"SELECT id, push_token, product, platform
                 FROM mobile_device_tokens
                WHERE company_id=@cid AND user_id=@uid AND status='active'
                ORDER BY last_registered_at DESC, id DESC
@@ -75,23 +76,32 @@ public sealed class MobilePushNotificationHandler(
             return;
         }
 
-        var title = Clamp(recipient["title"]?.ToString(), 100, "OpsTrax update");
-        var body = Clamp(recipient["message"]?.ToString(), 240, "You have a new OpsTrax notification.");
-        var outbound = devices.Select(device => new ExpoPushMessage(
-            To: device["pushToken"]?.ToString() ?? string.Empty,
-            Title: title,
-            Body: body,
-            Sound: "default",
-            Priority: "high",
-            ChannelId: "operations"
-        )).Where(item => IsExpoToken(item.To)).ToList();
-
-        if (outbound.Count == 0)
+        var targets = new List<PushTarget>();
+        foreach (var device in devices)
         {
-            await RevokeMalformedTokensAsync(companyId, devices, ct);
+            var token = device["pushToken"]?.ToString() ?? string.Empty;
+            var deviceId = Convert.ToInt64(device["id"]);
+            if (IsExpoToken(token))
+                targets.Add(new PushTarget(deviceId, token));
+            else
+                await RevokeDeviceAsync(companyId, deviceId, ct);
+        }
+
+        if (targets.Count == 0)
+        {
             await SetExternalRefAsync(companyId, recipientId, "expo:no-valid-device", ct);
             return;
         }
+
+        // Keep lock-screen content intentionally generic. Detailed title/body remain in the
+        // authenticated in-app inbox and Dispatch surfaces.
+        var outbound = targets.Select(target => new ExpoPushMessage(
+            To: target.Token,
+            Title: "OpsTrax operational update",
+            Body: "Open OpsTrax to review a new notification.",
+            Priority: "default",
+            ChannelId: "operations"
+        )).ToList();
 
         var client = httpClientFactory.CreateClient("expo-push");
         using var request = new HttpRequestMessage(HttpMethod.Post, "--/api/v2/push/send")
@@ -122,9 +132,9 @@ public sealed class MobilePushNotificationHandler(
         var tickets = envelope?.Data ?? [];
         var okTicketIds = new List<string>();
         var transientFailures = 0;
-        var invalidDeviceIndexes = new List<int>();
+        var revoked = 0;
 
-        for (var index = 0; index < outbound.Count; index++)
+        for (var index = 0; index < targets.Count; index++)
         {
             var ticket = index < tickets.Count ? tickets[index] : null;
             if (ticket is null)
@@ -140,24 +150,14 @@ public sealed class MobilePushNotificationHandler(
 
             var code = ticket.Details?.Error?.Trim();
             if (string.Equals(code, "DeviceNotRegistered", StringComparison.OrdinalIgnoreCase))
-                invalidDeviceIndexes.Add(index);
+            {
+                await RevokeDeviceAsync(companyId, targets[index].DeviceId, ct);
+                revoked++;
+            }
             else
+            {
                 transientFailures++;
-        }
-
-        foreach (var index in invalidDeviceIndexes)
-        {
-            if (index >= devices.Count) continue;
-            var deviceId = Convert.ToInt64(devices[index]["id"]);
-            await db.ExecuteAsync(
-                @"UPDATE mobile_device_tokens
-                     SET status='revoked', revoked_at=NOW(), updated_at=NOW()
-                   WHERE company_id=@cid AND id=@id AND status='active'",
-                c =>
-                {
-                    c.Parameters.AddWithValue("@cid", companyId);
-                    c.Parameters.AddWithValue("@id", deviceId);
-                }, ct);
+            }
         }
 
         if (okTicketIds.Count == 0 && transientFailures > 0)
@@ -168,10 +168,10 @@ public sealed class MobilePushNotificationHandler(
             : "expo:no-active-device";
         await SetExternalRefAsync(companyId, recipientId, marker, ct);
 
-        // Log counts only. Raw provider tokens and ticket payload bodies are intentionally excluded.
+        // Log counts only. Raw provider tokens, response bodies and ticket payloads are excluded.
         logger.LogInformation(
             "Mobile push handled recipient {RecipientId} company {CompanyId}: accepted={Accepted} revoked={Revoked} transient={Transient}",
-            recipientId, companyId, okTicketIds.Count, invalidDeviceIndexes.Count, transientFailures);
+            recipientId, companyId, okTicketIds.Count, revoked, transientFailures);
     }
 
     private async Task SetExternalRefAsync(long companyId, long recipientId, string marker, CancellationToken ct)
@@ -186,19 +186,16 @@ public sealed class MobilePushNotificationHandler(
                 c.Parameters.AddWithValue("@rid", recipientId);
             }, ct);
 
-    private async Task RevokeMalformedTokensAsync(long companyId, IReadOnlyList<Dictionary<string, object?>> devices, CancellationToken ct)
-    {
-        foreach (var device in devices)
-        {
-            var token = device["pushToken"]?.ToString() ?? string.Empty;
-            if (IsExpoToken(token)) continue;
-            var id = Convert.ToInt64(device["id"]);
-            await db.ExecuteAsync(
-                @"UPDATE mobile_device_tokens SET status='revoked',revoked_at=NOW(),updated_at=NOW()
-                   WHERE company_id=@cid AND id=@id AND status='active'",
-                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        }
-    }
+    private async Task RevokeDeviceAsync(long companyId, long deviceId, CancellationToken ct)
+        => await db.ExecuteAsync(
+            @"UPDATE mobile_device_tokens
+                 SET status='revoked',revoked_at=NOW(),updated_at=NOW()
+               WHERE company_id=@cid AND id=@id AND status='active'",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@id", deviceId);
+            }, ct);
 
     private static bool IsExpoToken(string token)
         => token.Length is >= 20 and <= 4096
@@ -207,25 +204,13 @@ public sealed class MobilePushNotificationHandler(
                || token.StartsWith("ExponentPushToken[", StringComparison.Ordinal))
            && token.EndsWith(']');
 
-    private static string Clamp(string? value, int max, string fallback)
-    {
-        var clean = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
-        return clean.Length <= max ? clean : clean[..max];
-    }
-
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true
     };
 
-    private sealed record ExpoPushMessage(
-        string To,
-        string Title,
-        string Body,
-        string Sound,
-        string Priority,
-        string ChannelId);
-
+    private sealed record PushTarget(long DeviceId, string Token);
+    private sealed record ExpoPushMessage(string To, string Title, string Body, string Priority, string ChannelId);
     private sealed record ExpoPushEnvelope(List<ExpoPushTicket>? Data);
     private sealed record ExpoPushTicket(string? Status, string? Id, string? Message, ExpoPushDetails? Details);
     private sealed record ExpoPushDetails(string? Error);
