@@ -25,7 +25,10 @@ import type { DriverProofArtifact } from "@/types";
 import { textOf, titleCase } from "@/data/records";
 
 type CapturedAsset = { uri: string; fileName?: string | null; mimeType?: string | null; fileSize?: number; file?: Blob | null };
-type ProofDraft = { notes: string; uploaded: DriverProofArtifact | null };
+type ProofDraft = {
+  notes: string;
+  uploaded: DriverProofArtifact | null;
+};
 
 async function captureOptionalCoordinates(): Promise<{ lat: number; lng: number } | null> {
   try {
