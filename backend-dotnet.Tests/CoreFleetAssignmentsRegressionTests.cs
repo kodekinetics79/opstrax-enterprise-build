@@ -30,6 +30,8 @@ public sealed class CoreFleetAssignmentsRegressionTests
         // Assignment ownership is persisted directly; scoping via a nullable joined
         // vehicle would make history leak or disappear after vehicle lifecycle changes.
         Assert.Contains("StrictBranchFilter(http, \"da\")", reads);
+        Assert.Contains("http.Request.Query[\"jobId\"]", reads);
+        Assert.Contains("da.job_id=@jid::BIGINT", reads);
         Assert.Contains("StrictBranchFilter(http, \"v\")", candidates);
         Assert.Contains("StrictBranchFilter(http, \"d\")", candidates);
         Assert.Contains("RequirePermission(http, \"dispatch:view\")", candidates);

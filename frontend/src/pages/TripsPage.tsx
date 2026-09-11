@@ -127,6 +127,7 @@ export function TripsPage() {
   }
 
   const detail = (((detailQ.data ?? {}) as AnyRecord).trip ?? selectedTrip ?? {}) as AnyRecord;
+  const linkedJobId = value(detail, "jobId", "job_id") ?? (selectedTrip ? value(selectedTrip, "jobId", "job_id") : undefined);
   const stops = (((detailQ.data ?? {}) as AnyRecord).stops ?? []) as AnyRecord[];
   const breadcrumbs = (breadcrumbsQ.data ?? []) as AnyRecord[];
   const compliance = (complianceQ.data ?? {}) as AnyRecord;
@@ -201,7 +202,9 @@ export function TripsPage() {
                 type="button"
                 onClick={() => setFilter(item)}
                 className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                  filter === item ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  filter === item
+                    ? "border-teal-300 bg-teal-50 text-teal-700"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                 }`}
               >
                 {item}
@@ -332,20 +335,20 @@ export function TripsPage() {
               </div>
 
               <div className="grid gap-3 sm:grid-cols-3">
-                <button type="button" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:bg-slate-50" onClick={() => navigate(`/jobs?tripId=${selectedTrip.id}`)}>
+                <button type="button" disabled={linkedJobId == null} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55" onClick={() => linkedJobId != null && navigate(`/jobs?jobId=${encodeURIComponent(String(linkedJobId))}`)}>
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Job context</p>
                   <p className="mt-1 text-sm font-semibold text-slate-900">Open linked jobs</p>
-                  <p className="mt-1 text-xs text-slate-500">Jump to the execution record behind this trip.</p>
+                  <p className="mt-1 text-xs text-slate-500">{linkedJobId == null ? "No linked job is recorded for this trip." : "Jump to the execution record behind this trip."}</p>
                 </button>
-                <button type="button" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:bg-slate-50" onClick={() => navigate(`/dispatch?tripId=${selectedTrip.id}`)}>
+                <button type="button" disabled={linkedJobId == null} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55" onClick={() => linkedJobId != null && navigate(`/dispatch?jobId=${encodeURIComponent(String(linkedJobId))}`)}>
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Dispatch context</p>
                   <p className="mt-1 text-sm font-semibold text-slate-900">Open dispatch board</p>
-                  <p className="mt-1 text-xs text-slate-500">See pairing and exception handling.</p>
+                  <p className="mt-1 text-xs text-slate-500">{linkedJobId == null ? "No linked job is available for dispatch lookup." : "See the assignment and exception handling for this job."}</p>
                 </button>
-                <button type="button" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:bg-slate-50" onClick={() => navigate(`/operations/proof-center?tripId=${selectedTrip.id}`)}>
+                <button type="button" disabled={linkedJobId == null} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55" onClick={() => linkedJobId != null && navigate(`/operations/proof-center?jobId=${encodeURIComponent(String(linkedJobId))}`)}>
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Proof context</p>
                   <p className="mt-1 text-sm font-semibold text-slate-900">Open proof center</p>
-                  <p className="mt-1 text-xs text-slate-500">Review POD, access and billing confidence.</p>
+                  <p className="mt-1 text-xs text-slate-500">{linkedJobId == null ? "No linked job is available for proof lookup." : "Review POD, access and billing confidence for this job."}</p>
                 </button>
               </div>
 

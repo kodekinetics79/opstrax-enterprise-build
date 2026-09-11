@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { useTenantCurrency } from "@/hooks/useTenantRegion";
 import type { AnyRecord } from "@/types";
 
 const rateCardsApi = {
@@ -9,14 +10,13 @@ const rateCardsApi = {
     rows.map((r) => ({
       ...r,
       rateCardId: r.rateCardId ?? r.code ?? `RC-${String(r.id)}`,
-      customerContract: r.rateCardName ?? r.customerContract ?? r.title ?? "",
-      originZone: r.originZone ?? r.origin ?? r.location_name ?? "",
+      rateCardName: r.rateCardName ?? r.title ?? "",
+      originZone: r.originZone ?? r.origin ?? r.locationName ?? "",
       destinationZone: r.destinationZone ?? r.destination ?? "",
-      baseRate: Number(r.baseRate ?? r.amount ?? 0),
-      perKmRate: Number(r.perKmRate ?? 0),
-      fuelSurcharge: r.fuelSurchargePercent ?? r.fuelSurcharge ?? "0%",
+      baseRate: r.baseRate != null || r.amount != null ? Number(r.baseRate ?? r.amount) : null,
+      fuelSurchargePercent: r.fuelSurchargePercent != null ? Number(r.fuelSurchargePercent) : null,
       effectiveFrom: r.effectiveDate ?? r.effectiveFrom ?? "",
-      effectiveTo: r.expiryDate ?? r.effectiveTo ?? r.due_at ?? "",
+      effectiveTo: r.expiryDate ?? r.effectiveTo ?? r.dueAt ?? "",
       pricingMethod: r.billingBasis ?? r.pricingMethod ?? "",
     }))
   ),
@@ -35,6 +35,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function VehicleTypeBadge({ type }: { type: string }) {
+  if (!type) return <span className="text-xs text-slate-500">—</span>;
   const cls =
     type.includes("Reefer") ? "bg-blue-50 border-blue-200 text-blue-700" :
     type.includes("Last-mile") || type.includes("Van") ? "bg-violet-50 border-violet-200 text-violet-700" :
@@ -45,11 +46,22 @@ function VehicleTypeBadge({ type }: { type: string }) {
 
 // ── Create Rate Card Modal ────────────────────────────────────────────────────
 
-function CreateRateCardModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ title: "", originZone: "", destinationZone: "", vehicleType: "Dry Van", pricingMethod: "Per KM", baseRate: "", perKmRate: "", fuelSurcharge: "9%", currency: "SAR", effectiveDate: "" });
+function CreateRateCardModal({ onClose, onSaved, defaultCurrency }: { onClose: () => void; onSaved: () => void; defaultCurrency: string }) {
+  const [form, setForm] = useState({ title: "", originZone: "", destinationZone: "", vehicleType: "Dry Van", pricingMethod: "Per KM", baseRate: "", fuelSurcharge: "", currency: defaultCurrency, effectiveDate: "" });
   const qc = useQueryClient();
   const mut = useMutation({
-    mutationFn: () => rateCardsApi.create({ ...form, status: "Active", amount: form.baseRate, effectiveDate: form.effectiveDate } as unknown as AnyRecord),
+    mutationFn: () => rateCardsApi.create({
+      rateCardName: form.title,
+      originZone: form.originZone,
+      destinationZone: form.destinationZone,
+      vehicleType: form.vehicleType,
+      billingBasis: form.pricingMethod,
+      baseRate: form.baseRate,
+      fuelSurchargePercent: form.fuelSurcharge || null,
+      currency: form.currency,
+      effectiveDate: form.effectiveDate,
+      status: "Active",
+    } as unknown as AnyRecord),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["rate-cards"] }); onSaved(); },
   });
   return (
@@ -58,15 +70,14 @@ function CreateRateCardModal({ onClose, onSaved }: { onClose: () => void; onSave
         <h2 className="text-base font-bold text-slate-900">New Rate Card</h2>
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2">
-            <label className="block text-xs font-medium text-slate-600 mb-1">Customer / Contract*</label>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Rate Card Name*</label>
             <input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400"
-              placeholder="CON-1001 / Saudi FMCG" value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
+              placeholder="Riyadh to Dammam standard" value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
           </div>
           {[
             { label: "Origin Zone", key: "originZone", placeholder: "Riyadh DC" },
             { label: "Destination Zone", key: "destinationZone", placeholder: "Dammam Retail" },
-            { label: "Base Rate", key: "baseRate", placeholder: "950" },
-            { label: "Per KM Rate", key: "perKmRate", placeholder: "5.8" },
+            { label: "Rate / Base Amount", key: "baseRate", placeholder: "5.8" },
           ].map(({ label, key, placeholder }) => (
             <div key={key}>
               <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
@@ -92,13 +103,14 @@ function CreateRateCardModal({ onClose, onSaved }: { onClose: () => void; onSave
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Fuel Surcharge</label>
             <input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400"
-              placeholder="9%" value={form.fuelSurcharge} onChange={(e) => setForm((f) => ({ ...f, fuelSurcharge: e.target.value }))} />
+              placeholder="Enter approved percentage" value={form.fuelSurcharge} onChange={(e) => setForm((f) => ({ ...f, fuelSurcharge: e.target.value }))} />
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Currency</label>
             <select title="Currency" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
               value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}>
-              {["SAR", "AED", "USD", "EUR"].map((c) => <option key={c}>{c}</option>)}
+              <option value="">Select currency</option>
+              {["USD", "CAD", "SAR", "AED", "PKR", "EUR", "GBP"].map((c) => <option key={c}>{c}</option>)}
             </select>
           </div>
           <div>
@@ -110,7 +122,7 @@ function CreateRateCardModal({ onClose, onSaved }: { onClose: () => void; onSave
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}
         <div className="flex justify-end gap-2 mt-2">
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
-          <button type="button" disabled={!form.title || !form.effectiveDate || mut.isPending} className="btn-primary text-sm" onClick={() => mut.mutate()}>
+          <button type="button" disabled={!form.title || !form.currency || !form.effectiveDate || mut.isPending} className="btn-primary text-sm" onClick={() => mut.mutate()}>
             {mut.isPending ? "Saving…" : "Create Rate Card"}
           </button>
         </div>
@@ -122,6 +134,7 @@ function CreateRateCardModal({ onClose, onSaved }: { onClose: () => void; onSave
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function RateCardsPage() {
+  const tenantCurrency = useTenantCurrency() ?? "";
   const [statusFilter, setStatusFilter] = useState<"All" | "Active" | "Expiring Soon" | "Expired">("All");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AnyRecord | null>(null);
@@ -137,7 +150,7 @@ export function RateCardsPage() {
     if (statusFilter !== "All" && c.status !== statusFilter) return false;
     if (search) {
       const sq = search.toLowerCase();
-      return String(c.customerContract ?? c.title ?? "").toLowerCase().includes(sq) ||
+      return String(c.rateCardName ?? "").toLowerCase().includes(sq) ||
              String(c.originZone ?? "").toLowerCase().includes(sq) ||
              String(c.vehicleType ?? "").toLowerCase().includes(sq);
     }
@@ -149,11 +162,11 @@ export function RateCardsPage() {
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
-      {showCreate && <CreateRateCardModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
+      {showCreate && <CreateRateCardModal defaultCurrency={tenantCurrency} onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Rate Cards</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Lane rates, pricing structures, fuel surcharges and contract rate management</p>
+          <p className="text-sm text-slate-500 mt-0.5">Persisted lane rates, pricing basis, fuel surcharge and effective periods</p>
         </div>
         <div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("rate-cards", filtered)}>Export CSV</button>
@@ -179,11 +192,13 @@ export function RateCardsPage() {
           {(["All", "Active", "Expiring Soon", "Expired"] as const).map((f) => (
             <button key={f} type="button" onClick={() => setStatusFilter(f)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                statusFilter === f ? "bg-teal-50 border-teal-300 text-teal-700" : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                statusFilter === f
+                  ? "bg-teal-50 border-teal-300 text-teal-700"
+                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
               }`}>{f}</button>
           ))}
         </div>
-        <input type="search" placeholder="Search contract, zone, vehicle…" value={search} onChange={(e) => setSearch(e.target.value)}
+        <input type="search" placeholder="Search rate card, zone, vehicle…" value={search} onChange={(e) => setSearch(e.target.value)}
           className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-52" />
       </div>
 
@@ -193,7 +208,7 @@ export function RateCardsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Rate Card", "Contract / Customer", "Lane", "Vehicle", "Method", "Base Rate", "Per KM", "Fuel Surch.", "Effective", "Expires", "Status"].map((h) => (
+                  {["Rate Card", "Name", "Lane", "Vehicle", "Method", "Rate", "Fuel Surch.", "Effective", "Expires", "Status"].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -203,13 +218,12 @@ export function RateCardsPage() {
                   <tr key={String(c.id ?? i)} className={`hover:bg-slate-50 cursor-pointer ${selected?.id === c.id ? "bg-teal-50" : ""}`}
                     onClick={() => setSelected(selected?.id === c.id ? null : c)}>
                     <td className="px-4 py-3 font-medium text-slate-900">{String(c.rateCardId ?? "--")}</td>
-                    <td className="px-4 py-3 text-xs text-slate-700 max-w-36 truncate">{String(c.customerContract ?? c.title ?? "—")}</td>
+                    <td className="px-4 py-3 text-xs text-slate-700 max-w-36 truncate">{String(c.rateCardName ?? "—")}</td>
                     <td className="px-4 py-3 text-xs text-slate-600">{String(c.originZone ?? "—")} → {String(c.destinationZone ?? "—")}</td>
                     <td className="px-4 py-3"><VehicleTypeBadge type={String(c.vehicleType ?? "")} /></td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(c.pricingMethod ?? "—")}</td>
-                    <td className="px-4 py-3 font-medium text-slate-900">{String(c.currency ?? "SAR")} {Number(c.baseRate ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-xs text-slate-600">{Number(c.perKmRate ?? 0) > 0 ? `${String(c.currency ?? "SAR")} ${String(c.perKmRate)}` : "—"}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{String(c.fuelSurcharge ?? "—")}</td>
+                    <td className="px-4 py-3 font-medium text-slate-900">{c.baseRate == null || !c.currency ? "—" : `${String(c.currency)} ${Number(c.baseRate).toLocaleString()}`}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{c.fuelSurchargePercent == null ? "—" : `${Number(c.fuelSurchargePercent).toLocaleString()}%`}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(c.effectiveFrom ?? "—")}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(c.effectiveTo ?? "—")}</td>
                     <td className="px-4 py-3"><StatusBadge status={String(c.status ?? "Active")} /></td>
@@ -234,13 +248,13 @@ export function RateCardsPage() {
             </div>
             <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-white/6">
               {[
-                ["Contract", String(selected.customerContract ?? "—")],
+                ["Rate Card Name", String(selected.rateCardName ?? "—")],
+                ["Contract ID", String(selected.contractId ?? "—")],
                 ["Origin", String(selected.originZone ?? "—")],
                 ["Destination", String(selected.destinationZone ?? "—")],
                 ["Pricing Method", String(selected.pricingMethod ?? "—")],
-                ["Base Rate", `${String(selected.currency ?? "SAR")} ${Number(selected.baseRate ?? 0).toLocaleString()}`],
-                ["Per KM Rate", Number(selected.perKmRate ?? 0) > 0 ? `${String(selected.currency ?? "SAR")} ${String(selected.perKmRate)}` : "—"],
-                ["Fuel Surcharge", String(selected.fuelSurcharge ?? "—")],
+                ["Rate", selected.baseRate == null || !selected.currency ? "—" : `${String(selected.currency)} ${Number(selected.baseRate).toLocaleString()}`],
+                ["Fuel Surcharge", selected.fuelSurchargePercent == null ? "—" : `${Number(selected.fuelSurchargePercent).toLocaleString()}%`],
                 ["Effective", String(selected.effectiveFrom ?? "—")],
                 ["Expires", String(selected.effectiveTo ?? "—")],
               ].map(([k, v]) => (

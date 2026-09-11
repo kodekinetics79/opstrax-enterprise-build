@@ -371,7 +371,7 @@ export default function App() {
         <Route path="/customers" element={<RequirePermission permission="customers:view"><CustomersPage /></RequirePermission>} />
         <Route path="/contracts" element={<RequirePermission permission="customers:view"><ContractsPage /></RequirePermission>} />
         <Route path="/rate-cards" element={<RequirePermission permission="customers:view"><RateCardsPage /></RequirePermission>} />
-        <Route path="/price-simulation" element={<RequirePermission permission="customers:view"><QuotationsPage /></RequirePermission>} />
+        <Route path="/price-simulation" element={<RequirePermission permission="customers:view"><OperatingModulePage moduleKey="price-simulation" /></RequirePermission>} />
         <Route path="/quotations" element={<RequirePermission permission="customers:view"><QuotationsPage /></RequirePermission>} />
         <Route path="/leads" element={<RequirePermission permission="customers:view"><LeadsPage /></RequirePermission>} />
         <Route path="/sales-pipeline" element={<RequirePermission permission="customers:view"><OpportunitiesPage /></RequirePermission>} />

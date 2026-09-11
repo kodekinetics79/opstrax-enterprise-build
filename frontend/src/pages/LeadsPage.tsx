@@ -16,9 +16,9 @@ const leadsApi = {
         source: r.source ?? "",
         requiredService: r.requiredService ?? r.required_service ?? "",
         estimatedMonthlyLoads: r.estimatedMonthlyLoads ?? r.estimated_monthly_loads ?? 0,
-        cityCountry: r.cityCountry ?? r.location_name ?? "",
-        assignedRep: r.assignedRep ?? r.assigned_rep ?? "",
-        nextFollowUp: r.nextFollowUp ?? r.due_at ?? "",
+        cityCountry: r.cityCountry ?? r.locationName ?? "",
+        assignedRep: r.assignedRep ?? r.ownerName ?? "",
+        nextFollowUp: r.nextFollowUp ?? r.dueAt ?? "",
       }))
     ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/leads", body)),
@@ -43,7 +43,7 @@ function StageBadge({ status }: { status: string }) {
 function CreateLeadModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState({
     title: "", contactPerson: "", industry: "", source: "Referral",
-    requiredService: "FTL", estimatedMonthlyLoads: "", cityCountry: "", assignedRep: "",
+    requiredService: "FTL", estimatedMonthlyLoads: "", cityCountry: "", assignedRep: "", nextFollowUp: "",
   });
   const qc = useQueryClient();
   const mut = useMutation({
@@ -63,10 +63,11 @@ function CreateLeadModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
             { label: "City, Country", key: "cityCountry", placeholder: "Jeddah, KSA" },
             { label: "Est. Monthly Loads", key: "estimatedMonthlyLoads", placeholder: "96" },
             { label: "Assigned Rep", key: "assignedRep", placeholder: "Maya Patel" },
-          ].map(({ label, key, placeholder, full }) => (
+            { label: "Next Follow-up", key: "nextFollowUp", placeholder: "2026-09-15", type: "date" },
+          ].map(({ label, key, placeholder, full, type }) => (
             <div key={key} className={full ? "col-span-2" : ""}>
               <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-              <input
+              <input type={type ?? "text"}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400"
                 placeholder={placeholder}
                 value={String(form[key as keyof typeof form])}
@@ -173,8 +174,8 @@ export function LeadsPage() {
           <p className="mt-1 text-sm font-semibold text-slate-900">Each record keeps customer, rep, service and next-step context together for sales follow-up.</p>
         </div>
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Quote bridge</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Qualified leads can still feed the quotation flow without a fake sales pipeline.</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Workflow boundary</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Lead-to-opportunity and quotation conversion is not automated in this build; each register remains a separate saved workflow.</p>
         </div>
       </div>
 
@@ -221,7 +222,9 @@ export function LeadsPage() {
           {["All", ...PIPELINE_STAGES].map((f) => (
             <button key={f} type="button" onClick={() => setStageFilter(f)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                stageFilter === f ? "bg-teal-50 border-teal-300 text-teal-700" : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                stageFilter === f
+                  ? "bg-teal-50 border-teal-300 text-teal-700"
+                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
               }`}>
               {f}
             </button>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { useTenantCurrency } from "@/hooks/useTenantRegion";
 import type { AnyRecord } from "@/types";
 
 const quotationsApi = {
@@ -11,13 +12,15 @@ const quotationsApi = {
         ...r,
         quoteId: r.quoteId ?? r.code ?? `QT-${String(r.id)}`,
         customer: r.customer ?? r.title ?? "",
-        origin: r.origin ?? r.location_name ?? "",
+        origin: r.origin ?? r.locationName ?? "",
         destination: r.destination ?? "",
-        quoteAmount: Number(r.quoteAmount ?? r.amount ?? 0),
-        currency: r.currency ?? "SAR",
+        quoteAmount: r.quoteAmount != null || r.amount != null ? Number(r.quoteAmount ?? r.amount) : null,
+        currency: r.currency ?? "",
         margin: r.margin ?? "—",
-        marginPct: parseFloat(String(r.margin ?? "0").replace("%", "")) || 0,
-        validUntil: r.validUntil ?? r.due_at ?? "",
+        marginPct: r.margin != null && Number.isFinite(parseFloat(String(r.margin).replace("%", "")))
+          ? parseFloat(String(r.margin).replace("%", ""))
+          : null,
+        validUntil: r.validUntil ?? r.dueAt ?? "",
       }))
     ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/quotations", body)),
@@ -35,7 +38,8 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{status}</span>;
 }
 
-function MarginBar({ pct }: { pct: number }) {
+function MarginBar({ pct }: { pct: number | null }) {
+  if (pct == null) return <span className="text-xs text-slate-500">Not calculated</span>;
   const color = pct >= 25 ? "bg-teal-500" : pct >= 15 ? "bg-amber-400" : "bg-red-400";
   return (
     <div className="flex items-center gap-2 text-xs">
@@ -49,8 +53,8 @@ function MarginBar({ pct }: { pct: number }) {
 
 // ── Create Quote Modal ────────────────────────────────────────────────────────
 
-function CreateQuoteModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ title: "", origin: "", destination: "", cargo: "", quoteAmount: "", currency: "SAR" });
+function CreateQuoteModal({ onClose, onSaved, defaultCurrency }: { onClose: () => void; onSaved: () => void; defaultCurrency: string }) {
+  const [form, setForm] = useState({ title: "", origin: "", destination: "", cargo: "", quoteAmount: "", currency: defaultCurrency, margin: "", validUntil: "" });
   const qc = useQueryClient();
   const mut = useMutation({
     mutationFn: () => quotationsApi.create({ ...form, status: "Draft", amount: form.quoteAmount } as unknown as AnyRecord),
@@ -71,10 +75,12 @@ function CreateQuoteModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
             { label: "Destination", key: "destination", placeholder: "Riyadh" },
             { label: "Cargo Description", key: "cargo", placeholder: "Fresh produce" },
             { label: "Quote Amount", key: "quoteAmount", placeholder: "3900" },
-          ].map(({ label, key, placeholder }) => (
+            { label: "Margin (%)", key: "margin", placeholder: "18" },
+            { label: "Valid Until", key: "validUntil", placeholder: "2026-09-30", type: "date" },
+          ].map(({ label, key, placeholder, type }) => (
             <div key={key}>
               <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-              <input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400"
+              <input type={type ?? "text"} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400"
                 placeholder={placeholder} value={String(form[key as keyof typeof form])}
                 onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))} />
             </div>
@@ -83,14 +89,15 @@ function CreateQuoteModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
             <label className="block text-xs font-medium text-slate-600 mb-1">Currency</label>
             <select title="Currency" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
               value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}>
-              {["SAR", "AED", "USD", "EUR"].map((c) => <option key={c}>{c}</option>)}
+              <option value="">Select currency</option>
+              {["USD", "CAD", "SAR", "AED", "PKR", "EUR", "GBP"].map((c) => <option key={c}>{c}</option>)}
             </select>
           </div>
         </div>
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}
         <div className="flex justify-end gap-2 mt-2">
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
-          <button type="button" disabled={!form.title || mut.isPending} className="btn-primary text-sm" onClick={() => mut.mutate()}>
+          <button type="button" disabled={!form.title || !form.currency || mut.isPending} className="btn-primary text-sm" onClick={() => mut.mutate()}>
             {mut.isPending ? "Saving…" : "Create Quote"}
           </button>
         </div>
@@ -102,6 +109,7 @@ function CreateQuoteModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function QuotationsPage() {
+  const tenantCurrency = useTenantCurrency() ?? "";
   const [statusFilter, setStatusFilter] = useState<"All" | "Draft" | "Sent" | "Accepted" | "Expired">("All");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AnyRecord | null>(null);
@@ -112,8 +120,16 @@ export function QuotationsPage() {
 
   const sent = quotes.filter((q) => q.status === "Sent").length;
   const accepted = quotes.filter((q) => q.status === "Accepted").length;
-  const totalValue = quotes.reduce((s, q) => s + Number(q.quoteAmount ?? 0), 0);
-  const avgMargin = quotes.length ? quotes.reduce((s, q) => s + Number(q.marginPct ?? 0), 0) / quotes.length : 0;
+  const valuedQuotes = quotes.filter((q) => q.quoteAmount != null && Number.isFinite(Number(q.quoteAmount)) && q.currency);
+  const quoteCurrencies = [...new Set(valuedQuotes.map((q) => String(q.currency).trim()).filter(Boolean))];
+  const totalValue = valuedQuotes.reduce((s, q) => s + Number(q.quoteAmount), 0);
+  const totalValueLabel = quoteCurrencies.length === 1
+    ? `${quoteCurrencies[0]} ${totalValue.toLocaleString()}`
+    : quoteCurrencies.length > 1 ? "Multiple currencies" : "—";
+  const marginedQuotes = quotes.filter((q) => q.marginPct != null && Number.isFinite(Number(q.marginPct)));
+  const avgMargin = marginedQuotes.length
+    ? marginedQuotes.reduce((s, q) => s + Number(q.marginPct), 0) / marginedQuotes.length
+    : null;
 
   const filtered = quotes.filter((q) => {
     if (statusFilter !== "All" && q.status !== statusFilter) return false;
@@ -137,7 +153,7 @@ export function QuotationsPage() {
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
-      {showCreate && <CreateQuoteModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
+      {showCreate && <CreateQuoteModal defaultCurrency={tenantCurrency} onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Quotations</h1>
@@ -152,11 +168,11 @@ export function QuotationsPage() {
       <div className="panel grid gap-3 md:grid-cols-3">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Quote integrity</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">This view now reflects only live quote rows, not placeholder pipeline data.</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">This view reflects persisted quote records returned by the service.</p>
         </div>
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Contract bridge</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Accepted quotes can bridge cleanly to contract creation without a fake success path.</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Conversion boundary</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Automated quote-to-contract or booking conversion is not available in this build.</p>
         </div>
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Margin discipline</p>
@@ -169,8 +185,8 @@ export function QuotationsPage() {
           { label: "Total Quotes",   val: quotes.length },
           { label: "Sent",           val: sent, accent: "text-blue-600" },
           { label: "Accepted",       val: accepted, accent: "text-teal-600" },
-          { label: "Total Value",    val: `SAR ${totalValue.toLocaleString()}`, accent: "text-violet-600" },
-          { label: "Avg Margin",     val: `${avgMargin.toFixed(1)}%`, accent: avgMargin >= 20 ? "text-teal-600" : "text-amber-600" },
+          { label: "Total Value",    val: totalValueLabel, accent: "text-violet-600" },
+          { label: "Avg Margin",     val: avgMargin == null ? "—" : `${avgMargin.toFixed(1)}%`, accent: avgMargin != null && avgMargin >= 20 ? "text-teal-600" : "text-amber-600" },
         ].map(({ label, val, accent }) => (
           <div key={label} className="panel flex flex-col gap-1 min-w-32">
             <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
@@ -184,7 +200,9 @@ export function QuotationsPage() {
           {(["All", "Draft", "Sent", "Accepted", "Expired"] as const).map((f) => (
             <button key={f} type="button" onClick={() => setStatusFilter(f)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                statusFilter === f ? "bg-teal-50 border-teal-300 text-teal-700" : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                statusFilter === f
+                  ? "bg-teal-50 border-teal-300 text-teal-700"
+                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
               }`}>{f}</button>
           ))}
         </div>
@@ -211,8 +229,8 @@ export function QuotationsPage() {
                     <td className="px-4 py-3 text-slate-700">{String(q.customer ?? q.title ?? "—")}</td>
                     <td className="px-4 py-3 text-xs text-slate-600">{String(q.origin ?? "—")} → {String(q.destination ?? "—")}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(q.cargo ?? "—")}</td>
-                    <td className="px-4 py-3 font-medium text-slate-900">{String(q.currency ?? "SAR")} {Number(q.quoteAmount ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-3"><MarginBar pct={Number(q.marginPct ?? 0)} /></td>
+                    <td className="px-4 py-3 font-medium text-slate-900">{q.quoteAmount == null || !q.currency ? "—" : `${String(q.currency)} ${Number(q.quoteAmount).toLocaleString()}`}</td>
+                    <td className="px-4 py-3"><MarginBar pct={q.marginPct == null ? null : Number(q.marginPct)} /></td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(q.validUntil ?? "—")}</td>
                     <td className="px-4 py-3"><StatusBadge status={String(q.status ?? "Draft")} /></td>
                   </tr>
@@ -237,7 +255,7 @@ export function QuotationsPage() {
                 ["Cargo", String(selected.cargo ?? "—")],
                 ["Origin", String(selected.origin ?? "—")],
                 ["Destination", String(selected.destination ?? "—")],
-                ["Amount", `${String(selected.currency ?? "SAR")} ${Number(selected.quoteAmount ?? 0).toLocaleString()}`],
+                ["Amount", selected.quoteAmount == null || !selected.currency ? "—" : `${String(selected.currency)} ${Number(selected.quoteAmount).toLocaleString()}`],
                 ["Margin", String(selected.margin ?? "—")],
                 ["Valid Until", String(selected.validUntil ?? "—")],
               ].map(([k, v]) => (
@@ -250,9 +268,10 @@ export function QuotationsPage() {
             <div className="px-5 py-4">
               <p className="text-xs font-semibold text-teal-400 uppercase tracking-wide mb-1.5">Pricing Insight</p>
               <p className="text-sm text-slate-300 leading-relaxed">
-                {Number(selected.marginPct ?? 0) >= 25 ? "Strong margin. This quote is competitively priced and profitable." :
-                 Number(selected.marginPct ?? 0) >= 15 ? "Acceptable margin. Consider negotiating fuel surcharge inclusion." :
-                 "Margin below target. Review cost inputs before accepting."}
+                {selected.marginPct == null ? "No persisted margin calculation is available for this quote." :
+                 Number(selected.marginPct) >= 25 ? "Strong recorded margin. Review the persisted cost inputs before accepting." :
+                 Number(selected.marginPct) >= 15 ? "Recorded margin is within the configured review band. Confirm fuel and accessorial inputs." :
+                 "Recorded margin is below the display threshold. Review persisted cost inputs before accepting."}
               </p>
             </div>
           </div>

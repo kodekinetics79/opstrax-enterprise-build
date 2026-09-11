@@ -5846,7 +5846,7 @@ public static partial class EndpointMappings
                 SUM(CASE WHEN risk_level IN ('High','Critical') THEN 1 ELSE 0 END) risk_items
                 FROM module_records WHERE company_id=@companyId AND module_key=@key" + branchPredicate,
                 c => BindModuleScope(c, companyId, moduleKey, branchId), ct);
-            rows = await db.QueryAsync("SELECT * FROM module_records WHERE company_id=@companyId AND module_key=@key" + branchPredicate + " ORDER BY id DESC",
+            rows = await db.QueryAsync(GenericModuleRecordSelect + " WHERE mr.company_id=@companyId AND mr.module_key=@key" + branchPredicate + " ORDER BY mr.id DESC",
                 c => BindModuleScope(c, companyId, moduleKey, branchId), ct);
         }
         else if (moduleKey.Equals("dashcam", StringComparison.OrdinalIgnoreCase))
@@ -5895,7 +5895,7 @@ public static partial class EndpointMappings
         var branchPredicate = ModuleBranchPredicate(moduleKey, definition.TableName, branchId);
         if (definition.TableName == "module_records")
         {
-            var scoped = await db.QuerySingleAsync("SELECT * FROM module_records WHERE id=@id AND company_id=@companyId AND module_key=@key" + branchPredicate, c =>
+            var scoped = await db.QuerySingleAsync(GenericModuleRecordSelect + " WHERE mr.id=@id AND mr.company_id=@companyId AND mr.module_key=@key" + branchPredicate, c =>
             {
                 c.Parameters.AddWithValue("@id", id);
                 c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
@@ -5978,6 +5978,34 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> CreateGenericModuleRecord(HttpContext http, string moduleKey, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        var metadata = BuildGenericModuleMetadata(moduleKey, body);
+        var title = IsBlank(Get(body, "title")) ? "New record" : Get(body, "title")!;
+        var status = IsBlank(Get(body, "status")) ? "Open" : Get(body, "status")!;
+        var risk = IsBlank(Get(body, "riskLevel")) ? "Medium" : Get(body, "riskLevel")!;
+        var owner = FirstPresent(body, "ownerName", "assignedRep", "owner");
+        var location = FirstPresent(body, "locationName", "cityCountry", "origin");
+        var dueAt = ParseGenericModuleDueAt(body, moduleKey);
+        var rawAmount = FirstPresent(body, "amount", "quoteAmount", "estimatedContractValue");
+        object amount = DBNull.Value;
+        if (!IsBlank(rawAmount))
+        {
+            if (!TryContractAmount(rawAmount, out var parsedAmount) || parsedAmount < 0)
+                return Results.BadRequest(ApiResponse<object>.Fail("Amount must be a non-negative number"));
+            amount = parsedAmount;
+        }
+
+        if (moduleKey.Equals("opportunities", StringComparison.OrdinalIgnoreCase) &&
+            !IsBlank(Get(body, "probability")) &&
+            (!TryContractAmount(Get(body, "probability"), out var probability) || probability is < 0 or > 100))
+            return Results.BadRequest(ApiResponse<object>.Fail("Probability must be between 0 and 100"));
+
+        if (!IsBlank(Get(body, "currency")))
+        {
+            var currency = Get(body, "currency")!.ToString()!.Trim();
+            if (currency.Length != 3 || !currency.All(char.IsLetter))
+                return Results.BadRequest(ApiResponse<object>.Fail("Currency must be a three-letter code"));
+        }
+
         var id = await db.InsertAsync(
             @"INSERT INTO module_records (company_id, module_key, title, status, owner_name, location_name, due_at, risk_level, amount, metadata_json)
               VALUES (@companyId, @key, @title, @status, @owner, @location, @dueAt, @risk, @amount, @metadata)",
@@ -5985,14 +6013,14 @@ public static partial class EndpointMappings
             {
                 c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
                 c.Parameters.AddWithValue("@key", moduleKey);
-                c.Parameters.AddWithValue("@title", Get(body, "title") ?? "New record");
-                c.Parameters.AddWithValue("@status", Get(body, "status") ?? "Open");
-                c.Parameters.AddWithValue("@owner", Get(body, "ownerName"));
-                c.Parameters.AddWithValue("@location", Get(body, "locationName"));
-                c.Parameters.AddWithValue("@dueAt", DBNull.Value);
-                c.Parameters.AddWithValue("@risk", Get(body, "riskLevel") ?? "Medium");
-                c.Parameters.AddWithValue("@amount", Get(body, "amount") ?? 0);
-                c.Parameters.AddWithValue("@metadata", "{}");
+                c.Parameters.AddWithValue("@title", title);
+                c.Parameters.AddWithValue("@status", status);
+                c.Parameters.AddWithValue("@owner", owner);
+                c.Parameters.AddWithValue("@location", location);
+                c.Parameters.AddWithValue("@dueAt", dueAt ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@risk", risk);
+                c.Parameters.AddWithValue("@amount", amount);
+                c.Parameters.AddWithValue("@metadata", NpgsqlDbType.Jsonb, JsonSerializer.Serialize(metadata));
             }, ct);
         await audit.LogAsync(http, "module.record.created", moduleKey, id, ct: ct);
         return Results.Created($"/api/modules/{moduleKey}/{id}", ApiResponse<object>.Ok(new { id }));
@@ -6000,17 +6028,132 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> UpdateGenericModuleRecord(HttpContext http, string moduleKey, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        await db.ExecuteAsync("UPDATE module_records SET title=COALESCE(@title,title), status=COALESCE(@status,status), risk_level=COALESCE(@risk,risk_level) WHERE company_id=@companyId AND module_key=@key AND id=@id", c =>
+        var metadata = BuildGenericModuleMetadata(moduleKey, body);
+        var rawAmount = FirstPresent(body, "amount", "quoteAmount", "estimatedContractValue");
+        object amount = DBNull.Value;
+        if (!IsBlank(rawAmount))
+        {
+            if (!TryContractAmount(rawAmount, out var parsedAmount) || parsedAmount < 0)
+                return Results.BadRequest(ApiResponse<object>.Fail("Amount must be a non-negative number"));
+            amount = parsedAmount;
+        }
+
+        if (moduleKey.Equals("opportunities", StringComparison.OrdinalIgnoreCase) &&
+            !IsBlank(Get(body, "probability")) &&
+            (!TryContractAmount(Get(body, "probability"), out var probability) || probability is < 0 or > 100))
+            return Results.BadRequest(ApiResponse<object>.Fail("Probability must be between 0 and 100"));
+
+        if (!IsBlank(Get(body, "currency")))
+        {
+            var currency = Get(body, "currency")!.ToString()!.Trim();
+            if (currency.Length != 3 || !currency.All(char.IsLetter))
+                return Results.BadRequest(ApiResponse<object>.Fail("Currency must be a three-letter code"));
+        }
+
+        var affected = await db.ExecuteAsync(@"UPDATE module_records SET
+            title=COALESCE(@title,title),
+            status=COALESCE(@status,status),
+            risk_level=COALESCE(@risk,risk_level),
+            owner_name=COALESCE(@owner,owner_name),
+            location_name=COALESCE(@location,location_name),
+            due_at=COALESCE(@dueAt,due_at),
+            amount=COALESCE(@amount,amount),
+            metadata_json=COALESCE(metadata_json,'{}'::jsonb) || @metadata
+            WHERE company_id=@companyId AND module_key=@key AND id=@id", c =>
         {
             c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
             c.Parameters.AddWithValue("@key", moduleKey);
             c.Parameters.AddWithValue("@id", id);
-            c.Parameters.AddWithValue("@title", Get(body, "title"));
-            c.Parameters.AddWithValue("@status", Get(body, "status"));
-            c.Parameters.AddWithValue("@risk", Get(body, "riskLevel"));
+            c.Parameters.AddWithValue("@title", Get(body, "title") ?? DBNull.Value);
+            c.Parameters.AddWithValue("@status", Get(body, "status") ?? DBNull.Value);
+            c.Parameters.AddWithValue("@risk", Get(body, "riskLevel") ?? DBNull.Value);
+            c.Parameters.AddWithValue("@owner", FirstPresent(body, "ownerName", "assignedRep", "owner"));
+            c.Parameters.AddWithValue("@location", FirstPresent(body, "locationName", "cityCountry", "origin"));
+            c.Parameters.AddWithValue("@dueAt", ParseGenericModuleDueAt(body, moduleKey) ?? (object)DBNull.Value);
+            c.Parameters.AddWithValue("@amount", amount);
+            c.Parameters.AddWithValue("@metadata", NpgsqlDbType.Jsonb, JsonSerializer.Serialize(metadata));
         }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Record not found"));
         await audit.LogAsync(http, "module.record.updated", moduleKey, id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }));
+    }
+
+    private const string GenericModuleRecordSelect = @"SELECT mr.*,
+        mr.metadata_json->>'contactPerson' contact_person,
+        mr.metadata_json->>'industry' industry,
+        mr.metadata_json->>'source' source,
+        mr.metadata_json->>'requiredService' required_service,
+        mr.metadata_json->>'estimatedMonthlyLoads' estimated_monthly_loads,
+        mr.metadata_json->>'cityCountry' city_country,
+        COALESCE(mr.metadata_json->>'assignedRep', mr.owner_name) assigned_rep,
+        mr.metadata_json->>'nextFollowUp' next_follow_up,
+        mr.metadata_json->>'customerLead' customer_lead,
+        mr.metadata_json->>'probability' probability,
+        mr.metadata_json->>'expectedCloseDate' expected_close_date,
+        COALESCE(mr.metadata_json->>'owner', mr.owner_name) owner,
+        mr.metadata_json->>'competitor' competitor,
+        mr.metadata_json->>'expectedLoadsMonth' expected_loads_month,
+        mr.metadata_json->>'currency' currency,
+        mr.metadata_json->>'origin' origin,
+        mr.metadata_json->>'destination' destination,
+        mr.metadata_json->>'cargo' cargo,
+        mr.metadata_json->>'quoteAmount' quote_amount,
+        mr.metadata_json->>'margin' margin,
+        mr.metadata_json->>'validUntil' valid_until,
+        mr.metadata_json->>'segment' segment,
+        mr.metadata_json->>'channel' channel,
+        mr.metadata_json->>'audienceSize' audience_size,
+        mr.metadata_json->>'openRate' open_rate,
+        mr.metadata_json->>'responseRate' response_rate,
+        mr.metadata_json->>'leadsGenerated' leads_generated,
+        mr.metadata_json->>'revenueInfluenced' revenue_influenced,
+        mr.metadata_json->>'startDate' start_date
+        FROM module_records mr";
+
+    private static readonly IReadOnlyDictionary<string, string[]> GenericModuleMetadataFields =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["leads"] = ["contactPerson", "industry", "source", "requiredService", "estimatedMonthlyLoads", "cityCountry", "assignedRep", "nextFollowUp"],
+            ["opportunities"] = ["customerLead", "probability", "expectedCloseDate", "owner", "competitor", "expectedLoadsMonth", "currency"],
+            ["quotations"] = ["origin", "destination", "cargo", "quoteAmount", "currency", "margin", "validUntil"],
+            ["campaigns"] = ["segment", "channel", "audienceSize", "openRate", "responseRate", "leadsGenerated", "revenueInfluenced", "currency", "startDate"],
+        };
+
+    private static Dictionary<string, object?> BuildGenericModuleMetadata(string moduleKey, Dictionary<string, object?> body)
+    {
+        var metadata = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        if (!GenericModuleMetadataFields.TryGetValue(moduleKey, out var fields)) return metadata;
+        foreach (var field in fields)
+        {
+            var value = Get(body, field);
+            if (!IsBlank(value)) metadata[field] = value;
+        }
+        return metadata;
+    }
+
+    private static object FirstPresent(Dictionary<string, object?> body, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = Get(body, key);
+            if (!IsBlank(value)) return value!;
+        }
+        return DBNull.Value;
+    }
+
+    private static DateTimeOffset? ParseGenericModuleDueAt(Dictionary<string, object?> body, string moduleKey)
+    {
+        var raw = moduleKey.ToLowerInvariant() switch
+        {
+            "leads" => FirstPresent(body, "nextFollowUp", "dueAt"),
+            "opportunities" => FirstPresent(body, "expectedCloseDate", "dueAt"),
+            "quotations" => FirstPresent(body, "validUntil", "dueAt"),
+            "campaigns" => FirstPresent(body, "startDate", "dueAt"),
+            _ => FirstPresent(body, "dueAt"),
+        };
+        return raw is not DBNull && DateTimeOffset.TryParse(raw.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
+            ? parsed
+            : null;
     }
 
     private static async Task<IResult> CreateVehicle(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
@@ -27409,6 +27552,7 @@ LIMIT 100000",
         var status    = http.Request.Query["status"].FirstOrDefault();
         var driverId  = http.Request.Query["driverId"].FirstOrDefault();
         var vehicleId = http.Request.Query["vehicleId"].FirstOrDefault();
+        var jobId     = http.Request.Query["jobId"].FirstOrDefault();
         var limitText = http.Request.Query["limit"].FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(limitText) && (!int.TryParse(limitText, out var parsedLimit) || parsedLimit < 1))
             return Results.BadRequest(ApiResponse<object>.Fail("limit must be an integer between 1 and 100"));
@@ -27416,6 +27560,8 @@ LIMIT 100000",
             return Results.BadRequest(ApiResponse<object>.Fail("driverId must be a positive integer"));
         if (!string.IsNullOrWhiteSpace(vehicleId) && (!long.TryParse(vehicleId, out var parsedVehicleId) || parsedVehicleId <= 0))
             return Results.BadRequest(ApiResponse<object>.Fail("vehicleId must be a positive integer"));
+        if (!string.IsNullOrWhiteSpace(jobId) && (!long.TryParse(jobId, out var parsedJobId) || parsedJobId <= 0))
+            return Results.BadRequest(ApiResponse<object>.Fail("jobId must be a positive integer"));
         var limit = string.IsNullOrWhiteSpace(limitText) ? 50 : Math.Min(int.Parse(limitText), 100);
 
         var rows = await db.QueryAsync(
@@ -27437,7 +27583,8 @@ LIMIT 100000",
               WHERE da.company_id=@cid
                 AND (@status::TEXT IS NULL OR da.assignment_status=@status::TEXT)
                 AND (@did::TEXT IS NULL OR da.driver_id=@did::BIGINT)
-                AND (@vid::TEXT IS NULL OR da.vehicle_id=@vid::BIGINT)" + branchClause + @"
+                AND (@vid::TEXT IS NULL OR da.vehicle_id=@vid::BIGINT)
+                AND (@jid::TEXT IS NULL OR da.job_id=@jid::BIGINT)" + branchClause + @"
               ORDER BY da.created_at DESC LIMIT @limit",
             c =>
             {
@@ -27445,6 +27592,7 @@ LIMIT 100000",
                 c.Parameters.AddWithValue("@status", string.IsNullOrEmpty(status)    ? (object)DBNull.Value : status);
                 c.Parameters.AddWithValue("@did",    string.IsNullOrEmpty(driverId)  ? (object)DBNull.Value : driverId);
                 c.Parameters.AddWithValue("@vid",    string.IsNullOrEmpty(vehicleId) ? (object)DBNull.Value : vehicleId);
+                c.Parameters.AddWithValue("@jid",    string.IsNullOrEmpty(jobId)     ? (object)DBNull.Value : jobId);
                 c.Parameters.AddWithValue("@limit",  limit);
                 if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId);
             }, ct);
