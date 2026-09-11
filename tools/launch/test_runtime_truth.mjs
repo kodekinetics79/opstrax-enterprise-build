@@ -27,7 +27,14 @@ test("runtime Live is fail-closed on API, database, worker and telemetry truth",
   assert.doesNotMatch(policy, /apiClient\.get\("\/health\/deep"/, "browser runtime truth must not call protected operator health");
   assert.doesNotMatch(shell, />\s*Live\s*</, "global shell still renders an unconditional Live label");
   assert.match(shell, /runtimeState === "Live"/);
-  assert.match(shell, /tenantIsExplicitlySynthetic \? "Demo Data"/);
+  assert.match(shell, /const runtimeState = runtimeQuery\.data\?\.state \?\? "Unavailable"/,
+    "deployment health must remain the shell's authoritative runtime state");
+  assert.doesNotMatch(shell, /tenantIsExplicitlySynthetic \? "Demo Data"/,
+    "demo provenance must never mask a deployment mismatch or unhealthy runtime");
+  assert.match(shell, /data-testid="synthetic-data-badge"/,
+    "synthetic tenant provenance must remain separately visible");
+  assert.match(shell, /data-testid="release-mismatch-banner"/,
+    "frontend\/API mismatch must stop a POC with a visible recovery action");
 });
 
 test("runtime provenance is exact in operator diagnostics and speakable-only on tenant About", () => {

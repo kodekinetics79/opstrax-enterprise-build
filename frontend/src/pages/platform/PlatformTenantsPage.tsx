@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Building2, Search } from "lucide-react";
+import { Plus, Building2, CheckCircle2, CircleAlert, Search } from "lucide-react";
 import type { AnyRecord } from "@/types";
 import { platformApi, formatMoney, formatAmount, minorUnits } from "@/services/platformApi";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
@@ -480,8 +480,8 @@ function CreateTenantDrawer({ packages, onClose, onCreated }: {
         </DrawerSection>
 
         <DrawerSection title="Subscription & commercial terms">
-          <div className="rounded-xl border border-teal-500/30 bg-teal-500/5 px-4 py-3 text-xs leading-5 text-slate-600">
-            <strong className="font-semibold text-slate-800">Package allowlist policy:</strong> this new tenant starts deny-by-default. Only modules in the selected package, country grants, or explicit Platform overrides are available.
+          <div className="rounded-xl border border-teal-500/30 bg-teal-500/5 px-4 py-3 text-xs leading-5 text-teal-900/80">
+            <strong className="font-semibold text-teal-950">Package allowlist policy:</strong> this new tenant starts deny-by-default. Only modules in the selected package, country grants, or explicit Platform overrides are available.
           </div>
           <PField label="Package">
             <PSelect value={form.packageId} onChange={(e) => set({ packageId: e.target.value })}>
@@ -624,6 +624,22 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
   const entMap = new Map(entitlements.map((e) => [String(e.moduleKey), e]));
   const tenantCode = String(tenant.companyCode ?? "");
   const policyMode = String(tenant.entitlementPolicyMode ?? "legacy_allow") as "legacy_allow" | "package_allowlist";
+  const hasClientIdentity = Boolean(String(tenant.name ?? "").trim())
+    && Boolean(String(tenant.primaryContactEmail ?? "").trim())
+    && !/\b(demo|synthetic|test)\b/i.test(String(tenant.name ?? ""));
+  const hasActiveClientAdmin = tenantUsers.some((user) =>
+    isAdminRole(String(user.roleName ?? ""))
+    && String(user.status ?? "").toLowerCase() === "active"
+    && user.hasPassword !== false,
+  );
+  const pocReadinessChecks = [
+    { label: "Client identity and contact", pass: hasClientIdentity },
+    { label: "Deny-by-default package access", pass: policyMode === "package_allowlist" },
+    { label: "Scoped package assigned", pass: Boolean(String(tenant.packageName ?? "").trim()) },
+    { label: "Operating region selected", pass: Boolean(String(tenant.country ?? "").trim()) },
+    { label: "Active client administrator", pass: !usersQ.isLoading && hasActiveClientAdmin },
+  ];
+  const pocReadinessPassed = pocReadinessChecks.filter((check) => check.pass).length;
 
   const captureControlSnapshot = async () => {
     setSnapshotBusy(true); setNotice(null);
@@ -687,6 +703,37 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
             <Info label="Trial ends" value={String(tenant.trialEndsAt ?? "—").slice(0, 10) || "—"} />
             <Info label="Contract end" value={String(tenant.contractEnd ?? "—").slice(0, 10) || "—"} />
           </div>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-4" data-testid="client-poc-preflight">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Independent client POC preflight</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Automated account controls for a clean client workspace. Do not use a demo or test tenant for client acceptance.
+                </p>
+              </div>
+              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold tabular-nums ${
+                pocReadinessPassed === pocReadinessChecks.length
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-amber-200 bg-amber-50 text-amber-800"
+              }`}>
+                {pocReadinessPassed}/{pocReadinessChecks.length} setup controls
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {pocReadinessChecks.map((check) => (
+                <div key={check.label} className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2 text-xs">
+                  {check.pass
+                    ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                    : <CircleAlert className="h-4 w-4 shrink-0 text-amber-600" />}
+                  <span className={check.pass ? "font-semibold text-slate-700" : "font-semibold text-amber-900"}>{check.label}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs leading-5 text-blue-900">
+              Final POC GO also requires a delivered client invitation, approved real client data, and a signed-in exact-SHA browser smoke test. Capture the audited control snapshot immediately before handover.
+            </div>
+          </section>
 
           <section className="rounded-xl border border-teal-200 bg-teal-50/60 p-4">
             <h3 className="mb-1 text-xs font-bold uppercase tracking-wider text-teal-700">Release control evidence</h3>
