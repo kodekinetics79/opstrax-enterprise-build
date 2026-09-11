@@ -2123,6 +2123,7 @@ public static partial class EndpointMappings
         app.MapPut("/api/admin/users/{id:long}", UpdateAdminUser);
         app.MapDelete("/api/admin/users/{id:long}", DeleteAdminUser);
         app.MapPost("/api/admin/users/{id:long}/activation-link", AdminUserActivationLink);
+        app.MapPost("/api/admin/users/{id:long}/reset-password", AdminUserResetPassword);
         app.MapGet("/api/admin/users/{id:long}/sessions", AdminUserSessions);
         app.MapDelete("/api/admin/users/{id:long}/sessions", AdminUserSessionsRevoke);
         app.MapGet("/api/security/my-sessions", MySessionsList);
@@ -18172,6 +18173,86 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         await audit.LogAsync(http, "user.activation_link.generated", "User", id,
             System.Text.Json.JsonSerializer.Serialize(new { expiresAt }), ct);
         return Results.Ok(ApiResponse<object>.Ok(new { link, expiresAt }, "Activation link generated"));
+    }
+
+    // Direct tenant-administrator recovery path. The administrator supplies the new
+    // password in the signed-in portal; no SMTP delivery or reset-link round trip is
+    // involved. This is deliberately stronger than the ordinary users:update guard:
+    // only the users:manage tier can replace another person's credential. The target
+    // must remain inside the caller's tenant/branch authority, every active session and
+    // outstanding reset token is revoked, and the password is never returned or audited.
+    internal static async Task<IResult> AdminUserResetPassword(
+        HttpContext http,
+        long id,
+        Dictionary<string, object?> body,
+        Database db,
+        SecuritySettingsService securitySettings,
+        AuditService audit,
+        CancellationToken ct)
+    {
+        var denied = await RequireAdminPermission(http, audit, "users:manage", "User", new { id }, ct);
+        if (denied is not null) return denied;
+
+        if (id == GetUserId(http))
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "Use My Account to change your own password after confirming the current password."));
+
+        var user = await GetScopedUser(http, db, id, ct);
+        if (user is null) return Results.NotFound(ApiResponse<object>.Fail("User not found"));
+
+        var status = user.GetValueOrDefault("status")?.ToString() ?? "";
+        if (!string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase))
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "Direct password reset is available only for active users. Re-enable the user first, or use an activation link for a pending user."));
+
+        var newPassword = Get(body, "newPassword") is { } raw && raw is not DBNull
+            ? raw.ToString() ?? string.Empty
+            : string.Empty;
+        var companyId = Convert.ToInt64(user["companyId"]);
+        var policy = await securitySettings.GetAsync(companyId, ct);
+        var validation = PasswordPolicyService.ValidatePassword(newPassword, policy);
+        if (!validation.valid)
+            return Results.BadRequest(ApiResponse<object>.Fail("Password does not meet this tenant's policy.", validation.failures));
+
+        var sessionsRevoked = 0L;
+        var resetApplied = await db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+            var updated = await db.ExecuteAsync(
+                @"UPDATE users SET password_hash=@hash, demo_password='', password_changed_at=NOW(),
+                    failed_login_attempts=0, locked_until=NULL
+                  WHERE id=@id AND company_id=@companyId AND status='Active'",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@hash", HashPassword(newPassword));
+                    command.Parameters.AddWithValue("@id", id);
+                    command.Parameters.AddWithValue("@companyId", companyId);
+                }, ct);
+            if (updated != 1) return false;
+            sessionsRevoked = await db.ScalarLongAsync(
+                "WITH gone AS (DELETE FROM user_sessions WHERE user_id=@id AND company_id=@companyId RETURNING 1) SELECT COUNT(*) FROM gone",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@id", id);
+                    command.Parameters.AddWithValue("@companyId", companyId);
+                }, ct);
+            await db.ExecuteAsync(
+                "DELETE FROM password_reset_tokens WHERE user_id=@id AND company_id=@companyId",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@id", id);
+                    command.Parameters.AddWithValue("@companyId", companyId);
+                }, ct);
+            await audit.LogAsync(http, "user.password.reset_by_admin", "User", id,
+                System.Text.Json.JsonSerializer.Serialize(new { sessionsRevoked, delivery = "administrator_set" }), ct);
+            return true;
+        }, ct);
+
+        if (!resetApplied)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "The user changed while the reset was being applied. Reload the user and try again."));
+        return Results.Ok(ApiResponse<object>.Ok(
+            new { id, sessionsRevoked },
+            "Password reset. Share it securely with the user; no email was sent."));
     }
 
     // ── Session management ────────────────────────────────────────────────────

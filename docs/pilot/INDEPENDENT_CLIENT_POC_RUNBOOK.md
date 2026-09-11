@@ -15,6 +15,7 @@ The POC uses a new tenant created for the client. Never rename or reuse `OpsTrax
 3. Open the tenant and clear every item in **Independent client POC preflight**. The account must have a client identity, allowlist access, an assigned package, an operating region, and an active client administrator.
 4. Create only the client roles and users needed for the agreed journeys. Grant the least permissions needed for each role. Do not add QA, synthetic, or internal demonstration users.
 5. Configure outbound mail in Platform Console → Email & SMTP, save the public tenant URL, and send a real test message. Issue the administrator invitation and confirm delivery and successful password setup in the client's browser.
+6. For an active user who cannot receive mail, a tenant administrator holding `users:manage` may open **Users & Roles → User Detail → Set new password**. This direct recovery sends no email, enforces the tenant password policy, clears lockout, revokes all sessions, invalidates outstanding reset links, and writes an audit event. Share the temporary credential through an approved secure channel and have the user change it after sign-in. Use activation links for pending users.
 
 ## Prepare the data and journeys
 

@@ -86,6 +86,7 @@ export const PERMISSIONS = {
   OPERATIONS_PROOF_ARTIFACT_CREATE: "operations.proof_artifact.create",
 
   USERS_VIEW: "users:view",
+  USERS_MANAGE: "users:manage",
   USERS_CREATE: "users:create",
   USERS_UPDATE: "users:update",
   USERS_DELETE: "users:delete",
@@ -262,6 +263,7 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   // The view groups now carry ONLY their own view token. Do not add a manage
   // token back: there is no one-way edge in this closure, only equivalence.
   [P.USERS_VIEW]: ["users.view", "users:view"],
+  [P.USERS_MANAGE]: ["users.manage", "users:manage"],
   [P.USERS_CREATE]: ["users.manage", "users:manage"],
   [P.USERS_UPDATE]: ["users.manage", "users:manage"],
   [P.USERS_DELETE]: ["users.manage", "users:manage"],

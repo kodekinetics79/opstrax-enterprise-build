@@ -86,6 +86,8 @@ export const adminApi = {
   updateUser: async (id: number, body: Record<string, unknown>) => put<{ id: number }>(`/api/admin/users/${id}`, body),
   deleteUser: async (id: number) => del<{ id: number }>(`/api/admin/users/${id}`),
   activationLink: async (id: number) => post<{ link: string; expiresAt: string }>(`/api/admin/users/${id}/activation-link`),
+  resetUserPassword: async (id: number, newPassword: string) =>
+    post<{ id: number; sessionsRevoked: number }>(`/api/admin/users/${id}/reset-password`, { newPassword }),
   userSessions: async (id: number): Promise<AnyRecord[]> => get<AnyRecord[]>(`/api/admin/users/${id}/sessions`),
   revokeUserSessions: async (id: number) => del<{ id: number; sessionsRevoked: number }>(`/api/admin/users/${id}/sessions`),
   roles: async (): Promise<AdminRole[]> => get<AdminRole[]>("/api/admin/roles"),

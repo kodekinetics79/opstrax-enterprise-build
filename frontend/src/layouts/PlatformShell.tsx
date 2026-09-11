@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import {
   LayoutDashboard, Building2, Package, Receipt, HeartPulse, ScrollText, LogOut, Gauge, BriefcaseBusiness, Activity, UserCog, KeyRound, Menu, X,
- Mail, ShieldCheck,
+ Mail, ShieldCheck, Cable,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
@@ -15,6 +15,7 @@ const NAV: NavItem[] = [
   { to: "/platform/commercial-ops", label: "Commercial Ops", icon: BriefcaseBusiness, permission: "platform:dashboard:view" },
   { to: "/platform/tenants", label: "Tenants", icon: Building2, permission: "platform:tenants:view" },
   { to: "/platform/product-pilot", label: "Product Pilot", icon: ShieldCheck, permission: "platform:pilot:run" },
+  { to: "/platform/hardware-readiness", label: "Hardware Readiness", icon: Cable, permission: "platform:devices:view" },
   { to: "/platform/packages", label: "Packages & Pricing", icon: Package, permission: "platform:packages:view" },
   { to: "/platform/revenue", label: "Revenue & Usage", icon: Gauge, permission: "platform:packages:view" },
   { to: "/platform/billing", label: "Billing & Invoices", icon: Receipt, permission: "platform:billing:view" },
