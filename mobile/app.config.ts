@@ -16,6 +16,7 @@ const PRIVACY_URL = process.env.EXPO_PUBLIC_PRIVACY_URL?.trim() || "";
 const SUPPORT_URL = process.env.EXPO_PUBLIC_SUPPORT_URL?.trim() || "";
 const ACCOUNT_DELETION_URL = process.env.EXPO_PUBLIC_ACCOUNT_DELETION_URL?.trim() || "";
 const ACCOUNT_CREATION_ENABLED = process.env.EXPO_PUBLIC_ACCOUNT_CREATION_ENABLED?.trim().toLowerCase() === "true";
+const EAS_PROJECT_ID = process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim() || process.env.EAS_PROJECT_ID?.trim() || "";
 const hasBundledAssets = existsSync(resolve(__dirname, "assets/icon.png"));
 
 function requirePublicHttpsUrl(value: string, label: string) {
@@ -71,6 +72,7 @@ const stageSuffix = STAGE.replace(/[^a-z0-9]+/g, "");
 const defaultBundle = STAGE === "production" ? product.bundle : `${product.bundle}.${stageSuffix}`;
 const plugins: NonNullable<ExpoConfig["plugins"]> = [
   "expo-secure-store",
+  "expo-notifications",
   [
     "expo-image-picker",
     {
@@ -81,7 +83,7 @@ const plugins: NonNullable<ExpoConfig["plugins"]> = [
   ],
   "./plugins/with-no-inbound-linking",
 ];
-if (APP_VARIANT !== "customer") plugins.splice(2, 0, "expo-location");
+if (APP_VARIANT !== "customer") plugins.splice(3, 0, "expo-location");
 
 if (isProductionBuild) {
   if (APP_VARIANT === "unified") {
@@ -140,6 +142,7 @@ const config: ExpoConfig = {
     supportUrl: SUPPORT_URL,
     accountDeletionUrl: ACCOUNT_DELETION_URL,
     accountCreationEnabled: ACCOUNT_CREATION_ENABLED,
+    ...(EAS_PROJECT_ID ? { easProjectId: EAS_PROJECT_ID, eas: { projectId: EAS_PROJECT_ID } } : {}),
   },
 };
 

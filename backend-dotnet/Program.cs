@@ -117,6 +117,13 @@ builder.Services.AddScoped<Opstrax.Api.Storage.FileStorageService>();
 builder.Services.AddSingleton<TenantScopeAccessor>();
 builder.Services.AddSingleton<Database>();
 builder.Services.AddHttpClient(); // POD asset proxy (token-scoped public POD delivery)
+// Native mobile push delivery. The sender uses only generic lock-screen copy; full
+// operational detail remains behind authenticated Driver/Fleet/Customer surfaces.
+builder.Services.AddHttpClient("expo-push", client =>
+{
+    client.BaseAddress = new Uri("https://exp.host/");
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
 builder.Services.AddSingleton<PostgresDataProtectionXmlRepository>();
 builder.Services.AddSingleton<DataProtectionReadinessService>();
 var dataProtection = builder.Services.AddDataProtection()
@@ -233,6 +240,9 @@ builder.Services.AddSingleton<IOutboxMessageHandler, CreditNoteIssuedGeneralLedg
 builder.Services.AddSingleton<IOutboxMessageHandler, DetentionWarningNotificationHandler>();
 // Alert notifications: email/SMS fan-out per user_notification_prefs (Settings → Notifications).
 builder.Services.AddSingleton<IOutboxMessageHandler, AlertNotificationDeliveryHandler>();
+// Recipient-scoped native push fan-out; outbox retries are idempotent via
+// notification_recipients.external_ref and server-owned device-token rows.
+builder.Services.AddSingleton<IOutboxMessageHandler, MobilePushNotificationHandler>();
 builder.Services.AddSingleton<FinancialConfigService>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();

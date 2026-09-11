@@ -1,6 +1,7 @@
 import Constants from "expo-constants";
 
 const extra = (Constants.expoConfig?.extra ?? {}) as Record<string, unknown>;
+const easExtra = extra.eas && typeof extra.eas === "object" ? extra.eas as Record<string, unknown> : {};
 
 export type AppVariant = "driver" | "fleet" | "customer" | "unified";
 
@@ -43,8 +44,12 @@ export const ACCOUNT_DELETION_URL = String(extra.accountDeletionUrl ?? process.e
 export const ACCOUNT_CREATION_ENABLED = Boolean(
   extra.accountCreationEnabled === true || String(process.env.EXPO_PUBLIC_ACCOUNT_CREATION_ENABLED ?? "").trim().toLowerCase() === "true",
 );
+export const EAS_PROJECT_ID = String(
+  extra.easProjectId ?? easExtra.projectId ?? process.env.EXPO_PUBLIC_EAS_PROJECT_ID ?? process.env.EAS_PROJECT_ID ?? "",
+).trim();
 
 const storageStage = STAGE_LABEL.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
 
 export const SECURE_SESSION_KEY = `opstrax.${APP_VARIANT}.${storageStage}.session.v3`;
 export const SECURE_WORKSPACE_JOB_KEY = `opstrax.${APP_VARIANT}.${storageStage}.job.v3`;
+export const SECURE_PUSH_TOKEN_KEY = `opstrax.${APP_VARIANT}.${storageStage}.push-token.v1`;
