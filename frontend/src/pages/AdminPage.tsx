@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronUp, ClipboardCheck, Copy, Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Trash2, UserCog, Users, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission, PermissionDenied } from "@/hooks/usePermission";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import {
   useAdminOverview,
   useAdminPermissions,
@@ -634,8 +635,13 @@ export function AdminPage() {
     setRoleForm({ name: "", permissions: [] });
   };
 
+  const userDrawerRef = useDialogFocus<HTMLElement>(selectedUser != null, closeUserDrawer);
+  const passwordResetDialogRef = useDialogFocus<HTMLDivElement>(passwordResetTarget != null, () => setPasswordResetTarget(null));
+  const userDialogRef = useDialogFocus<HTMLDivElement>(userModal != null, () => setUserModal(null));
+  const roleDialogRef = useDialogFocus<HTMLDivElement>(roleModal != null, () => setRoleModal(null));
+
   return (
-    <div className="iam flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="iam flex h-full flex-col gap-4 overflow-y-auto">
       <PageHeader
         eyebrow="Governance"
         title="Users & Roles"
@@ -661,7 +667,7 @@ export function AdminPage() {
       {permissionsExportNotice && <div className="rounded-xl border border-emerald-400/30 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{permissionsExportNotice}</div>}
 
       {overviewQ.isLoading ? <LoadingState /> : overviewQ.isError ? <ErrorState message="Could not load admin overview." /> : (
-        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
           {[
             { label: "Total Users", value: overviewQ.data?.totalUsers ?? 0, icon: <Users className="h-4 w-4" /> },
             { label: "Active Users", value: overviewQ.data?.activeUsers ?? 0, icon: <Users className="h-4 w-4" /> },
@@ -681,10 +687,12 @@ export function AdminPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-px">
-        {TAB_OPTIONS.map((option) => (
-          <button
+      <div className="overflow-x-auto border-b border-slate-200 pb-px">
+        <div className="flex min-w-max gap-1" role="group" aria-label="Administration sections">
+          {TAB_OPTIONS.map((option) => (
+            <button
             key={option.key}
+            aria-pressed={tab === option.key}
             onClick={() => setTab(option.key)}
             disabled={
               (option.key === "users" && !canViewUsers) ||
@@ -704,13 +712,14 @@ export function AdminPage() {
                 ? "You do not have permission to perform this action."
                 : undefined
             }
-            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition ${
+            className={`rounded-t-lg px-3 py-2 text-sm font-semibold transition ${
               tab === option.key ? "border border-b-0 border-teal-300 bg-teal-50 text-teal-700" : "text-slate-500 hover:text-slate-700"
             } disabled:cursor-not-allowed disabled:opacity-40`}
           >
             {option.label}
-          </button>
-        ))}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === "dashboard" && (
@@ -1194,13 +1203,13 @@ export function AdminPage() {
 
       {selectedUser && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-sm" onClick={closeUserDrawer}>
-          <aside className="iam iam-drawer max-w-lg p-6" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="User detail">
+          <aside ref={userDrawerRef} className="iam iam-drawer max-w-lg p-4 sm:p-5" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="admin-user-detail-title">
             <button className="float-right icon-btn" onClick={closeUserDrawer} aria-label="Close user detail"><X className="h-4 w-4" /></button>
             <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-teal-700">User Detail</p>
             <div className="mt-4 flex items-center gap-3 min-w-0">
               <Avatar name={String(selectedUser.fullName ?? selectedUser.full_name ?? "User")} />
               <div className="min-w-0">
-                <h2 className="text-xl font-bold text-slate-900 truncate">{String(selectedUser.fullName ?? selectedUser.full_name ?? "User")}</h2>
+                <h2 id="admin-user-detail-title" className="text-xl font-bold text-slate-900 truncate">{String(selectedUser.fullName ?? selectedUser.full_name ?? "User")}</h2>
                 <p className="text-xs text-slate-500 truncate">{String(selectedUser.email ?? "")}</p>
               </div>
             </div>
@@ -1302,8 +1311,8 @@ export function AdminPage() {
       )}
 
       {passwordResetTarget && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
-          <div className="iam iam-card w-full max-w-md space-y-4 p-6" role="dialog" aria-modal="true" aria-labelledby="admin-password-reset-title">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-2 backdrop-blur-sm sm:p-4">
+          <div ref={passwordResetDialogRef} className="iam iam-card max-h-[calc(100dvh-1rem)] w-full max-w-md space-y-4 overflow-y-auto p-4 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="admin-password-reset-title">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 id="admin-password-reset-title" className="font-bold text-slate-900">Set new password</h2>
@@ -1351,10 +1360,10 @@ export function AdminPage() {
       )}
 
       {userModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm p-4">
-          <div className="iam iam-card w-full max-w-2xl space-y-4 p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-2 backdrop-blur-sm sm:p-4">
+          <div ref={userDialogRef} className="iam iam-card max-h-[calc(100dvh-1rem)] w-full max-w-2xl space-y-4 overflow-y-auto p-4 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="admin-user-editor-title">
             <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">{userModal === "create" ? "Add User" : "Edit User"}</h2>
+              <h2 id="admin-user-editor-title" className="font-bold text-slate-900">{userModal === "create" ? "Add User" : "Edit User"}</h2>
               <button className="icon-btn" onClick={() => setUserModal(null)} aria-label="Close"><X className="h-4 w-4" /></button>
             </div>
               <div className="grid gap-3 md:grid-cols-2">
@@ -1489,10 +1498,10 @@ export function AdminPage() {
       )}
 
       {roleModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm p-4">
-          <div className="iam iam-card w-full max-w-3xl space-y-4 p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-2 backdrop-blur-sm sm:p-4">
+          <div ref={roleDialogRef} className="iam iam-card max-h-[calc(100dvh-1rem)] w-full max-w-3xl space-y-4 overflow-y-auto p-4 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="admin-role-editor-title">
             <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">{roleModal.id ? "Edit Role" : "Create Role"}</h2>
+              <h2 id="admin-role-editor-title" className="font-bold text-slate-900">{roleModal.id ? "Edit Role" : "Create Role"}</h2>
               <button className="icon-btn" onClick={() => setRoleModal(null)} aria-label="Close"><X className="h-4 w-4" /></button>
             </div>
             <div>

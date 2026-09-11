@@ -64,7 +64,7 @@ public sealed class CoreJobsBranchHosApiTests
             await Invoke("AssignJob", http, 1L, new Dictionary<string, object?> { ["driverId"] = 1, ["vehicleId"] = 1 }, db, audit, CancellationToken.None),
             await Invoke("ChangeJobStatus", http, 1L, new Dictionary<string, object?> { ["status"] = "En Route" }, db, audit, CancellationToken.None),
             await Invoke("SendEta", http, 1L, new Dictionary<string, object?>(), db, audit, CancellationToken.None),
-            await Invoke("CreateProofPlaceholder", http, 1L, new Dictionary<string, object?>(), db, audit, CancellationToken.None),
+            await Invoke("ProofPlaceholderUnavailable", http, 1L, new Dictionary<string, object?>(), db, audit, CancellationToken.None),
             await Invoke("CaptureProof", http, 1L, new Dictionary<string, object?> { ["receivedBy"] = "Receiver" }, db, audit, CancellationToken.None),
         })
             Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
@@ -128,8 +128,10 @@ public sealed class CoreJobsBranchHosApiTests
             var invalidBackwards = await Invoke("ChangeJobStatus", http, jobId, new Dictionary<string, object?> { ["status"] = "Assigned" }, db, audit, CancellationToken.None);
             Assert.Equal(StatusCodes.Status409Conflict, Assert.IsAssignableFrom<IStatusCodeHttpResult>(invalidBackwards).StatusCode);
 
-            var queued = await Invoke("CreateProofPlaceholder", http, jobId, new Dictionary<string, object?>(), db, audit, CancellationToken.None);
-            Assert.Equal(StatusCodes.Status200OK, Assert.IsAssignableFrom<IStatusCodeHttpResult>(queued).StatusCode);
+            var retiredPlaceholder = await Invoke("ProofPlaceholderUnavailable", http, jobId, new Dictionary<string, object?>(), db, audit, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status410Gone, Assert.IsAssignableFrom<IStatusCodeHttpResult>(retiredPlaceholder).StatusCode);
+            Assert.Equal(0, await db.ScalarLongAsync("SELECT COUNT(*) FROM proof_of_delivery WHERE company_id=@c AND job_id=@j",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@j", jobId); }));
 
             var evidenceBytes = new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a };
             var evidenceStream = new MemoryStream(evidenceBytes);
@@ -660,8 +662,9 @@ public sealed class CoreJobsBranchHosApiTests
             await AssertNotFound("ChangeJobStatus", http, jobId,
                 new Dictionary<string, object?> { ["status"] = "Delayed" }, db, audit, CancellationToken.None);
             await AssertNotFound("SendEta", http, jobId, new Dictionary<string, object?>(), db, audit, CancellationToken.None);
-            await AssertNotFound("CreateProofPlaceholder", http, jobId,
+            var retiredPlaceholder = await Invoke("ProofPlaceholderUnavailable", http, jobId,
                 new Dictionary<string, object?> { ["receivedBy"] = "Wrong branch" }, db, audit, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status410Gone, Assert.IsAssignableFrom<IStatusCodeHttpResult>(retiredPlaceholder).StatusCode);
             await AssertNotFound("CaptureProof", http, jobId,
                 new Dictionary<string, object?> { ["receivedBy"] = "Wrong branch", ["photoFileId"] = 1L }, db, audit, CancellationToken.None);
 

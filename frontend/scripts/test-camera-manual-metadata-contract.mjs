@@ -322,9 +322,9 @@ test("actual camera drawer never renders provider/private assessment fields or l
   } finally { f.cleanup(); }
 });
 
-test("other four actual page kinds retain their configured fields/actions and service dispatch", async () => {
+test("other three mutable page kinds retain their configured fields/actions and service dispatch", async () => {
   const cases = [["safety", "review", /\/safety\/events\/19\/review$/, "Create Safety Event"], ["coaching", "assign", /\/coaching\/tasks\/19\/assign$/, "Create Coaching Task"],
-    ["incidents", "status", /\/incidents\/19\/status$/, "Create Incident"], ["evidence", "lock", /\/evidence-packages\/19\/lock-package$/, "Create Evidence Package"]];
+    ["incidents", "status", /\/incidents\/19\/status$/, "Create Incident"]];
   for (const [kind, type, route, createLabel] of cases) {
     const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
     try {
@@ -336,6 +336,20 @@ test("other four actual page kinds retain their configured fields/actions and se
       assert.equal(f.calls.length, 1); assert.match(f.calls[0].url, route);
     } finally { f.cleanup(); }
   }
+});
+
+test("evidence package UI hides status mutation and locking until verified retrieval exists", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    const page = f.renderPage("evidence", { session: { ...f.session, permissions: ["*"] } });
+    const config = f.api.configs.evidence;
+    assert.deepEqual(config.actions, []);
+    assert.equal(config.fields.some(([key]) => key === "status"), false);
+    assert.ok(config.fields.length);
+    assert.ok(config.sections.length);
+    assert.ok(button(component(page, "PageHeader").props.actions, "Create Evidence Package"));
+    assert.equal(f.calls.length, 0);
+  } finally { f.cleanup(); }
 });
 
 // These are actual shipped hooks/callbacks with controlled React hook storage,

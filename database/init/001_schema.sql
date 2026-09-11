@@ -1080,6 +1080,7 @@ CREATE TABLE IF NOT EXISTS incident_evidence (
 CREATE TABLE IF NOT EXISTS evidence_packages (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   company_id BIGINT NOT NULL DEFAULT 1,
+  branch_id BIGINT NULL,
   package_number VARCHAR(80) NOT NULL,
   incident_id BIGINT NULL,
   safety_event_id BIGINT NULL,
@@ -1100,6 +1101,7 @@ CREATE TABLE IF NOT EXISTS evidence_packages (
 CREATE TABLE IF NOT EXISTS evidence_package_items (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   company_id BIGINT NOT NULL DEFAULT 1,
+  branch_id BIGINT NULL,
   package_id BIGINT NOT NULL,
   item_type VARCHAR(120) NOT NULL,
   item_title VARCHAR(220) NOT NULL,

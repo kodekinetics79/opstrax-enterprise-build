@@ -95,8 +95,7 @@ public static class PermissionPolicy
         Manage("users:manage", "users:view", "users:create", "users:update", "users:delete");
         Manage("roles:manage", "roles:view", "roles:create", "roles:update");
         Manage("settings:manage", "settings:view", "settings:update");
-        Manage("telemetry.devices.manage", "telemetry.devices.read", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:devices:command", "telematics:providers:manage");
-        Add("telematics:providers:manage", "telemetry.devices.manage");
+        Manage("telemetry.devices.manage", "telemetry.devices.read", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:devices:command");
         Manage("telemetry.alerts.manage", "telemetry.alerts.read", "alerts:acknowledge", "alerts:close");
         Manage("telemetry.rules.manage", "telemetry.rules.read");
         Add("devices:manage", "telemetry.rules.manage");

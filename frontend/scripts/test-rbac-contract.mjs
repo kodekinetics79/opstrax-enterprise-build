@@ -261,7 +261,6 @@ assert.equal(hasPermission(BACKEND_ROLES["Fleet Owner"], "settings:manage"), tru
 for (const [held, required] of [
   ["fleet:manage", "telemetry.devices.manage"],
   ["fleet.manage", "telemetry.devices.manage"],
-  ["telematics:providers:manage", "telemetry.devices.manage"],
   ["alerts:view", "telemetry.alerts.read"],
   ["safety:view", "telemetry.alerts.read"],
   ["maintenance:view", "telemetry.alerts.read"],
@@ -273,6 +272,8 @@ for (const [held, required] of [
 }
 // A read grant still never reaches the device write tier.
 assert.equal(hasPermission(["telematics:devices:view"], "telemetry.devices.manage"), false, "telematics:devices:view must NOT satisfy telemetry.devices.manage");
+assert.equal(hasPermission(["telematics:providers:manage"], "telemetry.devices.manage"), false, "provider credential management must NOT satisfy device lifecycle management");
+assert.equal(hasPermission(["telemetry.devices.manage"], "telematics:providers:manage"), false, "device lifecycle management must NOT satisfy provider credential management");
 // Broad fleet read alone is not an alert grant on either side.
 assert.equal(hasPermission(["fleet:view"], "telemetry.alerts.read"), false, "fleet:view must not reach telemetry.alerts.read");
 

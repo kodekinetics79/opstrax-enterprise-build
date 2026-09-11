@@ -1155,7 +1155,7 @@ function Info({ label, value }: { label: string; value: string }) {
 
 // Roles carrying tenant-wide authority — mirrors PlatformEndpoints.TenantAdminRoles.
 // Used only for labelling here; the server enforces the last-admin guard.
-const TENANT_ADMIN_ROLES = ["company admin", "super admin", "reseller / partner admin"];
+const TENANT_ADMIN_ROLES = ["tenant admin", "company admin", "super admin", "reseller / partner admin"];
 
 function isAdminRole(roleName: string) {
   return TENANT_ADMIN_ROLES.includes(roleName.trim().toLowerCase());
@@ -1166,7 +1166,7 @@ function AddTenantUserForm({ tenantId, roles, onDone }: {
   roles: AnyRecord[];
   onDone: (result: AnyRecord, message: string) => void;
 }) {
-  const [form, setForm] = useState({ fullName: "", email: "", roleName: "Company Admin" });
+  const [form, setForm] = useState({ fullName: "", email: "", roleName: "Tenant Admin" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 

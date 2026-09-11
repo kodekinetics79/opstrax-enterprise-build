@@ -372,6 +372,9 @@ MIGRATIONS=(
   2026_09_10_stage135_demo_operational_truth_reconciliation
   # Product Admin may govern exact device model/HW/FW/SHA readiness candidates.
   2026_09_11_stage136_platform_hardware_readiness_permission
+  # Evidence packages inherit authoritative branch ownership and generated
+  # placeholders can no longer support a custody lock.
+  2026_09_11_stage138_evidence_package_truth_boundary
   # Commercial truth overlays. These fail customer-facing operational reads
   # closed unless their persisted evidence is qualified at the source.
   2026_09_08_notification_delivery_contract

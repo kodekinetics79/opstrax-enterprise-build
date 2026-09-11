@@ -309,7 +309,7 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.TELEMATICS_SENSORS_EXPORT]: ["fleet.view", "fleet:view", "telematics.sensors.export", "telematics:sensors:export", "telematics.view", "telematics:view"],
   [P.TELEMETRY_LIVE_STATE_READ]: ["telemetry.live_state.read", "telemetry.live-state.read", "map:view", "map.view", "telematics:gps:view"],
   [P.TELEMETRY_DEVICES_READ]: ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view"],
-  [P.TELEMETRY_DEVICES_MANAGE]: ["telemetry.devices.manage", "telematics:providers:manage", "fleet:manage", "fleet.manage"],
+  [P.TELEMETRY_DEVICES_MANAGE]: ["telemetry.devices.manage", "fleet:manage", "fleet.manage"],
   [P.TELEMETRY_ALERTS_READ]: ["telemetry.alerts.read", "telemetry.alerts.view", "alerts:view", "alerts.view", "safety:view", "safety.view", "maintenance:view", "maintenance.view"],
   [P.TELEMETRY_ALERTS_MANAGE]: ["telemetry.alerts.manage", "alerts.manage", "alerts:manage"],
   [P.TELEMETRY_RULES_READ]: ["telemetry.rules.read", "telemetry.rules.view"],

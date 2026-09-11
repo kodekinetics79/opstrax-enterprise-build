@@ -161,7 +161,10 @@ public sealed class EnterpriseJourneyHardeningTests
         Assert.DoesNotContain("CONCAT('/exports/evidence-package-'", endpoint);
         Assert.Contains("Evidence export generation is not configured; no file was created", endpoint);
         Assert.Contains("mediaAvailable = false", endpoint);
-        Assert.Contains("actions: [\"lock\"]", page);
+        Assert.Contains("evidence: {", page);
+        Assert.Contains("Retrieval verification is not yet exposed as a user workflow", page);
+        Assert.Contains("actions: []", page);
+        Assert.DoesNotContain("actions: [\"lock\"]", page);
     }
 
     [Fact]

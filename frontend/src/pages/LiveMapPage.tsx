@@ -24,6 +24,7 @@ import { controlTowerApi } from "@/services/controlTowerApi";
 import { routesApi } from "@/services/routesApi";
 import { telemetryApi } from "@/services/telemetryApi";
 import { LiveMap } from "@/components/LiveMap";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
 import { AiInsightCard, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import type { AnyRecord } from "@/types";
@@ -530,7 +531,7 @@ export function LiveMapPage() {
       )}
 
       {/* Status segmentation — the single primary metric row. */}
-      <div className="live-map-status-grid order-2 grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="live-map-status-grid order-1 grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-5">
         <StatusBoardCard label="All Units"     count={liveEntities.length} tone="slate"  meaning="Fleet scope"    active={activeFilter === "All"}     onClick={() => setActiveFilter("All")} />
         <StatusBoardCard label="Moving"        count={buckets.Moving}      tone="teal"   meaning="On the road"    active={activeFilter === "Moving"}  onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")} />
         <StatusBoardCard label="Idle / Parked" count={buckets.Idle}        tone="indigo" meaning="Stopped, recent" active={activeFilter === "Idle"}    onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")} />
@@ -538,7 +539,7 @@ export function LiveMapPage() {
         <StatusBoardCard label="Unknown"       count={buckets.Unknown}     tone="slate"  meaning="No trusted state" active={activeFilter === "Unknown"} onClick={() => setActiveFilter(activeFilter === "Unknown" ? "All" : "Unknown")} />
       </div>
 
-      <div className="live-map-primary order-1 grid min-w-0 items-stretch gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
+      <div className="live-map-primary order-2 grid min-w-0 items-stretch gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
         {/* Hero map */}
         <section className="panel live-map-stage flex min-w-0 flex-col overflow-hidden p-3 sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
@@ -1049,18 +1050,17 @@ function StatusBoardCard({ label, count, tone, meaning, active, onClick }: { lab
       type="button"
       onClick={onClick}
       aria-pressed={active ? "true" : "false"}
-      className={`live-map-status-card flex items-center justify-between gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
+      aria-label={`${label}: ${count}. ${meaning}`}
+      className={`live-map-status-card flex min-h-11 items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition ${
         active ? `${t.activeBorder} ${t.activeBg} shadow-sm` : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
       }`}
     >
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${t.dot} ${tone === "teal" ? "animate-pulse" : ""}`} />
-          <span className="truncate text-sm font-semibold text-slate-700">{label}</span>
-        </div>
-        <p className="mt-1 pl-[18px] text-[11px] font-medium text-slate-400">{meaning}</p>
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${t.dot} ${tone === "teal" ? "animate-pulse" : ""}`} />
+        <span className="truncate text-xs font-semibold text-slate-700">{label}</span>
+        <span className="hidden truncate text-[10px] font-medium text-slate-400 2xl:inline">{meaning}</span>
       </div>
-      <span className={`text-3xl font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
+      <span className={`text-xl font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
     </button>
   );
 }
@@ -1247,14 +1247,15 @@ function ProvRow({ label, value }: { label: string; value: string }) {
 
 function VehicleDetailDrawer({ detail, entity, loading, onClose }: { detail?: AnyRecord; entity?: AnyRecord | null; loading: boolean; onClose: () => void }) {
   const record = detail?.record as AnyRecord | undefined;
+  const dialogRef = useDialogFocus<HTMLElement>(Boolean(record), onClose);
   if (!record && !loading) return null;
   if (!record) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
-      <aside className="h-full w-full max-w-3xl overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <aside ref={dialogRef} className="h-full w-full max-w-3xl overflow-y-auto border-l border-slate-200 bg-white p-4 shadow-2xl sm:p-5" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="vehicle-position-detail-title">
         <button type="button" aria-label="Close" className="float-right icon-btn" onClick={onClose}><X className="h-5 w-5" /></button>
         <p className="section-title">Vehicle Position Detail</p>
-        <h2 className="mt-3 text-2xl font-semibold text-slate-900">{String(record.vehicleCode ?? record.vehicle_code)}</h2>
+        <h2 id="vehicle-position-detail-title" className="mt-2 text-2xl font-semibold text-slate-900">{String(record.vehicleCode ?? record.vehicle_code)}</h2>
         <div className="mt-4 flex flex-wrap gap-2">
           <StatusBadge status={record.status} />
           <RiskBadge risk={record.riskScore ?? record.risk_score} />

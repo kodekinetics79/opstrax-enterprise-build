@@ -81,6 +81,42 @@ function isRedactedValue(value: string | number | boolean | null | undefined): b
   return typeof value === "string" && value.trim() === REDACTED_MARKER;
 }
 
+function messagingRoutingStatus(record: IntegrationRecord): { tone: string; message: string } {
+  const status = effectiveIntegrationStatus(record);
+  const verifiedConnection = status === "Connected"
+    && record.lastTestOk === true
+    && Boolean(record.lastTestedAt);
+
+  if (verifiedConnection) {
+    return {
+      tone: "text-emerald-700",
+      message: "Provider connection is verified by a successful recorded handshake. Live routing is available; end-to-end delivery is not claimed until a delivery record succeeds.",
+    };
+  }
+  if (status === "Pending") {
+    return {
+      tone: "text-amber-800",
+      message: "Configuration is pending. No live notification routing or delivery is claimed.",
+    };
+  }
+  if (status === "Error" || record.lastTestOk === false) {
+    return {
+      tone: "text-rose-700",
+      message: "The last connection check failed. No live notification routing or delivery is claimed.",
+    };
+  }
+  if (status === "Connected") {
+    return {
+      tone: "text-amber-800",
+      message: "Connected status is stored, but no successful current handshake is recorded. Live notification routing and delivery are not claimed.",
+    };
+  }
+  return {
+    tone: "text-slate-600",
+    message: "This connector is disconnected. No live notification routing or delivery is claimed.",
+  };
+}
+
 const CATEGORY_ORDER: IntegrationCategory[] = [
   "ERP & Accounting",
   "Telematics & ELD",
@@ -498,6 +534,7 @@ function ConfigDrawer({
   const meta = categoryMeta(integration.category);
   const adapterAvailable = integration.adapterAvailable === true;
   const canConfigure = canManage && adapterAvailable;
+  const messagingStatus = messagingRoutingStatus(integration);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm anim-fade-in">
@@ -599,6 +636,7 @@ function ConfigDrawer({
               </div>
             ) : fields.map((field) => {
               const secretSet = isSecretField(field.key) && isRedactedValue(integration.config[field.key]);
+              const secret = isSecretField(field.key);
               const inputId = `integration-${integration.id}-${field.key}`;
               return (
                 <div key={field.key}>
@@ -618,7 +656,9 @@ function ConfigDrawer({
                   ) : (
                     <input
                       id={inputId}
-                      type={field.type}
+                      type={secret ? "password" : field.type}
+                      autoComplete={secret ? "off" : undefined}
+                      spellCheck={secret ? false : undefined}
                       className="field mt-1 w-full"
                       value={form[field.key] ?? ""}
                       onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
@@ -652,9 +692,9 @@ function ConfigDrawer({
           {adapterAvailable && integration.category === "Messaging & Notifications" && (
             <div className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
               <p className="text-xs font-bold uppercase tracking-[0.18em] text-violet-600">Notification routing</p>
-              <div className="mt-3 flex items-center gap-2 text-sm text-slate-600">
+              <div className={`mt-3 flex items-center gap-2 text-sm ${messagingStatus.tone}`}>
                 <ArrowRightLeft className="h-4 w-4 text-violet-500" />
-                Operational alerts and customer notifications are routed through this connector live.
+                {messagingStatus.message}
               </div>
             </div>
           )}
@@ -1141,6 +1181,9 @@ function CustomConnectorDialog({
                     />
                     <input
                       className="field flex-1 text-sm"
+                      type={isSecretField(row.key) ? "password" : "text"}
+                      autoComplete={isSecretField(row.key) ? "off" : undefined}
+                      spellCheck={isSecretField(row.key) ? false : undefined}
                       value={row.value}
                       onChange={(event) =>
                         setConfigRows((rows) => rows.map((r) => (r.id === row.id ? { ...r, value: event.target.value } : r)))

@@ -31,6 +31,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EntityImportExport } from "@/components/EntityImportExport";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import {
   canReadProviderCatalog,
@@ -828,6 +829,7 @@ export function IotDevicesPage() {
   const [deviceSort, setDeviceSort] = useState<"serial" | "provider" | "model" | "status" | "lastCheckIn" | "vehicle">("serial");
   const [deviceDirection, setDeviceDirection] = useState<"asc" | "desc">("asc");
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
+  const deviceDrawerRef = useDialogFocus<HTMLElement>(selectedId != null, () => setSelectedId(null));
   // Step 1 of the connect flow — the minimal register-connection form.
   const [connectOpen, setConnectOpen] = useState(false);
   const [connectForm, setConnectForm] = useState<ConnectFormState>(defaultConnectForm);
@@ -1731,12 +1733,14 @@ export function IotDevicesPage() {
             <button type="button" className="btn-ghost py-2 text-xs" onClick={() => { setDeviceDirection((current) => current === "asc" ? "desc" : "asc"); setDevicePage(1); }}>
               {deviceDirection === "asc" ? "A–Z" : "Z–A"}
             </button>
-            <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Device workspace views">
-              {DEVICE_TABS.map((item) => (
-                <button key={item.key} role="tab" aria-selected={tab === item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item.key); setDevicePage(1); }}>
-                  {item.label}
-                </button>
-              ))}
+            <div className="max-w-full overflow-x-auto pb-1">
+              <div className="flex min-w-max gap-1.5" role="tablist" aria-label="Device workspace views">
+                {DEVICE_TABS.map((item) => (
+                  <button key={item.key} role="tab" aria-selected={tab === item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item.key); setDevicePage(1); }}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -1919,7 +1923,7 @@ export function IotDevicesPage() {
 
       {selectedId ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelectedId(null)}>
-          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-4 sm:p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <aside ref={deviceDrawerRef} className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-4 shadow-2xl sm:p-5" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Device details and lifecycle actions">
             <button className="float-right icon-btn" aria-label="Close device details" onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></button>
             {canManageDeviceLifecycle && suspensionRefreshWarning && suspensionReceiptId && suspensionRefreshContext.current.target ? (
               <SuspensionRefreshNotice deviceId={suspensionReceiptId} busy={suspensionRefreshPending} onRetry={() => { void refreshSuspensionDisplay(suspensionReceiptId); }} />
@@ -3458,10 +3462,11 @@ function ConnectDeviceDialog({
   error?: string | null;
 }) {
   const serialValid = form.serialNumber.trim().length > 0 && form.deviceCategory.trim().length > 0;
+  const dialogRef = useDialogFocus<HTMLDivElement>(true, onClose);
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="connect-device-title">
+    <div ref={dialogRef} className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-2 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="connect-device-title">
       <form
-        className="panel max-h-[90vh] w-full max-w-2xl overflow-y-auto p-6"
+        className="panel max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-y-auto p-4 sm:max-h-[90vh] sm:p-5"
         onSubmit={(event) => { event.preventDefault(); if (serialValid && !busy) onSubmit(); }}
       >
         <div className="flex items-start justify-between gap-4">
@@ -3638,10 +3643,11 @@ function DeviceCredentialsDialog({
                 : record.hasRecordedCheckIn
                   ? "Recorded check-in found"
                   : "No valid recorded check-in";
+  const dialogRef = useDialogFocus<HTMLDivElement>(true, onDone);
 
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="device-credentials-title">
-      <div className="panel max-h-[90vh] w-full max-w-2xl overflow-y-auto p-6">
+    <div ref={dialogRef} className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-2 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="device-credentials-title">
+      <div className="panel max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-y-auto p-4 sm:max-h-[90vh] sm:p-5">
         <div className="flex items-start gap-3">
           <div className="grid h-11 w-11 place-items-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-600 shadow-inner">
             <CheckCircle2 className="h-5 w-5" />
@@ -3721,9 +3727,10 @@ function RotatedCredentialsDialog({
   credentials: DeviceCredentialRotationResult;
   onDone: () => void;
 }) {
+  const dialogRef = useDialogFocus<HTMLDivElement>(true, onDone);
   return (
-    <div className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="rotated-credentials-title">
-      <div className="panel max-h-[90vh] w-full max-w-2xl overflow-y-auto p-6">
+    <div ref={dialogRef} className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-2 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="rotated-credentials-title">
+      <div className="panel max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-y-auto p-4 sm:max-h-[90vh] sm:p-5">
         <div className="flex items-start gap-3">
           <div className="grid h-11 w-11 place-items-center rounded-2xl border border-amber-200 bg-amber-50 text-amber-700 shadow-inner"><KeyRound className="h-5 w-5" /></div>
           <div>
