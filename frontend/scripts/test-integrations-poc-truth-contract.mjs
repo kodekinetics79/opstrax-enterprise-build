@@ -25,6 +25,21 @@ assert.match(
 );
 assert.match(
   integrations,
+  /record\.status !== "Connected"[\s\S]*record\.lastTestOk === false[\s\S]*record\.lastTestOk === true && Boolean\(record\.lastTestedAt\)/,
+  "Every connector card and summary must downgrade a stored Connected label unless a successful provider handshake is recorded",
+);
+assert.doesNotMatch(
+  integrations,
+  /<KpiCard label="Connected"[^>]*status="Live"/,
+  "The connector summary must not describe a verified credential handshake as live data flow",
+);
+assert.match(
+  integrations,
+  /<KpiCard label="Connected"[^>]*status="Verified"/,
+  "The connector summary must describe evidence-backed provider handshakes as verified",
+);
+assert.match(
+  integrations,
   /Connected status is stored, but no successful current handshake is recorded\. Live notification routing and delivery are not claimed\./,
   "A stored Connected label without handshake evidence must fail closed",
 );

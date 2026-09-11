@@ -1711,6 +1711,7 @@ export function IotDevicesPage() {
               className="field w-full pl-9"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
+              placeholder="Serial, IMEI, vehicle, driver…"
               aria-label="Search devices by provider, serial, IMEI, vehicle, driver, or tenant"
             />
           </div>
@@ -1733,15 +1734,17 @@ export function IotDevicesPage() {
             <button type="button" className="btn-ghost py-2 text-xs" onClick={() => { setDeviceDirection((current) => current === "asc" ? "desc" : "asc"); setDevicePage(1); }}>
               {deviceDirection === "asc" ? "A–Z" : "Z–A"}
             </button>
-            <div className="max-w-full overflow-x-auto pb-1">
-              <div className="flex min-w-max gap-1.5" role="tablist" aria-label="Device workspace views">
-                {DEVICE_TABS.map((item) => (
-                  <button key={item.key} role="tab" aria-selected={tab === item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item.key); setDevicePage(1); }}>
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <label className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-slate-500">
+              View
+              <select
+                aria-label="Device workspace view"
+                className="field min-w-0 max-w-56"
+                value={tab}
+                onChange={(event) => { setTab(event.target.value as DeviceTab); setDevicePage(1); }}
+              >
+                {DEVICE_TABS.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+              </select>
+            </label>
           </div>
         </div>
 
