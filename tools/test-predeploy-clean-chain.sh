@@ -60,63 +60,15 @@ log_dir=$(mktemp -d /tmp/opstrax-predeploy-clean.XXXXXX)
 export NEON_PG_URI="postgresql://${OPSTRAX_TEST_DB_USER}:${OPSTRAX_TEST_DB_PASSWORD}@${OPSTRAX_TEST_DB_HOST}:${OPSTRAX_TEST_DB_PORT}/${audit_db}?sslmode=disable"
 ./tools/apply-neon-predeploy-migrations.sh >"$log_dir/pass1.log" 2>&1
 ./tools/apply-neon-predeploy-migrations.sh >"$log_dir/pass2.log" 2>&1
-# Stage66 is advertised as additive/idempotent and may be rerun during a credential
-# cutover repair. Exercise its SQL directly instead of only testing the ledger skip.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage66_telematics_pilot.sql
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
-# Simulate a ledgered but weakened Stage68 commercial boundary.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
-ALTER TABLE companies ALTER COLUMN entitlement_policy_mode DROP NOT NULL;
-ALTER TABLE companies ALTER COLUMN entitlement_policy_mode DROP DEFAULT;
-ALTER TABLE companies DROP CONSTRAINT ck_companies_entitlement_policy_mode;
-ALTER TABLE companies ADD CONSTRAINT ck_companies_entitlement_policy_mode
-  CHECK (entitlement_policy_mode IN ('legacy_allow','package_allowlist','open')) NOT VALID;
-SQL
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage68_entitlement_policy_mode.sql
-# Simulate a ledgered but weakened Stage69 catalog. The repair replay must not
-# trust the constraint name and must restore nullability/default/enforcement.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
-ALTER TABLE tenant_market_packs ALTER COLUMN status DROP NOT NULL;
-ALTER TABLE tenant_market_packs ALTER COLUMN status DROP DEFAULT;
-ALTER TABLE tenant_market_packs DROP CONSTRAINT ck_tenant_market_packs_status;
-ALTER TABLE tenant_market_packs ADD CONSTRAINT ck_tenant_market_packs_status
-  CHECK (status IN ('active','disabled','trial')) NOT VALID;
-SQL
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage69_market_pack_control_hardening.sql
-# Simulate post-ledger HOS column drift on the disposable database, then prove
-# Stage70's recovery replay is additive and complete.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
-ALTER TABLE hos_logs DROP COLUMN notes;
-ALTER TABLE hos_clocks DROP COLUMN break_needed_at;
-ALTER TABLE hos_clocks DROP COLUMN reset_at;
-ALTER TABLE hos_clocks DROP COLUMN updated_at;
-SQL
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage70_hos_pilot_schema_reconciliation.sql
-# Production skips runtime schema initialization. Prove the owner repair
-# migration restores the driver acknowledgement evidence field after drift.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'ALTER TABLE coaching_tasks DROP COLUMN acknowledged_note'
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage71_coaching_evidence_reconciliation.sql
-# Reapply the HOS immutability/offboarding guard as a drift repair. Its function
-# bodies are owner-managed security contract, not runtime application state.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage72_hos_offboarding_immutability_reconciliation.sql
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage73_hos_offboarding_null_fail_closed.sql
-# Prove the Production retention ledger is owner-repairable after schema drift.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE data_retention_policies'
-# Simulate a ledgered Stage42 schema loss too. The owner runner must recreate the credential
-# registry before terminal Stage58/76 restore its policies and secret-column boundary.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE telemetry_gateways'
-# Simulate a ledgered Stage79 tenant-provisioning schema loss. The repair migration
-# must restore all write-path dependencies before terminal Stage58 restores exact
-# non-forgeable policies and least-privilege grants.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
-ALTER TABLE companies DROP COLUMN legal_name;
-ALTER TABLE tenant_subscriptions DROP COLUMN billing_cycle;
-DROP TABLE feature_flags;
-DROP TABLE password_reset_tokens;
-SQL
-# Use the real runner so Stage42/74 recreate their tables and the terminal Stage58
-# reconciliation restores FORCE-RLS policies and restricted-role grants.
-./tools/apply-neon-predeploy-migrations.sh >"$log_dir/pass3.log" 2>&1
+# The second pass represents the live production path. Ledgered migrations are
+# immutable history and must proceed directly to the guarded schema, RLS, grant,
+# ownership and readiness checks. Drift fails closed instead of replaying broad
+# historical DDL against active tables.
+grep -q "already applied (ledger) — verifying without replay" "$log_dir/pass2.log"
+if grep -q "ledgered reconciliation — reapplying to repair drift" "$log_dir/pass2.log"; then
+  echo "Ledgered migration was replayed during the verification-only pass" >&2
+  exit 1
+fi
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
 SET ROLE opstrax_system;
 INSERT INTO telemetry_stream_ticket_nonces
@@ -223,8 +175,6 @@ grep -q "applying 2026_07_16_stage42_telemetry_gateways" "$log_dir/pass1.log"
 grep -q "Tenant RLS coverage: .* in-scope tables verified" "$log_dir/pass1.log"
 grep -q "Existing Stage58/59/67/76 deployment reconciled with Stage76 terminal" "$log_dir/pass2.log"
 grep -q "Applying terminal Stage76 telemetry" "$log_dir/pass2.log"
-grep -q "Existing Stage58/59/67/76 deployment reconciled with Stage76 terminal" "$log_dir/pass3.log"
-grep -q "Applying terminal Stage76 telemetry" "$log_dir/pass3.log"
 
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $clean_chain$
@@ -291,7 +241,9 @@ BEGIN
       ('2026_09_08_stage128_device_compatibility_capability_catalog'),
       ('2026_09_08_stage129_latest_device_signal_projection'),
       ('2026_09_08_stage130_canonical_diagnostic_evidence_identity'),
-      ('2026_09_08_stage131_alert_source_truth')) required(version)
+      ('2026_09_08_stage131_alert_source_truth'),
+      ('2026_09_11_stage138_evidence_package_truth_boundary'),
+      ('2026_09_11_stage139_telemetry_ledger_backfill_reconciliation')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
     RAISE EXCEPTION 'Clean-chain target ledgers are missing or duplicated';
@@ -1043,4 +995,4 @@ END
 $clean_chain$;
 SQL
 
-echo "Predeploy clean-chain regression passed (fresh Stage19/20/22 baseline + Stage76-terminal runner replays + policy/ACL checks)."
+echo "Predeploy clean-chain regression passed (fresh Stage19/20/22 baseline + verification-only ledger rerun + Stage76 terminal policy/ACL checks)."

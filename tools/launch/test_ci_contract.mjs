@@ -44,10 +44,10 @@ test("CI reapplies terminal security and migration-owned boundaries through the 
   assert.match(terminalStep, /telemetry_replay_device_state/);
 });
 
-test("predeploy runner makes Stage76 terminal on first and repair runs", () => {
+test("predeploy runner makes Stage76 terminal on first and verification runs", () => {
   const runner = read("tools/apply-neon-predeploy-migrations.sh");
-  const repair = runner.slice(runner.indexOf('if [ "$stage58_already_applied" = "1" ]'), runner.indexOf("Post-check: auth-critical columns"));
-  assertOrdered(repair, [
+  const rerun = runner.slice(runner.indexOf('if [ "$stage58_already_applied" = "1" ]'), runner.indexOf("Post-check: auth-critical columns"));
+  assertOrdered(rerun, [
     "2026_07_31_stage58_nonforgeable_tenant_ticket.sql",
     "2026_07_31_stage59_data_protection_key_ring.sql",
     "2026_08_02_stage67_telematics_diagnostics_integrity.sql",
@@ -112,7 +112,7 @@ test("clean chain and production rehearsal require Stage76 evidence", () => {
   const clean = read("tools/test-predeploy-clean-chain.sh");
   const rehearsal = read("tools/test-production-shaped-local-rehearsal.sh");
   assert.match(clean, /2026_08_11_stage76_telematics_security_hardening/);
-  assert.match(clean, /Stage76-terminal runner replays/);
+  assert.match(clean, /verification-only ledger rerun/);
   assert.match(rehearsal, /migration_ledgers=16/);
   assert.match(rehearsal, /stage76_secret_read_violations=0/);
   assert.match(rehearsal, /stage76_default_acl_violations=0/);

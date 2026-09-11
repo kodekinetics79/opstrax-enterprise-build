@@ -375,6 +375,10 @@ MIGRATIONS=(
   # Evidence packages inherit authoritative branch ownership and generated
   # placeholders can no longer support a custody lock.
   2026_09_11_stage138_evidence_package_truth_boundary
+  # Stage23 backfilled Stage12A before Stage51 could create its target relations on
+  # a clean chain. Reconcile that additive telemetry contract under a forward-only
+  # version; ledgered historical migrations remain verification-only.
+  2026_09_11_stage139_telemetry_ledger_backfill_reconciliation
   # Commercial truth overlays. These fail customer-facing operational reads
   # closed unless their persisted evidence is qualified at the source.
   2026_09_08_notification_delivery_contract
@@ -448,74 +452,16 @@ for m in "${MIGRATIONS[@]}"; do
       continue
     fi
   fi
-  repair_migration=false
-  # Stage55 is deliberately not a recurring repair migration. Even when every
-  # column already matches, its broad ALTER TABLE statements request ACCESS
-  # EXCLUSIVE locks on hot production relations such as companies. The guarded
-  # post-check below and /health/ready verify its exact columns, indexes, RLS,
-  # grants and ledger without taking those locks. An unledgered Stage55 still
-  # applies normally; ledgered drift fails closed at verification.
-  case "$m" in
-    2026_06_27_stage5_p0b1a_foundation|\
-    2026_06_28_stage5b_p0b1a2_persistence_hardening|\
-    2026_06_28_stage5d_p0b1a3_dispatcher|\
-    2026_06_28_stage6_p0b1b_business_spine|\
-    2026_06_28_stage7a_revenue_readiness_schema_contract|\
-    2026_06_28_stage8_finance_activation|\
-    2026_06_28_stage12a_telemetry_live_state|\
-    2026_06_28_stage13b_safety_maintenance_foundation|\
-    2026_06_29_stage18_commercial_foundation|\
-    2026_07_11_stage32_device_imei|\
-    2026_07_16_stage42_telemetry_gateways|\
-    2026_07_30_stage53_tenant_rls_reconciliation|\
-    2026_07_30_stage54_cold_chain_device_integrity|\
-    2026_07_30_stage56_asset_type_integrity|\
-    2026_07_30_stage57_workforce_schedule_tenant_integrity|\
-    2026_07_22_stage47_detention_recovery|\
-    2026_08_01_stage60_dispatch_trip_pilot|\
-    2026_08_02_stage67_telematics_diagnostics_integrity|\
-    2026_08_02_stage68_entitlement_policy_mode|\
-    2026_08_02_stage69_market_pack_control_hardening|\
-    2026_08_02_stage70_hos_pilot_schema_reconciliation|\
-    2026_08_02_stage71_coaching_evidence_reconciliation|\
-    2026_08_02_stage72_hos_offboarding_immutability_reconciliation|\
-    2026_08_02_stage73_hos_offboarding_null_fail_closed|\
-    2026_08_02_stage74_retention_policy_production_contract|\
-    2026_08_02_stage75_bounded_support_access|\
-    2026_08_12_stage77_protected_role_bootstrap|\
-    2026_08_13_stage78_country_profiles_runtime_contract|\
-    2026_08_13_stage79_tenant_provisioning_runtime_contract|\
-    2026_08_14_stage80_fleet_identity_backbone|\
-    2026_08_21_stage83_company_security_settings_runtime_contract|\
-    2026_08_21_stage84_driver_hos_runtime_contract|\
-    2026_09_07_stage112_camera_provider_ingest_spine|\
-    2026_09_07_stage115_device_compatibility_candidate_registry|\
-    2026_09_07_stage116_device_connectivity_profiles|\
-    2026_09_07_stage117_device_firmware_campaign_planning|\
-    2026_09_07_stage118_device_rma_replacement|\
-    2026_09_07_stage119_device_remote_command_governance|\
-    2026_09_07_stage120_device_connectivity_observations|\
-    2026_09_07_stage121_device_installation_work_packages|\
-    2026_09_07_stage122_installation_work_package_links|\
-    2026_09_07_stage123_device_retirement|\
-    2026_09_07_stage124_rma_support_ownership|\
-    2026_09_07_stage125_device_spare_pool|\
-    2026_09_07_stage126_device_support_tier_history|\
-    2026_09_08_stage128_device_compatibility_capability_catalog|\
-    2026_09_08_stage129_latest_device_signal_projection|\
-    2026_09_08_stage130_canonical_diagnostic_evidence_identity|\
-    2026_09_08_stage131_alert_source_truth|\
-    2026_09_11_stage136_platform_hardware_readiness_permission) repair_migration=true ;;
-  esac
-  if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
-    echo "── $m: already applied (ledger) — skipping"
+  if [ "$applied" = "1" ]; then
+    # A ledgered migration is immutable history. Replaying its broad DDL on hot
+    # production tables can request locks even when every IF NOT EXISTS clause is
+    # already satisfied. The guarded post-checks below and /health/ready detect
+    # drift and fail the release closed. Security policies that later migrations
+    # can replace are reconciled explicitly in the terminal control-boundary pass.
+    echo "── $m: already applied (ledger) — verifying without replay"
     continue
   fi
-  if [ "$applied" = "1" ]; then
-    echo "── $m: ledgered reconciliation — reapplying to repair drift"
-  else
-    echo "── applying $m"
-  fi
+  echo "── applying $m"
   apply_migration_file "$f" "$m"
   # stage21 precedes the ledger; later migrations must register successfully so a
   # failed bookkeeping write cannot masquerade as a complete deploy on the next run.
@@ -595,9 +541,43 @@ BEGIN
       ('2026_09_09_stage134_legacy_demo_eld_reconciliation'),
       ('2026_09_11_stage137_legacy_operational_truth_contract'),
       ('2026_09_10_stage135_demo_operational_truth_reconciliation'),
-      ('2026_09_11_stage136_platform_hardware_readiness_permission')) required(version)
+      ('2026_09_11_stage136_platform_hardware_readiness_permission'),
+      ('2026_09_11_stage138_evidence_package_truth_boundary'),
+      ('2026_09_11_stage139_telemetry_ledger_backfill_reconciliation')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM (VALUES
+      ('location_events','source_channel'),
+      ('location_events','correlation_id'),
+      ('location_events','causation_id'),
+      ('location_events','client_generated_id'),
+      ('location_events','idempotency_key'),
+      ('telemetry_alerts','correlation_id'),
+      ('telemetry_alerts','causation_id'),
+      ('telemetry_alerts','source_channel'),
+      ('telemetry_alerts','client_generated_id'),
+      ('telemetry_alerts','ai_recommendation_id'),
+      ('latest_vehicle_positions','source_event_id'),
+      ('latest_vehicle_positions','correlation_id'),
+      ('latest_vehicle_positions','causation_id'),
+      ('latest_vehicle_positions','source_channel'),
+      ('latest_vehicle_positions','telemetry_status'),
+      ('latest_vehicle_positions','risk_level'),
+      ('latest_vehicle_positions','alert_count'),
+      ('latest_vehicle_positions','open_alert_count'),
+      ('latest_vehicle_positions','next_action'),
+      ('latest_vehicle_positions','summary_json'),
+      ('latest_vehicle_positions','updated_at')) required(table_name,column_name)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM information_schema.columns c
+      WHERE c.table_schema='public'
+        AND c.table_name=required.table_name
+        AND c.column_name=required.column_name
+    )
+  ) OR to_regclass('public.telemetry_live_asset_states') IS NULL
+  THEN RAISE EXCEPTION 'Stage139 telemetry live-state contract drifted'; END IF;
   IF (SELECT count(*)
         FROM platform_role_permissions permission
         JOIN platform_roles role ON role.id=permission.role_id
