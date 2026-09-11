@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import {
@@ -116,81 +115,77 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
   const avgSafety = optional(summary.avgSafetyScore);
   const readinessCoverage = optional(summary.readinessEvidenceCoverage);
   const driverCoverage = optional(summary.driverScoreCoverage);
+  const hasVehicleScope = total > 0;
+  const evidenceReady = score != null && hasVehicleScope;
+  const metrics = [
+    {
+      label: "Fleet health",
+      value: score == null ? "—" : `${score}%`,
+      detail: score == null ? "Not measured" : score >= 85 ? "Good standing" : score >= 65 ? "Needs attention" : "Action required",
+      tone: score == null ? "text-slate-400" : scoreColor(score),
+    },
+    {
+      label: "No recorded block",
+      value: hasVehicleScope ? `${ready}/${total}` : "—",
+      detail: hasVehicleScope ? "vehicles in recorded state" : "Coverage unavailable",
+      tone: hasVehicleScope ? "text-emerald-600" : "text-slate-400",
+    },
+    {
+      label: "Out of service",
+      value: hasVehicleScope ? String(oos) : "—",
+      detail: hasVehicleScope ? "vehicles" : "Coverage unavailable",
+      tone: hasVehicleScope && oos > 0 ? "text-red-600" : "text-slate-500",
+    },
+    {
+      label: "Dispatch blockers",
+      value: hasVehicleScope ? String(blockers) : "—",
+      detail: hasVehicleScope ? "critical defects" : "Coverage unavailable",
+      tone: hasVehicleScope && blockers > 0 ? "text-red-600" : "text-slate-500",
+    },
+    {
+      label: "Safety score",
+      value: avgSafety == null ? "—" : `${avgSafety}%`,
+      detail: avgSafety == null ? "Not measured" : "fleet average",
+      tone: avgSafety == null ? "text-slate-400" : scoreColor(avgSafety),
+    },
+    {
+      label: "Overdue PM",
+      value: hasVehicleScope ? String(num(summary.overduePmVehicles)) : "—",
+      detail: hasVehicleScope ? "vehicles" : "Coverage unavailable",
+      tone: hasVehicleScope && num(summary.overduePmVehicles) > 0 ? "text-amber-600" : "text-slate-500",
+    },
+  ];
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap gap-6 items-center shadow-sm">
-      {/* Fleet health score */}
-      <div className="flex items-center gap-4 pr-6 border-r border-slate-200">
-        <div className="relative h-16 w-16 shrink-0">
-          <svg viewBox="0 0 36 36" className="h-16 w-16 -rotate-90">
-            <circle cx="18" cy="18" r="14" fill="none" stroke={tokens.border} strokeWidth="3" />
-            <circle
-              cx="18" cy="18" r="14" fill="none"
-              stroke={score == null ? tokens.border : score >= 80 ? chart.emerald500 : score >= 60 ? chart.amber500 : chart.red500}
-              strokeWidth="3"
-              strokeDasharray={`${((score ?? 0) / 100) * 87.96} 87.96`}
-              strokeLinecap="round"
-            />
-          </svg>
-          <span className={`absolute inset-0 flex items-center justify-center text-sm font-bold ${score == null ? "text-slate-400" : scoreColor(score)}`}>
-            {score == null ? "—" : `${score}%`}
-          </span>
-        </div>
+    <section className="panel p-4" aria-label="Fleet health evidence summary">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Fleet Health</p>
-          <p className={`text-2xl font-bold ${score == null ? "text-slate-400" : scoreColor(score)}`}>
-            {score == null ? "—" : `${score}%`}
-          </p>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {score == null
-              ? "Not yet measured"
-              : score >= 85 ? "Good standing" : score >= 65 ? "Needs attention" : "Action required"}
-          </p>
+          <h2 className="text-sm font-semibold text-slate-900">Evidence summary</h2>
+          <p className="mt-0.5 text-xs text-slate-500">Qualified operational records for the current fleet scope</p>
         </div>
+        <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${evidenceReady ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+          {evidenceReady ? "Coverage ready" : "Coverage incomplete"}
+        </span>
       </div>
-
-      {/* KPIs */}
-      <div className="flex flex-wrap gap-8">
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">No Recorded Block</p>
-          <p className="text-xl font-bold text-emerald-600">{ready}<span className="text-slate-400 font-normal text-sm">/{total}</span></p>
-          <p className="text-xs text-slate-500">vehicles</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Out of Service</p>
-          <p className={`text-xl font-bold ${oos > 0 ? "text-red-600" : "text-slate-400"}`}>{oos}</p>
-          <p className="text-xs text-slate-500">vehicles</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Dispatch Blockers</p>
-          <p className={`text-xl font-bold ${blockers > 0 ? "text-red-600" : "text-slate-400"}`}>{blockers}</p>
-          <p className="text-xs text-slate-500">critical defects</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Safety Score</p>
-          <p className={`text-xl font-bold ${avgSafety == null ? "text-slate-400" : scoreColor(avgSafety)}`}>
-            {avgSafety == null ? "—" : `${avgSafety}%`}
-          </p>
-          <p className="text-xs text-slate-500">fleet avg</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Overdue PM</p>
-          <p className={`text-xl font-bold ${num(summary.overduePmVehicles) > 0 ? "text-amber-500" : "text-slate-400"}`}>
-            {num(summary.overduePmVehicles)}
-          </p>
-          <p className="text-xs text-slate-500">vehicles</p>
-        </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+        {metrics.map((metric) => (
+          <div key={metric.label} className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{metric.label}</p>
+            <p className={`mt-1 text-xl font-bold leading-none ${metric.tone}`}>{metric.value}</p>
+            <p className="mt-1 text-[11px] text-slate-500">{metric.detail}</p>
+          </div>
+        ))}
       </div>
-      {score == null && (
-        <div className="w-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+      {!evidenceReady && (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
           <p className="font-semibold">Fleet health score unavailable until qualified evidence covers the current fleet.</p>
-          <p className="mt-1 text-amber-700">
+          <p className="mt-0.5 text-amber-700">
             Vehicle readiness coverage: {readinessCoverage == null ? "unavailable" : `${readinessCoverage}%`}
             {" · "}Driver score coverage: {driverCoverage == null ? "unavailable" : `${driverCoverage}%`}
           </p>
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -910,26 +905,26 @@ function FilterBar({
     { label: "Medium", value: "medium" },
   ];
 
-  const chipBase = "px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer";
-  const chipActive = "bg-slate-900 text-white border-slate-900";
-  const chipInactive = "bg-white text-slate-600 border-slate-200 hover:border-slate-400";
+  const chipBase = "btn-compact whitespace-nowrap";
 
   return (
-    <div className="flex flex-wrap gap-4 items-center">
-      <div className="flex gap-1.5">
+    <div className="panel flex flex-wrap items-center gap-x-4 gap-y-2 p-3" aria-label="Fleet health filters">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Entity</span>
         {catOpts.map((o) => (
-          <button key={o.value} type="button"
-            className={`${chipBase} ${category === o.value ? chipActive : chipInactive}`}
+          <button key={o.value} type="button" aria-pressed={category === o.value}
+            className={`${category === o.value ? "btn-primary" : "btn-ghost"} ${chipBase}`}
             onClick={() => onCategory(o.value)}>
             {o.label}
           </button>
         ))}
       </div>
-      <div className="h-4 w-px bg-slate-200" />
-      <div className="flex gap-1.5">
+      <div className="hidden h-5 w-px bg-slate-200 sm:block" />
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Severity</span>
         {sevOpts.map((o) => (
-          <button key={o.value} type="button"
-            className={`${chipBase} ${severity === o.value ? chipActive : chipInactive}`}
+          <button key={o.value} type="button" aria-pressed={severity === o.value}
+            className={`${severity === o.value ? "btn-primary" : "btn-ghost"} ${chipBase}`}
             onClick={() => onSeverity(o.value)}>
             {o.label}
           </button>
@@ -1022,7 +1017,7 @@ export function FleetHealthPage() {
   }
 
   return (
-    <div className="control-tower space-y-6">
+    <div className="control-tower space-y-4">
       {/* Drawers */}
       <VehicleDrawer
         vehicleId={vehicleDrawerId}
@@ -1036,7 +1031,7 @@ export function FleetHealthPage() {
         onActionTaken={() => qc.invalidateQueries({ queryKey: ["fleet-health"] })}
       />
 
-      <div className="space-y-6">
+      <div className="space-y-4">
         {/* Page header */}
         <PageHeader
           eyebrow="Operations"
@@ -1122,7 +1117,7 @@ export function FleetHealthPage() {
             <p className="text-sm text-red-600">Failed to load risk data. Check backend connectivity.</p>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
+          <div className="panel p-8 text-center">
             {hasCompleteEvidence
               ? <CheckCircle className="h-10 w-10 text-emerald-400 mx-auto mb-3" />
               : <AlertTriangle className="h-10 w-10 text-amber-400 mx-auto mb-3" />}

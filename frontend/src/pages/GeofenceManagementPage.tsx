@@ -3,9 +3,11 @@ import { chart } from "@/styles/tokens";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowRight, Download, MapPin, Pencil, Pentagon, Plus, Trash2, X } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, PageHeader } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import type { AnyRecord } from "@/types";
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -171,15 +173,29 @@ function GeofenceMap({
 
   return (
     <div className="relative">
-      <div ref={containerRef} className="w-full rounded-xl overflow-hidden" style={{ height: 440 }} />
+      <div
+        ref={containerRef}
+        className="w-full overflow-hidden rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-400 focus:ring-offset-2"
+        style={{ height: 440 }}
+        tabIndex={0}
+        role="region"
+        aria-label={drawingPolygon ? `Geofence map. Pan with arrow keys and press Enter or Space to add polygon vertex ${polygonPoints.length + 1}.` : placing ? "Geofence map. Pan with arrow keys and press Enter or Space to place the zone center." : "Geofence map showing configured zones."}
+        onKeyDown={(event) => {
+          if ((!placing && !drawingPolygon) || !mapRef.current || !["Enter", " "].includes(event.key)) return;
+          event.preventDefault();
+          const center = mapRef.current.getCenter();
+          if (drawingPolygon) onAddVertex(center.lat, center.lng);
+          else onMapClick(center.lat, center.lng);
+        }}
+      />
       {placing && !drawingPolygon && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-violet-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow pointer-events-none z-10">
-          Click on the map to place geofence center
+        <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow" aria-live="polite">
+          Click, or pan with arrow keys and press Enter, to place the zone center
         </div>
       )}
       {drawingPolygon && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-violet-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow pointer-events-none z-10">
-          Click on the map to add polygon vertices ({polygonPoints.length})
+        <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow" aria-live="polite">
+          Click, or pan and press Enter, to add polygon vertices ({polygonPoints.length})
         </div>
       )}
     </div>
@@ -208,6 +224,7 @@ function GeofenceModal({
   const [lng, setLng] = useState(String(initial?.centerLng ?? initial?.center_lng ?? ""));
   const [radius, setRadius] = useState(String(initial?.radiusMeters ?? initial?.radius_meters ?? "500"));
   const [status, setStatus] = useState(String(initial?.status ?? "Active"));
+  const dialogRef = useDialogFocus<HTMLFormElement>(true, onClose);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -220,41 +237,41 @@ function GeofenceModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
-      <form className="panel w-full max-w-md mx-4 flex flex-col gap-4" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit}>
+      <form ref={dialogRef} className="panel mx-4 flex w-full max-w-md flex-col gap-4" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit} role="dialog" aria-modal="true" aria-labelledby="geofence-editor-title">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-slate-900">{isEdit ? "Edit Geofence" : isPolygon ? "Create Polygon Geofence" : "Create Geofence"}</h3>
-          <button type="button" className="text-slate-400 hover:text-slate-600" onClick={onClose} aria-label="Close geofence dialog">✕</button>
+          <h3 id="geofence-editor-title" className="text-base font-semibold text-slate-900">{isEdit ? "Edit Geofence" : isPolygon ? "Create Polygon Geofence" : "Create Geofence"}</h3>
+          <button type="button" className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" onClick={onClose} aria-label="Close geofence dialog"><X className="h-4 w-4" /></button>
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-700">Name <span className="text-red-500">*</span></label>
-          <input required className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={name} onChange={(e) => setName(e.target.value)} placeholder="Zone name" />
+          <label htmlFor="geofence-name" className="text-xs font-medium text-slate-700">Name <span className="text-red-500">*</span></label>
+          <input id="geofence-name" autoFocus required className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100" value={name} onChange={(e) => setName(e.target.value)} placeholder="Zone name" />
         </div>
         {isPolygon ? (
-          <div className="rounded-lg bg-violet-50 border border-violet-200 px-3 py-2 text-xs text-violet-700">
+          <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
             Polygon zone with {polygonPoints!.length} vertices. Boundary is defined by the points you drew on the map.
           </div>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-slate-700">Center Latitude</label>
-                <input className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={lat} onChange={(e) => setLat(e.target.value)} placeholder="38.75" />
+                <label htmlFor="geofence-latitude" className="text-xs font-medium text-slate-700">Center Latitude</label>
+                <input id="geofence-latitude" required type="number" min={-90} max={90} step="any" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100" value={lat} onChange={(e) => setLat(e.target.value)} placeholder="38.75" />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-slate-700">Center Longitude</label>
-                <input className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={lng} onChange={(e) => setLng(e.target.value)} placeholder="-77.47" />
+                <label htmlFor="geofence-longitude" className="text-xs font-medium text-slate-700">Center Longitude</label>
+                <input id="geofence-longitude" required type="number" min={-180} max={180} step="any" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100" value={lng} onChange={(e) => setLng(e.target.value)} placeholder="-77.47" />
               </div>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-slate-700">Radius (meters)</label>
-              <input type="number" min={50} max={50000} className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={radius} onChange={(e) => setRadius(e.target.value)} />
+              <label htmlFor="geofence-radius" className="text-xs font-medium text-slate-700">Radius (meters)</label>
+              <input id="geofence-radius" required type="number" min={50} max={50000} className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100" value={radius} onChange={(e) => setRadius(e.target.value)} />
             </div>
           </>
         )}
         {(isEdit || isPolygon) && (
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-slate-700">Status</label>
-            <select className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-400" value={status} onChange={(e) => setStatus(e.target.value)}>
+            <label htmlFor="geofence-status" className="text-xs font-medium text-slate-700">Status</label>
+            <select id="geofence-status" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100" value={status} onChange={(e) => setStatus(e.target.value)}>
               <option>Active</option>
               <option>Inactive</option>
             </select>
@@ -262,7 +279,7 @@ function GeofenceModal({
         )}
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
-          <button type="submit" disabled={pending || !name} className="bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+          <button type="submit" disabled={pending || !name} className="btn-primary disabled:opacity-50">
             {pending ? "Saving…" : isEdit ? "Save Changes" : "Create Zone"}
           </button>
         </div>
@@ -276,18 +293,19 @@ function GeofenceModal({
 function EventsPanel({ zone, onClose }: { zone: AnyRecord; onClose: () => void }) {
   const eventsQ = useQuery({ queryKey: ["geofences", "events", zone.id], queryFn: () => geoApi.events(Number(zone.id)) });
   const events = (eventsQ.data ?? []) as AnyRecord[];
+  const dialogRef = useDialogFocus<HTMLDivElement>(true, onClose);
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end" onClick={onClose}>
-      <div className="bg-slate-950 w-full max-w-sm h-full flex flex-col overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} className="flex h-full w-full max-w-sm flex-col overflow-y-auto bg-slate-950 shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="geofence-events-title">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
-          <span className="text-sm font-semibold text-white">{String(zone.name)} — Events</span>
-          <button type="button" className="text-slate-400 hover:text-white" onClick={onClose} aria-label="Close">✕</button>
+          <h2 id="geofence-events-title" className="text-sm font-semibold text-white">{String(zone.name)} — Events</h2>
+          <button type="button" className="rounded-lg p-1 text-slate-400 transition hover:bg-white/10 hover:text-white" onClick={onClose} aria-label="Close"><X className="h-4 w-4" /></button>
         </div>
         <div className="px-5 py-3 flex gap-4 border-b border-white/6">
           <div>
             <p className="text-xs text-slate-400">Radius</p>
-            <p className="text-sm font-semibold text-white">{Number(zone.radiusMeters ?? zone.radius_meters ?? 0).toLocaleString()} m</p>
+            <p className="text-sm font-semibold text-white">{zone.radiusMeters != null || zone.radius_meters != null ? `${Number(zone.radiusMeters ?? zone.radius_meters).toLocaleString()} m` : "—"}</p>
           </div>
           <div>
             <p className="text-xs text-slate-400">Total Events</p>
@@ -299,7 +317,11 @@ function EventsPanel({ zone, onClose }: { zone: AnyRecord; onClose: () => void }
           </div>
         </div>
         <div className="flex flex-col divide-y divide-white/6 px-5">
-          {events.length === 0 ? (
+          {eventsQ.isLoading ? (
+            <div className="py-6"><LoadingState /></div>
+          ) : eventsQ.isError ? (
+            <div className="py-6"><ErrorState message={(eventsQ.error as Error)?.message ?? "Unable to load geofence events."} onRetry={() => void eventsQ.refetch()} /></div>
+          ) : events.length === 0 ? (
             <div className="py-6">
               <EmptyState title="No geofence events yet" subtitle="Geofence activity will appear here once the backend has events for this zone." />
             </div>
@@ -397,7 +419,7 @@ export function GeofenceManagementPage() {
   }
 
   const zones = (listQ.data ?? []) as AnyRecord[];
-  const s = (summaryQ.data ?? {}) as AnyRecord;
+  const s = summaryQ.data as AnyRecord | undefined;
 
   const filtered = zones.filter((z) => {
     if (statusFilter !== "All" && z.status !== statusFilter) return false;
@@ -411,72 +433,90 @@ export function GeofenceManagementPage() {
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="control-tower flex flex-col gap-4">
       {toast && (
         <div className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">{toast}</div>
       )}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Geofence Management</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Define zones, monitor entry/exit events and set boundary alerts for your fleet</p>
-        </div>
-        <div className="flex gap-2">
-          <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("geofences", zones)}>Export CSV</button>
-          {canEdit && (
-            <>
-              <button
-                type="button"
-                className={`text-sm px-4 py-2 rounded-lg font-medium border transition-colors ${placing ? "bg-violet-100 border-violet-300 text-violet-700" : "bg-violet-600 text-white border-violet-600 hover:bg-violet-700"}`}
-                onClick={() => { setDrawingPolygon(false); setPolygonPoints([]); setPlacing(!placing); }}
-              >
-                {placing ? "Cancel placement" : "+ Create Zone"}
-              </button>
-              <button
-                type="button"
-                className={`text-sm px-4 py-2 rounded-lg font-medium border transition-colors ${drawingPolygon ? "bg-violet-100 border-violet-300 text-violet-700" : "bg-white border-violet-300 text-violet-700 hover:bg-violet-50"}`}
-                onClick={() => (drawingPolygon ? cancelPolygonDraw() : startPolygonDraw())}
-              >
-                {drawingPolygon ? "Cancel drawing" : "⬡ Draw Polygon"}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Operations"
+        title="Geofence Management"
+        description="Define fleet zones, monitor recorded entry and exit events, and configure boundary alerts."
+        actions={
+          <>
+            <button type="button" className="btn-secondary btn-compact" onClick={() => exportCsv("geofences", zones)}>
+              <Download className="h-4 w-4" /> Export CSV
+            </button>
+            {canEdit && (
+              <>
+                <button
+                  type="button"
+                  className="btn-primary btn-compact"
+                  onClick={() => { setDrawingPolygon(false); setPolygonPoints([]); setPlacing(false); setModalData({}); }}
+                >
+                  <Plus className="h-4 w-4" /> Create zone
+                </button>
+                <button
+                  type="button"
+                  className={`${drawingPolygon ? "btn-secondary" : "btn-ghost"} btn-compact`}
+                  onClick={() => (drawingPolygon ? cancelPolygonDraw() : startPolygonDraw())}
+                >
+                  <Pentagon className="h-4 w-4" /> {drawingPolygon ? "Cancel drawing" : "Draw polygon"}
+                </button>
+              </>
+            )}
+          </>
+        }
+      />
 
       {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
+      <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5" aria-label="Geofence summary">
         {[
-          { label: "Total Zones",       val: s.total ?? zones.length },
-          { label: "Active",            val: s.activeCount ?? zones.filter((z) => z.status === "Active").length, accent: "text-violet-600" },
-          { label: "Entry Events Today",val: s.entryEventsToday ?? 0, accent: "text-teal-600" },
-          { label: "Exit Events Today", val: s.exitEventsToday ?? 0, accent: "text-amber-600" },
-          { label: "Vehicles Triggered",val: s.vehiclesTriggered ?? 0, accent: "text-slate-700" },
+          { label: "Total Zones",       val: s?.total ?? zones.length },
+          { label: "Active",            val: s?.activeCount ?? zones.filter((z) => z.status === "Active").length, accent: "text-teal-600" },
+          { label: "Entry Events Today",val: summaryQ.isSuccess && s?.entryEventsToday != null ? s.entryEventsToday : "—", accent: "text-teal-600" },
+          { label: "Exit Events Today", val: summaryQ.isSuccess && s?.exitEventsToday != null ? s.exitEventsToday : "—", accent: "text-amber-600" },
+          { label: "Vehicles Triggered",val: summaryQ.isSuccess && s?.vehiclesTriggered != null ? s.vehiclesTriggered : "—", accent: "text-slate-700" },
         ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-30">
-            <span className={`text-2xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
+          <div key={label} className="panel flex min-w-0 items-center justify-between gap-3 p-3">
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{label}</span>
+            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
           </div>
         ))}
-      </div>
+      </section>
+      {summaryQ.isLoading ? (
+        <p className="text-xs text-slate-500" role="status">Loading recorded geofence activity…</p>
+      ) : summaryQ.isError ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="alert">
+          <span>Recorded geofence activity is unavailable. Zone configuration remains visible.</span>
+          <button type="button" className="btn-ghost btn-compact" onClick={() => void summaryQ.refetch()}>Retry activity summary</button>
+        </div>
+      ) : null}
 
       {/* Map + list split */}
-      <div className="grid gap-4 xl:grid-cols-[1fr_380px]">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* Map */}
         <div className="panel p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-slate-900">Zone Map</h2>
-            <span className="text-xs text-slate-400">{zones.filter((z) => z.status === "Active").length} active zones · click a zone to see events</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">{zones.filter((z) => z.status === "Active").length} active zones</span>
+              {canEdit && (
+                <button type="button" className={`${placing ? "btn-secondary" : "btn-ghost"} btn-compact`} onClick={() => { setDrawingPolygon(false); setPolygonPoints([]); setPlacing(!placing); }}>
+                  <MapPin className="h-3.5 w-3.5" /> {placing ? "Cancel placement" : "Place on map"}
+                </button>
+              )}
+            </div>
           </div>
           {drawingPolygon && (
-            <div className="flex items-center flex-wrap gap-2 mb-3 rounded-lg bg-violet-50 border border-violet-200 px-3 py-2">
-              <span className="text-xs font-semibold text-violet-700">Drawing polygon · {polygonPoints.length} {polygonPoints.length === 1 ? "point" : "points"}</span>
-              <span className="text-xs text-violet-600">Click the map to add vertices (min 3)</span>
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
+              <span className="text-xs font-semibold text-sky-800">Drawing polygon · {polygonPoints.length} {polygonPoints.length === 1 ? "point" : "points"}</span>
+              <span className="text-xs text-sky-700">Click the map, or pan with arrow keys and press Enter, to add at least three vertices</span>
               <div className="ml-auto flex gap-1.5">
                 <button
                   type="button"
                   disabled={polygonPoints.length === 0}
-                  className="text-xs px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                  className="btn-ghost btn-compact disabled:opacity-40"
                   onClick={undoLastVertex}
                 >
                   Undo last point
@@ -484,7 +524,7 @@ export function GeofenceManagementPage() {
                 <button
                   type="button"
                   disabled={polygonPoints.length === 0}
-                  className="text-xs px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                  className="btn-ghost btn-compact disabled:opacity-40"
                   onClick={() => setPolygonPoints([])}
                 >
                   Clear
@@ -492,7 +532,7 @@ export function GeofenceManagementPage() {
                 <button
                   type="button"
                   disabled={polygonPoints.length < 3}
-                  className="text-xs px-2.5 py-1 rounded-lg font-medium bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"
+                  className="btn-primary btn-compact disabled:opacity-40"
                   onClick={finishPolygon}
                 >
                   Finish polygon
@@ -514,63 +554,65 @@ export function GeofenceManagementPage() {
 
         {/* Zone list */}
         <div className="flex flex-col gap-3">
-          <div className="panel flex gap-2 items-center">
-            <div className="flex gap-1">
+          <div className="panel flex items-center gap-2 p-2">
+            <div className="flex gap-1" role="group" aria-label="Geofence status">
               {(["All", "Active", "Inactive"] as const).map((f) => (
-                <button key={f} type="button" onClick={() => setStatusFilter(f)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${statusFilter === f ? "bg-violet-50 border-violet-300 text-violet-700" : "bg-slate-50 border-slate-200 text-slate-600"}`}
+                <button
+                  key={f}
+                  type="button"
+                  aria-pressed={statusFilter === f}
+                  onClick={() => setStatusFilter(f)}
+                  className={`${statusFilter === f ? "btn-primary" : "btn-ghost"} btn-compact`}
                 >{f}</button>
               ))}
             </div>
             <input
               type="search" placeholder="Search zones…" value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="ml-auto border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400 w-32"
+              className="ml-auto w-36 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-100"
             />
           </div>
 
           {filtered.length === 0 ? (
             <EmptyState title="No zones found" />
           ) : (
-            <div className="flex flex-col gap-2 overflow-y-auto max-h-[420px]">
+            <div className="flex max-h-[520px] flex-col gap-2 overflow-y-auto">
               {filtered.map((zone) => {
                 const isActive = zone.status === "Active";
                 const isSel = selectedZone && Number(selectedZone.id) === Number(zone.id);
                 const zonePoly = parsePolygon(zone);
                 return (
-                  <div
-                    key={String(zone.id)}
-                    className={`panel p-3 cursor-pointer transition-colors ${isSel ? "border-violet-400 bg-violet-50" : "hover:bg-slate-50"}`}
-                    onClick={() => setSelectedZone(isSel ? null : zone)}
-                  >
+                  <div key={String(zone.id)} className={`panel p-3 transition-colors ${isSel ? "border-teal-300 bg-teal-50/60" : "hover:bg-slate-50"}`}>
                     <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
+                      <button type="button" className="min-w-0 flex-1 rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-teal-400 focus:ring-offset-2" aria-pressed={Boolean(isSel)} onClick={() => setSelectedZone(isSel ? null : zone)}>
                         <p className="font-medium text-slate-900 text-sm truncate">{String(zone.name)}</p>
                         <p className="text-xs text-slate-500 mt-0.5">
                           {zonePoly
                             ? `${zonePoly.length}-vertex polygon`
-                            : `${Number(zone.radiusMeters ?? zone.radius_meters ?? 0).toLocaleString()} m radius`} · {String(zone.eventsToday ?? 0)} events today
+                            : zone.radiusMeters != null || zone.radius_meters != null
+                              ? `${Number(zone.radiusMeters ?? zone.radius_meters).toLocaleString()} m radius`
+                              : "Radius unavailable"} · {zone.eventsToday == null ? "Event count unavailable" : `${String(zone.eventsToday)} events today`}
                         </p>
-                      </div>
+                      </button>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${isActive ? "bg-teal-50 border-teal-200 text-teal-700" : "bg-slate-100 border-slate-200 text-slate-500"}`}>
                           {String(zone.status)}
                         </span>
                         {canEdit && (
                           <>
-                            <button type="button" className="text-xs text-slate-400 hover:text-violet-600 px-1" aria-label={`Edit geofence ${String(zone.name ?? zone.id)}`} onClick={(e) => { e.stopPropagation(); setModalData(zone); }}>✎</button>
-                            <button type="button" className="text-xs text-slate-400 hover:text-red-500 px-1" aria-label={`Delete geofence ${String(zone.name ?? zone.id)}`} onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${String(zone.name)}"?`)) deleteMutation.mutate(Number(zone.id)); }}>✕</button>
+                            <button type="button" className="rounded-md p-1 text-slate-400 transition hover:bg-white hover:text-teal-700" aria-label={`Edit geofence ${String(zone.name ?? zone.id)}`} onClick={(e) => { e.stopPropagation(); setModalData(zone); }}><Pencil className="h-3.5 w-3.5" /></button>
+                            <button type="button" className="rounded-md p-1 text-slate-400 transition hover:bg-white hover:text-red-600" aria-label={`Delete geofence ${String(zone.name ?? zone.id)}`} onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${String(zone.name)}"?`)) deleteMutation.mutate(Number(zone.id)); }}><Trash2 className="h-3.5 w-3.5" /></button>
                           </>
                         )}
                       </div>
                     </div>
                     <button
                       type="button"
-                      className="mt-2 text-xs text-violet-600 hover:text-violet-800 font-medium"
+                      className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-900"
                       aria-label={`View events for geofence ${String(zone.name ?? zone.id)}`}
                       onClick={(e) => { e.stopPropagation(); setShowEvents(zone); }}
                     >
-                      View events →
+                      View events <ArrowRight className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 );

@@ -504,7 +504,7 @@ export function LiveMapPage() {
     : Math.round((positionFreshness.recent / positionFreshness.located) * 1000) / 10;
 
   return (
-    <div className="control-tower live-map-workbench flex h-full min-w-0 max-w-full flex-col gap-4 overflow-x-hidden overflow-y-auto">
+    <div className="control-tower flex h-full min-w-0 max-w-full flex-col gap-4 overflow-x-hidden overflow-y-auto">
       <PageHeader
         eyebrow="Operations"
         title="Fleet Position Map"
@@ -541,7 +541,7 @@ export function LiveMapPage() {
 
       <div className="live-map-primary order-2 grid min-w-0 items-stretch gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
         {/* Hero map */}
-        <section className="panel live-map-stage flex min-w-0 flex-col overflow-hidden p-3 sm:p-4">
+        <section className="panel flex min-w-0 flex-col overflow-hidden p-3 sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
             <h2 className="section-title">Fleet Position Map</h2>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-400">
@@ -664,7 +664,7 @@ export function LiveMapPage() {
             </span>
           </div>
 
-          <div className="map-surface live-map-canvas relative mt-2 min-h-[400px] flex-1 overflow-hidden sm:min-h-[500px] xl:min-h-[560px]">
+          <div className="map-surface relative mt-2 min-h-[400px] flex-1 overflow-hidden rounded-xl border border-slate-200 sm:min-h-[460px] xl:min-h-[520px]">
             <LiveMap
               entities={mapEntities}
               geofences={geofences}
@@ -716,7 +716,7 @@ export function LiveMapPage() {
         </section>
 
         {/* Unified right rail: roster (scrolls) over a pinned alerts strip. */}
-        <aside className="panel live-map-tactile-card flex min-w-0 max-h-[700px] flex-col overflow-hidden p-0">
+        <aside className="panel flex min-w-0 max-h-[700px] flex-col overflow-hidden p-0">
           <div className="border-b border-slate-100 px-4 pb-3 pt-4">
             <div className="flex items-center justify-between">
               <h2 className="section-title">Geospatial Health</h2>
@@ -1051,7 +1051,7 @@ function StatusBoardCard({ label, count, tone, meaning, active, onClick }: { lab
       onClick={onClick}
       aria-pressed={active ? "true" : "false"}
       aria-label={`${label}: ${count}. ${meaning}`}
-      className={`live-map-status-card flex min-h-11 items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition ${
+      className={`flex min-h-11 items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left shadow-sm transition ${
         active ? `${t.activeBorder} ${t.activeBg} shadow-sm` : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
       }`}
     >

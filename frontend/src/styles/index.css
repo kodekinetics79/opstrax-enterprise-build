@@ -1678,23 +1678,23 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
 
 .control-status-strip {
   display: grid;
-  gap: 18px;
+  gap: 12px;
   grid-template-columns: minmax(0, 1fr);
   align-items: center;
   border: 1px solid #bfdbfe;
   border-radius: 16px;
   background: linear-gradient(135deg, rgba(239,246,255,.98), rgba(240,253,250,.92) 52%, rgba(248,250,252,.96));
-  padding: 18px;
+  padding: 14px;
   box-shadow: 0 12px 36px rgba(15,23,42,.06);
 }
 
 .control-status-strip h2 {
-  margin-top: 6px;
+  margin-top: 4px;
   max-width: 820px;
   color: #0f172a;
-  font-size: 1.05rem;
+  font-size: .95rem;
   font-weight: 700;
-  line-height: 1.5;
+  line-height: 1.35;
 }
 
 .control-status-grid {
@@ -1707,16 +1707,16 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
   border: 1px solid #dbe5f0;
   border-radius: 12px;
   background: rgba(255,255,255,.86);
-  padding: 10px 12px;
+  padding: 8px 10px;
   color: #64748b;
-  font-size: .78rem;
+  font-size: .72rem;
   font-weight: 700;
 }
 
 .control-status-grid b {
   display: block;
   color: #0f172a;
-  font-size: 1.05rem;
+  font-size: .95rem;
 }
 
 .control-tab {
