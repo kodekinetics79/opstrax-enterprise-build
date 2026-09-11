@@ -93,21 +93,22 @@ export function ControlTowerPage() {
   // Live positions use the ticketed .NET telemetry stream above.
   const events = (data.events as AnyRecord[]) || [];
   const tabs = ["Dispatch", "Active Trips", ...((canViewDeviceEvidence || canViewCameraEvidence) ? ["Diagnostics"] : []), ...(canViewCameraEvidence ? ["Verified Camera Evidence"] : [])];
+  const hasCurrentTelemetryEvidence = kpis.onlineDevices != null && Number(kpis.onlineDevices) > 0 && positionFreshness.recent > 0;
 
   return (
-    <div className="control-tower flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="control-tower flex h-full flex-col gap-4 overflow-y-auto">
       <PageHeader
         eyebrow="Control Tower"
         title="Fleet Command Center"
         description="Last-known vehicle positions with fix freshness, telemetry alerts, trip compliance, and dispatch exceptions. The operational snapshot is refreshed every 15 seconds."
         actions={<><button className="btn-primary" onClick={() => action.mutate("eta")}><Send className="h-4 w-4" /> Send ETA Update</button><button className="btn-ghost" onClick={() => action.mutate("dispatch")}><Route className="h-4 w-4" /> Dispatch Review</button><button className="btn-ghost" onClick={() => action.mutate("maintenance")}><Wrench className="h-4 w-4" /> Maintenance Review</button></>}
       />
-      <ControlStatusStrip kpis={kpis} generatedAt={data.generatedAt} alertCount={alertCount} actionCount={actionQueue.length} alertsAvailable={alerts.isSuccess} />
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <ControlStatusStrip kpis={kpis} generatedAt={data.generatedAt} alertCount={alertCount} actionCount={actionQueue.length} alertsAvailable={alerts.isSuccess} telemetryEvidenceAvailable={hasCurrentTelemetryEvidence} />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <KpiCard label="Tracked Vehicles" value={String(kpis.trackedEntities ?? entities.length)} icon={<RadioTower />} status="Active" />
         {canViewDeviceEvidence && <KpiCard label="Online Device Evidence" value={kpis.onlineDevices == null ? "—" : String(kpis.onlineDevices)} icon={<Satellite />} status={kpis.onlineDevices == null ? "Unavailable" : "Reported"} />}
         <KpiCard label="Open Telemetry Alerts" value={alerts.isSuccess ? String(alertCount) : "—"} icon={<Bell />} status={!alerts.isSuccess ? "Unavailable" : alertCount > 0 ? "Review" : "Reported"} />
-        <KpiCard label="Telemetry Quality" value={kpis.telemetryQuality == null ? "—" : String(kpis.telemetryQuality)} icon={<Gauge />} status={kpis.telemetryQuality == null ? "Unavailable" : "Reported"} />
+        <KpiCard label="Current Telemetry Quality" value={!hasCurrentTelemetryEvidence || kpis.telemetryQuality == null ? "—" : String(kpis.telemetryQuality)} icon={<Gauge />} status={!hasCurrentTelemetryEvidence ? "No live evidence" : kpis.telemetryQuality == null ? "Unavailable" : "Reported"} />
         <KpiCard label="High Risk Units" value={kpis.highRiskUnits == null ? "—" : String(kpis.highRiskUnits)} icon={<ShieldAlert />} status={kpis.highRiskUnits == null ? "Unavailable" : Number(kpis.highRiskUnits) > 0 ? "Review" : "Reported"} />
         <KpiCard label="Speed Alerts" value={kpis.speedAlerts == null ? "—" : String(kpis.speedAlerts)} icon={<CircleDot />} status={kpis.speedAlerts == null ? "Unavailable" : Number(kpis.speedAlerts) > 0 ? "Warning" : "Reported"} />
       </div>
@@ -126,13 +127,13 @@ export function ControlTowerPage() {
             </div>
             <div className="flex flex-wrap gap-2">{["All","Speeding",...(canViewDeviceEvidence ? ["Device attention","Device evidence unavailable"] : []),...(canViewCameraEvidence ? ["Camera attention"] : []),"Fleet risk","Delayed"].map((filter) => <button type="button" key={filter} className={filter === activeFilter ? "btn-primary" : "btn-ghost"} onClick={() => setActiveFilter(filter)}>{filter}</button>)}</div>
           </div>
-          <div className="map-surface mt-4 h-[660px]">
+          <div className="map-surface mt-3 h-[520px]">
             <LiveMap entities={entities} geofences={geofences} onSelect={setSelected} />
           </div>
         </section>
 
         <aside className="space-y-6">
-          <Panel title="Event Feed">
+          <Panel title="Recorded Event Feed">
             <div className="space-y-3">{events.slice(0, 10).map((event, index) => <EventRow key={String(event.id || index)} event={event} />)}</div>
           </Panel>
           <Panel title={`Needs Attention${actionQueue.length > 0 ? ` (${actionQueue.length})` : ""}`}>
@@ -216,12 +217,13 @@ function VerifiedCameraEvidence({ rows }: { rows: AnyRecord[] }) {
   );
 }
 
-function ControlStatusStrip({ kpis, generatedAt, alertCount, actionCount, alertsAvailable }: {
+function ControlStatusStrip({ kpis, generatedAt, alertCount, actionCount, alertsAvailable, telemetryEvidenceAvailable }: {
   kpis: AnyRecord;
   generatedAt?: unknown;
   alertCount: number;
   actionCount: number;
   alertsAvailable: boolean;
+  telemetryEvidenceAvailable: boolean;
 }) {
   const lastSync = generatedAt
     ? new Date(String(generatedAt)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
@@ -244,7 +246,7 @@ function ControlStatusStrip({ kpis, generatedAt, alertCount, actionCount, alerts
         <h2 className="mt-1.5">{details}</h2>
       </div>
       <div className="control-status-grid">
-        <span><b>{String(kpis.telemetryQuality ?? "—")}</b> Telemetry quality</span>
+        <span><b>{telemetryEvidenceAvailable ? String(kpis.telemetryQuality ?? "—") : "—"}</b> Current telemetry quality</span>
         <span><b>{String(kpis.fleetReadiness ?? "—")}</b> Fleet readiness</span>
         <span><b>{alertsAvailable ? "Available" : "Unavailable"}</b> Open-alert evidence</span>
         <span><b>{lastSync}</b> Last sync</span>
@@ -296,7 +298,14 @@ function TelemetryAlertRow({ alert, onAck, onResolve }: { alert: AnyRecord; onAc
 }
 
 function EventRow({ event }: { event: AnyRecord }) {
-  return <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="flex justify-between gap-3"><p className="text-sm font-semibold text-slate-900">{String(event.title || event.type || event.eventType)}</p><StatusBadge status={event.severity || "Reported"} /></div><p className="mt-1 text-xs text-slate-500">{String(event.eventTime || event.generatedAt || "")}</p></div>;
+  const sourceTitle = String(event.title || event.type || event.eventType || "Operational event");
+  const title = sourceTitle.replace(/^Live\s+/i, "");
+  const recordedAt = event.eventTime || event.generatedAt;
+  const parsed = recordedAt ? new Date(String(recordedAt)) : null;
+  const timestamp = parsed && !Number.isNaN(parsed.getTime())
+    ? parsed.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : "Time unavailable";
+  return <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="flex justify-between gap-3"><p className="text-sm font-semibold text-slate-900">{title}</p><StatusBadge status={event.severity || "Recorded"} /></div><p className="mt-1 text-xs text-slate-500">Recorded {timestamp}</p></div>;
 }
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
