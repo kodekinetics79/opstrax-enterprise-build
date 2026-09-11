@@ -5,6 +5,13 @@ import { createMobileApiClient } from "@/api/client";
 import { SECURE_SESSION_KEY } from "@/config";
 import type { LoginResult, MfaChallenge, MobileSession } from "@/types";
 import { classifyRole, type RoleModel, ROLE_MODELS } from "@/data/roleModel";
+import {
+  configureNotificationPresentation,
+  registerNativePush,
+  revokeStoredNativePush,
+  watchNativePushTokenChanges,
+  watchNotificationOpens,
+} from "@/notifications/push";
 
 type SessionContextValue = {
   ready: boolean;
@@ -133,23 +140,44 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const cancelMfa = useCallback(() => setMfaChallenge(null), []);
 
-  const logout = useCallback(async () => {
-    await SecureStore.deleteItemAsync(SECURE_SESSION_KEY);
-    setSessionState(null);
-    setMfaChallenge(null);
-    try {
-      await api.logout();
-    } catch {
-      // Local logout must still clear the session even if the server is unavailable.
-    } finally {
-      sessionRef.current = null;
-    }
-  }, [api]);
-
   const refresh = useCallback(async () => {
     const next = await api.refresh();
     const normalized = normalizeSession(next);
     if (normalized) setSession(normalized);
+  }, [api]);
+
+  useEffect(() => {
+    if (!session?.token) return;
+    configureNotificationPresentation();
+    void registerNativePush(api, { requestPermission: false });
+
+    const tokenSubscription = watchNativePushTokenChanges(api);
+    const responseSubscription = watchNotificationOpens(() => {
+      void refresh().catch(() => undefined);
+      void api.request.get<{ count?: number }>("/api/notifications/unread-count").catch(() => undefined);
+    });
+
+    return () => {
+      tokenSubscription?.remove();
+      responseSubscription?.remove();
+    };
+  }, [api, refresh, session?.token]);
+
+  const logout = useCallback(async () => {
+    // Start remote revocation while the bearer session is still available. Neither
+    // a push-provider outage nor an auth-service outage is allowed to trap the user
+    // in a local session.
+    try {
+      await Promise.allSettled([
+        revokeStoredNativePush(api),
+        api.logout(),
+      ]);
+    } finally {
+      await SecureStore.deleteItemAsync(SECURE_SESSION_KEY);
+      sessionRef.current = null;
+      setSessionState(null);
+      setMfaChallenge(null);
+    }
   }, [api]);
 
   const normalizedRole = classifyRole(session?.role);
