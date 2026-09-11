@@ -84,4 +84,25 @@ public sealed class DemoCertificationTruthContractTests
         Assert.Contains("2026_09_09_stage134_legacy_demo_eld_reconciliation", runner, StringComparison.Ordinal);
         Assert.Contains("Stage134 original OPX-DEMO ELD truth cleanup is incomplete", runner, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Stage135RemovesOnlyExactDemoOperationalContradictions()
+    {
+        var migration = File.ReadAllText(Path.Combine(Root, "database", "migrations", "2026_09_10_stage135_demo_operational_truth_reconciliation.sql"));
+        var runner = File.ReadAllText(Path.Combine(Root, "tools", "apply-neon-predeploy-migrations.sh"));
+        var batch2 = File.ReadAllText(Path.Combine(Root, "backend-dotnet", "Services", "Batch2SchemaService.cs"));
+        var batch7 = File.ReadAllText(Path.Combine(Root, "backend-dotnet", "Services", "Batch7SchemaService.cs"));
+
+        Assert.Contains("LOWER(c.name) LIKE '%demo%' OR LOWER(c.company_code) LIKE '%demo%'", migration, StringComparison.Ordinal);
+        Assert.Contains("LOWER(COALESCE(pod.proof_type,'')) = 'placeholder'", migration, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(pod.notes,'') = 'Batch 2 proof placeholder.'", migration, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(j.job_number,j.job_code) = 'JOB-1005'", migration, StringComparison.Ordinal);
+        Assert.Contains("j.deleted_at IS NULL", migration, StringComparison.Ordinal);
+        Assert.Contains("2026_09_10_stage135_demo_operational_truth_reconciliation", migration, StringComparison.Ordinal);
+        Assert.Contains("2026_09_10_stage135_demo_operational_truth_reconciliation", runner, StringComparison.Ordinal);
+        Assert.Contains("Stage135 demo POD placeholder cleanup is incomplete", runner, StringComparison.Ordinal);
+        Assert.Contains("Stage135 contradictory demo job audit cleanup is incomplete", runner, StringComparison.Ordinal);
+        Assert.DoesNotContain("INSERT INTO proof_of_delivery", batch2, StringComparison.Ordinal);
+        Assert.DoesNotContain("'job.deleted','Job',5", batch7, StringComparison.Ordinal);
+    }
 }

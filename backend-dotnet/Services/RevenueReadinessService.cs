@@ -1660,7 +1660,8 @@ public sealed class RevenueReadinessService(
         return n == 1;
     }
 
-    // A job "has POD" if EITHER store shows it: proof_of_delivery.status='Captured' (ops/job path)
+    // A job "has POD" if EITHER store shows it: a non-placeholder
+    // proof_of_delivery.status='Captured' (ops/job path)
     // OR dispatch_proofs.proof_type='delivery' (driver/dispatch path). Neither alone is authoritative
     // because the two capture surfaces write different tables; jobs.proof_status is not trustworthy
     // (driver PODs never set it). Both sides are double-scoped by company_id.
@@ -1669,7 +1670,11 @@ public sealed class RevenueReadinessService(
         var n = await db.ScalarLongAsync(
             @"SELECT CASE WHEN
                 EXISTS (SELECT 1 FROM proof_of_delivery
-                        WHERE company_id=@cid AND job_id=@jid AND status='Captured')
+                        WHERE company_id=@cid AND job_id=@jid AND status='Captured'
+                          AND NOT (
+                            LOWER(COALESCE(proof_type,''))='placeholder'
+                            OR COALESCE(notes,'')='Batch 2 proof placeholder.'
+                          ))
                 OR EXISTS (SELECT 1 FROM dispatch_proofs dp
                         JOIN dispatch_assignments da ON da.id=dp.assignment_id AND da.company_id=@cid
                         WHERE dp.company_id=@cid AND da.job_id=@jid AND dp.proof_type='delivery')

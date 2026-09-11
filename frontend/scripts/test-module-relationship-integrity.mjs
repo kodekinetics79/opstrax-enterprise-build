@@ -7,6 +7,7 @@ const shell = read("../src/layouts/AppShell.tsx");
 const trips = read("../src/pages/TripsPage.tsx");
 const dispatch = read("../src/pages/DispatchCommandPage.tsx");
 const proof = read("../src/pages/OperationsProofCenterPage.tsx");
+const jobs = read("../src/pages/JobsPage.tsx");
 const dispatchApi = read("../src/services/dispatchApi.ts");
 const leads = read("../src/pages/LeadsPage.tsx");
 const opportunities = read("../src/pages/OpportunitiesPage.tsx");
@@ -30,6 +31,11 @@ assert.match(dispatch, /searchParams\.get\("jobId"\)/, "Dispatch must consume li
 assert.match(proof, /searchParams\.get\("jobId"\)/, "Proof Center must consume linked job context");
 assert.match(dispatchApi, /jobId\?: number/, "The dispatch service must support job filtering");
 assert.match(endpoints, /da\.job_id=@jid/, "The dispatch endpoint must apply the linked job filter");
+assert.match(endpoints, /j\.status job_status/, "Dispatch assignments must expose job state separately");
+assert.match(dispatch, /Current.*History/s, "Dispatch must distinguish the current assignment from history");
+assert.match(dispatch, /Job State/, "Dispatch detail must distinguish job state from assignment state");
+assert.match(jobs, /operations\/proof-center\?jobId=/, "Jobs must link directly to the same Proof Center job context");
+assert.match(endpoints, /Batch 2 proof placeholder\./, "Operational proof reads must explicitly exclude the retired demo placeholder");
 
 assert.match(endpoints, /NpgsqlDbType\.Jsonb, JsonSerializer\.Serialize\(metadata\)/, "Generic commercial modules must persist their allowed detail fields");
 for (const field of ["contactPerson", "estimatedMonthlyLoads", "probability", "expectedCloseDate", "currency", "origin", "destination", "cargo", "quoteAmount", "segment", "channel", "startDate"]) {
