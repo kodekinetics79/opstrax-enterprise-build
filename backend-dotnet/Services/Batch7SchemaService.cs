@@ -618,7 +618,6 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
           (52,1,'admin','vehicle.deleted','Vehicle',4,'Warning','vehicles','delete','{""source"":""api""}'),
           (53,1,'admin','driver.updated','Driver',2,'Info','drivers','update','{""source"":""api""}'),
           (54,1,'admin','driver.status.changed','Driver',3,'Info','drivers','update','{""source"":""api""}'),
-          (55,1,'admin','job.deleted','Job',5,'Warning','jobs','delete','{""source"":""api""}'),
           (56,1,'admin','route.deleted','Route',3,'Warning','route-planning','delete','{""source"":""api""}'),
           (57,1,'admin','dispatch.auto_suggest','Dispatch',1,'Info','dispatch','create','{""source"":""api""}'),
           (58,1,'admin','eta.sent','Job',6,'Info','customer-portal','create','{""source"":""api""}'),

@@ -180,6 +180,9 @@ export function DispatchCommandPage() {
       .reduce((acc, [, v]) => acc + v.length, 0),
     exceptions: (stageMap["Exception"] ?? []).length,
   };
+  const focusedJobNumber = requestedJobId
+    ? assignments.data?.find((row) => String(row.jobId ?? row.job_id ?? "") === requestedJobId)?.jobNumber
+    : null;
 
   return (
     <div className="fleet-console space-y-3">
@@ -237,6 +240,13 @@ export function DispatchCommandPage() {
 
       {/* Tabs */}
       <section className="fc-neumo p-5">
+        {requestedJobId ? (
+          <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+            Focused on {String(focusedJobNumber ?? `job ${requestedJobId}`)}. The current assignment is listed first;
+            terminal rows are retained as history. Job state and assignment state are shown separately because a delayed
+            job can still have an in-transit assignment.
+          </div>
+        ) : null}
         <div className="fc-seg flex flex-wrap items-center gap-1 p-1">
           {TABS.map((tab) => (
             <button
@@ -527,6 +537,20 @@ function AssignmentsTab({
       />
     );
 
+  const terminal = new Set(["cancelled", "delivered", "rejected"]);
+  const currentByJob = new Map<string, string>();
+  for (const row of rows) {
+    const jobKey = String(row["jobId"] ?? row["job_id"] ?? row["jobNumber"] ?? "");
+    const rowId = String(row["id"] ?? "");
+    const status = String(row["assignmentStatus"] ?? "").toLowerCase();
+    if (jobKey && rowId && !terminal.has(status) && !currentByJob.has(jobKey)) currentByJob.set(jobKey, rowId);
+  }
+  for (const row of rows) {
+    const jobKey = String(row["jobId"] ?? row["job_id"] ?? row["jobNumber"] ?? "");
+    const rowId = String(row["id"] ?? "");
+    if (jobKey && rowId && !currentByJob.has(jobKey)) currentByJob.set(jobKey, rowId);
+  }
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
@@ -546,6 +570,8 @@ function AssignmentsTab({
         <tbody className="divide-y divide-slate-100">
           {rows.map((r) => {
             const status     = String(r["assignmentStatus"] ?? "").toLowerCase();
+            const jobKey     = String(r["jobId"] ?? r["job_id"] ?? r["jobNumber"] ?? "");
+            const isCurrent  = currentByJob.get(jobKey) === String(r["id"] ?? "");
             const nextOpts   = nextStatusOptions(r).filter((s) => s !== "cancelled");
             const showCancel = canCancel && ["assigned", "accepted", "exception"].includes(status);
 
@@ -558,7 +584,15 @@ function AssignmentsTab({
                 <td className="px-3 py-2 font-mono text-xs font-semibold">{String(r["jobNumber"] ?? "--")}</td>
                 <td className="px-3 py-2">{String(r["driverName"] ?? "--")}</td>
                 <td className="px-3 py-2">{String(r["vehicleCode"] ?? "--")}</td>
-                <td className="px-3 py-2"><StatusBadge status={r["assignmentStatus"]} /></td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <StatusBadge status={r["assignmentStatus"]} />
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${isCurrent ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                      {isCurrent ? "Current" : "History"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-500">Job: {String(r["jobStatus"] ?? "Unknown")}</p>
+                </td>
                 <td className="px-3 py-2">
                   <SafetyScorePill score={r["driverSafetyScore"]} />
                 </td>
@@ -898,8 +932,11 @@ function AssignmentDrawer({
         <InfoRow label="Customer"   value={assignment["customerName"]} />
         <InfoRow label="Driver"     value={assignment["driverName"]} />
         <InfoRow label="Vehicle"    value={assignment["vehicleCode"]} />
-        <InfoRow label="Status">
+        <InfoRow label="Assignment State">
           <StatusBadge status={isUnassignedJob ? "Unassigned" : assignment["assignmentStatus"]} />
+        </InfoRow>
+        <InfoRow label="Job State">
+          <StatusBadge status={assignment["jobStatus"] ?? "Unknown"} />
         </InfoRow>
         <InfoRow label="Safety Score">
           <SafetyScorePill score={assignment["driverSafetyScore"]} />

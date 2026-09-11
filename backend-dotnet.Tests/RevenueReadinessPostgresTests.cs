@@ -843,6 +843,10 @@ public class RevenueReadinessPostgresTests
     {
         var db = CreateDatabase();
         await EnsureSchemasAsync(db);
+        await new Batch2SchemaService(db).EnsureAsync();
+        await new DispatchSchemaService(
+            db,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DispatchSchemaService>.Instance).EnsureAsync();
         var companyId = await SeedCompanyAsync(db);
         var customerId = await SeedCustomerAsync(db, companyId, "cust-pod");
         var spine = new BusinessSpineService(db);
@@ -876,10 +880,21 @@ public class RevenueReadinessPostgresTests
             Assert.False(blocked.Success);
             Assert.Contains("no proof of delivery", blocked.Message, StringComparison.OrdinalIgnoreCase);
 
-            // Flag ON, POD captured (proof_of_delivery path) -> passes the gate.
+            // Flag ON, a synthetic placeholder marked Captured still cannot unlock billing.
+            var (jobPlaceholder, draftPlaceholder) = await DraftAsync($"POD-PLACEHOLDER-{companyId}");
+            await db.ExecuteAsync(
+                @"INSERT INTO proof_of_delivery (company_id, job_id, receiver_name, proof_type, status, notes)
+                  VALUES (@c, @j, 'Seed Receiver', 'Placeholder', 'Captured', 'Batch 2 proof placeholder.')",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@j", jobPlaceholder); });
+            var placeholderBlocked = await service.IssueInvoiceFromDraftAsync(companyId, draftPlaceholder, $"iss-placeholder-{companyId}");
+            Assert.False(placeholderBlocked.Success);
+            Assert.Contains("no proof of delivery", placeholderBlocked.Message, StringComparison.OrdinalIgnoreCase);
+
+            // Flag ON, a real POD capture (proof_of_delivery path) -> passes the gate.
             var (jobPod, draftPod) = await DraftAsync($"POD-YES-{companyId}");
             await db.ExecuteAsync(
-                "INSERT INTO proof_of_delivery (company_id, job_id, receiver_name, status) VALUES (@c, @j, 'Jane Receiver', 'Captured')",
+                @"INSERT INTO proof_of_delivery (company_id, job_id, receiver_name, proof_type, status)
+                  VALUES (@c, @j, 'Jane Receiver', 'Digital Signature', 'Captured')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@j", jobPod); });
             var allowed = await service.IssueInvoiceFromDraftAsync(companyId, draftPod, $"iss-pod-{companyId}");
             Assert.DoesNotContain("no proof of delivery", allowed.Message, StringComparison.OrdinalIgnoreCase);
@@ -917,12 +932,14 @@ public class RevenueReadinessPostgresTests
     private static async Task EnsureSchemasAsync(Database db)
     {
         await ApplyBaseSchemaAsync(db);
+        await new Batch1SchemaService(db).EnsureAsync();
         await new FoundationSchemaService(db).EnsureAsync();
         await new BusinessSpineSchemaService(db).EnsureAsync();
         await new RevenueReadinessSchemaService(db).EnsureAsync();
         await new FinanceActivationSchemaService(db).EnsureAsync();
         await new TaxSchemaService(db).EnsureAsync();
         await new BillingProfileSchemaService(db).EnsureAsync();
+        await new FeatureFlagSchemaService(db).EnsureAsync();
     }
 
     private static async Task ApplyBaseSchemaAsync(Database db)
@@ -966,6 +983,9 @@ ON CONFLICT (id) DO UPDATE SET
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS module_key VARCHAR(100) NULL");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS body TEXT NULL");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS score DECIMAL(6,2) NOT NULL DEFAULT 80");
+        await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+        await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(120) NULL");
+        await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS causation_id VARCHAR(120) NULL");
         await db.ExecuteAsync("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS contract_id BIGINT NULL");
         await db.ExecuteAsync("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS job_number VARCHAR(60) NULL");
         await db.ExecuteAsync("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NULL");

@@ -5716,7 +5716,15 @@ public static partial class EndpointMappings
             stops = await db.QueryAsync("SELECT * FROM route_stops WHERE job_id=@id AND company_id=@cid ORDER BY stop_sequence", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
             communications = await db.QueryAsync("SELECT * FROM customer_communications WHERE job_id=@id AND company_id=@cid ORDER BY sent_at DESC LIMIT 10", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
             etaUpdates = await db.QueryAsync("SELECT * FROM eta_updates WHERE job_id=@id AND company_id=@cid ORDER BY sent_at DESC LIMIT 10", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
-            proof = await db.QueryAsync("SELECT * FROM proof_of_delivery WHERE job_id=@id AND company_id=@cid ORDER BY captured_at DESC LIMIT 5", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
+            proof = await db.QueryAsync(
+                @"SELECT * FROM proof_of_delivery
+                  WHERE job_id=@id AND company_id=@cid
+                    AND NOT (
+                      LOWER(COALESCE(proof_type,''))='placeholder'
+                      OR COALESCE(notes,'')='Batch 2 proof placeholder.'
+                    )
+                  ORDER BY captured_at DESC LIMIT 5",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
             costs = await db.QuerySingleAsync("SELECT revenue_estimate, cost_estimate, margin_estimate, CASE WHEN margin_estimate < 150 THEN 'High' ELSE 'Low' END margin_risk FROM jobs WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
             auditTrail = await AuditTrail(db, "Job", id, GetCompanyId(http), ct)
         }));
@@ -18871,6 +18879,10 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                          pod.created_at
                   FROM proof_of_delivery pod
                   WHERE pod.company_id=@cid
+                    AND NOT (
+                      LOWER(COALESCE(pod.proof_type,''))='placeholder'
+                      OR COALESCE(pod.notes,'')='Batch 2 proof placeholder.'
+                    )
                   ORDER BY pod.job_id, COALESCE(pod.captured_at, pod.created_at) DESC, pod.id DESC
               ),
               latest_package AS (
@@ -19039,6 +19051,10 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                          pod.proof_type
                   FROM proof_of_delivery pod
                   WHERE pod.company_id=@cid
+                    AND NOT (
+                      LOWER(COALESCE(pod.proof_type,''))='placeholder'
+                      OR COALESCE(pod.notes,'')='Batch 2 proof placeholder.'
+                    )
                   ORDER BY pod.job_id, COALESCE(pod.captured_at, pod.created_at) DESC, pod.id DESC
               ),
               proof_surface AS (
@@ -27566,7 +27582,7 @@ LIMIT 100000",
 
         var rows = await db.QueryAsync(
             @"SELECT da.*, COALESCE(j.job_number,j.job_code) job_number,
-                     j.pickup_address, j.dropoff_address, j.priority, j.sla_status, j.tracking_code,
+                     j.status job_status, j.pickup_address, j.dropoff_address, j.priority, j.sla_status, j.tracking_code,
                      c.name customer_name,
                      v.vehicle_code, v.availability_status vehicle_availability,
                      d.full_name driver_name, d.safety_score driver_safety_score,
@@ -27585,7 +27601,13 @@ LIMIT 100000",
                 AND (@did::TEXT IS NULL OR da.driver_id=@did::BIGINT)
                 AND (@vid::TEXT IS NULL OR da.vehicle_id=@vid::BIGINT)
                 AND (@jid::TEXT IS NULL OR da.job_id=@jid::BIGINT)" + branchClause + @"
-              ORDER BY da.created_at DESC LIMIT @limit",
+              ORDER BY CASE
+                         WHEN LOWER(COALESCE(da.assignment_status,da.status,'')) IN ('cancelled','delivered','rejected') THEN 1
+                         ELSE 0
+                       END,
+                       COALESCE(da.updated_at,da.created_at,da.assigned_at) DESC,
+                       da.id DESC
+              LIMIT @limit",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",    companyId);

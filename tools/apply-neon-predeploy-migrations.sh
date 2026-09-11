@@ -316,6 +316,8 @@ MIGRATIONS=(
   2026_09_09_stage133_demo_eld_certification_truth
   # Reconcile the original OPX-DEMO ELD fixture that predates Stage133's serial vocabulary.
   2026_09_09_stage134_legacy_demo_eld_reconciliation
+  # Retire exact legacy demo POD/audit rows that contradict the live operating truth.
+  2026_09_10_stage135_demo_operational_truth_reconciliation
   # Commercial truth overlays. These fail customer-facing operational reads
   # closed unless their persisted evidence is qualified at the source.
   2026_09_08_notification_delivery_contract
@@ -527,7 +529,8 @@ BEGIN
       ('2026_09_08_stage130_canonical_diagnostic_evidence_identity'),
       ('2026_09_08_stage131_alert_source_truth'),
       ('2026_09_09_stage133_demo_eld_certification_truth'),
-      ('2026_09_09_stage134_legacy_demo_eld_reconciliation')) required(version)
+      ('2026_09_09_stage134_legacy_demo_eld_reconciliation'),
+      ('2026_09_10_stage135_demo_operational_truth_reconciliation')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -617,6 +620,30 @@ BEGIN
         OR d.hmac_previous_secret_encrypted IS NOT NULL)
   ) THEN
     RAISE EXCEPTION 'Stage134 original OPX-DEMO ELD truth cleanup is incomplete';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM proof_of_delivery pod
+    JOIN companies c ON c.id=pod.company_id
+    WHERE (LOWER(c.name) LIKE '%demo%' OR LOWER(c.company_code) LIKE '%demo%')
+      AND LOWER(COALESCE(pod.proof_type,''))='placeholder'
+      AND COALESCE(pod.notes,'')='Batch 2 proof placeholder.'
+  ) THEN
+    RAISE EXCEPTION 'Stage135 demo POD placeholder cleanup is incomplete';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM audit_logs al
+    JOIN companies c ON c.id=al.company_id
+    JOIN jobs j ON j.company_id=al.company_id AND j.id=al.entity_id
+    WHERE j.deleted_at IS NULL
+      AND (LOWER(c.name) LIKE '%demo%' OR LOWER(c.company_code) LIKE '%demo%')
+      AND COALESCE(j.job_number,j.job_code)='JOB-1005'
+      AND al.action_name='job.deleted'
+      AND COALESCE(al.actor_name,'')='admin'
+      AND COALESCE(al.details_json,'{}'::jsonb) @> '{"source":"api"}'::jsonb
+  ) THEN
+    RAISE EXCEPTION 'Stage135 contradictory demo job audit cleanup is incomplete';
   END IF;
   IF to_regclass('public.camera_provider_event_inbox') IS NULL
      OR to_regclass('public.camera_provider_media_references') IS NULL THEN
