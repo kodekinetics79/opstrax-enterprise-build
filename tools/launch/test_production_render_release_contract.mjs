@@ -90,6 +90,15 @@ test("ledgered migrations are verified without replaying broad DDL on live table
   assert.match(runner, /already applied \(ledger\) — verifying without replay/);
   assert.match(runner, /if \[ "\$applied" = "1" \]; then[\s\S]*?continue[\s\S]*?echo "── applying \$m"/);
   assert.match(runner, /reapply_late_control_boundaries/);
+  assert.match(runner, /reapply_immutable_evidence_offboarding_boundaries/);
+  const offboardingReconcile = runner.slice(
+    runner.indexOf("reapply_immutable_evidence_offboarding_boundaries()"),
+    runner.indexOf("MIGRATIONS=("),
+  );
+  assert.match(offboardingReconcile, /stage72_hos_offboarding_immutability_reconciliation\.sql/);
+  assert.match(offboardingReconcile, /Stage72/);
+  assert.match(offboardingReconcile, /stage73_hos_offboarding_null_fail_closed\.sql/);
+  assert.match(offboardingReconcile, /Stage73/);
   assert.match(runner, /Fleet Stage55 authorization evidence contract drifted/);
   assert.match(runner, /Stage54\/55\/56\/57 migration ledger missing or duplicated/);
 });

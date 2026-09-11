@@ -158,6 +158,19 @@ reapply_late_control_boundaries() {
   apply_migration_file database/migrations/2026_09_08_stage132_private_user_row_authority.sql
 }
 
+# These CREATE OR REPLACE functions are an explicit security boundary rather than
+# broad historical schema DDL. Established databases may carry the Stage72/73
+# ledger entries from an older function body, so reconcile the exact null-safe,
+# dual-gated definitions before their guarded postcondition is evaluated.
+reapply_immutable_evidence_offboarding_boundaries() {
+  apply_migration_file \
+    database/migrations/2026_08_02_stage72_hos_offboarding_immutability_reconciliation.sql \
+    Stage72
+  apply_migration_file \
+    database/migrations/2026_08_02_stage73_hos_offboarding_null_fail_closed.sql \
+    Stage73
+}
+
 MIGRATIONS=(
   # The dated migrations are additive overlays. A genuinely empty Neon database
   # must first receive the canonical 001 predecessor that owns core tables such
@@ -479,6 +492,11 @@ for m in "${MIGRATIONS[@]}"; do
     psql_neon -v ON_ERROR_STOP=1 -q -c "INSERT INTO schema_migrations (version, description) VALUES ('$ledger_version', 'applied by apply-neon-predeploy-migrations.sh') ON CONFLICT (version) DO NOTHING"
   fi
 done
+
+if [ "$stage58_already_applied" = "1" ]; then
+  echo "Reconciling immutable-evidence offboarding function boundaries…"
+  reapply_immutable_evidence_offboarding_boundaries
+fi
 
 # Required owner schemas and pilot-wave migrations are release gates, not optional seed packs.
 # Verify their ledgers and critical objects before the terminal Stage58 reconciliation.
