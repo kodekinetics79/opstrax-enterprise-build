@@ -174,7 +174,7 @@ public sealed class NotificationService(Database db)
     private async Task InsertRecipientAsync(long notifId, long companyId, long userId,
         long? driverId, string? roleTarget, string channel, CancellationToken ct)
     {
-        await db.InsertAsync(
+        var recipientId = await db.InsertAsync(
             @"INSERT INTO notification_recipients
                 (notification_id, company_id, user_id, driver_id, role_target, status, channel, delivered_at)
               VALUES (@nid, @cid, @uid, @did, @role, 'unread', @chan,
@@ -187,6 +187,32 @@ public sealed class NotificationService(Database db)
                 c.Parameters.AddWithValue("@did",  driverId.HasValue ? driverId.Value : DBNull.Value);
                 c.Parameters.AddWithValue("@role", roleTarget ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@chan", channel);
+            }, ct);
+
+        if (channel == "in_app" && recipientId > 0)
+            await QueueMobilePushAsync(companyId, recipientId, ct);
+    }
+
+    private async Task QueueMobilePushAsync(long companyId, long recipientId, CancellationToken ct)
+    {
+        var aggregateId = recipientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var idempotencyKey = $"mobile.push.notification.recipient.{aggregateId}";
+        await db.ExecuteAsync(
+            @"INSERT INTO outbox_messages
+                (tenant_id,event_type,aggregate_type,aggregate_id,payload_json,idempotency_key,status,retry_count)
+              SELECT @cid,@event,'notification_recipient',@agg,
+                     jsonb_build_object('notificationRecipientId',@rid),@idem,'pending',0
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM outbox_messages
+                  WHERE tenant_id=@cid AND event_type=@event AND aggregate_id=@agg
+               )",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@event", MobilePushNotificationHandler.RequestedEventType);
+                c.Parameters.AddWithValue("@agg", aggregateId);
+                c.Parameters.AddWithValue("@rid", recipientId);
+                c.Parameters.AddWithValue("@idem", idempotencyKey);
             }, ct);
     }
 
