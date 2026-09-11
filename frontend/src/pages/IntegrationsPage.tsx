@@ -150,7 +150,16 @@ function categoryMeta(category: string) {
 }
 
 function effectiveIntegrationStatus(record: IntegrationRecord): IntegrationStatus {
-  return record.adapterAvailable === true ? record.status : "Disconnected";
+  if (record.adapterAvailable !== true) return "Disconnected";
+  if (record.status !== "Connected") return record.status;
+
+  // A persisted status label is not sufficient connection evidence. Older/demo
+  // rows can contain Connected without ever recording a provider handshake; keep
+  // those rows pending until the current adapter records an actual success.
+  if (record.lastTestOk === false) return "Error";
+  return record.lastTestOk === true && Boolean(record.lastTestedAt)
+    ? "Connected"
+    : "Pending";
 }
 
 function categoryFields(category: string): ConfigField[] {
@@ -1807,7 +1816,7 @@ export function IntegrationsPage() {
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard label="Available adapters" value={summary.total} icon={<Layers className="h-5 w-5" />} delta={`${summary.categories} categories`} />
-        <KpiCard label="Connected" value={summary.connected} status="Live" icon={<Link2 className="h-5 w-5" />} />
+        <KpiCard label="Connected" value={summary.connected} status="Verified" icon={<Link2 className="h-5 w-5" />} />
         <KpiCard label="Pending" value={summary.pending} status={summary.pending > 0 ? "Pending" : undefined} icon={<PlugZap className="h-5 w-5" />} />
         <KpiCard label="Errors" value={summary.errors} status={summary.errors > 0 ? "Critical" : undefined} icon={<AlertTriangle className="h-5 w-5" />} />
         <KpiCard label="Evaluation only" value={summary.evaluation} icon={<Warehouse className="h-5 w-5" />} />
