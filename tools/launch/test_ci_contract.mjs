@@ -66,6 +66,18 @@ test("predeploy runner makes Stage76 terminal on first and verification runs", (
   ]);
 });
 
+test("Stage58 avoids redundant policy DDL on already exact hot tables", () => {
+  const stage58 = read("database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql");
+  assertOrdered(stage58, [
+    "INTO policy_contract_exact",
+    "IF NOT rec.relrowsecurity THEN",
+    "IF NOT rec.relforcerowsecurity THEN",
+    "IF NOT policy_contract_exact THEN",
+    "DROP POLICY %I ON public.%I",
+    "CREATE POLICY tenant_ticket_app ON public.%I",
+  ]);
+});
+
 test("protected clean database receives the complete pre-RLS runtime foundation", () => {
   const runner = read("tools/apply-neon-predeploy-migrations.sh");
   const clean = read("tools/test-predeploy-clean-chain.sh");

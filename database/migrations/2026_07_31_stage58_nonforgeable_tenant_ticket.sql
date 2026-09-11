@@ -394,10 +394,10 @@ END
 $default_acl$;
 
 DO $tenant_contract$
-DECLARE rec record; pol record; tenant_col text; seq_name text;
+DECLARE rec record; pol record; tenant_col text; seq_name text; policy_contract_exact boolean;
 BEGIN
   FOR rec IN
-    SELECT cls.relname AS table_name,
+    SELECT cls.relname AS table_name,cls.relrowsecurity,cls.relforcerowsecurity,
       CASE WHEN cls.relname='companies' THEN 'id'
            WHEN EXISTS (SELECT 1 FROM information_schema.columns c WHERE c.table_schema='public' AND c.table_name=cls.relname AND c.column_name='company_id' AND c.data_type='bigint') THEN 'company_id'
            ELSE 'tenant_id' END AS tenant_column
@@ -409,13 +409,33 @@ BEGIN
           AND c.column_name IN ('company_id','tenant_id') AND c.data_type='bigint'))
   LOOP
     tenant_col:=rec.tenant_column;
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',rec.table_name);
-    EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY',rec.table_name);
-    FOR pol IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename=rec.table_name LOOP
-      EXECUTE format('DROP POLICY %I ON public.%I',pol.policyname,rec.table_name);
-    END LOOP;
-    EXECUTE format('CREATE POLICY tenant_ticket_app ON public.%I AS PERMISSIVE FOR ALL TO opstrax_app USING (%I=(SELECT opstrax_security.current_tenant_id())) WITH CHECK (%I=(SELECT opstrax_security.current_tenant_id()))',rec.table_name,tenant_col,tenant_col);
-    EXECUTE format('CREATE POLICY system_control_plane ON public.%I AS PERMISSIVE FOR ALL TO opstrax_system USING (true) WITH CHECK (true)',rec.table_name);
+    SELECT count(*)=2
+      AND count(*) FILTER (WHERE policyname='tenant_ticket_app' AND permissive='PERMISSIVE'
+        AND cmd='ALL' AND roles='{opstrax_app}'::name[]
+        AND qual=format('(%s = ( SELECT opstrax_security.current_tenant_id() AS current_tenant_id))',tenant_col)
+        AND with_check=qual)=1
+      AND count(*) FILTER (WHERE policyname='system_control_plane' AND permissive='PERMISSIVE'
+        AND cmd='ALL' AND roles='{opstrax_system}'::name[] AND qual='true' AND with_check='true')=1
+    INTO policy_contract_exact
+    FROM pg_policies WHERE schemaname='public' AND tablename=rec.table_name;
+
+    -- Replays run against live databases. Exact tables need no policy DDL, and
+    -- avoiding a redundant ALTER/DROP/CREATE prevents hot readers from blocking
+    -- an otherwise verification-only release. Drift still takes the full
+    -- fail-closed repair path and the terminal verifier remains authoritative.
+    IF NOT rec.relrowsecurity THEN
+      EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',rec.table_name);
+    END IF;
+    IF NOT rec.relforcerowsecurity THEN
+      EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY',rec.table_name);
+    END IF;
+    IF NOT policy_contract_exact THEN
+      FOR pol IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename=rec.table_name LOOP
+        EXECUTE format('DROP POLICY %I ON public.%I',pol.policyname,rec.table_name);
+      END LOOP;
+      EXECUTE format('CREATE POLICY tenant_ticket_app ON public.%I AS PERMISSIVE FOR ALL TO opstrax_app USING (%I=(SELECT opstrax_security.current_tenant_id())) WITH CHECK (%I=(SELECT opstrax_security.current_tenant_id()))',rec.table_name,tenant_col,tenant_col);
+      EXECUTE format('CREATE POLICY system_control_plane ON public.%I AS PERMISSIVE FOR ALL TO opstrax_system USING (true) WITH CHECK (true)',rec.table_name);
+    END IF;
 
     EXECUTE format('GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.%I TO opstrax_system',rec.table_name);
     IF rec.table_name='companies' THEN
