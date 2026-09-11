@@ -366,6 +366,8 @@ MIGRATIONS=(
   2026_09_09_stage133_demo_eld_certification_truth
   # Reconcile the original OPX-DEMO ELD fixture that predates Stage133's serial vocabulary.
   2026_09_09_stage134_legacy_demo_eld_reconciliation
+  # Migration-only databases need additive legacy Jobs/POD columns before Stage135 truth cleanup.
+  2026_09_11_stage137_legacy_operational_truth_contract
   # Retire exact legacy demo POD/audit rows that contradict the live operating truth.
   2026_09_10_stage135_demo_operational_truth_reconciliation
   # Product Admin may govern exact device model/HW/FW/SHA readiness candidates.
@@ -583,6 +585,7 @@ BEGIN
       ('2026_09_08_stage131_alert_source_truth'),
       ('2026_09_09_stage133_demo_eld_certification_truth'),
       ('2026_09_09_stage134_legacy_demo_eld_reconciliation'),
+      ('2026_09_11_stage137_legacy_operational_truth_contract'),
       ('2026_09_10_stage135_demo_operational_truth_reconciliation'),
       ('2026_09_11_stage136_platform_hardware_readiness_permission')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1

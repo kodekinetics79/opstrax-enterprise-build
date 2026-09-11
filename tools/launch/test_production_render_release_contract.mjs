@@ -77,6 +77,27 @@ test("production migrations bound live DDL lock waits and retry transient conten
   assert.match(runner, /apply_migration_file "\$f" "\$m"/);
 });
 
+test("migration-only databases reconcile legacy operational columns before Stage135 cleanup", () => {
+  const runner = read("tools", "apply-neon-predeploy-migrations.sh");
+  const podContract = read(
+    "database",
+    "migrations",
+    "2026_09_11_stage137_legacy_operational_truth_contract.sql",
+  );
+  const contractIndex = runner.indexOf("2026_09_11_stage137_legacy_operational_truth_contract");
+  const cleanupIndex = runner.indexOf("2026_09_10_stage135_demo_operational_truth_reconciliation");
+
+  assert.ok(contractIndex >= 0);
+  assert.ok(cleanupIndex > contractIndex);
+  assert.match(podContract, /ALTER TABLE jobs/);
+  assert.match(podContract, /ADD COLUMN IF NOT EXISTS job_number/);
+  assert.match(podContract, /ADD COLUMN IF NOT EXISTS deleted_at/);
+  assert.match(podContract, /ALTER TABLE proof_of_delivery/);
+  assert.match(podContract, /ADD COLUMN IF NOT EXISTS proof_type/);
+  assert.match(podContract, /ADD COLUMN IF NOT EXISTS notes/);
+  assert.match(podContract, /2026_09_11_stage137_legacy_operational_truth_contract/);
+});
+
 test("Canada/KSA wrapper preserves Batch6 fixed-ID seed contract across release ordering", () => {
   const wrapper = read("tools", "apply-canada-ksa-compliance-predeploy.sh");
   const runtime = read("backend-dotnet", "Services", "Batch6SchemaService.cs");
