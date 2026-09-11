@@ -77,14 +77,14 @@ test("production migrations bound live DDL lock waits and retry transient conten
   assert.match(runner, /apply_migration_file "\$f" "\$m"/);
 });
 
-test("ledgered Stage55 is verified without replaying broad DDL on live tables", () => {
+test("ledgered migrations are verified without replaying broad DDL on live tables", () => {
   const runner = read("tools", "apply-neon-predeploy-migrations.sh");
-  const repairSelection = runner.slice(
-    runner.indexOf("repair_migration=false"),
-    runner.indexOf("if [ \"$applied\" = \"1\" ] && [ \"$repair_migration\" = false ]"),
-  );
 
-  assert.doesNotMatch(repairSelection, /2026_07_30_stage55_fleet_runtime_route_contract/);
+  assert.doesNotMatch(runner, /repair_migration/);
+  assert.doesNotMatch(runner, /ledgered reconciliation — reapplying to repair drift/);
+  assert.match(runner, /already applied \(ledger\) — verifying without replay/);
+  assert.match(runner, /if \[ "\$applied" = "1" \]; then[\s\S]*?continue[\s\S]*?echo "── applying \$m"/);
+  assert.match(runner, /reapply_late_control_boundaries/);
   assert.match(runner, /Fleet Stage55 authorization evidence contract drifted/);
   assert.match(runner, /Stage54\/55\/56\/57 migration ledger missing or duplicated/);
 });
