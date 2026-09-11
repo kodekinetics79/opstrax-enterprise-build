@@ -320,8 +320,11 @@ export function AppShell() {
   const tenantCountry = useTenantCountry();
   const runtimeQuery = useRuntimeDiagnostics();
   const tenantIsExplicitlySynthetic = /\b(demo|synthetic|test)\b/i.test(String(session?.company?.name ?? ""));
-  const runtimeState = tenantIsExplicitlySynthetic ? "Demo Data" : (runtimeQuery.data?.state ?? "Unavailable");
+  // Deployment health and data provenance are independent facts. A demo tenant
+  // must never hide a stale bundle or a frontend/API SHA mismatch.
+  const runtimeState = runtimeQuery.data?.state ?? "Unavailable";
   const runtimeIsVerified = runtimeState === "Live" || runtimeState === "Staging";
+  const showReleaseMismatch = runtimeQuery.isFetched && runtimeState === "Mismatch";
   const notificationsQuery = useQuery({
     queryKey: ["notifications"],
     queryFn: notificationsApi.list,
@@ -714,6 +717,17 @@ export function AppShell() {
                   {runtimeState}
                 </div>
 
+                {tenantIsExplicitlySynthetic ? (
+                  <div
+                    className="hidden items-center gap-1.5 rounded-full border border-amber-300/60 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800 md:flex"
+                    title="This tenant contains demonstration or test data."
+                    data-testid="synthetic-data-badge"
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                    Demo Data
+                  </div>
+                ) : null}
+
                 {/* Notifications */}
                 {canViewNotifications ? <div className="relative" ref={notifRef}>
                   <button
@@ -872,6 +886,23 @@ export function AppShell() {
             the shell off-screen; scrollbar-gutter keeps width stable across load states so
             charts measured before the scrollbar appears never lock in a too-wide layout. */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-clip scrollbar-gutter-stable">
+          {showReleaseMismatch && (
+            <div
+              className="flex shrink-0 flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-red-300 bg-red-50 px-3 py-2 text-center text-xs font-semibold text-red-950"
+              role="alert"
+              data-testid="release-mismatch-banner"
+            >
+              <ShieldAlert className="h-4 w-4 shrink-0 text-red-600" />
+              <span>Update required — this browser has an older OpsTrax release than the live API.</span>
+              <button
+                type="button"
+                className="rounded-md border border-red-300 bg-white px-2.5 py-1 text-[11px] font-bold text-red-800 shadow-sm transition hover:bg-red-100"
+                onClick={() => window.location.reload()}
+              >
+                Reload now
+              </button>
+            </div>
+          )}
           {session?.supportAccess?.active && (
             <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-center text-xs font-semibold text-amber-950" role="status" data-testid="support-access-banner">
               Read-only Platform support session · tenant changes are blocked · reference {session.supportAccess.grantRef}

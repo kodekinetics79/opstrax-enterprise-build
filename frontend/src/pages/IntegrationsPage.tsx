@@ -66,6 +66,8 @@ type IntegrationOperationResult = {
   details?: Record<string, unknown> | null;
 };
 
+type ConnectorView = "available" | "evaluation";
+
 // Sensitive config values come back from the API redacted (never the real secret).
 // An empty submit for a field that is already set must NOT overwrite the stored value.
 const REDACTED_MARKER = "••••••••";
@@ -1494,6 +1496,7 @@ export function IntegrationsPage() {
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
+  const [connectorView, setConnectorView] = useState<ConnectorView>("available");
   const [configTarget, setConfigTarget] = useState<IntegrationRecord | null>(null);
   // Provider operations surface their exact backend verdict and counts; success is
   // never inferred from a button click or from catalog presence.
@@ -1543,32 +1546,42 @@ export function IntegrationsPage() {
       } as Record<string, string>)[motiveOAuthOutcome ?? ""]
       ?? "Motive returned to OpsTrax, but no successful current verification is recorded. Review the connector before continuing.";
   const activity = payload?.activity ?? [];
+  const availableIntegrations = useMemo(
+    () => integrations.filter((item) => item.adapterAvailable === true),
+    [integrations],
+  );
+  const evaluationIntegrations = useMemo(
+    () => integrations.filter((item) => item.adapterAvailable !== true),
+    [integrations],
+  );
+  const scopedIntegrations = connectorView === "available" ? availableIntegrations : evaluationIntegrations;
   const summary = {
-    total: integrations.length,
-    connected: integrations.filter((item) => effectiveIntegrationStatus(item) === "Connected").length,
-    pending: integrations.filter((item) => effectiveIntegrationStatus(item) === "Pending").length,
-    errors: integrations.filter((item) => effectiveIntegrationStatus(item) === "Error").length,
-    categories: new Set(integrations.map((item) => item.category)).size,
+    total: availableIntegrations.length,
+    connected: availableIntegrations.filter((item) => effectiveIntegrationStatus(item) === "Connected").length,
+    pending: availableIntegrations.filter((item) => effectiveIntegrationStatus(item) === "Pending").length,
+    errors: availableIntegrations.filter((item) => effectiveIntegrationStatus(item) === "Error").length,
+    categories: new Set(availableIntegrations.map((item) => item.category)).size,
+    evaluation: evaluationIntegrations.length,
     lastUpdated: payload?.summary.lastUpdated ?? new Date().toISOString(),
   };
 
   // Category chips ordered canonically, then any unexpected categories.
   const categories = useMemo(() => {
-    const present = new Set(integrations.map((item) => item.category));
+    const present = new Set(scopedIntegrations.map((item) => item.category));
     const ordered = CATEGORY_ORDER.filter((cat) => present.has(cat));
     const extra = Array.from(present).filter((cat) => !CATEGORY_ORDER.includes(cat as IntegrationCategory));
     return ["All", ...ordered, ...extra];
-  }, [integrations]);
+  }, [scopedIntegrations]);
 
   const categoryCounts = useMemo(() => {
     const map = new Map<string, number>();
-    for (const item of integrations) map.set(item.category, (map.get(item.category) ?? 0) + 1);
+    for (const item of scopedIntegrations) map.set(item.category, (map.get(item.category) ?? 0) + 1);
     return map;
-  }, [integrations]);
+  }, [scopedIntegrations]);
 
   const filtered = useMemo(
     () =>
-      integrations.filter((integration) => {
+      scopedIntegrations.filter((integration) => {
         if (categoryFilter !== "All" && integration.category !== categoryFilter) return false;
         if (statusFilter !== "All" && integration.status !== statusFilter) return false;
         if (search) {
@@ -1586,7 +1599,7 @@ export function IntegrationsPage() {
         }
         return true;
       }),
-    [integrations, categoryFilter, statusFilter, search],
+    [scopedIntegrations, categoryFilter, statusFilter, search],
   );
 
   // Group the filtered set by category in canonical order for section headers.
@@ -1715,10 +1728,10 @@ export function IntegrationsPage() {
       <PageHeader
         eyebrow="Connector marketplace"
         title="Integrations"
-        description="Tenant-scoped connector registry. A connector is shown as Connected only after the backend records a successful handshake; catalog presence alone does not mean the provider feature is supported."
+        description="Tenant-scoped connector registry. Available adapters are shown first; evaluation-only catalog entries are separated and never presented as working connections."
         actions={
           <>
-            <button type="button" className="btn-ghost text-sm" onClick={() => exportCsv("integrations", integrations)}>
+            <button type="button" className="btn-ghost text-sm" onClick={() => exportCsv("integrations", filtered)}>
               Export CSV
             </button>
             <button
@@ -1750,11 +1763,11 @@ export function IntegrationsPage() {
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <KpiCard label="Connectors" value={summary.total} icon={<Layers className="h-5 w-5" />} delta={`${summary.categories} categories`} />
+        <KpiCard label="Available adapters" value={summary.total} icon={<Layers className="h-5 w-5" />} delta={`${summary.categories} categories`} />
         <KpiCard label="Connected" value={summary.connected} status="Live" icon={<Link2 className="h-5 w-5" />} />
         <KpiCard label="Pending" value={summary.pending} status={summary.pending > 0 ? "Pending" : undefined} icon={<PlugZap className="h-5 w-5" />} />
         <KpiCard label="Errors" value={summary.errors} status={summary.errors > 0 ? "Critical" : undefined} icon={<AlertTriangle className="h-5 w-5" />} />
-        <KpiCard label="Categories" value={summary.categories} icon={<Warehouse className="h-5 w-5" />} />
+        <KpiCard label="Evaluation only" value={summary.evaluation} icon={<Warehouse className="h-5 w-5" />} />
       </div>
 
       {summary.errors > 0 && (
@@ -1810,6 +1823,39 @@ export function IntegrationsPage() {
       )}
 
       <div className="panel flex flex-col gap-3 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Connector inventory view">
+            <button
+              type="button"
+              aria-pressed={connectorView === "available"}
+              className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${connectorView === "available" ? "bg-white text-teal-800 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+              onClick={() => {
+                setConnectorView("available");
+                setCategoryFilter("All");
+                setStatusFilter("All");
+              }}
+            >
+              Available adapters <span className="ml-1 tabular-nums">{availableIntegrations.length}</span>
+            </button>
+            <button
+              type="button"
+              aria-pressed={connectorView === "evaluation"}
+              className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${connectorView === "evaluation" ? "bg-white text-amber-800 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+              onClick={() => {
+                setConnectorView("evaluation");
+                setCategoryFilter("All");
+                setStatusFilter("All");
+              }}
+            >
+              Evaluation catalog <span className="ml-1 tabular-nums">{evaluationIntegrations.length}</span>
+            </button>
+          </div>
+          <p className="text-xs text-slate-500">
+            {connectorView === "available"
+              ? "These adapters can be configured. Connected still requires a successful provider handshake."
+              : "Reference entries only. No credentials can be stored and no connection is claimed."}
+          </p>
+        </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -1835,14 +1881,14 @@ export function IntegrationsPage() {
             <option value="Disconnected">Disconnected</option>
           </select>
           <span className="ml-auto rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-bold text-slate-500">
-            {filtered.length === integrations.length ? `${integrations.length} connectors` : `${filtered.length} of ${integrations.length}`}
+            {filtered.length === scopedIntegrations.length ? `${scopedIntegrations.length} connectors` : `${filtered.length} of ${scopedIntegrations.length}`}
           </span>
         </div>
 
         <div className="flex flex-wrap gap-1.5 border-t border-slate-100 pt-3">
           {categories.map((item) => {
             const active = categoryFilter === item;
-            const count = item === "All" ? integrations.length : categoryCounts.get(item) ?? 0;
+            const count = item === "All" ? scopedIntegrations.length : categoryCounts.get(item) ?? 0;
             const meta = item === "All" ? null : categoryMeta(item);
             return (
               <button
@@ -1866,7 +1912,9 @@ export function IntegrationsPage() {
           {filtered.length === 0 ? (
             <EmptyState
               title="No connectors match your filters"
-              subtitle="Clear the category, status, or search filter to see the live connector inventory."
+              subtitle={connectorView === "available"
+                ? "Clear the category, status, or search filter to see configurable adapters."
+                : "Clear the category, status, or search filter to see evaluation-only catalog entries."}
               action={
                 <button
                   type="button"
