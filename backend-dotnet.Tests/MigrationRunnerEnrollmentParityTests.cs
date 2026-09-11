@@ -55,7 +55,10 @@ public sealed class MigrationRunnerEnrollmentParityTests
     {
         var runner = RunnerText();
         foreach (var name in AppliedByRunnerAfterTheArray)
-            Assert.Contains($"-f database/migrations/{name}.sql", runner, StringComparison.Ordinal);
+            Assert.True(
+                runner.Contains($"-f database/migrations/{name}.sql", StringComparison.Ordinal)
+                || runner.Contains($"apply_migration_file database/migrations/{name}.sql", StringComparison.Ordinal),
+                $"Terminal migration {name} is not applied directly or through the bounded lock-retry helper.");
     }
 
     [Fact]
