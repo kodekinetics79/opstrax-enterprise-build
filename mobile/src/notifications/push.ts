@@ -52,8 +52,10 @@ async function ensureAndroidChannel() {
   await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
     name: "OpsTrax operations",
     description: "Assignment, dispatch, proof, safety, and operational updates.",
-    importance: Notifications.AndroidImportance.HIGH,
-    vibrationPattern: [0, 180, 100, 180],
+    // Routine Driver notifications must not behave like an emergency alarm while a
+    // vehicle is in motion. Urgent safety alerting can use a separately governed
+    // channel once product/regulatory policy explicitly defines it.
+    importance: Notifications.AndroidImportance.DEFAULT,
     lightColor: "#42dfcf",
   });
 }
