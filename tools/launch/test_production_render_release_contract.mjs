@@ -57,6 +57,26 @@ test("Canada/KSA wrapper preserves canonical chain then applies and verifies Sta
   assert.match(wrapper, /External provider\/device\/certification\/qualification evidence: STILL REQUIRED/);
 });
 
+test("production migrations bound live DDL lock waits and retry transient contention", () => {
+  const runner = read("tools", "apply-neon-predeploy-migrations.sh");
+  const helper = runner.slice(
+    runner.indexOf("apply_migration_file()"),
+    runner.indexOf("reapply_late_control_boundaries()"),
+  );
+
+  assert.match(runner, /MIGRATION_LOCK_MAX_ATTEMPTS=20/);
+  assert.match(runner, /MIGRATION_LOCK_RETRY_DELAY_SECONDS=2/);
+  assert.match(helper, /SET lock_timeout='3s'/);
+  assert.match(helper, /deadlock detected/);
+  assert.match(helper, /canceling statement due to lock timeout/);
+  assert.match(helper, /return "\$status"/);
+
+  for (const stage of ["Stage58", "Stage59", "Stage67", "Stage76"]) {
+    assert.match(runner, new RegExp(`apply_migration_file [^\\n]+ ${stage}`));
+  }
+  assert.match(runner, /apply_migration_file "\$f" "\$m"/);
+});
+
 test("Canada/KSA wrapper preserves Batch6 fixed-ID seed contract across release ordering", () => {
   const wrapper = read("tools", "apply-canada-ksa-compliance-predeploy.sh");
   const runtime = read("backend-dotnet", "Services", "Batch6SchemaService.cs");
