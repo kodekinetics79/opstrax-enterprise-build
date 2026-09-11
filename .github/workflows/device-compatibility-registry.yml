@@ -104,8 +104,8 @@ jobs:
           psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql
           psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql
           psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_11_stage136_platform_hardware_readiness_permission.sql
-          test "$(psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -tAc \"SELECT count(*) FROM platform_role_permissions p JOIN platform_roles r ON r.id=p.role_id WHERE r.role_key='product_admin' AND p.permission_key IN ('platform:devices:view','platform:devices:manage')\")" = "2"
-          test "$(psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -tAc \"SELECT has_table_privilege('opstrax_app','device_compatibility_candidates','INSERT,UPDATE,DELETE'),has_table_privilege('opstrax_system','device_compatibility_candidates','SELECT,INSERT,UPDATE,DELETE')\")" = "f|t"
+          test "$(psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -tAc "SELECT count(*) FROM platform_role_permissions p JOIN platform_roles r ON r.id=p.role_id WHERE r.role_key='product_admin' AND p.permission_key IN ('platform:devices:view','platform:devices:manage')")" = "2"
+          test "$(psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -tAc "SELECT has_table_privilege('opstrax_app','device_compatibility_candidates','INSERT,UPDATE,DELETE'),has_table_privilege('opstrax_system','device_compatibility_candidates','SELECT,INSERT,UPDATE,DELETE')")" = "f|t"
       - name: Run DeviceOps truth and PostgreSQL tests
         run: >-
           dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj
