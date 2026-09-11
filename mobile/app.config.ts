@@ -73,6 +73,7 @@ const defaultBundle = STAGE === "production" ? product.bundle : `${product.bundl
 const plugins: NonNullable<ExpoConfig["plugins"]> = [
   "expo-secure-store",
   "expo-notifications",
+  ...(APP_VARIANT !== "customer" ? ["expo-location"] : []),
   [
     "expo-image-picker",
     {
@@ -83,7 +84,6 @@ const plugins: NonNullable<ExpoConfig["plugins"]> = [
   ],
   "./plugins/with-no-inbound-linking",
 ];
-if (APP_VARIANT !== "customer") plugins.splice(3, 0, "expo-location");
 
 if (isProductionBuild) {
   if (APP_VARIANT === "unified") {

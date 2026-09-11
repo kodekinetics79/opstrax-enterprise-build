@@ -1,7 +1,29 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { resolveProductAccess } from "../src/auth/productAccess.ts";
+
+const mobileRoot = fileURLToPath(new URL("../", import.meta.url));
+const expoBin = fileURLToPath(new URL("../node_modules/.bin/expo", import.meta.url));
+
+const resolveExpoConfig = (variant) => {
+  const result = spawnSync(expoBin, ["config", "--type", "public", "--json"], {
+    cwd: mobileRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      EXPO_NO_TELEMETRY: "1",
+      EXPO_PUBLIC_APP_VARIANT: variant,
+      EXPO_PUBLIC_STAGE: "pilot",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return JSON.parse(result.stdout);
+};
+
+const pluginNames = (config) => config.plugins.map((plugin) => Array.isArray(plugin) ? plugin[0] : plugin);
 
 const access = (variant, normalizedRole, permissions) => resolveProductAccess({
   variant,
@@ -48,11 +70,14 @@ test("Customer screens use only customer-portal API families", async () => {
 });
 
 test("Customer build has a separate identity and omits device location", async () => {
-  const [config, profiles] = await Promise.all([
-    readFile(new URL("../app.config.ts", import.meta.url), "utf8"),
-    readFile(new URL("../eas.json", import.meta.url), "utf8"),
-  ]);
-  assert.match(config, /bundle: "com\.opstrax\.customer"/);
-  assert.match(config, /if \(APP_VARIANT !== "customer"\) plugins\.splice\(2, 0, "expo-location"\)/);
+  const profiles = await readFile(new URL("../eas.json", import.meta.url), "utf8");
+  const customerConfig = resolveExpoConfig("customer");
+  const fleetConfig = resolveExpoConfig("fleet");
+
+  assert.equal(customerConfig.ios.bundleIdentifier, "com.opstrax.customer.pilot");
+  assert.equal(customerConfig.android.package, "com.opstrax.customer.pilot");
+  assert.equal(pluginNames(customerConfig).includes("expo-location"), false);
+  assert.equal(pluginNames(fleetConfig).includes("expo-location"), true);
+  assert.equal(pluginNames(customerConfig).includes("expo-notifications"), true);
   assert.equal(JSON.parse(profiles).build["production-customer"].env.EXPO_PUBLIC_APP_VARIANT, "customer");
 });
