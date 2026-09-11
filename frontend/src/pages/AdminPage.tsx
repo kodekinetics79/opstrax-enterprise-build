@@ -229,6 +229,7 @@ export function AdminPage() {
   const { session } = useAuth();
   const hasPermission = useHasPermission();
   const canViewUsers = hasPermission(PERMISSIONS.USERS_VIEW);
+  const canManageUsers = hasPermission(PERMISSIONS.USERS_MANAGE);
   const canCreateUsers = hasPermission(PERMISSIONS.USERS_CREATE);
   const canUpdateUsers = hasPermission(PERMISSIONS.USERS_UPDATE);
   const canDeleteUsers = hasPermission(PERMISSIONS.USERS_DELETE);
@@ -271,6 +272,10 @@ export function AdminPage() {
   const [inviteResult, setInviteResult] = useState<ActivationLink | null>(null);
   const [drawerLink, setDrawerLink] = useState<ActivationLink | null>(null);
   const [drawerAccessError, setDrawerAccessError] = useState<string | null>(null);
+  const [drawerAccessNotice, setDrawerAccessNotice] = useState<string | null>(null);
+  const [passwordResetTarget, setPasswordResetTarget] = useState<AnyRecord | null>(null);
+  const [passwordResetForm, setPasswordResetForm] = useState({ password: "", confirm: "" });
+  const [passwordResetError, setPasswordResetError] = useState<string | null>(null);
   const [copiedLinkKey, setCopiedLinkKey] = useState<"invite" | "drawer" | null>(null);
   const [userSort, setUserSort] = useState<{ key: UserSortKey; dir: "asc" | "desc" }>({ key: "fullName", dir: "asc" });
   const [userPage, setUserPage] = useState(1);
@@ -397,6 +402,12 @@ export function AdminPage() {
     enabled: selectedUserId != null && Number.isFinite(selectedUserId),
   });
   const generateLink = useMutation({ mutationFn: (id: number) => adminApi.activationLink(id) });
+  const resetPassword = useMutation({
+    mutationFn: ({ id, newPassword }: { id: number; newPassword: string }) => adminApi.resetUserPassword(id, newPassword),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["admin-user-sessions"] });
+    },
+  });
   const revokeSessions = useMutation({
     mutationFn: (id: number) => adminApi.revokeUserSessions(id),
     onSuccess: async () => {
@@ -510,12 +521,14 @@ export function AdminPage() {
   const openUserDrawer = (user: AnyRecord) => {
     setDrawerLink(null);
     setDrawerAccessError(null);
+    setDrawerAccessNotice(null);
     setSelectedUser(user);
   };
 
   const closeUserDrawer = () => {
     setDrawerLink(null);
     setDrawerAccessError(null);
+    setDrawerAccessNotice(null);
     setSelectedUser(null);
   };
 
@@ -536,6 +549,33 @@ export function AdminPage() {
       await revokeSessions.mutateAsync(id);
     } catch (err) {
       setDrawerAccessError(extractApiError(err, "Could not revoke this user's sessions."));
+    }
+  };
+
+  const openPasswordReset = (user: AnyRecord) => {
+    setPasswordResetForm({ password: "", confirm: "" });
+    setPasswordResetError(null);
+    setPasswordResetTarget(user);
+  };
+
+  const submitPasswordReset = async () => {
+    if (!passwordResetTarget) return;
+    if (passwordResetForm.password !== passwordResetForm.confirm) {
+      setPasswordResetError("The two passwords do not match.");
+      return;
+    }
+    try {
+      setPasswordResetError(null);
+      const result = await resetPassword.mutateAsync({
+        id: Number(passwordResetTarget.id),
+        newPassword: passwordResetForm.password,
+      });
+      const name = String(passwordResetTarget.fullName ?? passwordResetTarget.full_name ?? passwordResetTarget.email ?? "User");
+      setPasswordResetTarget(null);
+      setPasswordResetForm({ password: "", confirm: "" });
+      setDrawerAccessNotice(`${name}'s password was reset and ${result.sessionsRevoked} active session${result.sessionsRevoked === 1 ? " was" : "s were"} revoked. No email was sent.`);
+    } catch (err) {
+      setPasswordResetError(extractApiError(err, "Could not reset this user's password."));
     }
   };
 
@@ -1213,6 +1253,17 @@ export function AdminPage() {
                     onDismiss={() => setDrawerLink(null)}
                   />
                 )}
+                {canManageUsers
+                  && Number(selectedUser.id) !== Number(session?.user?.id)
+                  && /^active$/i.test(String(selectedUser.status ?? "")) && (
+                  <button
+                    className="btn-ghost w-full"
+                    onClick={() => openPasswordReset(selectedUser)}
+                  >
+                    <KeyRound className="h-4 w-4" />
+                    Set new password
+                  </button>
+                )}
                 {canUpdateUsers && (
                   <button
                     className="btn-ghost w-full text-rose-600 hover:text-rose-700"
@@ -1225,6 +1276,9 @@ export function AdminPage() {
                 )}
                 {drawerAccessError && (
                   <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{drawerAccessError}</p>
+                )}
+                {drawerAccessNotice && (
+                  <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">{drawerAccessNotice}</p>
                 )}
                 {canViewAudit && (
                   <button
@@ -1244,6 +1298,55 @@ export function AdminPage() {
               </button>
             )}
           </aside>
+        </div>
+      )}
+
+      {passwordResetTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+          <div className="iam iam-card w-full max-w-md space-y-4 p-6" role="dialog" aria-modal="true" aria-labelledby="admin-password-reset-title">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 id="admin-password-reset-title" className="font-bold text-slate-900">Set new password</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  {String(passwordResetTarget.fullName ?? passwordResetTarget.full_name ?? passwordResetTarget.email)} · no email will be sent
+                </p>
+              </div>
+              <button className="icon-btn" onClick={() => setPasswordResetTarget(null)} aria-label="Close"><X className="h-4 w-4" /></button>
+            </div>
+            <div>
+              <label className="label">New password</label>
+              <PasswordInput
+                value={passwordResetForm.password}
+                onChange={(event) => setPasswordResetForm((current) => ({ ...current, password: event.target.value }))}
+                autoComplete="new-password"
+                placeholder="Enter a policy-compliant password"
+              />
+            </div>
+            <div>
+              <label className="label">Confirm password</label>
+              <PasswordInput
+                value={passwordResetForm.confirm}
+                onChange={(event) => setPasswordResetForm((current) => ({ ...current, confirm: event.target.value }))}
+                autoComplete="new-password"
+                placeholder="Repeat the new password"
+              />
+            </div>
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+              This replaces the current credential, clears the lockout, revokes every active session and invalidates outstanding reset links. Share the new password through a secure channel.
+            </p>
+            {passwordResetError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{passwordResetError}</p>}
+            <div className="flex gap-2">
+              <button type="button" className="btn-ghost flex-1" onClick={() => setPasswordResetTarget(null)}>Cancel</button>
+              <button
+                type="button"
+                className="btn-primary flex-1"
+                onClick={submitPasswordReset}
+                disabled={resetPassword.isPending || !passwordResetForm.password || !passwordResetForm.confirm}
+              >
+                {resetPassword.isPending ? "Resetting…" : "Reset password"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1366,7 +1469,7 @@ export function AdminPage() {
                 </div>
               ) : (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                  Passwords are not changed from this form. Use the one-time activation link from User Detail for credential recovery.
+                  Passwords are not changed from this form. Open User Detail and choose Set new password for direct recovery, or generate an activation link for the user to choose it.
                 </div>
               )}
               <div>

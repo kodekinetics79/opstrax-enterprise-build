@@ -318,6 +318,8 @@ MIGRATIONS=(
   2026_09_09_stage134_legacy_demo_eld_reconciliation
   # Retire exact legacy demo POD/audit rows that contradict the live operating truth.
   2026_09_10_stage135_demo_operational_truth_reconciliation
+  # Product Admin may govern exact device model/HW/FW/SHA readiness candidates.
+  2026_09_11_stage136_platform_hardware_readiness_permission
   # Commercial truth overlays. These fail customer-facing operational reads
   # closed unless their persisted evidence is qualified at the source.
   2026_09_08_notification_delivery_contract
@@ -442,7 +444,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_09_08_stage128_device_compatibility_capability_catalog|\
     2026_09_08_stage129_latest_device_signal_projection|\
     2026_09_08_stage130_canonical_diagnostic_evidence_identity|\
-    2026_09_08_stage131_alert_source_truth) repair_migration=true ;;
+    2026_09_08_stage131_alert_source_truth|\
+    2026_09_11_stage136_platform_hardware_readiness_permission) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -530,9 +533,16 @@ BEGIN
       ('2026_09_08_stage131_alert_source_truth'),
       ('2026_09_09_stage133_demo_eld_certification_truth'),
       ('2026_09_09_stage134_legacy_demo_eld_reconciliation'),
-      ('2026_09_10_stage135_demo_operational_truth_reconciliation')) required(version)
+      ('2026_09_10_stage135_demo_operational_truth_reconciliation'),
+      ('2026_09_11_stage136_platform_hardware_readiness_permission')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
+  IF (SELECT count(*)
+        FROM platform_role_permissions permission
+        JOIN platform_roles role ON role.id=permission.role_id
+       WHERE role.role_key='product_admin'
+         AND permission.permission_key IN ('platform:devices:view','platform:devices:manage')) <> 2
+  THEN RAISE EXCEPTION 'Stage136 Product Admin hardware-readiness permissions are incomplete'; END IF;
   IF EXISTS (
     SELECT 1
     FROM dashcam_events de
