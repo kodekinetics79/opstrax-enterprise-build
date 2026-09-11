@@ -12,6 +12,8 @@
 - Added a daily executive velocity dashboard and vertical-slice hardening board.
 - Reserved exact-SHA Chrome, persisted customer data, provider, device, regulatory, scale and recovery evidence for frozen meaningful candidates.
 - Preserved product truth, tenant and branch isolation, no-self-certification, independent assurance, qualified-human gates and evidence-specific commercial claims.
+- Records the dated 2026-09-02 adoption baseline: Wave 1 G1A merged and closed under a time-bounded LIMITED GO with M1/M2 still PILOT; GT06 physical certification deferred and NOT CERTIFIED; Wave 2 active; PRs #118 and #119 merged; and PR #120 active.
+- Treats that adoption baseline as historical. Later dated repository and production facts supersede it wherever status changed, including the later merge of PR #120.
 
 ## Controlled revision 2.7 update
 

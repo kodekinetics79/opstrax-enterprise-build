@@ -178,11 +178,22 @@ Implementation teams may submit evidence but cannot self-certify critical claims
 
 ## 13. Current repository and production truth
 
-Live GitHub and production state was verified on 2026-09-08.
+### Adoption baseline on 2026-09-02
+
+The following is the dated historical snapshot used when the Accelerated Hardening Factory v2.0 was adopted. It establishes the transition from v1.1 and v1.2; it is not a claim about the repository after that date.
+
+- Wave 1 G1A was merged and closed under a time-bounded LIMITED GO; M1/M2 remained PILOT.
+- GT06 physical certification was deferred on EXTERNAL HOLD and remained NOT CERTIFIED.
+- Wave 2 was active through #115 for Samsara and #116 for certified ELD partner selection and integration readiness.
+- PRs #118 and #119 were merged; PR #120 was active for Samsara truth and recovery hardening.
+
+### Later verified truth on 2026-09-08
+
+The later repository and production facts below supersede the adoption snapshot wherever status changed.
 
 - Current `main` is `2ed4e4295136118711fb7dcfd7db29d0ce3a3a42`.
 - The production POC frontend and API report exact deployed software SHA `294a20ded52b7f6a3c4d689fa0de7d0b3fbe7efa`.
-- The original v2.0 activation snapshot recorded PRs #118 and #119 merged and PR #120 active. PR #120 has since merged.
+- PR #120 has since merged.
 - PRs #201, #202, #210 and #216 are merged with successful checks.
 - PR #131 was closed without merge; its function was superseded by later integrated HOS work.
 - PR #159 is merged with successful checks.
