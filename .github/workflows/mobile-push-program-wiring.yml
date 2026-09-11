@@ -1,0 +1,68 @@
+name: Mobile Push Program Wiring
+
+on:
+  push:
+    branches:
+      - feat/mobile-native-push-v1
+    paths:
+      - .github/workflows/mobile-push-program-wiring.yml
+
+permissions:
+  contents: write
+
+jobs:
+  wire-and-prove:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: feat/mobile-native-push-v1
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '8.0.x'
+      - name: Wire Expo push sender into API composition root
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('backend-dotnet/Program.cs')
+          s = p.read_text()
+          old_http = 'builder.Services.AddHttpClient(); // POD asset proxy (token-scoped public POD delivery)'
+          new_http = '''builder.Services.AddHttpClient(); // POD asset proxy (token-scoped public POD delivery)
+          // Native mobile push delivery. The sender uses only generic lock-screen copy; full
+          // operational detail remains behind authenticated Driver/Fleet/Customer surfaces.
+          builder.Services.AddHttpClient("expo-push", client =>
+          {
+              client.BaseAddress = new Uri("https://exp.host/");
+              client.Timeout = TimeSpan.FromSeconds(10);
+          });'''
+          if old_http not in s and 'AddHttpClient("expo-push"' not in s:
+              raise SystemExit('expected generic AddHttpClient anchor missing')
+          if 'AddHttpClient("expo-push"' not in s:
+              s = s.replace(old_http, new_http, 1)
+
+          old_handler = 'builder.Services.AddSingleton<IOutboxMessageHandler, AlertNotificationDeliveryHandler>();'
+          new_handler = '''builder.Services.AddSingleton<IOutboxMessageHandler, AlertNotificationDeliveryHandler>();
+          // Recipient-scoped native push fan-out; outbox retries are idempotent via
+          // notification_recipients.external_ref and server-owned device-token rows.
+          builder.Services.AddSingleton<IOutboxMessageHandler, MobilePushNotificationHandler>();'''
+          if old_handler not in s and 'IOutboxMessageHandler, MobilePushNotificationHandler' not in s:
+              raise SystemExit('expected alert handler anchor missing')
+          if 'IOutboxMessageHandler, MobilePushNotificationHandler' not in s:
+              s = s.replace(old_handler, new_handler, 1)
+          p.write_text(s)
+          PY
+      - name: Restore API
+        run: dotnet restore backend-dotnet/Opstrax.Api.csproj
+      - name: Build API
+        run: dotnet build backend-dotnet/Opstrax.Api.csproj --no-restore --configuration Release
+      - name: Commit proven wiring
+        run: |
+          if git diff --quiet -- backend-dotnet/Program.cs; then
+            echo "Program wiring already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend-dotnet/Program.cs
+          git commit -m "feat(mobile-push): register Expo outbox delivery"
+          git push origin HEAD:feat/mobile-native-push-v1
