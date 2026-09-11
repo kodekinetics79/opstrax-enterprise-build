@@ -53,6 +53,11 @@ test("predeploy runner makes Stage76 terminal on first and verification runs", (
     "2026_08_02_stage67_telematics_diagnostics_integrity.sql",
     "2026_08_11_stage76_telematics_security_hardening.sql",
   ]);
+  assert.match(
+    rerun,
+    /2026_07_31_stage58_nonforgeable_tenant_ticket\.sql Stage58 "30s" 4/,
+    "hot production Stage58 reconciliation must retain its bounded lock queue",
+  );
   const initial = runner.slice(runner.indexOf("Reapplying Stage67 least-privilege"));
   assertOrdered(initial, [
     "2026_08_02_stage67_telematics_diagnostics_integrity.sql",

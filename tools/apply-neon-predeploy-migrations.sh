@@ -1368,7 +1368,12 @@ echo "Owner integrity: Stage42 gateway schema plus pilot ledgers and critical co
 
 if [ "$stage58_already_applied" = "1" ]; then
   echo "Reapplying terminal Stage58 without a legacy-policy window…"
-  apply_migration_file database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql Stage58
+  # Stage58 deliberately reconciles the complete tenant-policy surface in one
+  # transaction. On a live fleet database, repeated three-second attempts can
+  # continually surrender the ACCESS EXCLUSIVE lock queue to telemetry readers.
+  # Stay queued for a bounded 30 seconds so PostgreSQL can drain existing readers,
+  # while retaining four fail-closed retries for genuinely long transactions.
+  apply_migration_file database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql Stage58 "30s" 4
   apply_migration_file database/migrations/2026_07_31_stage59_data_protection_key_ring.sql Stage59
   echo "Reapplying Stage67 device-credential boundary after Stage58…"
   apply_migration_file database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql Stage67
