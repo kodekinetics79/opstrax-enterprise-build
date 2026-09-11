@@ -82,28 +82,78 @@ command -v python3 >/dev/null || { echo "ERROR: python3 is required for secret-s
 # variables. The full credential never enters a process argument or receipt.
 psql_neon() { python3 tools/psql-neon-env.py "$@"; }
 
+# Production serves live traffic while this owner-only chain runs. DDL must not
+# queue an ACCESS EXCLUSIVE lock behind a long request because the queued writer
+# can then stall new readers and eventually deadlock with another relation. Keep
+# each wait short and retry the complete idempotent migration in a new session.
+# Transactional migrations roll back before retry; additive migrations are
+# repeat-safe by contract and are verified again below.
+MIGRATION_LOCK_MAX_ATTEMPTS=20
+MIGRATION_LOCK_RETRY_DELAY_SECONDS=2
+
+apply_migration_file() {
+  local file="$1"
+  local label="${2:-$1}"
+  local attempt=1
+  local output
+  local status
+  local reason
+
+  while [ "$attempt" -le "$MIGRATION_LOCK_MAX_ATTEMPTS" ]; do
+    if output=$(psql_neon -v ON_ERROR_STOP=1 -q \
+      -c "SET lock_timeout='3s'" -f "$file" 2>&1); then
+      [ -z "$output" ] || printf '%s\n' "$output"
+      return 0
+    else
+      status=$?
+    fi
+
+    if [[ "$output" == *"deadlock detected"* ]]; then
+      reason="deadlock"
+    elif [[ "$output" == *"canceling statement due to lock timeout"* ]]; then
+      reason="lock timeout"
+    else
+      printf '%s\n' "$output" >&2
+      return "$status"
+    fi
+
+    if [ "$attempt" -ge "$MIGRATION_LOCK_MAX_ATTEMPTS" ]; then
+      printf 'ERROR: %s remained blocked after %s attempts (%s).\n' \
+        "$label" "$MIGRATION_LOCK_MAX_ATTEMPTS" "$reason" >&2
+      printf '%s\n' "$output" >&2
+      return "$status"
+    fi
+
+    printf 'Transient %s applying %s; retrying %s/%s after %ss.\n' \
+      "$reason" "$label" "$((attempt + 1))" "$MIGRATION_LOCK_MAX_ATTEMPTS" \
+      "$MIGRATION_LOCK_RETRY_DELAY_SECONDS" >&2
+    sleep "$MIGRATION_LOCK_RETRY_DELAY_SECONDS"
+    attempt=$((attempt + 1))
+  done
+}
+
 # Stage58 intentionally rebuilds generic tenant-table grants. These later slices
 # own narrower control-plane or safe-column boundaries, so replay them after every
 # terminal Stage58/76 reconciliation. Each migration is additive and repeat-safe.
 reapply_late_control_boundaries() {
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage112_camera_provider_ingest_spine.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage116_device_connectivity_profiles.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage117_device_firmware_campaign_planning.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage118_device_rma_replacement.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage119_device_remote_command_governance.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage120_device_connectivity_observations.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage121_device_installation_work_packages.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage122_installation_work_package_links.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage123_device_retirement.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage124_rma_support_ownership.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage125_device_spare_pool.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage126_device_support_tier_history.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage130_canonical_diagnostic_evidence_identity.sql
+  apply_migration_file database/migrations/2026_09_07_stage112_camera_provider_ingest_spine.sql
+  apply_migration_file database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql
+  apply_migration_file database/migrations/2026_09_07_stage116_device_connectivity_profiles.sql
+  apply_migration_file database/migrations/2026_09_07_stage117_device_firmware_campaign_planning.sql
+  apply_migration_file database/migrations/2026_09_07_stage118_device_rma_replacement.sql
+  apply_migration_file database/migrations/2026_09_07_stage119_device_remote_command_governance.sql
+  apply_migration_file database/migrations/2026_09_07_stage120_device_connectivity_observations.sql
+  apply_migration_file database/migrations/2026_09_07_stage121_device_installation_work_packages.sql
+  apply_migration_file database/migrations/2026_09_07_stage122_installation_work_package_links.sql
+  apply_migration_file database/migrations/2026_09_07_stage123_device_retirement.sql
+  apply_migration_file database/migrations/2026_09_07_stage124_rma_support_ownership.sql
+  apply_migration_file database/migrations/2026_09_07_stage125_device_spare_pool.sql
+  apply_migration_file database/migrations/2026_09_07_stage126_device_support_tier_history.sql
+  apply_migration_file database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql
+  apply_migration_file database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql
+  apply_migration_file database/migrations/2026_09_08_stage130_canonical_diagnostic_evidence_identity.sql
   # Must remain last: every preceding reconciliation can replace tenant policies.
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage132_private_user_row_authority.sql
+  apply_migration_file database/migrations/2026_09_08_stage132_private_user_row_authority.sql
 }
 
 MIGRATIONS=(
@@ -316,6 +366,8 @@ MIGRATIONS=(
   2026_09_09_stage133_demo_eld_certification_truth
   # Reconcile the original OPX-DEMO ELD fixture that predates Stage133's serial vocabulary.
   2026_09_09_stage134_legacy_demo_eld_reconciliation
+  # Migration-only databases need additive legacy Jobs/POD columns before Stage135 truth cleanup.
+  2026_09_11_stage137_legacy_operational_truth_contract
   # Retire exact legacy demo POD/audit rows that contradict the live operating truth.
   2026_09_10_stage135_demo_operational_truth_reconciliation
   # Product Admin may govern exact device model/HW/FW/SHA readiness candidates.
@@ -456,7 +508,7 @@ for m in "${MIGRATIONS[@]}"; do
   else
     echo "── applying $m"
   fi
-  psql_neon -v ON_ERROR_STOP=1 -q -f "$f"
+  apply_migration_file "$f" "$m"
   # stage21 precedes the ledger; later migrations must register successfully so a
   # failed bookkeeping write cannot masquerade as a complete deploy on the next run.
   if [ "$(psql_neon -tA -c "SELECT to_regclass('public.schema_migrations') IS NOT NULL")" = "t" ]; then
@@ -533,6 +585,7 @@ BEGIN
       ('2026_09_08_stage131_alert_source_truth'),
       ('2026_09_09_stage133_demo_eld_certification_truth'),
       ('2026_09_09_stage134_legacy_demo_eld_reconciliation'),
+      ('2026_09_11_stage137_legacy_operational_truth_contract'),
       ('2026_09_10_stage135_demo_operational_truth_reconciliation'),
       ('2026_09_11_stage136_platform_hardware_readiness_permission')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
@@ -1299,12 +1352,12 @@ echo "Owner integrity: Stage42 gateway schema plus pilot ledgers and critical co
 
 if [ "$stage58_already_applied" = "1" ]; then
   echo "Reapplying terminal Stage58 without a legacy-policy window…"
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+  apply_migration_file database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql Stage58
+  apply_migration_file database/migrations/2026_07_31_stage59_data_protection_key_ring.sql Stage59
   echo "Reapplying Stage67 device-credential boundary after Stage58…"
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
+  apply_migration_file database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql Stage67
   echo "Applying terminal Stage76 telemetry ACL reconciliation…"
-  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+  apply_migration_file database/migrations/2026_08_11_stage76_telematics_security_hardening.sql Stage76
   echo "Reapplying late safe-column and control-plane boundaries after Stage76…"
   reapply_late_control_boundaries
   psql_neon -v ON_ERROR_STOP=1 <<'SQL'
@@ -1728,8 +1781,8 @@ terminal_file="database/migrations/${terminal_migration}.sql"
 # contracts. Every tenant table now exists, including Stage60-63 additions, so
 # Stage58 can atomically replace all legacy/public GUC policies before the first
 # production-wide policy scan. There is no post-scan legacy-policy window.
-psql_neon -v ON_ERROR_STOP=1 -q -f "$terminal_file"
-psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+apply_migration_file "$terminal_file" Stage58
+apply_migration_file database/migrations/2026_07_31_stage59_data_protection_key_ring.sql Stage59
 
 echo "Post-check: production-wide tenant RLS coverage…"
 if [ "$stage58_already_applied" != "1" ]; then
@@ -2066,7 +2119,7 @@ $verify_stage58$;
 SQL
 echo "Stage58: signed transaction tickets, exact roles/policies/grants, and control-plane separation verified"
 echo "Reapplying Stage67 least-privilege device credential boundary after terminal reconciliation…"
-psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
+apply_migration_file database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql Stage67
 psql_neon -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $verify_stage67_credentials$
 BEGIN
@@ -2082,7 +2135,7 @@ END
 $verify_stage67_credentials$;
 SQL
 echo "Applying terminal Stage76 telemetry default-deny/runtime ACL reconciliation…"
-psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+apply_migration_file database/migrations/2026_08_11_stage76_telematics_security_hardening.sql Stage76
 echo "Reapplying late safe-column and control-plane boundaries after Stage76…"
 reapply_late_control_boundaries
 psql_neon -v ON_ERROR_STOP=1 -q <<'SQL'
