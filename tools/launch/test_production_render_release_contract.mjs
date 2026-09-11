@@ -66,10 +66,15 @@ test("production migrations bound live DDL lock waits and retry transient conten
 
   assert.match(runner, /MIGRATION_LOCK_MAX_ATTEMPTS=20/);
   assert.match(runner, /MIGRATION_LOCK_RETRY_DELAY_SECONDS=2/);
-  assert.match(helper, /SET lock_timeout='3s'/);
+  assert.match(helper, /local lock_timeout="\$\{3:-3s\}"/);
+  assert.match(helper, /SET lock_timeout='\$lock_timeout'/);
   assert.match(helper, /deadlock detected/);
   assert.match(helper, /canceling statement due to lock timeout/);
   assert.match(helper, /return "\$status"/);
+  assert.match(
+    runner,
+    /2026_09_11_stage139_telemetry_ledger_backfill_reconciliation[\s\S]*?apply_migration_file "\$f" "\$m" "30s" 4/,
+  );
 
   for (const stage of ["Stage58", "Stage59", "Stage67", "Stage76"]) {
     assert.match(runner, new RegExp(`apply_migration_file [^\\n]+ ${stage}`));

@@ -82,26 +82,28 @@ command -v python3 >/dev/null || { echo "ERROR: python3 is required for secret-s
 # variables. The full credential never enters a process argument or receipt.
 psql_neon() { python3 tools/psql-neon-env.py "$@"; }
 
-# Production serves live traffic while this owner-only chain runs. DDL must not
-# queue an ACCESS EXCLUSIVE lock behind a long request because the queued writer
-# can then stall new readers and eventually deadlock with another relation. Keep
-# each wait short and retry the complete idempotent migration in a new session.
-# Transactional migrations roll back before retry; additive migrations are
-# repeat-safe by contract and are verified again below.
+# Production serves live traffic while this owner-only chain runs. DDL normally
+# uses a short ACCESS EXCLUSIVE lock wait and retries the complete idempotent
+# migration in a new session. A forward-only reconciliation may opt into a longer,
+# bounded wait when repeated short attempts would continually surrender its queue
+# position to live traffic. Transactional migrations roll back before retry;
+# additive migrations are repeat-safe by contract and are verified again below.
 MIGRATION_LOCK_MAX_ATTEMPTS=20
 MIGRATION_LOCK_RETRY_DELAY_SECONDS=2
 
 apply_migration_file() {
   local file="$1"
   local label="${2:-$1}"
+  local lock_timeout="${3:-3s}"
+  local max_attempts="${4:-$MIGRATION_LOCK_MAX_ATTEMPTS}"
   local attempt=1
   local output
   local status
   local reason
 
-  while [ "$attempt" -le "$MIGRATION_LOCK_MAX_ATTEMPTS" ]; do
+  while [ "$attempt" -le "$max_attempts" ]; do
     if output=$(psql_neon -v ON_ERROR_STOP=1 -q \
-      -c "SET lock_timeout='3s'" -f "$file" 2>&1); then
+      -c "SET lock_timeout='$lock_timeout'" -f "$file" 2>&1); then
       [ -z "$output" ] || printf '%s\n' "$output"
       return 0
     else
@@ -117,15 +119,15 @@ apply_migration_file() {
       return "$status"
     fi
 
-    if [ "$attempt" -ge "$MIGRATION_LOCK_MAX_ATTEMPTS" ]; then
+    if [ "$attempt" -ge "$max_attempts" ]; then
       printf 'ERROR: %s remained blocked after %s attempts (%s).\n' \
-        "$label" "$MIGRATION_LOCK_MAX_ATTEMPTS" "$reason" >&2
+        "$label" "$max_attempts" "$reason" >&2
       printf '%s\n' "$output" >&2
       return "$status"
     fi
 
     printf 'Transient %s applying %s; retrying %s/%s after %ss.\n' \
-      "$reason" "$label" "$((attempt + 1))" "$MIGRATION_LOCK_MAX_ATTEMPTS" \
+      "$reason" "$label" "$((attempt + 1))" "$max_attempts" \
       "$MIGRATION_LOCK_RETRY_DELAY_SECONDS" >&2
     sleep "$MIGRATION_LOCK_RETRY_DELAY_SECONDS"
     attempt=$((attempt + 1))
@@ -462,7 +464,15 @@ for m in "${MIGRATIONS[@]}"; do
     continue
   fi
   echo "── applying $m"
-  apply_migration_file "$f" "$m"
+  if [ "$m" = "2026_09_11_stage139_telemetry_ledger_backfill_reconciliation" ]; then
+    # Stage139 must obtain one metadata-only lock on the hot location_events
+    # relation. Three-second retries repeatedly surrender the queue position under
+    # production traffic. Stay queued for a bounded 30 seconds while preserving
+    # four fail-closed attempts and the default policy for every other migration.
+    apply_migration_file "$f" "$m" "30s" 4
+  else
+    apply_migration_file "$f" "$m"
+  fi
   # stage21 precedes the ledger; later migrations must register successfully so a
   # failed bookkeeping write cannot masquerade as a complete deploy on the next run.
   if [ "$(psql_neon -tA -c "SELECT to_regclass('public.schema_migrations') IS NOT NULL")" = "t" ]; then
