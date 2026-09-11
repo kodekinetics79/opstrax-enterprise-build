@@ -449,6 +449,12 @@ for m in "${MIGRATIONS[@]}"; do
     fi
   fi
   repair_migration=false
+  # Stage55 is deliberately not a recurring repair migration. Even when every
+  # column already matches, its broad ALTER TABLE statements request ACCESS
+  # EXCLUSIVE locks on hot production relations such as companies. The guarded
+  # post-check below and /health/ready verify its exact columns, indexes, RLS,
+  # grants and ledger without taking those locks. An unledgered Stage55 still
+  # applies normally; ledgered drift fails closed at verification.
   case "$m" in
     2026_06_27_stage5_p0b1a_foundation|\
     2026_06_28_stage5b_p0b1a2_persistence_hardening|\
@@ -463,7 +469,6 @@ for m in "${MIGRATIONS[@]}"; do
     2026_07_16_stage42_telemetry_gateways|\
     2026_07_30_stage53_tenant_rls_reconciliation|\
     2026_07_30_stage54_cold_chain_device_integrity|\
-    2026_07_30_stage55_fleet_runtime_route_contract|\
     2026_07_30_stage56_asset_type_integrity|\
     2026_07_30_stage57_workforce_schedule_tenant_integrity|\
     2026_07_22_stage47_detention_recovery|\
