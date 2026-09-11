@@ -74,6 +74,7 @@ public sealed class PlatformTenantUserAdministrationPostgresTests
             INSERT INTO roles (name, permissions_json, is_system)
             SELECT seed.name, seed.permissions_json, TRUE
             FROM (VALUES
+                ('Tenant Admin',  jsonb_build_array('users:view','users:create','users:update','users:manage')),
                 ('Company Admin', jsonb_build_array('*')),
                 ('Dispatcher',    jsonb_build_array('dispatch:view')),
                 ('Driver',        jsonb_build_array('jobs:view'))
@@ -181,7 +182,7 @@ public sealed class PlatformTenantUserAdministrationPostgresTests
         var token = await SeedPlatformAdminAsync(db, "platform_super_admin", $"ua2-{suffix}@opstrax.test");
 
         var companyId = await SeedCompanyAsync(db, suffix);
-        var onlyAdmin = await SeedUserAsync(db, companyId, $"solo-{suffix}@acme.test", "Company Admin");
+        var onlyAdmin = await SeedUserAsync(db, companyId, $"solo-{suffix}@acme.test", "Tenant Admin");
         await SeedUserAsync(db, companyId, $"driver-{suffix}@acme.test", "Driver");
 
         var demote = await PlatformEndpoints.TenantUserUpdate(companyId, onlyAdmin, Http(token),
@@ -195,7 +196,7 @@ public sealed class PlatformTenantUserAdministrationPostgresTests
         // Unchanged on both counts.
         var row = await db.QuerySingleAsync("SELECT role_name, status FROM users WHERE id=@u",
             c => c.Parameters.AddWithValue("@u", onlyAdmin));
-        Assert.Equal("Company Admin", row?["roleName"]?.ToString());
+        Assert.Equal("Tenant Admin", row?["roleName"]?.ToString());
         Assert.Equal("Active", row?["status"]?.ToString());
 
         // Create a second administrator from the platform console, then the first
@@ -205,7 +206,7 @@ public sealed class PlatformTenantUserAdministrationPostgresTests
             {
                 ["email"] = $"second-admin-{suffix}@acme.test",
                 ["fullName"] = "Second Admin",
-                ["roleName"] = "Company Admin",
+                ["roleName"] = "Tenant Admin",
             }, db, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, Status(created));
 

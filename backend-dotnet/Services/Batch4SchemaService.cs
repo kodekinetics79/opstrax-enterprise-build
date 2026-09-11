@@ -170,13 +170,13 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
             evidence_type VARCHAR(120) NOT NULL, evidence_title VARCHAR(220) NOT NULL, evidence_url VARCHAR(400) NULL, content_hash VARCHAR(64) NULL, evidence_json JSONB NULL,
             source_entity_type VARCHAR(100) NULL, source_entity_id BIGINT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
         @"CREATE TABLE IF NOT EXISTS evidence_packages (
-            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, package_number VARCHAR(80) NOT NULL,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, branch_id BIGINT NULL, package_number VARCHAR(80) NOT NULL,
             incident_id BIGINT NULL, safety_event_id BIGINT NULL, dashcam_event_id BIGINT NULL, driver_id BIGINT NULL, vehicle_id BIGINT NULL, job_id BIGINT NULL,
             package_type VARCHAR(120) NOT NULL DEFAULT 'Insurance Evidence', status VARCHAR(80) NOT NULL DEFAULT 'Draft', locked BOOLEAN NOT NULL DEFAULT FALSE,
             export_url VARCHAR(400) NULL, summary TEXT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL)",
         @"CREATE TABLE IF NOT EXISTS evidence_package_items (
-            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, evidence_package_id BIGINT NOT NULL,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, branch_id BIGINT NULL, evidence_package_id BIGINT NOT NULL,
             item_type VARCHAR(120) NOT NULL, item_title VARCHAR(220) NOT NULL, item_url VARCHAR(400) NULL, item_json JSONB NULL,
             source_entity_type VARCHAR(100) NULL, source_entity_id BIGINT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
         @"CREATE TABLE IF NOT EXISTS insurance_reports (
@@ -207,6 +207,8 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
         "CREATE INDEX IF NOT EXISTS ix_b4_dashcam_events ON dashcam_events(company_id, severity, review_status, occurred_at)",
         "CREATE INDEX IF NOT EXISTS ix_b4_coaching_tasks ON coaching_tasks(company_id, driver_id, status, priority)",
         "CREATE INDEX IF NOT EXISTS ix_b4_incidents ON incidents(company_id, status, severity, incident_number)",
+        "ALTER TABLE evidence_packages ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL",
+        "ALTER TABLE evidence_package_items ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL",
         "CREATE INDEX IF NOT EXISTS ix_b4_evidence_packages ON evidence_packages(company_id, status, package_number)",
         "CREATE INDEX IF NOT EXISTS ix_b4_insurance_reports ON insurance_reports(company_id, report_number, status)"
         ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_company_idempotency ON incidents(company_id,idempotency_key) WHERE idempotency_key IS NOT NULL"

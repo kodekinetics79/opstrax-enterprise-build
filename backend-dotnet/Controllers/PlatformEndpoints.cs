@@ -1384,41 +1384,70 @@ public static class PlatformEndpoints
     }
 
     // Platform-initiated password reset for a tenant user. Generates a strong one-time
-    // password, sets it, kills that user's sessions, and returns the password ONCE so the
-    // operator can hand it over. Deliberately does NOT depend on SMTP, and never changes
-    // the user's status (a disabled user stays disabled).
-    private static async Task<IResult> TenantUserResetPassword(long id, long userId, HttpContext http, Database db, CancellationToken ct)
+    // password, sets it, kills that user's sessions and reset links, and returns the
+    // password ONCE so the operator can hand it over. Deliberately does NOT depend on SMTP.
+    private static async Task<IResult> TenantUserResetPassword(long id, long userId, HttpContext http, Database db, SecuritySettingsService securitySettings, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
         if (error is not null) return error;
 
         var user = await db.QuerySingleAsync(
-            "SELECT id, email, full_name FROM users WHERE id=@uid AND company_id=@cid",
+            "SELECT id, email, full_name, status FROM users WHERE id=@uid AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", id); }, ct);
         if (user is null)
             return Results.Json(ApiResponse<object>.Fail("Not found", "That user does not belong to this tenant"),
                 statusCode: StatusCodes.Status404NotFound);
 
-        var temp = GenerateTempPassword();
-        // Mirrors the canonical self-service reset path: set the hash, stamp the change,
-        // and CLEAR the lockout counters — a locked-out user is usually the reason an
-        // operator is resetting in the first place.
-        await db.ExecuteAsync(
-            @"UPDATE users SET
-                password_hash=@h, demo_password='', password_changed_at=NOW(),
-                failed_login_attempts=0, locked_until=NULL
-              WHERE id=@uid AND company_id=@cid",
-            c =>
-            {
-                c.Parameters.AddWithValue("@h", PlatformSchemaService.HashPassword(temp));
-                c.Parameters.AddWithValue("@uid", userId);
-                c.Parameters.AddWithValue("@cid", id);
-            }, ct);
-        var revoked = await db.ExecuteAsync("DELETE FROM user_sessions WHERE user_id=@uid",
-            c => c.Parameters.AddWithValue("@uid", userId), ct);
+        if (!string.Equals(user["status"]?.ToString(), "Active", StringComparison.OrdinalIgnoreCase))
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "Direct password reset is available only for active users. Re-enable the user first, or resend an activation invite for a pending user."));
+
+        var policy = await securitySettings.GetAsync(id, ct);
+        var temp = GenerateTempPassword(policy);
+        var validation = PasswordPolicyService.ValidatePassword(temp, policy);
+        if (!validation.valid)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "The tenant password policy cannot produce a safe temporary password.", validation.failures));
+
+        var revoked = 0L;
+        var applied = await db.RunInTenantTransactionAsync(id, async () =>
+        {
+            var updated = await db.ExecuteAsync(
+                @"UPDATE users SET
+                    password_hash=@h, demo_password='', password_changed_at=NOW(),
+                    failed_login_attempts=0, locked_until=NULL
+                  WHERE id=@uid AND company_id=@cid AND status='Active'",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@h", PlatformSchemaService.HashPassword(temp));
+                    c.Parameters.AddWithValue("@uid", userId);
+                    c.Parameters.AddWithValue("@cid", id);
+                }, ct);
+            if (updated != 1) return false;
+
+            revoked = await db.ScalarLongAsync(
+                "WITH gone AS (DELETE FROM user_sessions WHERE user_id=@uid AND company_id=@cid RETURNING 1) SELECT COUNT(*) FROM gone",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@uid", userId);
+                    c.Parameters.AddWithValue("@cid", id);
+                }, ct);
+            await db.ExecuteAsync(
+                "DELETE FROM password_reset_tokens WHERE user_id=@uid AND company_id=@cid",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@uid", userId);
+                    c.Parameters.AddWithValue("@cid", id);
+                }, ct);
+            return true;
+        }, ct);
+
+        if (!applied)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "The user changed while the reset was being applied. Reload the user and try again."));
 
         await AuditAsync(db, principal!, http, "tenant.user.password_reset", "User", userId, id,
-            new { email = user["email"], sessionsRevoked = revoked }, ct);
+            new { email = user["email"], sessionsRevoked = revoked, resetTokensRevoked = true }, ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -1432,7 +1461,7 @@ public static class PlatformEndpoints
 
     // Roles carrying tenant-wide authority. Used both to seed a new administrator
     // and to guard against removing the last one.
-    private static readonly string[] TenantAdminRoles = ["Company Admin", "Super Admin", "Reseller / Partner Admin"];
+    private static readonly string[] TenantAdminRoles = ["Tenant Admin", "Company Admin", "Super Admin", "Reseller / Partner Admin"];
 
     private static bool IsTenantAdminRole(string? roleName) =>
         roleName is not null && TenantAdminRoles.Contains(roleName, StringComparer.OrdinalIgnoreCase);
@@ -1743,13 +1772,24 @@ public static class PlatformEndpoints
     }
 
     // Unambiguous alphabet (no O/0, I/l/1) so a handed-over password is easy to type.
-    private static string GenerateTempPassword()
+    private static string GenerateTempPassword(SecuritySettings? policy = null)
     {
-        const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-        var bytes = RandomNumberGenerator.GetBytes(16);
-        var sb = new System.Text.StringBuilder(16);
-        foreach (var b in bytes) sb.Append(chars[b % chars.Length]);
-        return sb.ToString();
+        const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%*?";
+        var length = Math.Clamp(Math.Max(16, policy?.PasswordMinLength ?? 16), 16, 256);
+        var value = new char[length];
+        value[0] = 'A';
+        value[1] = 'a';
+        value[2] = '2';
+        value[3] = '!';
+        var bytes = RandomNumberGenerator.GetBytes(length);
+        for (var i = 4; i < value.Length; i++) value[i] = chars[bytes[i] % chars.Length];
+        // Shuffle the guaranteed policy characters away from predictable positions.
+        for (var i = value.Length - 1; i > 0; i--)
+        {
+            var j = RandomNumberGenerator.GetInt32(i + 1);
+            (value[i], value[j]) = (value[j], value[i]);
+        }
+        return new string(value);
     }
 
     private static async Task<IResult> TenantAudit(long id, HttpContext http, Database db, CancellationToken ct)
@@ -3067,8 +3107,8 @@ public static class PlatformEndpoints
             if (!string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase))
             {
                 await db.ExecuteAsync(
-                    @"UPDATE users SET full_name=@n, role_name='Company Admin',
-                          role_id=(SELECT id FROM roles WHERE LOWER(name)=LOWER('Company Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
+                    @"UPDATE users SET full_name=@n, role_name='Tenant Admin',
+                          role_id=(SELECT id FROM roles WHERE LOWER(name)=LOWER('Tenant Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
                           status='Pending'
                       WHERE id=@id AND company_id=@cid",
                     c =>
@@ -3088,8 +3128,8 @@ public static class PlatformEndpoints
             userId = await db.InsertAsync(
                 @"INSERT INTO users (company_id, role_id, full_name, email, role_name, status)
                   VALUES (@cid,
-                          (SELECT id FROM roles WHERE LOWER(name)=LOWER('Company Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
-                          @name, @email, 'Company Admin', 'Pending')
+                          (SELECT id FROM roles WHERE LOWER(name)=LOWER('Tenant Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
+                          @name, @email, 'Tenant Admin', 'Pending')
                   RETURNING id",
                 c =>
                 {

@@ -434,7 +434,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/jobs/{id:long}/assign", AssignJob);
         app.MapPost("/api/jobs/{id:long}/status", ChangeJobStatus);
         app.MapPost("/api/jobs/{id:long}/send-eta", SendEta);
-        app.MapPost("/api/jobs/{id:long}/proof-placeholder", CreateProofPlaceholder);
+        app.MapPost("/api/jobs/{id:long}/proof-placeholder", ProofPlaceholderUnavailable);
         app.MapPost("/api/jobs/{id:long}/proof", CaptureProof);
         app.MapPost("/api/jobs/{id:long}/proof/upload", UploadJobProofEvidence).DisableAntiforgery();
         app.MapGet("/api/jobs/{id:long}/proof", GetJobProof);
@@ -1499,7 +1499,11 @@ public static partial class EndpointMappings
             var denied = RequirePermission(http, "safety:manage");
             return denied is not null ? Task.FromResult(denied) : UpdateEvidencePackage(http, id, body, db, audit, ct);
         });
-        app.MapDelete("/api/evidence-packages/{id:long}", SoftDeleteWithPermission("evidence_packages", "evidence.package.deleted", "safety:manage"));
+        app.MapDelete("/api/evidence-packages/{id:long}", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
+        {
+            var denied = RequirePermission(http, "safety:manage");
+            return denied is not null ? Task.FromResult(denied) : DeleteEvidencePackage(http, id, db, audit, ct);
+        });
         app.MapPost("/api/evidence-packages/{id:long}/generate-export-placeholder", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "safety:manage");
@@ -2823,11 +2827,12 @@ public static partial class EndpointMappings
             "telemetry.live_state.read" or "telemetry.live-state.read" => ["telemetry.live_state.read", "telemetry.live-state.read", "map:view", "map.view", "telematics:gps:view", "telematics.gps.view"],
             // Packet-2 mirror: fleet:view no longer reaches the device registry.
             "telemetry.devices.read" or "telemetry.devices.view" => ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view"],
-            "telemetry.devices.manage" => ["telemetry.devices.manage", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:providers:manage", "fleet:manage", "fleet.manage"],
+            "telemetry.devices.manage" => ["telemetry.devices.manage", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "fleet:manage", "fleet.manage"],
             "telematics:devices:firmware" or "telematics.devices.firmware" => ["telematics:devices:firmware", "telematics.devices.firmware", "maintenance:manage", "maintenance.manage", "telematics:manage", "telematics.manage"],
             "telematics:devices:rma" or "telematics.devices.rma" => ["telematics:devices:rma", "telematics.devices.rma", "maintenance:update", "maintenance.update", "maintenance:manage", "maintenance.manage", "telematics:manage", "telematics.manage"],
-            // Mirror of the frontend permission group: providers-manage ⇄ devices-manage ⇄ fleet:manage.
-            "telematics:providers:manage" or "telematics.providers.manage" => ["telematics:providers:manage", "telematics.providers.manage", "telemetry.devices.manage", "fleet:manage", "fleet.manage"],
+            // Provider credentials and device lifecycle are separate write domains.
+            // Fleet managers retain both through their explicit coarse grant.
+            "telematics:providers:manage" or "telematics.providers.manage" => ["telematics:providers:manage", "telematics.providers.manage", "fleet:manage", "fleet.manage"],
             "telemetry.alerts.read" or "telemetry.alerts.view" => ["telemetry.alerts.read", "telemetry.alerts.view", "alerts:view", "alerts.view", "safety:view", "safety.view", "maintenance:view", "maintenance.view"],
             "telemetry.alerts.manage" => ["telemetry.alerts.manage", "alerts:acknowledge", "alerts:close", "alerts.manage", "alerts:manage", "safety:manage", "safety.manage", "maintenance:manage", "maintenance.manage"],
             // Packet-2 mirror: dashboard:view / fleet:view no longer satisfy rules reads.
@@ -7578,48 +7583,12 @@ public static partial class EndpointMappings
         }, ct);
     }
 
-    private static async Task<IResult> CreateProofPlaceholder(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static Task<IResult> ProofPlaceholderUnavailable(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
-        if (RequireAnyDirectPermission(http, "dispatch:update", "shipments:update", "dispatch:manage") is { } denied) return denied;
-        var companyId = GetCompanyId(http);
-        var branchId = GetBranchId(http);
-        return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
-        {
-        var job = await db.QuerySingleAsync(
-            "SELECT status FROM jobs WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL" +
-            (branchId is null ? "" : " AND branch_id=@branchId") + " FOR UPDATE",
-            c =>
-            {
-                c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@companyId", companyId);
-                if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
-            }, ct);
-        if (job is null) return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
-        if (job["status"]?.ToString() is "Cancelled" or "Delivered")
-            return Results.Conflict(ApiResponse<object>.Fail("Proof cannot be queued for a cancelled or delivered job"));
-        var existing = await db.QuerySingleAsync(
-            "SELECT id FROM proof_of_delivery WHERE company_id=@companyId AND job_id=@id AND status='Pending' ORDER BY captured_at DESC,id DESC LIMIT 1",
-            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        var created = existing is null;
-        var proofId = created ? await db.InsertAsync(
-            @"INSERT INTO proof_of_delivery (company_id, job_id, receiver_name, received_by, proof_type, status, notes)
-              VALUES (@companyId, @id, @receiver, @receiver, 'Placeholder', 'Pending', @notes)",
-            c =>
-            {
-                c.Parameters.AddWithValue("@companyId", companyId);
-                c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@receiver", Get(body, "receivedBy") is DBNull ? "Pending receiver" : Get(body, "receivedBy"));
-                c.Parameters.AddWithValue("@notes", Get(body, "notes") is DBNull ? "Proof placeholder created from OpsTrax." : Get(body, "notes"));
-            }, ct) : Convert.ToInt64(existing!["id"]);
-        await db.ExecuteAsync("UPDATE jobs SET proof_status='Pending', updated_at=NOW() WHERE id=@id AND company_id=@companyId" + (branchId is null ? "" : " AND branch_id=@branchId"),
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct);
-        if (created)
-        {
-            await audit.LogAsync(http, "proof.placeholder.created", "Job", id, ct: ct);
-            await AddTimeline(db, companyId, "Job", id, "proof.placeholder.created", "Proof placeholder created", ct);
-        }
-        return Results.Ok(ApiResponse<object>.Ok(new { id, proofId, alreadyQueued = !created }, created ? "Proof placeholder created" : "Proof is already queued"));
-        }, ct);
+        if (RequireAnyDirectPermission(http, "dispatch:update", "shipments:update", "dispatch:manage") is { } denied) return Task.FromResult(denied);
+        return Task.FromResult<IResult>(Results.Json(
+            ApiResponse<object>.Fail("Placeholder proof creation has been retired. Open Proof Center to upload or capture authentic proof of delivery."),
+            statusCode: StatusCodes.Status410Gone));
     }
 
     private static async Task<IResult> GetJobProof(HttpContext http, long id, Database db, CancellationToken ct)
@@ -10285,7 +10254,7 @@ public static partial class EndpointMappings
                     evidence_json->>'custodyStatus' custody_status,
                     evidence_json->>'retrievalStatus' retrieval_status
                   FROM incident_evidence WHERE incident_id=@id AND company_id=@cid" + (branchId is null ? "" : " AND branch_id=@branchId") + " ORDER BY created_at DESC", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct),
-            packages = await db.QueryAsync("SELECT * FROM evidence_packages WHERE incident_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            packages = await db.QueryAsync("SELECT * FROM evidence_packages WHERE incident_id=@id AND company_id=@cid AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"), c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct),
             insuranceReports = await db.QueryAsync("SELECT * FROM insurance_reports WHERE incident_id=@id AND company_id=@cid" + (branchId is null ? "" : " AND branch_id=@branchId"), c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct),
             timeline = await IncidentTimelineRows(companyId, id, db, ct),
             recommendations = GetBranchId(http) is null ? await TenantModuleRecommendations(db, companyId, "incidents", ct) : [],
@@ -10485,27 +10454,30 @@ public static partial class EndpointMappings
     private static async Task<IResult> EvidenceSummary(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "safety:evidence:view") is { } denied) return denied;
+        var (branchClause, branchId) = StrictBranchFilter(http, "ep");
         var row = await db.QuerySingleAsync(@"SELECT COUNT(*) total_packages, SUM(CASE WHEN status='Draft' THEN 1 ELSE 0 END) draft_packages, SUM(CASE WHEN status='Export Ready' THEN 1 ELSE 0 END) export_ready,
             SUM(CASE WHEN locked=TRUE THEN 1 ELSE 0 END) locked_packages, SUM(CASE WHEN package_type LIKE '%Insurance%' THEN 1 ELSE 0 END) insurance_packages, SUM(CASE WHEN export_url IS NOT NULL THEN 1 ELSE 0 END) exports_generated
-            FROM evidence_packages WHERE company_id=@cid AND deleted_at IS NULL",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
+            FROM evidence_packages ep WHERE company_id=@cid AND deleted_at IS NULL" + branchClause,
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
     private static Task<IResult> EvidencePackages(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "safety:evidence:view") is { } denied) return Task.FromResult(denied);
-        return OkRows(db, EvidenceSql + " WHERE ep.company_id=@cid AND ep.deleted_at IS NULL ORDER BY ep.created_at DESC",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        var (branchClause, branchId) = StrictBranchFilter(http, "ep");
+        return OkRows(db, EvidenceSql + " WHERE ep.company_id=@cid AND ep.deleted_at IS NULL" + branchClause + " ORDER BY ep.created_at DESC",
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct: ct);
     }
     private static async Task<IResult> EvidencePackageDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "safety:evidence:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
-        var record = (await db.QueryAsync(EvidenceSql + " WHERE ep.id=@id AND ep.company_id=@cid",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct)).FirstOrDefault();
+        var (branchClause, branchId) = StrictBranchFilter(http, "ep");
+        var record = (await db.QueryAsync(EvidenceSql + " WHERE ep.id=@id AND ep.company_id=@cid AND ep.deleted_at IS NULL" + branchClause,
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Evidence package not found"));
         return Results.Ok(ApiResponse<object>.Ok(new { record,
-            items = await db.QueryAsync("SELECT * FROM evidence_package_items WHERE evidence_package_id=@id AND company_id=@cid ORDER BY created_at", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            items = await db.QueryAsync("SELECT * FROM evidence_package_items WHERE evidence_package_id=@id AND company_id=@cid AND COALESCE(item_json->>'excludedFromEvidence','false')<>'true'" + (branchId is null ? "" : " AND branch_id=@branchId") + " ORDER BY created_at", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct),
             recommendations = await TenantModuleRecommendations(db, companyId, "evidence-packages", ct),
             auditTrail = await TenantAuditRows(db, companyId, "EvidencePackage", id, ct) }));
     }
@@ -10529,18 +10501,20 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("Evidence package must reference incident, safety event or dashcam event."));
 
         var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
         var referencesValid = await db.ScalarLongAsync(
             @"SELECT CASE WHEN
-                (@incident::bigint IS NULL OR EXISTS (SELECT 1 FROM incidents WHERE id=@incident AND company_id=@cid AND deleted_at IS NULL))
-                AND (@safety::bigint IS NULL OR EXISTS (SELECT 1 FROM safety_events WHERE id=@safety AND company_id=@cid AND deleted_at IS NULL))
-                AND (@dashcam::bigint IS NULL OR EXISTS (SELECT 1 FROM dashcam_events WHERE id=@dashcam AND company_id=@cid AND deleted_at IS NULL))
-                AND (@driver::bigint IS NULL OR EXISTS (SELECT 1 FROM drivers WHERE id=@driver AND company_id=@cid AND deleted_at IS NULL))
-                AND (@vehicle::bigint IS NULL OR EXISTS (SELECT 1 FROM vehicles WHERE id=@vehicle AND company_id=@cid AND deleted_at IS NULL))
-                AND (@job::bigint IS NULL OR EXISTS (SELECT 1 FROM jobs WHERE id=@job AND company_id=@cid AND deleted_at IS NULL))
+                (@incident::bigint IS NULL OR EXISTS (SELECT 1 FROM incidents WHERE id=@incident AND company_id=@cid AND deleted_at IS NULL AND (@branchId::bigint IS NULL OR branch_id=@branchId)))
+                AND (@safety::bigint IS NULL OR EXISTS (SELECT 1 FROM safety_events WHERE id=@safety AND company_id=@cid AND deleted_at IS NULL AND (@branchId::bigint IS NULL OR branch_id=@branchId)))
+                AND (@dashcam::bigint IS NULL OR EXISTS (SELECT 1 FROM dashcam_events WHERE id=@dashcam AND company_id=@cid AND deleted_at IS NULL AND (@branchId::bigint IS NULL OR branch_id=@branchId)))
+                AND (@driver::bigint IS NULL OR EXISTS (SELECT 1 FROM drivers WHERE id=@driver AND company_id=@cid AND deleted_at IS NULL AND (@branchId::bigint IS NULL OR branch_id=@branchId)))
+                AND (@vehicle::bigint IS NULL OR EXISTS (SELECT 1 FROM vehicles WHERE id=@vehicle AND company_id=@cid AND deleted_at IS NULL AND (@branchId::bigint IS NULL OR branch_id=@branchId)))
+                AND (@job::bigint IS NULL OR EXISTS (SELECT 1 FROM jobs WHERE id=@job AND company_id=@cid AND deleted_at IS NULL AND (@branchId::bigint IS NULL OR branch_id=@branchId)))
               THEN 1 ELSE 0 END",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@incident", (object?)incidentId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@safety", (object?)safetyEventId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@dashcam", (object?)dashcamEventId ?? DBNull.Value);
@@ -10551,28 +10525,89 @@ public static partial class EndpointMappings
         if (referencesValid != 1)
             return Results.BadRequest(ApiResponse<object>.Fail("Evidence package references are invalid."));
 
-        var id = await InsertEvidencePackage(http, db, incidentId, safetyEventId, dashcamEventId, driverId, vehicleId, jobId, ct);
+        var ownership = await db.QuerySingleAsync(@"SELECT COUNT(DISTINCT branch_id) branch_count, MIN(branch_id) branch_id FROM (
+                SELECT branch_id FROM incidents WHERE id=@incident AND company_id=@cid
+                UNION ALL SELECT branch_id FROM safety_events WHERE id=@safety AND company_id=@cid
+                UNION ALL SELECT branch_id FROM dashcam_events WHERE id=@dashcam AND company_id=@cid
+                UNION ALL SELECT branch_id FROM drivers WHERE id=@driver AND company_id=@cid
+                UNION ALL SELECT branch_id FROM vehicles WHERE id=@vehicle AND company_id=@cid
+                UNION ALL SELECT branch_id FROM jobs WHERE id=@job AND company_id=@cid
+            ) referenced_branches", c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@incident", (object?)incidentId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@safety", (object?)safetyEventId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@dashcam", (object?)dashcamEventId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@driver", (object?)driverId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@vehicle", (object?)vehicleId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@job", (object?)jobId ?? DBNull.Value);
+            }, ct);
+        if (Convert.ToInt64(ownership?["branchCount"] ?? 0L) > 1)
+            return Results.BadRequest(ApiResponse<object>.Fail("Evidence package references must belong to one branch."));
+        var ownerBranchId = ownership?["branchId"] is null or DBNull ? branchId : Convert.ToInt64(ownership["branchId"]!);
+        var summary = Get(body, "summary") is DBNull ? null : Get(body, "summary")?.ToString()?.Trim();
+        var id = await InsertEvidencePackage(http, db, ownerBranchId, incidentId, safetyEventId, dashcamEventId, driverId, vehicleId, jobId, summary, ct);
         await audit.LogAsync(http, "evidence.package.created", "EvidencePackage", id, ct: ct);
         return Results.Created($"/api/evidence-packages/{id}", ApiResponse<object>.Ok(new { id }, "Evidence package created"));
     }
     private static async Task<IResult> UpdateEvidencePackage(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         var companyId = GetCompanyId(http);
-        var locked = await db.ScalarLongAsync("SELECT COUNT(*) FROM evidence_packages WHERE id=@id AND company_id=@cid AND locked=TRUE", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-        if (locked > 0 && !string.Equals(Get(body, "override")?.ToString(), "true", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(ApiResponse<object>.Fail("Locked evidence package cannot be modified without override."));
-        await db.ExecuteAsync("UPDATE evidence_packages SET status=COALESCE(@status,status), summary=COALESCE(@summary,summary) WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@status", Get(body, "status")); c.Parameters.AddWithValue("@summary", Get(body, "summary")); }, ct);
+        var branchId = GetBranchId(http);
+        var current = await db.QuerySingleAsync("SELECT locked,status FROM evidence_packages WHERE id=@id AND company_id=@cid AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"), c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct);
+        if (current is null) return Results.NotFound(ApiResponse<object>.Fail("Evidence package not found"));
+        var requestedStatus = Get(body, "status") is DBNull ? null : Get(body, "status")?.ToString();
+        if (requestedStatus is not null && !string.Equals(requestedStatus, current["status"]?.ToString(), StringComparison.OrdinalIgnoreCase))
+            return Results.BadRequest(ApiResponse<object>.Fail("Evidence package status is controlled by the verified lock workflow."));
+        if (Convert.ToBoolean(current["locked"])) return Results.Conflict(ApiResponse<object>.Fail("Locked evidence packages are immutable."));
+        await db.ExecuteAsync("UPDATE evidence_packages SET summary=COALESCE(@summary,summary),updated_at=NOW() WHERE id=@id AND company_id=@companyId" + (branchId is null ? "" : " AND branch_id=@branchId"), c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@summary", Get(body, "summary")); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct);
         await audit.LogAsync(http, "evidence.package.updated", "EvidencePackage", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Evidence package updated"));
     }
     private static async Task<IResult> EvidenceExport(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
         var companyId = GetCompanyId(http);
-        var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM evidence_packages WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct: ct);
+        var branchId = GetBranchId(http);
+        var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM evidence_packages WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"),
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct: ct);
         if (exists == 0) return Results.NotFound(ApiResponse<object>.Fail("Evidence package not found"));
         return Results.Conflict(ApiResponse<object>.Fail("Evidence export generation is not configured; no file was created"));
     }
-    private static async Task<IResult> EvidenceLock(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE evidence_packages SET locked=TRUE, status='Locked' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "evidence.package.locked", "EvidencePackage", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Evidence package locked")); }
+
+    private static async Task<IResult> DeleteEvidencePackage(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        var companyId = GetCompanyId(http); var branchId = GetBranchId(http);
+        var affected = await db.ExecuteAsync("UPDATE evidence_packages SET deleted_at=NOW(),updated_at=NOW() WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL AND locked=FALSE" + (branchId is null ? "" : " AND branch_id=@branchId"), c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct);
+        if (affected == 0)
+        {
+            var exists = await db.QuerySingleAsync("SELECT locked FROM evidence_packages WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"), c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct);
+            return exists is null ? Results.NotFound(ApiResponse<object>.Fail("Evidence package not found")) : Results.Conflict(ApiResponse<object>.Fail("Locked evidence packages cannot be deleted."));
+        }
+        await audit.LogAsync(http, "evidence.package.deleted", "EvidencePackage", id, ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Evidence package deleted"));
+    }
+
+    private static async Task<IResult> EvidenceLock(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        var companyId = GetCompanyId(http); var branchId = GetBranchId(http);
+        var package = await db.QuerySingleAsync("SELECT locked FROM evidence_packages WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"), c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct);
+        if (package is null) return Results.NotFound(ApiResponse<object>.Fail("Evidence package not found"));
+        if (Convert.ToBoolean(package["locked"])) return Results.Ok(ApiResponse<object>.Ok(new { id }, "Evidence package is already locked"));
+        var ready = await db.ScalarLongAsync(@"SELECT CASE WHEN COUNT(*) > 0 AND COUNT(*) FILTER (WHERE
+                    LOWER(item_url) LIKE 'https://%'
+                    AND item_json->>'contentHash' ~ '^[0-9a-fA-F]{64}$'
+                    AND LOWER(COALESCE(item_json->>'verificationStatus',''))='verified'
+                    AND LOWER(COALESCE(item_json->>'retrievalStatus',''))='verified'
+                    AND COALESCE(source_entity_type,'')<>'' AND source_entity_id IS NOT NULL
+                ) = COUNT(*) THEN 1 ELSE 0 END
+              FROM evidence_package_items
+             WHERE evidence_package_id=@id AND company_id=@companyId
+               AND COALESCE(item_json->>'excludedFromEvidence','false')<>'true'" + (branchId is null ? "" : " AND branch_id=@branchId"), c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct);
+        if (ready != 1) return Results.Conflict(ApiResponse<object>.Fail("Evidence package cannot be locked until every included item has an HTTPS source, SHA-256 hash, verified retrieval, verified content, provenance and branch ownership."));
+        await db.ExecuteAsync("UPDATE evidence_packages SET locked=TRUE,status='Locked',updated_at=NOW() WHERE id=@id AND company_id=@companyId" + (branchId is null ? "" : " AND branch_id=@branchId"), c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value); }, ct);
+        await audit.LogAsync(http, "evidence.package.locked", "EvidencePackage", id, ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Evidence package locked"));
+    }
 
     private static async Task<IResult> AiInsights(HttpContext http, Database db, CancellationToken ct)
     {
@@ -14971,13 +15006,20 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@branchId", Get(body, "resolvedBranchId") is DBNull ? (object?)GetBranchId(http) ?? DBNull.Value : Get(body, "resolvedBranchId")); BindIncident(c, body); c.Parameters["@type"].Value = type ?? "Safety Incident"; if (dashcam is not null) c.Parameters["@dashcam"].Value = dashcam["id"] ?? DBNull.Value; }, ct);
     }
 
-    private static async Task<long> InsertEvidencePackage(HttpContext http, Database db, object? incidentId, object? safetyEventId, object? dashcamEventId, object? driverId, object? vehicleId, object? jobId, CancellationToken ct)
+    private static async Task<long> InsertEvidencePackage(HttpContext http, Database db, long? branchId, object? incidentId, object? safetyEventId, object? dashcamEventId, object? driverId, object? vehicleId, object? jobId, string? summary, CancellationToken ct)
     {
-        var id = await db.InsertAsync(@"INSERT INTO evidence_packages (company_id, package_number, incident_id, safety_event_id, dashcam_event_id, driver_id, vehicle_id, job_id, package_type, status, summary)
-            VALUES (@companyId, CONCAT('EVD-', floor(extract(epoch from now()))::bigint), @incident, @safety, @dashcam, @driver, @vehicle, @job, 'Insurance Evidence', 'Draft', 'GPS, speed, video, job, DVIR, maintenance and statement placeholders bundled.')",
-            c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@incident", incidentId ?? DBNull.Value); c.Parameters.AddWithValue("@safety", safetyEventId ?? DBNull.Value); c.Parameters.AddWithValue("@dashcam", dashcamEventId ?? DBNull.Value); c.Parameters.AddWithValue("@driver", driverId ?? DBNull.Value); c.Parameters.AddWithValue("@vehicle", vehicleId ?? DBNull.Value); c.Parameters.AddWithValue("@job", jobId ?? DBNull.Value); }, ct);
-        await db.ExecuteAsync(@"INSERT INTO evidence_package_items (company_id,evidence_package_id,item_type,item_title,item_url,item_json,source_entity_type,source_entity_id)
-            VALUES (@companyId,@id,'Bundle','GPS + Speed + Video Evidence Bundle','/placeholder/evidence-bundle.dat',jsonb_build_object('chainOfCustody','created'), 'package', @id)", c => { c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@id", id); }, ct);
+        var companyId = GetCompanyId(http);
+        var id = await db.InsertAsync(@"INSERT INTO evidence_packages (company_id,branch_id,package_number,incident_id,safety_event_id,dashcam_event_id,driver_id,vehicle_id,job_id,package_type,status,summary)
+            VALUES (@companyId,@branchId,CONCAT('EVD-',floor(extract(epoch from now()))::bigint,'-',substr(md5(random()::text),1,6)),@incident,@safety,@dashcam,@driver,@vehicle,@job,'Insurance Evidence','Draft',COALESCE(@summary,'Draft package. Only recorded evidence references are listed; lock remains unavailable until retrieval and content verification pass.'))",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); c.Parameters.AddWithValue("@incident", incidentId ?? DBNull.Value); c.Parameters.AddWithValue("@safety", safetyEventId ?? DBNull.Value); c.Parameters.AddWithValue("@dashcam", dashcamEventId ?? DBNull.Value); c.Parameters.AddWithValue("@driver", driverId ?? DBNull.Value); c.Parameters.AddWithValue("@vehicle", vehicleId ?? DBNull.Value); c.Parameters.AddWithValue("@job", jobId ?? DBNull.Value); c.Parameters.AddWithValue("@summary", (object?)summary ?? DBNull.Value); }, ct);
+        await db.ExecuteAsync(@"INSERT INTO evidence_package_items (company_id,branch_id,package_id,evidence_package_id,item_type,item_title,item_url,item_json,source_entity_type,source_entity_id)
+            SELECT @companyId,@branchId,@id,@id,evidence_type,evidence_title,evidence_url,
+                   COALESCE(evidence_json,'{}'::jsonb) || jsonb_build_object('contentHash',LOWER(content_hash),'retrievalStatus',COALESCE(evidence_json->>'retrievalStatus','not_verified'),'verificationStatus',COALESCE(evidence_json->>'verificationStatus','caller_attested')),
+                   'incident_evidence',id
+              FROM incident_evidence
+             WHERE company_id=@companyId AND incident_id=@incident
+               AND LOWER(evidence_url) LIKE 'https://%' AND content_hash ~ '^[0-9a-fA-F]{64}$'
+               AND (@branchId::bigint IS NULL OR branch_id=@branchId)", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@incident", incidentId ?? DBNull.Value); }, ct);
         return id;
     }
 
@@ -17269,51 +17311,24 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         return Results.Ok(ApiResponse<object>.Ok(new { catalogCount, runsToday, scheduled, pendingExports = exports, categories, recentRuns }, "Reports summary"));
     }
 
-    // ReportRun: backward-compatible legacy endpoint (POST /api/reports/{key}/run).
-    // If key matches a P8 dataset, delegates to the real secure query builder.
-    // Otherwise falls back to recording a catalog run entry for UI compatibility.
+    // Backward-compatible route name with a fail-closed execution contract:
+    // only a real registered P8 dataset can create a completed run receipt.
     private static async Task<IResult> ReportRun(HttpContext http, string key, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         var denied = RequirePermission(http, "reports:view");
         if (denied is not null) return denied;
-        var tenantId  = GetCompanyId(http);
-        var userId    = http.Items[AuthUserIdItemKey] ?? 1L;
         var perms     = http.Items[AuthPermissionsItemKey] as string[] ?? [];
 
-        // If the key is a registered dataset, use the real query builder
+        // Catalog entries describe planned reports. Only registered datasets can
+        // execute and create a completed run receipt.
         var dataset = ReportingDatasetRegistry.Get(key);
-        if (dataset is not null && HasPermission(perms, dataset.RequiredPermission))
-        {
-            // Run with default fields (all non-sensitive)
-            var defaultFields = dataset.Fields
-                .Where(f => !f.Sensitive)
-                .Select(f => f.Key)
-                .Take(10)
-                .ToArray();
-            var qBody = new P8QueryBody(key, defaultFields, Page: 1, PageSize: 100);
-            return await P8RunQuery(http, qBody, db, audit, ct);
-        }
-
-        // Legacy catalog-based run
-        var catalog = await db.QueryAsync("SELECT * FROM report_catalog WHERE report_key=@key AND (tenant_id IS NULL OR tenant_id=@tenantId) LIMIT 1",
-            c => { c.Parameters.AddWithValue("@key", key); c.Parameters.AddWithValue("@tenantId", tenantId); }, ct);
-        var name  = catalog.Count > 0 ? String(catalog[0], "report_name") : key;
-
-        // Record the run (no fake row count — use 0 to indicate unexecuted catalog placeholder)
-        var runId = await db.InsertAsync(
-            @"INSERT INTO report_runs (tenant_id,report_key,report_name,run_by_user_id,run_by_name,status,row_count,completed_at,filters_json)
-              VALUES (@tenantId,@key,@name,@userId,@userName,'Completed',0,NOW(),@filt)",
-            c =>
-            {
-                c.Parameters.AddWithValue("@tenantId", tenantId);
-                c.Parameters.AddWithValue("@userId",   userId);
-                c.Parameters.AddWithValue("@userName", "Operations User");
-                c.Parameters.AddWithValue("@key",      key);
-                c.Parameters.AddWithValue("@name",     name);
-                c.Parameters.AddWithValue("@filt",     System.Text.Json.JsonSerializer.Serialize(body));
-            }, ct);
-        await audit.LogAsync(http, "report.run_completed", "ReportRun", runId, ct: ct);
-        return Results.Created($"/api/reports/runs/{runId}", ApiResponse<object>.Ok(new { id = runId, reportKey = key, rowCount = 0, status = "Completed" }, "Report run recorded"));
+        if (dataset is null)
+            return Results.Conflict(ApiResponse<object>.Fail("This catalog entry has no executable dataset. No report run was recorded."));
+        if (!HasPermission(perms, dataset.RequiredPermission))
+            return RequirePermission(http, dataset.RequiredPermission)!;
+        var defaultFields = dataset.Fields.Where(f => !f.Sensitive).Select(f => f.Key).Take(10).ToArray();
+        var qBody = new P8QueryBody(key, defaultFields, Page: 1, PageSize: 100);
+        return await P8RunQuery(http, qBody, db, audit, ct);
     }
 
     private static async Task<IResult> CreateScheduledReport(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
