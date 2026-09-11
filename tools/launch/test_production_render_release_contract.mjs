@@ -110,6 +110,23 @@ test("migration-only databases reconcile legacy operational columns before Stage
   assert.match(podContract, /2026_09_11_stage137_legacy_operational_truth_contract/);
 });
 
+test("ledger backfills are reconciled with a new forward-only telemetry migration", () => {
+  const runner = read("tools", "apply-neon-predeploy-migrations.sh");
+  const migration = read(
+    "database",
+    "migrations",
+    "2026_09_11_stage139_telemetry_ledger_backfill_reconciliation.sql",
+  );
+
+  assert.match(runner, /2026_09_11_stage139_telemetry_ledger_backfill_reconciliation/);
+  assert.match(runner, /Stage139 telemetry live-state contract drifted/);
+  assert.match(migration, /ALTER TABLE IF EXISTS telemetry_alerts/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS correlation_id/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS telemetry_live_asset_states/);
+  assert.match(migration, /Stage139 telemetry live-state contract is incomplete/);
+  assert.match(migration, /2026_09_11_stage139_telemetry_ledger_backfill_reconciliation/);
+});
+
 test("Canada/KSA wrapper preserves Batch6 fixed-ID seed contract across release ordering", () => {
   const wrapper = read("tools", "apply-canada-ksa-compliance-predeploy.sh");
   const runtime = read("backend-dotnet", "Services", "Batch6SchemaService.cs");

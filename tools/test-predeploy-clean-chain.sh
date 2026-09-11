@@ -241,7 +241,9 @@ BEGIN
       ('2026_09_08_stage128_device_compatibility_capability_catalog'),
       ('2026_09_08_stage129_latest_device_signal_projection'),
       ('2026_09_08_stage130_canonical_diagnostic_evidence_identity'),
-      ('2026_09_08_stage131_alert_source_truth')) required(version)
+      ('2026_09_08_stage131_alert_source_truth'),
+      ('2026_09_11_stage138_evidence_package_truth_boundary'),
+      ('2026_09_11_stage139_telemetry_ledger_backfill_reconciliation')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
     RAISE EXCEPTION 'Clean-chain target ledgers are missing or duplicated';

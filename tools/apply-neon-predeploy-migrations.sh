@@ -375,6 +375,10 @@ MIGRATIONS=(
   # Evidence packages inherit authoritative branch ownership and generated
   # placeholders can no longer support a custody lock.
   2026_09_11_stage138_evidence_package_truth_boundary
+  # Stage23 backfilled Stage12A before Stage51 could create its target relations on
+  # a clean chain. Reconcile that additive telemetry contract under a forward-only
+  # version; ledgered historical migrations remain verification-only.
+  2026_09_11_stage139_telemetry_ledger_backfill_reconciliation
   # Commercial truth overlays. These fail customer-facing operational reads
   # closed unless their persisted evidence is qualified at the source.
   2026_09_08_notification_delivery_contract
@@ -537,9 +541,43 @@ BEGIN
       ('2026_09_09_stage134_legacy_demo_eld_reconciliation'),
       ('2026_09_11_stage137_legacy_operational_truth_contract'),
       ('2026_09_10_stage135_demo_operational_truth_reconciliation'),
-      ('2026_09_11_stage136_platform_hardware_readiness_permission')) required(version)
+      ('2026_09_11_stage136_platform_hardware_readiness_permission'),
+      ('2026_09_11_stage138_evidence_package_truth_boundary'),
+      ('2026_09_11_stage139_telemetry_ledger_backfill_reconciliation')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM (VALUES
+      ('location_events','source_channel'),
+      ('location_events','correlation_id'),
+      ('location_events','causation_id'),
+      ('location_events','client_generated_id'),
+      ('location_events','idempotency_key'),
+      ('telemetry_alerts','correlation_id'),
+      ('telemetry_alerts','causation_id'),
+      ('telemetry_alerts','source_channel'),
+      ('telemetry_alerts','client_generated_id'),
+      ('telemetry_alerts','ai_recommendation_id'),
+      ('latest_vehicle_positions','source_event_id'),
+      ('latest_vehicle_positions','correlation_id'),
+      ('latest_vehicle_positions','causation_id'),
+      ('latest_vehicle_positions','source_channel'),
+      ('latest_vehicle_positions','telemetry_status'),
+      ('latest_vehicle_positions','risk_level'),
+      ('latest_vehicle_positions','alert_count'),
+      ('latest_vehicle_positions','open_alert_count'),
+      ('latest_vehicle_positions','next_action'),
+      ('latest_vehicle_positions','summary_json'),
+      ('latest_vehicle_positions','updated_at')) required(table_name,column_name)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM information_schema.columns c
+      WHERE c.table_schema='public'
+        AND c.table_name=required.table_name
+        AND c.column_name=required.column_name
+    )
+  ) OR to_regclass('public.telemetry_live_asset_states') IS NULL
+  THEN RAISE EXCEPTION 'Stage139 telemetry live-state contract drifted'; END IF;
   IF (SELECT count(*)
         FROM platform_role_permissions permission
         JOIN platform_roles role ON role.id=permission.role_id
