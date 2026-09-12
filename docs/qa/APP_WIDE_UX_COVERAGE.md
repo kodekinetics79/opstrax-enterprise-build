@@ -48,7 +48,7 @@
 | Leads (`leads`) | `/leads` | `LeadsPage`<br><sub>`frontend/src/pages/LeadsPage.tsx`</sub> | Yes | Desktop first view | C1 M4 |
 | Sales Pipeline (`sales-pipeline`) | `/sales-pipeline` | `OpportunitiesPage`<br><sub>`frontend/src/pages/OpportunitiesPage.tsx`</sub> | Yes | Desktop first view | C1 M4 |
 | Opportunities (`opportunities`) | `/opportunities` | `OpportunitiesPage`<br><sub>`frontend/src/pages/OpportunitiesPage.tsx`</sub> | Yes | Desktop first view | C1 M4 |
-| Campaigns (`campaigns`) | `/campaigns` | `CampaignsPage`<br><sub>`frontend/src/pages/CampaignsPage.tsx`</sub> | Yes | Pending | C1 M4 |
+| Campaigns (`campaigns`) | `/campaigns` | `CampaignsPage`<br><sub>`frontend/src/pages/CampaignsPage.tsx`</sub> | Yes | Desktop first view | C1 M4 |
 | Account Health (`account-health`) | `/account-health` | `AccountHealthPage`<br><sub>`frontend/src/pages/AccountHealthPage.tsx`</sub> | Yes | Desktop first view | C2 M5 |
 | Follow-ups (`follow-ups`) | `/follow-ups` | `AccountHealthPage`<br><sub>`frontend/src/pages/AccountHealthPage.tsx`</sub> | Yes | Desktop first view | C2 M5 |
 | Support Tickets (`support-tickets`) | `/support-tickets` | `AccountHealthPage`<br><sub>`frontend/src/pages/AccountHealthPage.tsx`</sub> | Yes | Desktop first view | C2 M5 |
@@ -133,8 +133,8 @@
 
 | Module | Route | Component and source | Source reviewed | Browser | Risks |
 |---|---|---|---|---|---|
-| Work Orders (`work-orders`) | `/work-orders` | `MaintenanceCommandPage`<br><sub>`frontend/src/pages/MaintenanceCommandPage.tsx`</sub> | Yes | Pending | C1 M5 |
-| Maintenance Center (`maintenance-center`) | `/maintenance` | `MaintenanceCommandPage`<br><sub>`frontend/src/pages/MaintenanceCommandPage.tsx`</sub> | Yes | Pending | C1 M5 |
+| Work Orders (`work-orders`) | `/work-orders` | `MaintenanceCommandPage`<br><sub>`frontend/src/pages/MaintenanceCommandPage.tsx`</sub> | Yes | Desktop first view | C1 M5 |
+| Maintenance Center (`maintenance-center`) | `/maintenance` | `MaintenanceCommandPage`<br><sub>`frontend/src/pages/MaintenanceCommandPage.tsx`</sub> | Yes | Desktop first view | C1 M5 |
 | Service History (`service-history`) | `/service-history` | `MaintenancePlanningPage`<br><sub>`frontend/src/pages/MaintenancePlanningPage.tsx`</sub> | Yes | Desktop first view | H5 M5 |
 | Downtime (`downtime`) | `/downtime` | `MaintenancePlanningPage`<br><sub>`frontend/src/pages/MaintenancePlanningPage.tsx`</sub> | Yes | Desktop first view | H5 M5 |
 | Preventive Maintenance (`preventive-maintenance`) | `/preventive-maintenance` | `MaintenancePlanningPage`<br><sub>`frontend/src/pages/MaintenancePlanningPage.tsx`</sub> | Yes | Desktop first view | H5 M5 |
@@ -150,9 +150,9 @@
 | Payments (`payments`) | `/payments` | `FinancialAnalyticsPage`<br><sub>`frontend/src/pages/FinancialAnalyticsPage.tsx`</sub> | Yes | Desktop first view | C1 M5 |
 | Profitability (`profitability`) | `/profitability` | `FinancialAnalyticsPage`<br><sub>`frontend/src/pages/FinancialAnalyticsPage.tsx`</sub> | Yes | Desktop first view | C1 M5 |
 | Tax Configuration (`tax-config`) | `/finance/tax-config` | `TaxAdminPage`<br><sub>`frontend/src/pages/TaxAdminPage.tsx`</sub> | Yes | Desktop first view | C2 |
-| Consolidate Invoices (`billing-consolidation`) | `/finance/billing` | `BillingConsolidationPage`<br><sub>`frontend/src/pages/BillingConsolidationPage.tsx`</sub> | Yes | Pending | C2 |
-| Driver Pay (`driver-pay`) | `/finance/settlements` | `SettlementPage`<br><sub>`frontend/src/pages/SettlementPage.tsx`</sub> | Yes | Pending | C2 |
-| Revenue Recognition (`revenue-recognition`) | `/finance/revenue-recognition` | `RevenueRecognitionPage`<br><sub>`frontend/src/pages/RevenueRecognitionPage.tsx`</sub> | Yes | Pending | C2 |
+| Consolidate Invoices (`billing-consolidation`) | `/finance/billing` | `BillingConsolidationPage`<br><sub>`frontend/src/pages/BillingConsolidationPage.tsx`</sub> | Yes | Desktop first view | C2 |
+| Driver Pay (`driver-pay`) | `/finance/settlements` | `SettlementPage`<br><sub>`frontend/src/pages/SettlementPage.tsx`</sub> | Yes | Desktop first view | C2 |
+| Revenue Recognition (`revenue-recognition`) | `/finance/revenue-recognition` | `RevenueRecognitionPage`<br><sub>`frontend/src/pages/RevenueRecognitionPage.tsx`</sub> | Yes | Desktop first view | C2 |
 
 ### Governance
 
@@ -162,7 +162,7 @@
 | Audit Logs (`audit-logs`) | `/audit-logs` | `AuditLogsPage`<br><sub>`frontend/src/pages/AuditLogsPage.tsx`</sub> | Yes | Desktop first view | C1 |
 | Integrations (`integrations`) | `/integrations` | `IntegrationsPage`<br><sub>`frontend/src/pages/IntegrationsPage.tsx`</sub> | Yes | Desktop first view | H2 M4 |
 | Alert Rules (`alert-rules`) | `/alert-rules` | `AlertRulesPage`<br><sub>`frontend/src/pages/AlertRulesPage.tsx`</sub> | Yes | Desktop first view | H2 H5 |
-| Feature Flags (`feature-flags`) | `/feature-flags` | `FeatureFlagsPage`<br><sub>`frontend/src/pages/FeatureFlagsPage.tsx`</sub> | Yes | Pending | H2 |
+| Feature Flags (`feature-flags`) | `/feature-flags` | `FeatureFlagsPage`<br><sub>`frontend/src/pages/FeatureFlagsPage.tsx`</sub> | Yes | Desktop first view | H2 |
 | About OpsTrax (`about`) | `/about` | `AboutPage`<br><sub>`frontend/src/pages/AboutPage.tsx`</sub> | Yes | Desktop first view | H2 |
 
 ### Intelligence
@@ -283,3 +283,9 @@ Campaigns and Feature Flags remain **Pending** because their repair work was sti
 ## Browser evidence still required
 
 For every row above, capture the route, role/permission, entitlement and region state, viewport, dataset/provenance state, and exact deployed SHA. The minimum UX pass must verify: first meaningful work in the initial viewport; no duplicate page/header hierarchy; no nested page scroll; stable table and side-panel geometry; 44px touch targets on narrow screens; keyboard focus/order; empty/loading/error/large-data states; and transitions to every primary action and linked module.
+
+## Post-repair local confirmation
+
+After the local Stage 140 migration and API restart, Firefox loaded Campaigns, Feature Flags, Consolidate Invoices, Driver Pay, and Revenue Recognition with persisted empty results and no prior 404/500/payload errors. API readiness and the five repaired reads returned HTTP 200. Maintenance Center showed the compact no-open-defects notice directly above the PM table; Work Orders had already been exercised with persisted records. These are local source/runtime observations, not production or hardware certification. The local binary retained the earlier embedded SHA.
+
+PR verification found one stale source assertion that expected the old Vehicles header HTML. The aggregate total remains in the shared PageHeader description; the assertion was updated to verify that binding while retaining the tenant-wide backend summary checks.
