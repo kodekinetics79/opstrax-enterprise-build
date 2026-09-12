@@ -10869,12 +10869,9 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                 if (sourceBranchId != targetBranchId)
                     return Results.UnprocessableEntity(ApiResponse<object>.Fail("Driver and vehicle must belong to the same branch."));
 
-                var candidateVehicleId = table == "vehicles" ? id : targetId.Value;
-                var candidateDriverId = table == "drivers" ? id : targetId.Value;
-                var eligibility = await CheckDispatchEligibilityAsync(companyId, candidateVehicleId, candidateDriverId, db, ct);
-                if (!eligibility.Eligible)
-                    return Results.UnprocessableEntity(ApiResponse<object>.Fail(
-                        $"Pair is not operationally eligible: {string.Join("; ", eligibility.BlockingReasons)}"));
+                // Fleet master pairing records responsibility; it does not dispatch a job.
+                // Live HOS and operational eligibility remain enforced by dispatch endpoints.
+                // Missing provider evidence must not prevent maintaining the fleet registry.
             }
 
             var oldTargetId = source["currentTargetId"] is { } oldTarget && oldTarget is not DBNull ? Convert.ToInt64(oldTarget) : (long?)null;

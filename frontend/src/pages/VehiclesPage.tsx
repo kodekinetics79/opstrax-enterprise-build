@@ -604,7 +604,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
           vehicle={assignmentVehicle}
           drivers={(drivers.data || []) as AnyRecord[]}
           saving={assign.isPending}
-          serverError={assign.error instanceof Error ? assign.error.message : undefined}
+          serverError={assign.error ? apiErrorMessage(assign.error, "The assignment could not be saved. Please try again.") : undefined}
           onClose={() => setAssignmentVehicle(null)}
           onSave={(driverId) => assign.mutate({ vehicleId: String(assignmentVehicle.id), driverId })}
         />
@@ -753,7 +753,7 @@ function DriverAssignmentModal({ vehicle, drivers, saving, serverError, onClose,
           <div>
             <p className="section-title text-teal-700">Fleet master assignment</p>
             <h2 id="driver-assignment-title" className="mt-1 text-xl font-bold text-slate-900">{currentDriverId ? "Reassign" : "Assign"} {vehicleCode}</h2>
-            <p className="mt-1 text-sm text-slate-500">Choose the intended driver, review the change, then confirm. The previous pairing will be released with an effective-to timestamp.</p>
+            <p className="mt-1 text-sm text-slate-500">Choose the intended driver, review the change, then confirm. The previous pairing will be recorded in assignment history. Dispatch readiness is checked separately before a job is assigned.</p>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} disabled={saving} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
