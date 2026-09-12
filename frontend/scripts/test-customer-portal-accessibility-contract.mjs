@@ -10,5 +10,10 @@ assert.match(page, /name="feedback-shipment"[\s\S]*aria-label="Shipment for feed
 assert.match(page, /name="feedback-rating"[\s\S]*aria-label="Feedback rating"/);
 assert.match(page, /name="feedback-subject"[\s\S]*aria-label="Feedback subject"[\s\S]*autoComplete="off"/);
 assert.match(page, /name="feedback-comment"[\s\S]*aria-label="Feedback details"[\s\S]*autoComplete="off"/);
+assert.match(page, /responseStatus\(invoicesQ\.error\) === 403/);
+assert.match(page, /responseStatus\(jobsQ\.error\) === 403/);
+assert.match(page, /portalAccessDeniedOnly[\s\S]*One or more portal data sets could not be loaded/);
+assert.match(page, /invoiceAccessDenied \? "Requires customer-linked account" : "Load failed"/);
+assert.match(page, /shipmentAccessDenied \? "Requires customer-linked account" : "Load failed"/);
 
-console.log("Customer portal feedback controls expose stable accessible names and autofill boundaries.");
+console.log("Customer portal accessibility and truthful failure-state contracts verified.");

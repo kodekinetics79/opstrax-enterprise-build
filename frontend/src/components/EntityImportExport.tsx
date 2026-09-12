@@ -125,18 +125,18 @@ export function EntityImportExport({ config, canImport, canExport }: {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" className="btn-ghost h-10" disabled={busy === "template"} aria-label={`Download ${config.entity} CSV template`}
+      <button type="button" className="btn-ghost" disabled={busy === "template"} aria-label={`Download ${config.entity} CSV template`}
         onClick={() => download("template", config.templateEndpoint, `${config.entity}-import-template.csv`)}>
         {busy === "template" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />} {templateLabel}
       </button>
       {canImport ? (
-        <button type="button" className="btn-ghost h-10" title="Import a CSV of records"
+        <button type="button" className="btn-ghost" title="Import a CSV of records"
           onClick={() => setWizardOpen(true)}>
           <FileUp className="h-4 w-4" /> {importLabel}
         </button>
       ) : null}
       {config.exportEndpoint && canExport ? (
-        <button type="button" className="btn-ghost h-10" disabled={busy === "export"} title="Export the full dataset (all pages)"
+        <button type="button" className="btn-ghost" disabled={busy === "export"} title="Export the full dataset (all pages)"
           onClick={() => download("export", config.exportEndpoint!, `${config.entity}_${new Date().toISOString().slice(0, 10)}.csv`)}>
           {busy === "export" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} {exportLabel}
         </button>

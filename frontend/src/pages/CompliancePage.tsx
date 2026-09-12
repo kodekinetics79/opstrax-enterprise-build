@@ -122,7 +122,7 @@ export function CompliancePage() {
   if (hasError) return <EmptyState title="Compliance unavailable" subtitle="Unable to load compliance records right now. Refresh to try again." />;
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto">
+    <div className="page-stack min-w-0">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -185,8 +185,9 @@ export function CompliancePage() {
       {tab === "overview" && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Compliance profiles */}
-          <div className="panel space-y-2">
+          <div className="panel space-y-2 p-3">
             <p className="section-title flex items-center gap-2"><Globe className="h-3.5 w-3.5 text-emerald-400" />Active Compliance Profiles</p>
+            {!((summary?.profiles as AnyRecord[] | undefined)?.length) && <p className="text-sm text-slate-500">No compliance profiles are configured for this scope.</p>}
             {(summary?.profiles as AnyRecord[] | undefined)?.map(p => (
               <div key={String(p.id)} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
                 <div>
@@ -202,8 +203,9 @@ export function CompliancePage() {
           </div>
 
           {/* Recent violations */}
-          <div className="panel space-y-2">
+          <div className="panel space-y-2 p-3">
             <p className="section-title flex items-center gap-2"><ShieldAlert className="h-3.5 w-3.5 text-red-400" />Recent Violations</p>
+            {!violations.length && <p className="text-sm text-slate-500">No violation records in the current scope.</p>}
             {violations.slice(0, 5).map(v => (
               <div key={String(v.id)} className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 cursor-pointer hover:bg-slate-100" onClick={() => setDrawer(v)}>
                 <SeverityBadge severity={String(v.severity)} />

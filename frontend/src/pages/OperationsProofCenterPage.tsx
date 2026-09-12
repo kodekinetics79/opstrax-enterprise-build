@@ -285,7 +285,7 @@ export function OperationsProofCenterPage() {
   }
 
   return (
-    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
+    <div className="fleet-console page-stack min-w-0">
       <PageHeader
         eyebrow="Operational Proof"
         title="Operational Proof Center"
@@ -299,6 +299,7 @@ export function OperationsProofCenterPage() {
                 onChange={(event) => setJobInput(event.target.value)}
                 inputMode="numeric"
                 placeholder="Job ID"
+                aria-label="Job ID"
               />
               <button className="btn-primary" type="submit">
                 <RefreshCw className="h-4 w-4" />
@@ -324,11 +325,11 @@ export function OperationsProofCenterPage() {
       ) : (
         <>
           {actionError ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{actionError}</div> : null}
-          <div className="grid gap-4 lg:grid-cols-4">
-            <KpiCard label="Risk Status" value={summaryStatus} icon={<TriangleAlert />} status={summaryStatus} />
-            <KpiCard label="Next Best Actions" value={String(nextBestActions?.length ?? 0)} icon={<Sparkles />} status="Active" />
-            <KpiCard label="Mobile Ready Actions" value={String(mobileReadyActions?.length ?? 0)} icon={<ShieldCheck />} status="Active" />
-            <KpiCard label="Billing Confidence" value={String(billingConfidence?.confidence_score ?? "No data")} icon={<CheckCircle2 />} status={billingConfidence?.status as string | undefined} />
+          <div className="panel flex flex-wrap divide-x divide-slate-200 overflow-hidden">
+            <KpiCard compact label="Risk Status" value={summaryStatus} icon={<TriangleAlert />} status={summaryStatus} />
+            <KpiCard compact label="Next Best Actions" value={String(nextBestActions?.length ?? 0)} icon={<Sparkles />} status="Active" />
+            <KpiCard compact label="Mobile Ready Actions" value={String(mobileReadyActions?.length ?? 0)} icon={<ShieldCheck />} status="Active" />
+            <KpiCard compact label="Billing Confidence" value={String(billingConfidence?.confidence_score ?? "No data")} icon={<CheckCircle2 />} status={billingConfidence?.status as string | undefined} />
           </div>
 
           <section className="panel p-5">

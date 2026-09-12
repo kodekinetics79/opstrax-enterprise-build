@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { BellRing, BatteryCharging, FlaskConical, Gauge, Layers3, RadioTower, Thermometer, Truck } from 'lucide-react';
-import { ClayStat, ConsoleRail } from '@/components/console';
+import { ConsoleRail } from '@/components/console';
+import { KpiCard } from '@/components/ui';
 import { notifyApiError } from '@/services/fleetTmsApi';
 import { fleetApi, fleetColdChainApi, type ColdChainEvent, type ColdChainReport, type ColdChainSummaryResponse, type TemperatureAlert, type TemperatureDevice } from '@/services/fleetTmsApi';
 import { useHasPermission } from '@/hooks/usePermission';
@@ -235,7 +236,7 @@ export function FleetColdChainPage() {
             <h1 className="text-3xl font-black tracking-tight text-slate-950">Cold-chain data is unavailable.</h1>
             <p className="max-w-2xl text-slate-600">{error}</p>
             <div className="flex flex-wrap gap-3">
-              <button type="button" onClick={() => window.location.reload()} className="rounded-full bg-slate-950 px-4 py-2.5 text-sm font-bold text-white">
+              <button type="button" onClick={() => window.location.reload()} className="btn-primary min-h-11 sm:min-h-9">
                 Retry
               </button>
               <Link to="/fleet-workspace" className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700">
@@ -270,7 +271,7 @@ export function FleetColdChainPage() {
 
   return (
     <div className="fleet-console page-stack text-slate-900">
-      <section className="relative mx-auto flex w-full max-w-7xl flex-col gap-3">
+      <section className="relative flex w-full flex-col gap-3">
         <ConsoleRail
           eyebrow="Fleet · Cold Chain"
           icon={<FlaskConical className="h-3.5 w-3.5 text-teal-700" />}
@@ -300,79 +301,29 @@ export function FleetColdChainPage() {
           </div>
         )}
 
-        <div className="grid gap-3 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="grid items-start gap-3 lg:grid-cols-[1.15fr_0.85fr]">
           <div className="space-y-3">
 
-            <section className="fc-neumo p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="section-title">Guardrails</p>
-                  <h2 className="mt-1 text-xl font-black text-slate-950">Temperature policies &amp; breach history</h2>
-                </div>
-                <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-bold text-cyan-700">
-                  {summary.summary.policyCount ?? summary.policies.length} policies
-                </span>
-              </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Policies</p>
-                  <p className="mt-2 text-2xl font-black text-slate-950">{summary.summary.policyCount ?? summary.policies.length}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Event log</p>
-                  <p className="mt-2 text-2xl font-black text-slate-950">{summary.summary.eventLogCount ?? events.length}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Breach rate</p>
-                  <p className="mt-2 text-2xl font-black text-slate-950">{summary.summary.totalReadings === 0 ? 'Not measured' : `${Math.round((summary.summary.breachReadings / summary.summary.totalReadings) * 100)}%`}</p>
-                  <p className="mt-1 text-xs text-slate-500">Authenticated sensor or gateway readings only</p>
-                </div>
-              </div>
-              <div className="mt-4 space-y-3">
-                {summary.policies.slice(0, 3).map((policy) => (
-                  <div key={policy.id} className="rounded-2xl border border-slate-200/80 bg-slate-50 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="font-bold text-slate-950">{policy.policyCode}</p>
-                        <p className="text-sm text-slate-500">{policy.scopeType} · {policy.scopeKey || 'default scope'}</p>
-                      </div>
-                      <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-bold text-cyan-700">{policy.severity}</span>
-                    </div>
-                    <p className="mt-2 text-sm text-slate-600">
-                      {policy.minCelsius ?? '—'}°C to {policy.maxCelsius ?? '—'}°C · {policy.requiresAcknowledgement ? 'Acknowledgement required' : 'Auto-apply allowed'} · {policy.status}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">Humidity {policy.humidityMinPercent ?? '—'}% to {policy.humidityMaxPercent ?? '—'}%</p>
-                    {policy.notes ? <p className="mt-2 text-sm text-slate-500">{policy.notes}</p> : null}
-                    <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer font-semibold">Policy audit details</summary><p className="mt-1">Source {policy.sourceChannel || 'Not reported'} · created {policy.createdAtUtc ? new Date(policy.createdAtUtc).toLocaleString() : 'unavailable'} · updated {policy.updatedAtUtc ? new Date(policy.updatedAtUtc).toLocaleString() : 'unavailable'}</p></details>
-                  </div>
-                ))}
-                {!summary.policies.length ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">No cold-chain policies are configured for this tenant.</div> : null}
-              </div>
+
+            <section aria-label="Cold-chain indicators" className="panel flex flex-wrap divide-x divide-slate-200 overflow-hidden">
+              {metrics.map((metric) => (
+                <KpiCard compact key={metric.label} label={metric.label} value={metric.value} status={metric.label === 'Open alerts' && Number(metric.value) > 0 ? 'Review' : undefined} />
+              ))}
             </section>
 
-            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-              {metrics.map((metric, i) => (
-                <ClayStat key={metric.label} Icon={metric.icon}
-                  tone={["fc-clay-sky", "fc-clay-teal", "fc-clay-red", "fc-clay-emerald"][i % 4]}
-                  iconCls={["text-sky-700", "text-teal-700", "text-rose-700", "text-emerald-700"][i % 4]}
-                  label={metric.label} value={metric.value}
-                  alert={metric.label === "Open alerts"} />
-              ))}
-            </div>
-
-            <div className="grid gap-3 xl:grid-cols-[1fr_0.95fr]">
-              <section className="panel p-4">
+            <div className="grid items-start gap-3 xl:grid-cols-[1fr_0.95fr]">
+              <section className="panel p-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Temperature devices</p>
-                    <h2 className="mt-2 text-2xl font-black text-slate-950">Operational sensors</h2>
+                    <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Temperature devices</p>
+                    <h2 className="mt-1 text-lg font-bold text-slate-950">Operational sensors</h2>
                   </div>
                   <BatteryCharging className="h-5 w-5 text-emerald-500" />
                 </div>
-                <div className="mt-5 space-y-3">
-                  {!devices.length ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">No cold-chain devices are registered for this tenant.</div> : null}
+                <div className="mt-3 space-y-2">
+                  {!devices.length ? <div className="rounded-xl border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">No cold-chain devices are registered for this tenant.</div> : null}
                   {devices.map((device) => (
-                    <div key={device.id} className="rounded-2xl border border-slate-200/80 bg-white/80 p-4">
+                    <div key={device.id} className="rounded-xl border border-slate-200/80 bg-white/80 p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <p className="font-bold text-slate-950">{device.deviceCode} · {device.name}</p>
@@ -390,7 +341,7 @@ export function FleetColdChainPage() {
                           <p className="font-bold text-slate-900">{/^(Sensor|Gateway)$/i.test(device.lastMeasurementSource || '') ? formatMeasurement(device.batteryPercent, 0, '%', 'Not reported') : 'Not authenticated'}</p>
                         </div>
                         <div><p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Last report</p><p className="font-bold text-slate-900">{/^(Sensor|Gateway)$/i.test(device.lastMeasurementSource || '') && device.lastPingAtUtc ? new Date(device.lastPingAtUtc).toLocaleString() : 'Never authenticated'}</p></div>
-                        <button onClick={() => setSelectedReadingDeviceId(String(device.id))} disabled={!canManageFleet} title={canManageFleet ? 'Select this device for an operator-entered reading' : 'Requires fleet manage permission'} className="rounded-full bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                        <button onClick={() => setSelectedReadingDeviceId(String(device.id))} disabled={!canManageFleet} title={canManageFleet ? 'Select this device for an operator-entered reading' : 'Requires fleet manage permission'} className="btn-ghost min-h-11 px-3 py-2 text-xs sm:min-h-9">
                           {selectedReadingDeviceId === String(device.id) ? 'Selected' : 'Record manually'}
                         </button>
                       </div>
@@ -424,12 +375,12 @@ export function FleetColdChainPage() {
                 </div>
               </section>
 
-              <section className="panel p-4">
-                <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Control inputs</p>
-                <h2 className="mt-2 text-2xl font-black text-slate-950">Register a device</h2>
-                <p className="mt-2 text-sm text-slate-600">Registration and calibration fields are operator-reported metadata. Live measurements require authenticated sensor or gateway ingest.</p>
-                <div className="mt-5 space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
+              <section className="panel p-3">
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Control inputs</p>
+                <h2 className="mt-1 text-lg font-bold text-slate-950">Register a device</h2>
+                <p className="mt-1 text-sm text-slate-600">Registration and calibration fields are operator-reported metadata. Live measurements require authenticated sensor or gateway ingest.</p>
+                <div className="mt-3 space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
                     <label className="text-sm font-semibold text-slate-700">Device code<input value={form.deviceCode} onChange={(e) => setForm((current) => ({ ...current, deviceCode: e.target.value }))} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" required /></label>
                     <label className="text-sm font-semibold text-slate-700">Device name<input value={form.name} onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" required /></label>
                     <label className="text-sm font-semibold text-slate-700">Vehicle number (optional)<input value={form.vehicleNumber} onChange={(e) => setForm((current) => ({ ...current, vehicleNumber: e.target.value }))} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" /></label>
@@ -461,36 +412,84 @@ export function FleetColdChainPage() {
                       <label className="text-sm font-semibold text-slate-700">Humidity % (optional)<input type="number" min="0" max="100" step="0.1" value={form.humidityPercent} onChange={(e) => setForm((current) => ({ ...current, humidityPercent: e.target.value }))} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3" /></label>
                     </div>
                     <label className="mt-3 block text-sm font-semibold text-slate-700">Observation notes (optional)<textarea value={form.readingNotes} onChange={(e) => setForm((current) => ({ ...current, readingNotes: e.target.value }))} rows={2} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3" /></label>
-                    <button type="button" onClick={logReading} disabled={!canManageFleet || !selectedReadingDeviceId || saving} className="mt-3 w-full rounded-2xl bg-slate-950 px-4 py-3 font-bold text-white disabled:opacity-50">Record manual reading{selectedReadingDeviceId ? ` for ${devices.find((device) => String(device.id) === selectedReadingDeviceId)?.deviceCode ?? 'selected device'}` : ''}</button>
+                    <button type="button" onClick={logReading} disabled={!canManageFleet || !selectedReadingDeviceId || saving} className="btn-primary mt-3 min-h-11 w-full sm:min-h-9">Record manual reading{selectedReadingDeviceId ? ` for ${devices.find((device) => String(device.id) === selectedReadingDeviceId)?.deviceCode ?? 'selected device'}` : ''}</button>
                   </div>
                 </div>
               </section>
             </div>
+
+            <section className="fc-neumo p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="section-title">Guardrails</p>
+                  <h2 className="mt-1 text-lg font-bold text-slate-950">Temperature policies &amp; breach history</h2>
+                </div>
+                <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-bold text-cyan-700">
+                  {summary.summary.policyCount ?? summary.policies.length} policies
+                </span>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Policies</p>
+                  <p className="mt-0.5 text-lg font-bold text-slate-950">{summary.summary.policyCount ?? summary.policies.length}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Event log</p>
+                  <p className="mt-0.5 text-lg font-bold text-slate-950">{summary.summary.eventLogCount ?? events.length}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Breach rate</p>
+                  <p className="mt-0.5 text-lg font-bold text-slate-950">{summary.summary.totalReadings === 0 ? 'Not measured' : `${Math.round((summary.summary.breachReadings / summary.summary.totalReadings) * 100)}%`}</p>
+                  <p className="mt-1 text-xs text-slate-500">Authenticated sensor or gateway readings only</p>
+                </div>
+              </div>
+              <div className="mt-3 space-y-2">
+                {summary.policies.slice(0, 3).map((policy) => (
+                  <div key={policy.id} className="rounded-xl border border-slate-200/80 bg-slate-50 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-bold text-slate-950">{policy.policyCode}</p>
+                        <p className="text-sm text-slate-500">{policy.scopeType} · {policy.scopeKey || 'default scope'}</p>
+                      </div>
+                      <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-bold text-cyan-700">{policy.severity}</span>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-600">
+                      {policy.minCelsius ?? '—'}°C to {policy.maxCelsius ?? '—'}°C · {policy.requiresAcknowledgement ? 'Acknowledgement required' : 'Auto-apply allowed'} · {policy.status}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">Humidity {policy.humidityMinPercent ?? '—'}% to {policy.humidityMaxPercent ?? '—'}%</p>
+                    {policy.notes ? <p className="mt-2 text-sm text-slate-500">{policy.notes}</p> : null}
+                    <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer font-semibold">Policy audit details</summary><p className="mt-1">Source {policy.sourceChannel || 'Not reported'} · created {policy.createdAtUtc ? new Date(policy.createdAtUtc).toLocaleString() : 'unavailable'} · updated {policy.updatedAtUtc ? new Date(policy.updatedAtUtc).toLocaleString() : 'unavailable'}</p></details>
+                  </div>
+                ))}
+                {!summary.policies.length ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">No cold-chain policies are configured for this tenant.</div> : null}
+              </div>
+            </section>
+
           </div>
 
-          <aside className="space-y-6">
-            <section className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-white shadow-lg">
+          <aside className="space-y-3">
+            <section className="panel p-4 text-slate-900">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.24em] text-cyan-200/70">Zones</p>
-                  <h2 className="mt-2 text-2xl font-black">Temperature bands</h2>
+                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-teal-700">Zones</p>
+                  <h2 className="mt-1 text-lg font-bold text-slate-950">Temperature bands</h2>
                 </div>
-                <Truck className="h-5 w-5 text-cyan-300" />
+                <Truck className="h-5 w-5 text-teal-600" />
               </div>
-              <div className="mt-5 space-y-3">
+              <div className="mt-3 space-y-2">
                 {summary.zones.map((zone) => (
-                  <div key={zone.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <div key={zone.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-900">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="font-bold">{zone.name}</p>
-                        <p className="text-sm text-slate-300">{zone.code} · {zone.minCelsius}°C to {zone.maxCelsius}°C</p>
+                        <p className="font-bold text-slate-950">{zone.name}</p>
+                        <p className="text-sm text-slate-600">{zone.code} · {zone.minCelsius}°C to {zone.maxCelsius}°C</p>
                       </div>
                       <span className="h-3 w-3 rounded-full" style={{ backgroundColor: zone.color }} />
                     </div>
-                    <p className="mt-2 text-sm text-slate-400">{zone.notes || 'No zone notes'} · {zone.isActive ? 'Active' : 'Inactive'}</p>
+                    <p className="mt-1 text-sm text-slate-500">{zone.notes || 'No zone notes'} · {zone.isActive ? 'Active' : 'Inactive'}</p>
                   </div>
                 ))}
-                {!summary.zones.length ? <div className="rounded-2xl border border-dashed border-white/20 p-4 text-sm text-slate-300">No temperature zones are configured.</div> : null}
+                {!summary.zones.length ? <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-sm text-slate-500">No temperature zones are configured.</div> : null}
               </div>
             </section>
 
@@ -520,7 +519,7 @@ export function FleetColdChainPage() {
                     <p className="mt-1 text-xs text-slate-500">Reading reference {alert.readingId || 'Unavailable'}</p>
                     <div className="mt-3 flex items-center justify-between gap-3">
                       <label className="min-w-0 flex-1 text-xs font-semibold text-slate-600">Resolution notes<input value={alertNotes[alert.id] ?? ''} onChange={(e) => setAlertNotes((current) => ({ ...current, [alert.id]: e.target.value }))} className="mt-1 w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-normal outline-none" required /></label>
-                      <button onClick={() => resolveAlert(alert.id)} disabled={!canManageFleet} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-full bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                      <button onClick={() => resolveAlert(alert.id)} disabled={!canManageFleet} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="btn-primary min-h-11 px-3 py-2 text-xs sm:min-h-9">
                         Resolve
                       </button>
                     </div>

@@ -1,10 +1,10 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArchiveRestore, Bot, ClipboardCheck, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Target, Trash2, Upload, UserCheck, X } from "lucide-react";
+import { Activity, AlertTriangle, ArchiveRestore, Bot, ClipboardCheck, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Trash2, Upload, UserCheck, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
-import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, EmptyState, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { DriverIntelligenceBoard, triageOf, type Triage } from "@/components/DriverIntelligenceBoard";
 import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
@@ -402,7 +402,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const mutationError = saveMutation.error || deleteMutation.error || reactivateMutation.error || assignMutation.error || exportMutation.error;
 
   return (
-    <div className="page-stack flex h-full flex-col overflow-y-auto">
+    <div className="page-stack flex flex-col">
       <PageHeader
         eyebrow={cfg.eyebrow}
         title={cfg.title}
@@ -448,33 +448,25 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         </div>
       ) : null}
 
-      {kind === "drivers" ? (
-        <DriverIntelligenceBoard
-          rows={scopedRows}
-          activeTriage={triageFilter}
-          onTriageSelect={(triage) => setTriageFilter((current) => (current === triage ? null : triage))}
-        />
-      ) : isFleetMaster ? (
-        <FleetPainPointCockpit
-          kind={kind}
-          config={cfg}
-          rows={rows}
-          summary={visibleSummary}
-        />
-      ) : null}
+      <section className="panel p-2" aria-label={`${cfg.title} summary`}>
+        <dl className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          {cfg.kpis.map(([label, key, suffix]) => {
+            const value = visibleSummary?.[key] ?? (key === "aiSignals" ? recommendations.length || "Select" : 0);
+            const attention = Number(visibleSummary?.[key] ?? 0) > 0 && /risk|exception|watch/i.test(label);
+            return (
+              <div key={label} className={`min-w-0 rounded-lg border px-3 py-2 ${attention ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-slate-50/70"}`}>
+                <dt className="truncate text-[10px] font-bold uppercase tracking-[0.1em] text-slate-500">{label}</dt>
+                <dd className={`mt-1 text-base font-black leading-none tabular-nums ${attention ? "text-amber-700" : "text-slate-900"}`}>{String(value)}{suffix}</dd>
+              </div>
+            );
+          })}
+        </dl>
+      </section>
 
-      {kind === "vehicles" && !isScopedViewer ? <VehiclePlanningForecast data={planningInsights.data} loading={planningInsights.isLoading} /> : null}
-
-      <div className="grid gap-3 md:grid-cols-4">
-          {cfg.kpis.map(([label, key, suffix]) => (
-          <KpiCard key={label} label={label} value={`${visibleSummary?.[key] ?? (key === "aiSignals" ? recommendations.length || "Select" : 0)}${suffix}`} icon={<Target />} status={Number(visibleSummary?.[key] ?? 0) > 0 && /risk|exception|watch/i.test(label) ? "Review" : "Healthy"} />
-        ))}
-      </div>
-
-      <div className="panel flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="panel flex flex-col gap-2 p-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative max-w-xl flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-          <input value={search} onChange={(event) => setSearch(event.target.value)} className="field pl-10" placeholder={`Search ${cfg.title.toLowerCase()}...`} />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} className="field pl-10" aria-label={`Search ${cfg.title.toLowerCase()}`} placeholder={`Search ${cfg.title.toLowerCase()}...`} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {kind === "drivers" && triageFilter ? (
@@ -483,18 +475,18 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
             </button>
           ) : null}
           {["All", "Active", "Available", "At Risk", "Maintenance", ...((kind === "vehicles" || kind === "drivers") ? ["Archived"] : [])].map((item) => (
-            <button key={item} className={statusFilter === item ? "btn-primary" : "btn-ghost"} onClick={() => setStatusFilter(item)}>{item}</button>
+            <button key={item} aria-pressed={statusFilter === item} className={`${statusFilter === item ? "btn-primary" : "btn-ghost"} btn-compact`} onClick={() => setStatusFilter(item)}>{item}</button>
           ))}
         </div>
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
           {rows.length ? <DataTable rows={rows} columns={cfg.columns} onSelect={setSelected} /> : <EmptyState title={`No ${cfg.title.toLowerCase()} found`} subtitle="Try another search or filter, or create a new record if you have permission." />}
-        <div className="space-y-4">
+        <div className="space-y-3 xl:self-start">
           {kind !== "drivers" ? (
-            <div className="panel p-5">
+            <div className="panel p-3">
               <div className="flex items-center gap-2 text-teal-700"><Sparkles className="h-4 w-4" /><span className="section-title">Account Intelligence</span></div>
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-2 flex flex-wrap gap-2">
                 {cfg.wow.map((item) => <span key={item} className="badge">{item}</span>)}
               </div>
             </div>
@@ -505,6 +497,32 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
           ))}
         </div>
       </div>
+
+      {isFleetMaster ? (
+        <details className="panel px-3 py-2">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-slate-600 sm:min-h-8">
+            <Sparkles className="h-4 w-4 text-teal-600" /> Planning and intelligence
+            <span className="ml-auto text-[10px] font-medium normal-case tracking-normal text-slate-400">Expand supporting analysis</span>
+          </summary>
+          <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+            {kind === "drivers" ? (
+              <DriverIntelligenceBoard
+                rows={scopedRows}
+                activeTriage={triageFilter}
+                onTriageSelect={(triage) => setTriageFilter((current) => (current === triage ? null : triage))}
+              />
+            ) : isFleetMaster ? (
+              <FleetPainPointCockpit
+                kind={kind}
+                config={cfg}
+                rows={rows}
+                summary={visibleSummary}
+              />
+            ) : null}
+            {kind === "vehicles" && !isScopedViewer ? <VehiclePlanningForecast data={planningInsights.data} loading={planningInsights.isLoading} /> : null}
+          </div>
+        </details>
+      ) : null}
 
       <BatchDetailDrawer
         kind={kind}

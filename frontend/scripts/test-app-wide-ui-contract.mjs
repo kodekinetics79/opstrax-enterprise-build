@@ -4,6 +4,9 @@ import fs from "node:fs";
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 const shell = read("../src/layouts/AppShell.tsx");
 const styles = read("../src/styles/index.css");
+const sharedUi = read("../src/components/ui.tsx");
+const entityImportExport = read("../src/components/EntityImportExport.tsx");
+const driverScorecards = read("../src/pages/DriverScorecardsPage.tsx");
 const maintenance = read("../src/pages/MaintenanceCommandPage.tsx");
 const admin = read("../src/pages/AdminPage.tsx");
 const activeShipments = read("../src/pages/ActiveShipmentsPage.tsx");
@@ -19,9 +22,24 @@ const platformUi = read("../src/pages/platform/ui.tsx");
 assert.doesNotMatch(shell, /<WorkspaceExperience/, "The tenant shell must not restore the duplicate Quick Access strip above every module.");
 assert.match(shell, /tenant-workspace/, "Tenant routes must share the compact workspace contract.");
 assert.match(styles, /--control-standard:\s*32px/, "Standard desktop controls must remain compact.");
+assert.doesNotMatch(styles, /any-pointer:\s*coarse/, "A secondary touchscreen must not inflate controls for a desktop primary pointer.");
+assert.match(styles, /@media \(pointer:\s*coarse\), \(max-width:\s*639px\)/, "Touch-primary and narrow viewports must retain 44px targets.");
 assert.match(styles, /\.page-stack\s*\{[\s\S]*?gap:\s*var\(--space-3\)/, "Pages must use the shared 12px vertical rhythm.");
 assert.match(styles, /@media \(min-width:\s*640px\)[\s\S]*?\.page-header__actions[\s\S]*?\.w-full[\s\S]*?width:\s*auto/, "Only PageHeader actions should normalize legacy full-width desktop buttons.");
 assert.doesNotMatch(styles, /\.tenant-workspace button\.w-full/, "The workspace contract must not shrink legitimate full-width form, drawer, card, or driver controls.");
+assert.match(sharedUi, /password-field w-full pr-10/, "Password fields must reserve space for their visibility control.");
+assert.match(sharedUi, /password-toggle absolute/, "Password visibility controls must use the shared touch-target hook.");
+assert.match(styles, /\.password-toggle\s*\{\s*width:\s*var\(--control-touch\)/, "Password visibility controls must reach 44px on touch and narrow viewports.");
+assert.match(sharedUi, /flex-nowrap items-center gap-2 overflow-x-auto sm:flex-wrap sm:overflow-visible/, "Option filter bars must scroll in one row on narrow screens and wrap on desktop.");
+assert.match(sharedUi, /filter-chip-active[^\n]*filter-chip[^\n]*shrink-0/, "Filter options must remain intact inside the narrow horizontal rail.");
+
+const importExportToolbar = entityImportExport.slice(
+  entityImportExport.indexOf("export function EntityImportExport"),
+  entityImportExport.indexOf("/* ---------------- wizard ---------------- */"),
+);
+assert.doesNotMatch(importExportToolbar, /\bh-10\b/, "Shared import/export toolbar actions must use the 32px standard control instead of a local 40px override.");
+assert.match(driverScorecards, /max-w-full items-center gap-1\.5 overflow-x-auto[^>]*role="tablist"/, "Scorecard tabs must remain reachable through a narrow horizontal rail.");
+assert.match(driverScorecards, /className="field w-full sm:ml-auto sm:w-48 sm:flex-none"/, "Scorecard search must stack at full width on narrow screens and remain compact on desktop.");
 
 assert.match(maintenance, /location\.pathname === "\/work-orders"[\s\S]*?"Work Orders"/, "The Work Orders route must open the Work Orders tab.");
 assert.match(maintenance, /location\.pathname === "\/inspections"[\s\S]*?"Inspections"/, "The Inspections route must open the Inspections tab.");

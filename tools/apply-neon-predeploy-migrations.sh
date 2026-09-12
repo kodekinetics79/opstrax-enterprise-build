@@ -394,6 +394,9 @@ MIGRATIONS=(
   # a clean chain. Reconcile that additive telemetry contract under a forward-only
   # version; ledgered historical migrations remain verification-only.
   2026_09_11_stage139_telemetry_ledger_backfill_reconciliation
+  # Feature-flag administration reads/writes updated_by; historical owners did not
+  # materialize it on established protected databases.
+  2026_09_11_stage140_feature_flag_actor_contract
   # Commercial truth overlays. These fail customer-facing operational reads
   # closed unless their persisted evidence is qualified at the source.
   2026_09_08_notification_delivery_contract
@@ -571,7 +574,8 @@ BEGIN
       ('2026_09_10_stage135_demo_operational_truth_reconciliation'),
       ('2026_09_11_stage136_platform_hardware_readiness_permission'),
       ('2026_09_11_stage138_evidence_package_truth_boundary'),
-      ('2026_09_11_stage139_telemetry_ledger_backfill_reconciliation')) required(version)
+      ('2026_09_11_stage139_telemetry_ledger_backfill_reconciliation'),
+      ('2026_09_11_stage140_feature_flag_actor_contract')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -1198,7 +1202,8 @@ BEGIN
          ('companies','tax_id'),('companies','primary_contact_name'),
          ('companies','primary_contact_email'),('companies','primary_contact_phone'),
          ('companies','billing_email'),('tenant_subscriptions','billing_cycle'),
-         ('feature_flags','environment'),('password_reset_tokens','token_hash')
+         ('feature_flags','environment'),('feature_flags','updated_by'),
+         ('password_reset_tokens','token_hash')
        ) required(table_name,column_name)
        WHERE NOT EXISTS (
          SELECT 1 FROM information_schema.columns actual

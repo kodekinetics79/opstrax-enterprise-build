@@ -2298,10 +2298,11 @@ public static partial class EndpointMappings
         // module_records CRUD so it renders + supports create/edit (full quote→contract
         // conversion is a separate roadmap feature).
         MapDedicatedModule(app, "quotations");
-        // CRM: the Leads + Opportunities pages call /api/leads + /api/opportunities; back
+        // CRM: the register pages call /api/leads, /api/opportunities and /api/campaigns; back
         // them with the tenant-scoped module_records CRUD (LoadModule scopes by company_id).
         MapDedicatedModule(app, "leads");
         MapDedicatedModule(app, "opportunities");
+        MapDedicatedModule(app, "campaigns");
         MapDedicatedModule(app, "settings");
         MapDedicatedModule(app, "billing");
         MapDedicatedModule(app, "companies");
@@ -11634,6 +11635,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         ["quotations"] = "customers:view",
         ["leads"] = "customers:view",
         ["opportunities"] = "customers:view",
+        ["campaigns"] = "customers:view",
         ["settings"] = "settings:view",
         ["billing"] = "billing:view",
         ["companies"] = "users:view",
@@ -11662,6 +11664,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         ["quotations"] = "customers:update",
         ["leads"] = "customers:update",
         ["opportunities"] = "customers:update",
+        ["campaigns"] = "customers:update",
         ["white-label"] = "settings:update",
     };
 

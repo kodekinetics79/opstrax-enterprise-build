@@ -187,7 +187,7 @@ export function FleetAssignmentsPage() {
     assignments;
 
   return (
-    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto pb-6">
+    <div className="fleet-console flex flex-col gap-3 pb-6">
       {supportingError ? (
         <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           Some assignment supporting data could not be loaded: {supportingError instanceof Error ? supportingError.message : "Please retry."}
@@ -369,15 +369,15 @@ export function FleetAssignmentsPage() {
       )}
 
       {section === "board" && (
-        <div className="grid gap-4 xl:grid-cols-[1.6fr_0.95fr]">
-          <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-5">
+        <div className="grid items-start gap-3 xl:grid-cols-[1.6fr_0.95fr]">
+          <div className="grid items-start gap-3 md:grid-cols-2 2xl:grid-cols-5">
             {Object.entries(grouped).map(([label, rows]) => (
-              <section key={label} className="panel min-h-[420px] p-4">
-                <div className="mb-4 flex items-center justify-between">
+              <section key={label} className="panel self-start p-3">
+                <div className="mb-3 flex items-center justify-between">
                   <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-slate-400">{label}</h2>
                   <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">{rows.length}</span>
                 </div>
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {rows.slice(0, 8).map((row) => (
                     <button
                       key={String(row.id)}

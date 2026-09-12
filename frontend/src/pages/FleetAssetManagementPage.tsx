@@ -323,14 +323,14 @@ export function FleetAssetManagementPage() {
           </dl>
         </section>
 
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.65fr)]">
-          <section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950 p-3 text-white shadow-lg" aria-labelledby="asset-inventory-heading">
+        <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.65fr)]">
+          <section className="panel min-w-0 p-3 text-slate-900" aria-labelledby="asset-inventory-heading">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-200/70">Assets</p>
-                <h2 id="asset-inventory-heading" className="mt-0.5 text-lg font-bold">Inventory list</h2>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-teal-700">Assets</p>
+                <h2 id="asset-inventory-heading" className="mt-0.5 text-lg font-bold text-slate-950">Inventory list</h2>
               </div>
-              <Archive className="h-4 w-4 text-cyan-300" aria-hidden="true" />
+              <Archive className="h-4 w-4 text-teal-600" aria-hidden="true" />
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
                 <label className="relative">
@@ -340,14 +340,14 @@ export function FleetAssetManagementPage() {
                     value={assetSearch}
                     onChange={(event) => { setAssetSearch(event.target.value); setAssetPage(1); }}
                     placeholder="Search tag, name, type, status, location…"
-                    className="min-h-11 w-full rounded-xl border border-white/15 bg-white/10 py-2 pl-9 pr-3 text-sm text-white placeholder:text-slate-400 sm:min-h-9"
+                    className="field min-h-11 w-full py-2 pl-9 pr-3 sm:min-h-9"
                   />
                 </label>
                 <select
                   aria-label="Sort assets"
                   value={assetSort}
                   onChange={(event) => { setAssetSort(event.target.value as typeof assetSort); setAssetPage(1); }}
-                  className="min-h-11 w-full rounded-xl border border-white/15 bg-slate-900 px-3 py-2 text-sm text-white sm:min-h-9 sm:w-auto"
+                  className="field min-h-11 w-full px-3 py-2 sm:min-h-9 sm:w-auto"
                 >
                   <option value="assetTag">Asset tag</option>
                   <option value="name">Name</option>
@@ -357,28 +357,28 @@ export function FleetAssetManagementPage() {
                   <option value="condition">Condition</option>
                   <option value="lastSeen">Last seen</option>
                 </select>
-                <button type="button" className="min-h-11 w-full rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold sm:min-h-9 sm:w-auto" onClick={() => { setAssetDirection((current) => current === 'asc' ? 'desc' : 'asc'); setAssetPage(1); }}>
+                <button type="button" className="btn-ghost min-h-11 w-full px-3 py-2 text-sm sm:min-h-9 sm:w-auto" onClick={() => { setAssetDirection((current) => current === 'asc' ? 'desc' : 'asc'); setAssetPage(1); }}>
                   {assetDirection === 'asc' ? 'Ascending' : 'Descending'}
                 </button>
             </div>
             <div className="mt-3 space-y-2 xl:max-h-[34rem] xl:overflow-y-auto xl:pr-1">
                 {assets.map((asset) => (
-                <button key={asset.id} onClick={() => setSelectedAssetId(asset.id)} className={`min-h-11 w-full rounded-xl border p-3 text-left transition ${selectedAssetId === asset.id ? 'border-cyan-300 bg-white/10' : 'border-white/10 bg-white/5 hover:bg-white/8'}`}>
+                <button key={asset.id} onClick={() => setSelectedAssetId(asset.id)} className={`min-h-11 w-full rounded-xl border p-3 text-left text-slate-900 transition ${selectedAssetId === asset.id ? 'border-teal-300 bg-teal-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="font-bold">{asset.assetTag}</p>
-                        <p className="text-sm text-slate-300">{asset.name} · {asset.currentLocation}</p>
+                        <p className="font-bold text-slate-950">{asset.assetTag}</p>
+                        <p className="text-sm text-slate-500">{asset.name} · {asset.currentLocation}</p>
                       </div>
-                      <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-bold">{asset.status}</span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-700">{asset.status}</span>
                     </div>
                   </button>
                 ))}
             </div>
-            <div className="mt-3 flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-xs text-slate-300">
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-200 pt-3 text-xs text-slate-500">
                 <span>Page {assetPage} of {assetPageCount} · {assets.length} shown · {assetTotal} total</span>
                 <div className="flex gap-2">
-                <button type="button" aria-label="Previous asset page" disabled={assetPage <= 1} className="grid min-h-11 min-w-11 place-items-center rounded-lg border border-white/15 disabled:opacity-40 sm:min-h-8 sm:min-w-8" onClick={() => setAssetPage((current) => Math.max(1, current - 1))}><ChevronLeft className="h-4 w-4" /></button>
-                <button type="button" aria-label="Next asset page" disabled={assetPage >= assetPageCount} className="grid min-h-11 min-w-11 place-items-center rounded-lg border border-white/15 disabled:opacity-40 sm:min-h-8 sm:min-w-8" onClick={() => setAssetPage((current) => Math.min(assetPageCount, current + 1))}><ChevronRight className="h-4 w-4" /></button>
+                <button type="button" aria-label="Previous asset page" disabled={assetPage <= 1} className="grid min-h-11 min-w-11 place-items-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-40 sm:min-h-8 sm:min-w-8" onClick={() => setAssetPage((current) => Math.max(1, current - 1))}><ChevronLeft className="h-4 w-4" /></button>
+                <button type="button" aria-label="Next asset page" disabled={assetPage >= assetPageCount} className="grid min-h-11 min-w-11 place-items-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-40 sm:min-h-8 sm:min-w-8" onClick={() => setAssetPage((current) => Math.min(assetPageCount, current + 1))}><ChevronRight className="h-4 w-4" /></button>
                 </div>
             </div>
           </section>

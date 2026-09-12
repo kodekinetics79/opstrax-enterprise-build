@@ -494,7 +494,7 @@ export function GeofenceManagementPage() {
       ) : null}
 
       {/* Map + list split */}
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* Map */}
         <div className="panel p-3">
           <div className="flex items-center justify-between mb-3">

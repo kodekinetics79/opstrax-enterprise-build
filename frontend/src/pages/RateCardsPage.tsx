@@ -161,7 +161,7 @@ export function RateCardsPage() {
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="page-stack h-full overflow-y-auto">
+    <div className="page-stack min-w-0">
       {showCreate && <CreateRateCardModal defaultCurrency={tenantCurrency} onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>

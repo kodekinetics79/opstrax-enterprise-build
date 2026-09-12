@@ -314,12 +314,14 @@ body {
   min-width: var(--control-compact);
   flex-shrink: 0;
 }
-@media (any-pointer: coarse) {
+@media (pointer: coarse), (max-width: 639px) {
   .btn-primary, .btn-secondary, .btn-ghost, .btn-danger, .icon-btn, .field:not(textarea),
   .filter-chip, .fc-seg-btn, .deck-seg-btn, .fc-pager-btn {
     min-height: var(--control-touch);
   }
   .icon-btn { min-width: var(--control-touch); }
+  .password-field { padding-right: var(--control-touch); }
+  .password-toggle { width: var(--control-touch); }
 }
 
 .btn-primary {
@@ -639,7 +641,7 @@ body {
   }
 }
 
-@media (any-pointer: coarse) {
+@media (pointer: coarse), (max-width: 639px) {
   .tenant-workspace :is(.btn-primary, .btn-secondary, .btn-ghost, .icon-btn, .field) {
     min-height: var(--control-touch);
   }

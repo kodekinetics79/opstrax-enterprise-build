@@ -438,7 +438,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   }
 
   return (
-    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
+    <div className="fleet-console space-y-3">
       <PageHeader
         eyebrow={config.eyebrow}
         title={config.title}
@@ -486,11 +486,12 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
         </div>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Fleet managed units" value={fleetUnits} status={fleetUnits ? "Recorded" : "None recorded"} icon={kpiIcon} />
-        <KpiCard label="Fleet offline / stale" value={offlineCount} status={!fleetUnits ? "Unknown" : offlineCount ? "Critical" : "No recorded gaps"} icon={<AlertTriangle className="h-4 w-4" />} />
-        <KpiCard label="Fleet needs action" value={issueCount} status={!fleetUnits ? "Unknown" : issueCount ? "Watch" : "No recorded issues"} icon={<RadioTower className="h-4 w-4" />} />
+      <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label={`${config.title} summary`}>
+        <KpiCard compact label="Fleet managed units" value={fleetUnits} status={fleetUnits ? "Recorded" : "None recorded"} icon={kpiIcon} />
+        <KpiCard compact label="Fleet offline / stale" value={offlineCount} status={!fleetUnits ? "Unknown" : offlineCount ? "Critical" : "No recorded gaps"} icon={<AlertTriangle className="h-4 w-4" />} />
+        <KpiCard compact label="Fleet needs action" value={issueCount} status={!fleetUnits ? "Unknown" : issueCount ? "Watch" : "No recorded issues"} icon={<RadioTower className="h-4 w-4" />} />
         <KpiCard
+          compact
           label="Current page health"
           value={avgHealth == null ? "—" : `${avgHealth}%`}
           status={avgHealth == null ? "Unknown" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"}
@@ -499,32 +500,11 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       </div>
       {paged ? <p className="text-xs text-slate-500">Fleet cards cover every authorized unit. Health is averaged only across evidence-bearing rows on the current page.</p> : null}
 
-      {kind === "gps-tracking" ? (
-        <div className="grid gap-3 xl:grid-cols-3">
-          {rows.slice(0, 6).map((row) => (
-            <button type="button" key={row.id} className="panel rounded-xl p-3 text-left transition hover:border-teal-300 hover:bg-slate-50" onClick={() => setSelected(row)}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-semibold text-slate-900">{row.vehicleCode}</p>
-                  <p className="mt-1 text-xs text-slate-400">{row.locationLabel} · {row.positionSource}</p>
-                </div>
-                <RiskBadge risk={row.geofenceStatus} />
-              </div>
-              <div className="mt-2 grid gap-1.5 text-xs text-slate-700">
-                <div className="flex justify-between"><span>GPS ping</span><span>{row.staleGps || "—"}</span></div>
-                <div className="flex justify-between"><span>Coordinates</span><span>{formatCoordinates(row.latitude, row.longitude)}</span></div>
-                <div className="flex justify-between"><span>Speed / heading</span><span>{formatSpeedHeading(row.speedMph, row.heading)}</span></div>
-                <div className="flex justify-between gap-3"><span>Operational use</span><span className="text-right">{row.routingReadiness}</span></div>
-              </div>
-            </button>
-          ))}
-        </div>
-      ) : null}
-
       <div className="panel space-y-3 p-3">
         <div className={`grid gap-2 xl:items-center ${paged ? "xl:grid-cols-[minmax(260px,1fr)_200px_auto]" : "xl:grid-cols-[minmax(260px,1fr)_auto]"}`}>
           <input
             className="field xl:min-w-[360px]"
+            aria-label={`Search ${config.eyebrow.toLowerCase()} records`}
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
             placeholder={config.searchPlaceholder}
@@ -540,9 +520,9 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
               <option value="provider">Provider</option>
             </select>
           </label> : null}
-          <div className="flex flex-wrap gap-1.5 xl:justify-end">
+          <div className="flex flex-wrap gap-1.5 xl:justify-end" role="group" aria-label={`${config.eyebrow} status filters`}>
             {config.filterTabs.map((item) => (
-              <button key={item} className={tab === item ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item); setPage(1); }}>
+              <button key={item} type="button" aria-pressed={tab === item} className={tab === item ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item); setPage(1); }}>
                 {item}
               </button>
             ))}
@@ -645,6 +625,31 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
           </nav>
         ) : null}
       </div>
+
+      {kind === "gps-tracking" && rows.length > 0 ? (
+        <details className="panel p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-700">Current-page position previews ({Math.min(rows.length, 6)})</summary>
+          <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 xl:grid-cols-3">
+            {rows.slice(0, 6).map((row) => (
+              <button type="button" key={row.id} className="panel rounded-xl p-3 text-left transition hover:border-teal-300 hover:bg-slate-50" onClick={() => setSelected(row)}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-900">{row.vehicleCode}</p>
+                    <p className="mt-1 text-xs text-slate-400">{row.locationLabel} · {row.positionSource}</p>
+                  </div>
+                  <RiskBadge risk={row.geofenceStatus} />
+                </div>
+                <div className="mt-2 grid gap-1.5 text-xs text-slate-700">
+                  <div className="flex justify-between"><span>GPS ping</span><span>{row.staleGps || "—"}</span></div>
+                  <div className="flex justify-between"><span>Coordinates</span><span>{formatCoordinates(row.latitude, row.longitude)}</span></div>
+                  <div className="flex justify-between"><span>Speed / heading</span><span>{formatSpeedHeading(row.speedMph, row.heading)}</span></div>
+                  <div className="flex justify-between gap-3"><span>Operational use</span><span className="text-right">{row.routingReadiness}</span></div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </details>
+      ) : null}
 
       {selectedRecord ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelected(null)}>

@@ -3,6 +3,7 @@ import { tokens, chart } from "@/styles/tokens";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
+import { requireCommercialModuleRecords } from "@/services/commercialModulePayload";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import { useTenantCurrency } from "@/hooks/useTenantRegion";
 import type { AnyRecord } from "@/types";
@@ -15,8 +16,8 @@ function persistedNumber(value: unknown): number | null {
 
 const oppApi = {
   list: () =>
-    unwrap<AnyRecord[]>(apiClient.get("/api/opportunities")).then((rows) =>
-      rows.map((r) => ({
+    unwrap<unknown>(apiClient.get("/api/opportunities")).then((payload) =>
+      requireCommercialModuleRecords(payload, "opportunities").map((r) => ({
         ...r,
         opportunityId: r.opportunityId ?? r.code ?? `OPP-${String(r.id)}`,
         customerLead: r.customerLead ?? r.customer_lead ?? r.title ?? "",
@@ -170,7 +171,7 @@ export function OpportunitiesPage() {
   }
 
   return (
-    <div className="page-stack h-full overflow-y-auto">
+    <div className="page-stack min-w-0">
       {showCreate && <CreateOppModal defaultCurrency={tenantCurrency} onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
 
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -212,21 +213,6 @@ export function OpportunitiesPage() {
             <span className="text-xs text-slate-500 font-medium">{label}</span>
           </div>
         ))}
-      </div>
-
-      {/* Pipeline funnel chart */}
-      <div className="panel p-5">
-        <h2 className="text-sm font-semibold text-slate-900 mb-4">Opportunities by stage (count)</h2>
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 4 }}>
-            <CartesianGrid stroke="rgba(0,0,0,0.05)" strokeDasharray="3 3" />
-            <XAxis dataKey="stage" tick={{ fontSize: 10 }} />
-            <YAxis tick={{ fontSize: 10 }} />
-            <Tooltip contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8, fontSize: 12 }}
-              formatter={(val) => [String(val), "Deals"]} />
-            <Bar dataKey="count" fill={chart.teal500} radius={[3, 3, 0, 0]} name="count" />
-          </BarChart>
-        </ResponsiveContainer>
       </div>
 
       {/* Filters */}
@@ -279,6 +265,23 @@ export function OpportunitiesPage() {
           </div>
         )}
       </div>
+
+      {/* Pipeline funnel chart */}
+      <details className="panel p-3">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-900">Opportunities by stage (count)</summary>
+        {active.length === 0 ? <p className="py-3 text-sm text-slate-500">No active opportunities are recorded.</p> : (
+        <ResponsiveContainer width="100%" height={180}>
+          <BarChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 4 }}>
+            <CartesianGrid stroke="rgba(0,0,0,0.05)" strokeDasharray="3 3" />
+            <XAxis dataKey="stage" tick={{ fontSize: 10 }} />
+            <YAxis tick={{ fontSize: 10 }} />
+            <Tooltip contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8, fontSize: 12 }}
+              formatter={(val) => [String(val), "Deals"]} />
+            <Bar dataKey="count" fill={chart.teal500} radius={[3, 3, 0, 0]} name="count" />
+          </BarChart>
+        </ResponsiveContainer>
+        )}
+      </details>
 
       {/* Detail drawer */}
       {selected && (

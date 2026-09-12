@@ -504,7 +504,7 @@ export function LiveMapPage() {
     : Math.round((positionFreshness.recent / positionFreshness.located) * 1000) / 10;
 
   return (
-    <div className="control-tower flex h-full min-w-0 max-w-full flex-col gap-3 overflow-x-hidden overflow-y-auto">
+    <div className="control-tower flex min-w-0 max-w-full flex-col gap-3 overflow-x-hidden">
       <PageHeader
         eyebrow="Operations"
         title="Fleet Position Map"
@@ -539,7 +539,7 @@ export function LiveMapPage() {
         <StatusBoardCard label="Unknown"       count={buckets.Unknown}     tone="slate"  meaning="No trusted state" active={activeFilter === "Unknown"} onClick={() => setActiveFilter(activeFilter === "Unknown" ? "All" : "Unknown")} />
       </div>
 
-      <div className="live-map-primary order-2 grid min-w-0 items-stretch gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
+      <div className="live-map-primary order-2 grid min-w-0 items-start gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
         {/* Hero map */}
         <section className="panel flex min-w-0 flex-col overflow-hidden p-3 sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
@@ -619,7 +619,7 @@ export function LiveMapPage() {
             </span>
           </div>
 
-          <div className="map-surface relative mt-2 min-h-[380px] flex-1 overflow-hidden rounded-xl border border-slate-200 sm:min-h-[420px] xl:min-h-[460px]">
+          <div className="map-surface relative mt-2 min-h-[320px] flex-1 overflow-hidden rounded-xl border border-slate-200 sm:min-h-[360px] xl:min-h-[400px]">
             <LiveMap
               entities={mapEntities}
               geofences={geofences}
@@ -671,7 +671,7 @@ export function LiveMapPage() {
         </section>
 
         {/* Unified right rail: roster (scrolls) over a pinned alerts strip. */}
-        <aside className="panel flex min-w-0 max-h-[640px] flex-col overflow-hidden p-0">
+        <aside className="panel flex min-w-0 max-h-[560px] flex-col self-start overflow-hidden p-0">
           <div className="border-b border-slate-100 px-4 pb-3 pt-4">
             <div className="flex items-center justify-between">
               <h2 className="section-title">Geospatial Health</h2>

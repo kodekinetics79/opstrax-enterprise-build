@@ -27,7 +27,7 @@ import { adminApi } from "@/services/adminApi";
 import { customersApi } from "@/services/customersApi";
 import { branchesApi } from "@/services/branchesApi";
 import { PERMISSIONS } from "@/auth/rbacConfig";
-import { EmptyState, ErrorState, LoadingState, PageHeader, PasswordInput, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, PasswordInput, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type AdminTab = "dashboard" | "users" | "roles" | "permissions" | "access" | "settings" | "audit";
@@ -660,7 +660,7 @@ export function AdminPage() {
   const roleDialogRef = useDialogFocus<HTMLDivElement>(roleModal != null, () => setRoleModal(null));
 
   return (
-    <div className="iam flex h-full flex-col gap-4 overflow-y-auto">
+    <div className="iam page-stack min-w-0">
       <PageHeader
         eyebrow="Governance"
         title="Users & Roles"
@@ -686,7 +686,7 @@ export function AdminPage() {
       {permissionsExportNotice && <div className="rounded-xl border border-emerald-400/30 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{permissionsExportNotice}</div>}
 
       {overviewQ.isLoading ? <LoadingState /> : overviewQ.isError ? <ErrorState message="Could not load admin overview." /> : (
-        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+        <div className="flex min-w-0 flex-wrap divide-x divide-slate-100 rounded-xl border border-slate-200 bg-white">
           {[
             { label: "Total Users", value: overviewQ.data?.totalUsers ?? 0, icon: <Users className="h-4 w-4" /> },
             { label: "Active Users", value: overviewQ.data?.activeUsers ?? 0, icon: <Users className="h-4 w-4" /> },
@@ -695,13 +695,7 @@ export function AdminPage() {
             { label: "Audit Events Today", value: overviewQ.data?.recentAuditEvents ?? 0, icon: <ShieldCheck className="h-4 w-4" /> },
             { label: "Permissions", value: overviewQ.data?.permissionCoverage ?? permissions.length, icon: <ShieldCheck className="h-4 w-4" /> },
           ].map((card) => (
-            <div key={card.label} className="iam-stat min-w-0">
-              <div className="flex items-start justify-between gap-2">
-                <p className="min-w-0 truncate text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500" title={card.label}>{card.label}</p>
-                <div className="shrink-0 rounded-xl border border-white/70 bg-white p-2 text-teal-600 shadow-[-2px_-2px_5px_rgba(255,255,255,.9),3px_4px_8px_rgba(141,157,184,.24)]">{card.icon}</div>
-              </div>
-              <div className="mt-2 text-3xl font-bold tracking-tight text-slate-900">{card.value}</div>
-            </div>
+            <KpiCard compact key={card.label} label={card.label} value={String(card.value)} />
           ))}
         </div>
       )}
@@ -785,13 +779,13 @@ export function AdminPage() {
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[220px]">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-              <input className="field w-full pl-9" placeholder="Search users..." value={search} onChange={(e) => { setSearch(e.target.value); setUserPage(1); }} />
+              <input aria-label="Search users" className="field w-full pl-9" placeholder="Search users..." value={search} onChange={(e) => { setSearch(e.target.value); setUserPage(1); }} />
             </div>
-            <select className="field" value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setUserPage(1); }}>
+            <select aria-label="Filter users by role" className="field w-full sm:w-44" value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setUserPage(1); }}>
               <option value="">All roles</option>
               {roleOptions.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
             </select>
-            <select className="field" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setUserPage(1); }}>
+            <select aria-label="Filter users by status" className="field w-full sm:w-36" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setUserPage(1); }}>
               <option value="">All statuses</option>
               {["Active", "Inactive", "Pending"].map((status) => <option key={status} value={status}>{status}</option>)}
             </select>

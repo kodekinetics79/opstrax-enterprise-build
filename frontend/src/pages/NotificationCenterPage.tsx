@@ -77,7 +77,7 @@ export function NotificationCenterPage() {
   });
 
   return (
-    <div className="page-stack h-full overflow-y-auto">
+    <div className="page-stack min-w-0">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>

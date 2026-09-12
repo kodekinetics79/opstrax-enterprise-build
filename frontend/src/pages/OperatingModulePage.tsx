@@ -715,11 +715,11 @@ function AlertsPage() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Open Alerts" value={summary.open} status="Open" />
-        <KpiCard label="Critical Alerts" value={summary.critical} status="Critical" />
-        <KpiCard label="Acknowledged" value={summary.acknowledged} status="Review" />
-        <KpiCard label="Closed" value={summary.closed} status="Recorded" />
+      <div className="panel flex flex-wrap divide-x divide-slate-100">
+        <KpiCard compact label="Open Alerts" value={summary.open} status="Open" />
+        <KpiCard compact label="Critical Alerts" value={summary.critical} status="Critical" />
+        <KpiCard compact label="Acknowledged" value={summary.acknowledged} status="Review" />
+        <KpiCard compact label="Closed" value={summary.closed} status="Recorded" />
       </div>
 
       <div className="panel flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -1008,11 +1008,11 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
           </button>
         </>}
       />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {definition.kpis.map((kpi) => <KpiCard key={kpi.label} label={kpi.label} value={hasConnectedRecords ? kpi.value : "—"} status={hasConnectedRecords ? kpi.status : "Unavailable"} trend={hasConnectedRecords ? kpi.trend : undefined} />)}
+      <div className="panel flex flex-wrap divide-x divide-slate-100">
+        {definition.kpis.map((kpi) => <KpiCard compact key={kpi.label} label={kpi.label} value={hasConnectedRecords ? kpi.value : "—"} status={hasConnectedRecords ? kpi.status : "Unavailable"} trend={hasConnectedRecords ? kpi.trend : undefined} />)}
       </div>
       <ModuleToolbar search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} />
-      <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
+      <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
         {hasConnectedRecords
           ? <DataTable rows={rows} columns={definition.columns} onSelect={setSelected} />
           : <EmptyState title="No connected production records" subtitle="This workspace has no production data source yet. Fixed example records, percentages, and recommendations are not shown." />}

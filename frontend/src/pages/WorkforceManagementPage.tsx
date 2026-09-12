@@ -194,7 +194,7 @@ export function WorkforceManagementPage() {
   if (isLoading) return <LoadingState />;
 
   return (
-    <div className="page-stack h-full overflow-y-auto">
+    <div className="page-stack min-w-0">
       <AssignModal cell={cell} onClose={() => setCell(null)} onSave={handleSave} />
 
       {/* Header */}

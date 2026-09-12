@@ -12,7 +12,7 @@ import {
   Truck,
   Wrench,
 } from "lucide-react";
-import { LoadingState, ErrorState, KpiCard, EmptyState, DataTable, StatusBadge } from "@/components/ui";
+import { LoadingState, ErrorState, KpiCard, EmptyState, DataTable, StatusBadge, PageHeader, PageStack } from "@/components/ui";
 import { EntityImportExport } from "@/components/EntityImportExport";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
@@ -130,59 +130,48 @@ export function VehiclesModulePage() {
       : evidencedScores.reduce((total, score) => total + score, 0) / Math.max(evidencedScores.length, 1));
 
   const shellBanner = (
-    <header className="fc-rail relative px-6 py-4">
-      <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0">
-          <span className="section-title inline-flex items-center gap-2">
-            <Truck className="h-3.5 w-3.5 text-teal-700" /> Fleet · Master Data
-          </span>
-          <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Vehicles</h1>
-          <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
-            <span className="font-bold text-slate-700 tabular-nums">{total}</span> units in the fleet registry ·{" "}
-            <span className="font-bold text-emerald-600 tabular-nums">{available}</span> available ·{" "}
-            <span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> need attention
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+    <PageHeader
+      eyebrow="Fleet · Master Data"
+      title="Vehicles"
+      description={`${total} units in the fleet registry · ${available} available · ${atRisk} need attention`}
+      actions={(
+        <>
           <EntityImportExport
             config={VEHICLE_IMPORT_EXPORT}
             canImport={canManageFleet}
             canExport={hasPermission(PERMISSIONS.VEHICLES_EXPORT)}
           />
-          {/* Single-add sat only on the roster tab, so the Overview offered bulk import
-              but no way to add one record — users reasonably concluded it was missing.
-              Deep-links into the roster's existing create form rather than duplicating it. */}
           {canManageFleet ? (
-            <button type="button" onClick={() => navigate("/vehicles/roster?new=1")} className="btn-ghost h-10">
+            <button type="button" onClick={() => navigate("/vehicles/roster?new=1")} className="btn-ghost btn-compact min-h-11 sm:min-h-9">
               <Plus className="h-4 w-4" /> New vehicle
             </button>
           ) : null}
-          {section !== "roster" && <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary h-10">
-            Open roster <ArrowRight className="h-4 w-4" />
-          </button>}
-        </div>
-      </div>
-    </header>
+          {section !== "roster" && (
+            <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary btn-compact min-h-11 sm:min-h-9">
+              Open roster <ArrowRight className="h-4 w-4" />
+            </button>
+          )}
+        </>
+      )}
+    />
   );
 
   return (
-    <div className="fleet-console space-y-3 pb-6">
+    <PageStack className="fleet-console pb-6">
       {shellBanner}
 
-      <nav className="fc-neumo sticky top-4 z-20 p-2">
-        <div className="grid grid-cols-2 gap-1 min-[420px]:grid-cols-3 sm:grid-cols-5">
+      <nav className="panel sticky top-4 z-20 overflow-x-auto p-1.5" aria-label="Vehicle workspace">
+        <div className="flex min-w-max gap-1">
           {SECTIONS.map((item) => (
             <button
               key={item.key}
               type="button"
               aria-current={section === item.key ? "page" : undefined}
+              aria-pressed={section === item.key}
               onClick={() => navigate(`/vehicles/${item.key}`)}
-              className={`min-h-11 min-w-0 rounded-xl px-3 py-2.5 text-left transition ${
-                section === item.key ? "fc-seg-btn-active rounded-xl" : "hover:bg-white/60"
-              }`}
+              className={`${section === item.key ? "btn-primary" : "btn-ghost"} btn-compact min-h-11 shrink-0 sm:min-h-9`}
             >
-              <div className={`text-xs font-bold uppercase tracking-[0.14em] ${section === item.key ? "text-teal-800" : "text-slate-700"}`}>{item.label}</div>
-              <div className="mt-0.5 hidden text-[11px] text-slate-500 lg:block">{item.description}</div>
+              {item.label}
             </button>
           ))}
         </div>
@@ -190,29 +179,29 @@ export function VehiclesModulePage() {
 
       {section === "overview" && (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
             <OverviewClay Icon={Gauge}       tone="fc-clay-teal"    iconCls="text-teal-700"    label="Fleet readiness" value={readiness == null ? "Unknown" : `${readiness}%`} caption={`${readinessRows.length} assessed · ${rows.length - readinessRows.length} unknown`} />
             <OverviewClay Icon={Truck}       tone="fc-clay-emerald" iconCls="text-emerald-700" label="Available now"   value={available}       caption="Ready for dispatch" />
             <OverviewClay Icon={ShieldAlert} tone="fc-clay-red"     iconCls="text-rose-700"    label="At risk"         value={atRisk}          caption="High risk or down" alert={atRisk > 0} />
             <OverviewClay Icon={Boxes}       tone="fc-clay-amber"   iconCls="text-amber-700"   label="Device gaps"     value={deviceEx}        caption="Telematics blind spots" alert={deviceEx > 0} />
           </div>
-          <div className="grid gap-3 lg:grid-cols-3">
+          <div className="grid gap-2 lg:grid-cols-3">
             <ModuleCard title="Roster" body="Browse, search, edit, assign and export live fleet records." action="Open roster" onClick={() => navigate("/vehicles/roster")} icon={<ClipboardList className="h-5 w-5" />} />
             <ModuleCard title="Planning" body="Replacement pressure, operational gaps and CapEx priority computed from the live fleet." action="Open planning" onClick={() => navigate("/vehicles/planning")} icon={<Sparkles className="h-5 w-5" />} />
             <ModuleCard title="Health" body="Device, camera, maintenance and compliance posture per unit." action="Open health" onClick={() => navigate("/vehicles/health")} icon={<Wrench className="h-5 w-5" />} />
           </div>
-          <div className="grid gap-3 xl:grid-cols-[1.1fr_0.9fr]">
-            <section className="fc-neumo p-4">
+          <div className="grid items-start gap-3 xl:grid-cols-[1.1fr_0.9fr]">
+            <section className="panel p-3">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-black text-slate-900">Latest units</h2>
                   <p className="text-xs font-medium text-slate-500">Most recent records from the live registry.</p>
                 </div>
-                <button type="button" className="btn-ghost h-9" onClick={() => navigate("/vehicles/roster")}>Go to roster</button>
+                <button type="button" className="btn-ghost btn-compact min-h-11 sm:min-h-9" onClick={() => navigate("/vehicles/roster")}>Go to roster</button>
               </div>
-              <div className="mt-3 grid gap-2.5 md:grid-cols-2">
+              <div className="mt-2 grid gap-2 md:grid-cols-2">
                 {rows.slice(0, 4).map((row) => (
-                  <div key={String(row.id)} className="deck-inset rounded-xl p-3.5">
+                  <div key={String(row.id)} className="deck-inset rounded-xl p-3">
                     <p className="text-base font-bold text-slate-900">{String(g(row, "vehicleCode", "vehicle_code") ?? `Vehicle ${row.id}`)}</p>
                     <p className="mt-0.5 text-xs text-slate-500">{[g(row, "make"), g(row, "model")].filter(Boolean).join(" ") || String(g(row, "type") ?? "—")}</p>
                     <div className="mt-2.5 flex items-center justify-between text-xs text-slate-500">
@@ -224,14 +213,14 @@ export function VehiclesModulePage() {
                 {rows.length === 0 && <p className="deck-inset col-span-full rounded-xl px-3 py-4 text-sm text-slate-400">No vehicles in the registry yet — import a CSV or add one from the roster.</p>}
               </div>
             </section>
-            <section className="fc-neumo p-4">
+            <section className="panel p-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <h2 className="text-base font-black text-slate-900">Connected records</h2>
                   <p className="text-xs font-medium text-slate-500">Jump to the records tied to your fleet.</p>
                 </div>
               </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 {RELATED_ENTITIES.map((item) => (
                   <button
                     key={item.label}
@@ -257,7 +246,7 @@ export function VehiclesModulePage() {
       {section === "planning" && <PlanningView rows={rows} planning={planning.data as AnyRecord} onNavigate={navigate} />}
       {section === "health" && <HealthView rows={rows} onNavigate={navigate} />}
       {section === "records" && <RecordsView rows={rows} onNavigate={navigate} />}
-    </div>
+    </PageStack>
   );
 }
 
@@ -266,27 +255,27 @@ function OverviewClay({ Icon, tone, iconCls, label, value, caption, alert }:
   const n = Number(value);
   const valueColor = alert && Number.isFinite(n) && n > 0 ? (tone.includes("red") ? "text-rose-600" : "text-amber-600") : "text-slate-900";
   return (
-    <div className={`fc-clay ${tone} p-4`}>
-      <div className="flex items-center justify-between">
-        <span className="text-[12px] font-bold text-slate-600">{label}</span>
-        <span className="fc-blob"><Icon className={`h-4 w-4 ${iconCls}`} /></span>
+    <div className={`panel ${tone} min-w-0 px-3 py-2`}>
+      <div className="flex min-w-0 items-center gap-2">
+        <Icon className={`h-4 w-4 shrink-0 ${iconCls}`} aria-hidden />
+        <span className="min-w-0 flex-1 truncate text-[11px] font-bold uppercase tracking-[0.08em] text-slate-600">{label}</span>
+        <span className={`text-lg font-black leading-none tabular-nums ${valueColor}`}>{value}</span>
       </div>
-      <div className={`mt-2 text-[30px] font-black leading-none tracking-tight tabular-nums ${valueColor}`}>{value}</div>
-      {caption ? <p className="mt-2 text-[11px] font-medium text-slate-500">{caption}</p> : null}
+      {caption ? <p className="mt-1 truncate text-[10.5px] font-medium text-slate-500" title={caption}>{caption}</p> : null}
     </div>
   );
 }
 
 function ModuleCard({ title, body, action, onClick, icon }: { title: string; body: string; action: string; onClick: () => void; icon: React.ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className="fc-neumo group p-5 text-left transition hover:-translate-y-0.5">
-      <div className="flex items-center justify-between">
-        <div className="fc-blob h-10 w-10 text-slate-500">{icon}</div>
-        <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-600" />
-      </div>
-      <h3 className="mt-4 text-base font-black text-slate-900">{title}</h3>
-      <p className="mt-1.5 text-sm text-slate-500">{body}</p>
-      <p className="mt-3 text-xs font-bold uppercase tracking-[0.14em] text-teal-700">{action}</p>
+    <button type="button" onClick={onClick} className="panel group flex min-h-11 items-center gap-3 p-3 text-left transition hover:border-teal-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/60">
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-black text-slate-900">{title}</span>
+        <span className="block truncate text-xs text-slate-500" title={body}>{body}</span>
+      </span>
+      <span className="hidden text-xs font-bold text-teal-700 sm:inline">{action}</span>
+      <ArrowRight className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-600" />
     </button>
   );
 }

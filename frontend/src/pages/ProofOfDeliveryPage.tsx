@@ -655,7 +655,7 @@ export function ProofOfDeliveryPage() {
       </div>
 
       {/* Table + supporting rail */}
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="flex min-w-0 flex-col gap-3">
       <div className="clay-card overflow-hidden p-0">
         {rows.length === 0 ? (
           <EmptyState title="No POD records match your filters" />
@@ -786,8 +786,8 @@ export function ProofOfDeliveryPage() {
         </nav>
       )}
 
-      {/* Supporting rail — recent captures, awaiting queue, proof-type mix */}
-      <div className="flex flex-col gap-3">
+      {/* Supporting summaries follow the primary register and its pagination. */}
+      <div className="grid items-start gap-3 md:grid-cols-3">
         {/* Awaiting capture queue */}
         <div className="clay-card p-4">
           <div className="mb-3 flex items-center justify-between">

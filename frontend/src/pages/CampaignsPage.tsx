@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
+import { requireCommercialModuleRecords } from "@/services/commercialModulePayload";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
@@ -11,8 +12,8 @@ function persistedNumber(value: unknown): number | null {
 }
 
 const campaignsApi = {
-  list: () => unwrap<AnyRecord[]>(apiClient.get("/api/campaigns")).then((rows) =>
-    rows.map((r) => ({
+  list: () => unwrap<unknown>(apiClient.get("/api/campaigns")).then((payload) =>
+    requireCommercialModuleRecords(payload, "campaigns").map((r) => ({
       ...r,
       campaignName: r.campaignName ?? r.title ?? "",
       segment: r.segment ?? "",
@@ -139,7 +140,7 @@ export function CampaignsPage() {
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="page-stack h-full overflow-y-auto">
+    <div className="page-stack min-w-0">
       {showCreate && <CreateCampaignModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
 
       <div className="flex items-start justify-between gap-4 flex-wrap">

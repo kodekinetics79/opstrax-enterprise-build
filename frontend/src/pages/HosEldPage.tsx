@@ -121,7 +121,7 @@ export function HosEldPage() {
   };
 
   return (
-    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
+    <div className="fleet-console page-stack min-w-0">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

@@ -143,13 +143,13 @@ export function PasswordInput({
   const [show, setShow] = useState(false);
   return (
     <div className={`relative ${wrapperClassName}`.trim()}>
-      <input {...props} type={show ? "text" : "password"} className={`${className} w-full pr-10`} />
+      <input {...props} type={show ? "text" : "password"} className={`${className} password-field w-full pr-10`} />
       <button
         type="button"
         onClick={() => setShow((s) => !s)}
         aria-label={show ? "Hide password" : "Show password"}
         aria-pressed={show}
-        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-slate-400 hover:text-teal-600"
+        className="password-toggle absolute inset-y-0 right-0 flex w-10 items-center justify-center text-slate-400 hover:text-teal-600"
       >
         {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
       </button>
@@ -194,9 +194,9 @@ export function PageHeader({
    KPI CARD
    ============================================================ */
 export function KpiCard({
-  label, value, trend, status, delta, icon,
+  label, value, trend, status, delta, icon, compact = false,
 }: {
-  label: string; value: ReactNode; trend?: string; status?: string; icon?: ReactNode; delta?: string;
+  label: string; value: ReactNode; trend?: string; status?: string; icon?: ReactNode; delta?: string; compact?: boolean;
 }) {
   const isCritical = /critical|overdue|breach|rejected/i.test(String(label) + String(status));
   const isWarning  = !isCritical && /missing|anomal|unusual|pending|risk/i.test(String(label) + String(status));
@@ -207,6 +207,12 @@ export function KpiCard({
     : isWarning && Number(value) > 0
     ? "text-amber-700"
     : "text-slate-950";
+
+  if (compact) return <div className="min-w-[110px] flex-1 px-3 py-2">
+    <p className="text-xs font-medium text-slate-600">{label}</p>
+    <p className={`text-lg font-bold tabular-nums ${valueColor}`}>{value}</p>
+    {(status || trend || delta) && <p className="text-xs text-slate-500">{[status, delta, trend].filter(Boolean).join(" · ")}</p>}
+  </div>;
 
   return (
     <div className="clay-card card-hover kpi-card relative min-w-0 overflow-hidden">
@@ -545,22 +551,24 @@ export function FilterBar({
   options?: string[]; value?: string; onChange?: (option: string) => void; children?: ReactNode;
 }) {
   return (
-    <div className="panel filter-bar flex flex-wrap items-center">
+    <div className={`panel filter-bar ${options ? "min-w-0 overflow-hidden" : "flex flex-wrap items-center"}`}>
       {options
-        ? options.map((option) => {
-            const active = option === value;
-            return (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={active}
-                className={active ? "filter-chip filter-chip-active" : "filter-chip"}
-                onClick={() => onChange?.(option)}
-              >
-                {option}
-              </button>
-            );
-          })
+        ? <div className="flex w-full min-w-0 max-w-full flex-nowrap items-center gap-2 overflow-x-auto sm:flex-wrap sm:overflow-visible">
+            {options.map((option) => {
+              const active = option === value;
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={active}
+                  className={`${active ? "filter-chip filter-chip-active" : "filter-chip"} shrink-0`}
+                  onClick={() => onChange?.(option)}
+                >
+                  {option}
+                </button>
+              );
+            })}
+          </div>
         : children}
     </div>
   );

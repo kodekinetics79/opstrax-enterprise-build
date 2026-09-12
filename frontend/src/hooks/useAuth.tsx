@@ -56,7 +56,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // it once, so the app only ever renders from server-current permissions. No stored session → nothing
   // to revalidate (the login screen renders immediately).
   const [revalidating, setRevalidating] = useState<boolean>(initialRef.current != null);
-  const didRevalidate = useRef(false);
 
   const setSession = (next: UserSession | null) => {
     setSessionState(next);
@@ -75,8 +74,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    if (didRevalidate.current) return;
-    didRevalidate.current = true;
     if (!initialRef.current) { setRevalidating(false); return; }
     let cancelled = false;
     authApi.me()

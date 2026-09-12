@@ -20,6 +20,7 @@ import { useHasPermission } from '@/hooks/usePermission';
 import { ShipmentLifecycleDrawer } from '../components/fleet/ShipmentLifecycleDrawer';
 import type { AnyRecord } from '@/types';
 import { formatTelemetrySpeed, optionalTelemetrySpeed, telemetrySpeedSummary } from '@/utils/telemetryMeasurements';
+import { PageHeader, PageStack } from '@/components/ui';
 
 type FleetMode = 'command' | 'shipments' | 'vehicles' | 'tracking' | 'maintenance' | 'fuel' | 'carriers';
 
@@ -374,45 +375,40 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
     mode === 'carriers' ? carriers.length : shipments.length;
 
   return (
-    <div className="fleet-console flex h-full min-h-0 flex-col gap-2.5">
-
-      {/* ── Console rail ─────────────────────────────────────────────────── */}
-      <header className="fc-rail relative shrink-0 px-5 py-3">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <div className="min-w-0">
-            <span className="section-title inline-flex items-center gap-2">
-              <Truck className="h-3.5 w-3.5 text-teal-700" /> Fleet &amp; TMS
-            </span>
-            <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">{config.label}</h1>
-            <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">{config.description}</p>
-          </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2.5">
+    <PageStack className="fleet-console">
+      <PageHeader
+        eyebrow="Fleet & TMS"
+        title={config.label}
+        description={config.description}
+        actions={
+          <>
             {generatedAt && (
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
                 <span className="h-1.5 w-1.5 rounded-full bg-slate-400" /> {tenantIsExplicitlySynthetic ? 'Demo snapshot queried' : 'Snapshot queried'} {generatedAt}
               </span>
             )}
-            <button type="button" className="btn-ghost h-10" disabled={refreshing} onClick={() => void refreshAll()}>
+            <button type="button" className="btn-ghost btn-compact" disabled={refreshing} onClick={() => void refreshAll()}>
               <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
             </button>
-            <button type="button" className="btn-primary h-10" onClick={() => navigate('/map-view')}>
+            <button type="button" className="btn-primary btn-compact" onClick={() => navigate('/map-view')}>
               Live map <MapPinned className="h-4 w-4" />
             </button>
-          </div>
-        </div>
-        <div className="fc-seg mt-3 flex flex-wrap items-center gap-1 p-1">
+          </>
+        }
+      />
+      <nav className="panel flex max-w-full gap-1 overflow-x-auto p-1.5" aria-label="Fleet workspace views">
           {MODE_ORDER.map((item) => (
             <button
               key={item}
               type="button"
               onClick={() => setMode(item)}
-              className={`fc-seg-btn ${item === mode ? 'fc-seg-btn-active' : ''}`}
+              aria-pressed={item === mode}
+              className={`${item === mode ? 'btn-primary' : 'btn-ghost'} btn-compact shrink-0`}
             >
               {MODULES[item].short}
             </button>
           ))}
-        </div>
-      </header>
+      </nav>
 
       {!canManageFleet && (
         <div className="shrink-0 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900" role="status">
@@ -431,7 +427,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
       )}
 
       {/* ── Clay overview tiles — pressable mode shortcuts ────────────────── */}
-      <div className="grid shrink-0 grid-cols-2 gap-2.5 xl:grid-cols-4">
+      <div className="grid shrink-0 grid-cols-2 gap-2 xl:grid-cols-4">
         <ClayStat Icon={Package} tone="fc-clay-teal"    iconCls="text-teal-700"    label="Active shipments" value={summary?.activeShipments ?? (loading ? '…' : 0)} caption="Recorded booked + moving" active={mode === 'shipments'} onClick={() => setMode(mode === 'shipments' ? 'command' : 'shipments')} />
         <ClayStat Icon={Truck}   tone="fc-clay-emerald" iconCls="text-emerald-700" label="Fleet available"  value={summary?.activeVehicles ?? (loading ? '…' : 0)}  caption="Recorded ready state" active={mode === 'vehicles'} onClick={() => setMode(mode === 'vehicles' ? 'command' : 'vehicles')} />
         <ClayStat Icon={Wrench}  tone="fc-clay-amber"   iconCls="text-amber-700"   label="Open maintenance" value={summary?.openMaintenance ?? (loading ? '…' : 0)} caption="Work orders open"     active={mode === 'maintenance'} onClick={() => setMode(mode === 'maintenance' ? 'command' : 'maintenance')} alert={Boolean(summary?.openMaintenance)} />
@@ -442,7 +438,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-2.5 xl:grid-cols-[minmax(0,1fr)_280px]">
 
         {/* Operational board */}
-        <section className="fc-neumo flex min-h-[420px] flex-col overflow-hidden xl:min-h-0">
+        <section className="panel flex min-h-[360px] flex-col overflow-hidden xl:min-h-0">
           <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pb-2 pt-3">
             <div>
               <p className="section-title">Operational board</p>
@@ -457,8 +453,8 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
             <span className="ml-auto text-[11px] font-semibold text-slate-400 tabular-nums">{boardCount} records</span>
           </div>
 
-          <div className="fc-bezel mx-3 flex min-h-0 flex-1 flex-col">
-            <div className="fc-screen min-h-0 flex-1 overflow-y-auto p-2.5">
+          <div className="mx-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
               {loading ? (
                 <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                   {Array.from({ length: 8 }).map((_, i) => <div key={i} className="skeleton h-24 rounded-2xl" />)}
@@ -528,7 +524,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
         {/* Instrument rail */}
         <aside className="flex min-h-0 flex-col gap-2.5 xl:overflow-y-auto">
           {/* Mode instruments */}
-          <div className="fc-neumo shrink-0 p-3.5">
+          <div className="panel shrink-0 p-3">
             <span className="section-title inline-flex items-center gap-2">
               <Gauge className="h-3.5 w-3.5 text-teal-700" /> {config.label} signals
             </span>
@@ -543,7 +539,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
           </div>
 
           {/* Load plan — real route aggregation from the overview */}
-          <div className="fc-neumo shrink-0 p-3.5">
+          <div className="panel shrink-0 p-3">
             <div className="flex items-center justify-between">
               <span className="section-title inline-flex items-center gap-2">
                 <MapPinned className="h-3.5 w-3.5 text-teal-700" /> Load plan
@@ -571,7 +567,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
           </div>
 
           {/* Exceptions */}
-          <div className="fc-neumo shrink-0 p-3.5">
+          <div className="panel shrink-0 p-3">
             <span className="section-title inline-flex items-center gap-2">
               <AlertTriangle className="h-3.5 w-3.5 text-teal-700" /> Exceptions
             </span>
@@ -594,7 +590,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
           </div>
 
           {/* Signal summary */}
-          <div className="fc-neumo flex-1 p-3.5">
+          <div className="panel flex-1 p-3">
             <span className="section-title inline-flex items-center gap-2">
               <CheckCircle2 className="h-3.5 w-3.5 text-teal-700" /> Today
             </span>
@@ -619,7 +615,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
       {selectedShipment && (
         <ShipmentLifecycleDrawer shipment={selectedShipment} canManage={canManageFleet} onClose={() => setSelectedShipment(null)} />
       )}
-    </div>
+    </PageStack>
   );
 }
 
@@ -629,15 +625,19 @@ function ClayStat({ Icon, tone, iconCls, label, value, caption, active, onClick,
   { Icon: React.ElementType; tone: string; iconCls: string; label: string; value: React.ReactNode; caption: string; active: boolean; onClick: () => void; alert?: boolean }) {
   const n = Number(value);
   const valueColor = alert && Number.isFinite(n) && n > 0 ? (tone.includes('red') ? 'text-rose-600' : 'text-amber-600') : 'text-slate-900';
+  const surfaceTone = tone.includes('red') ? 'border-rose-100 bg-rose-50/45'
+    : tone.includes('amber') ? 'border-amber-100 bg-amber-50/45'
+      : tone.includes('emerald') ? 'border-emerald-100 bg-emerald-50/45'
+        : 'border-teal-100 bg-teal-50/45';
   return (
     <button type="button" onClick={onClick} aria-pressed={active}
-      className={`fc-clay ${tone} ${active ? 'deck-clay-pressed' : ''} p-3.5 text-left`}>
-      <div className="flex items-center justify-between">
-        <span className="text-[12px] font-bold text-slate-600">{label}</span>
-        <span className="fc-blob"><Icon className={`h-4 w-4 ${iconCls}`} /></span>
+      className={`min-h-11 min-w-0 rounded-lg border px-3 py-2 text-left transition focus:outline-none focus:ring-2 focus:ring-teal-400 focus:ring-offset-2 ${surfaceTone} ${active ? 'ring-2 ring-teal-400' : ''}`}>
+      <div className="flex min-w-0 items-center gap-2">
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${iconCls}`} />
+        <span className="min-w-0 flex-1 truncate text-[11px] font-bold text-slate-600">{label}</span>
+        <span className={`shrink-0 text-base font-black leading-none tracking-tight tabular-nums ${valueColor}`}>{value}</span>
       </div>
-      <div className={`mt-2 text-[27px] font-black leading-none tracking-tight tabular-nums ${valueColor}`}>{value}</div>
-      <p className="mt-1.5 text-[10.5px] font-medium text-slate-500">{caption}</p>
+      <p className="mt-1 truncate text-[10px] font-medium text-slate-500" title={caption}>{caption}</p>
     </button>
   );
 }

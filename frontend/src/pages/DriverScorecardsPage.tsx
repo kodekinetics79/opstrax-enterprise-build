@@ -341,7 +341,7 @@ export function DriverScorecardsPage() {
   if (driversQ.isError || summaryQ.isError) return <ErrorState message={((driversQ.error ?? summaryQ.error) as Error)?.message} onRetry={() => { void driversQ.refetch(); void summaryQ.refetch(); }} />;
 
   return (
-    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
+    <div className="fleet-console page-stack min-w-0">
       {toast && (
         <div role="status" aria-live="polite" className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">
           {toast}
@@ -408,28 +408,30 @@ export function DriverScorecardsPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="panel flex gap-1.5 p-2" role="tablist" aria-label="Scorecard views">
-        {(["drivers", "vehicles", "trends"] as Tab[]).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)} role="tab" aria-selected={tab === t}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium border transition-colors capitalize ${
-              tab === t
-                ? "bg-teal-50 border-teal-300 text-teal-700"
-                : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            {t === "trends" ? "Fleet Trends" : `${t.charAt(0).toUpperCase() + t.slice(1)} Scorecards`}
-          </button>
-        ))}
+      <div className="panel flex min-w-0 flex-col gap-2 p-2 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-x-auto" role="tablist" aria-label="Scorecard views">
+          {(["drivers", "vehicles", "trends"] as Tab[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTab(t)} role="tab" aria-selected={tab === t}
+              className={`min-h-11 shrink-0 rounded-lg border px-4 py-1.5 text-sm font-medium capitalize transition-colors sm:min-h-8 ${
+                tab === t
+                  ? "border-teal-300 bg-teal-50 text-teal-700"
+                  : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              {t === "trends" ? "Fleet Trends" : `${t.charAt(0).toUpperCase() + t.slice(1)} Scorecards`}
+            </button>
+          ))}
+        </div>
         {tab === "drivers" && (
           <input
             type="search"
             placeholder="Search drivers…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-48"
+            className="field w-full sm:ml-auto sm:w-48 sm:flex-none"
           />
         )}
       </div>

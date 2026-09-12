@@ -129,7 +129,7 @@ export function ContractsPage() {
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="page-stack h-full overflow-y-auto">
+    <div className="page-stack min-w-0">
       {showCreate && (
         <CreateContractModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />
       )}

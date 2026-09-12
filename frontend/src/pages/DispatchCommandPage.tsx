@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
-import { AlertTriangle, CheckCircle, ChevronRight, Clock, MapPin, Radio, ShieldAlert, Truck, User, XCircle, Zap } from "lucide-react";
+import { AlertTriangle, CheckCircle, ChevronRight, Clock, Radio, ShieldAlert, Truck, User, XCircle, Zap } from "lucide-react";
 import { DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
-import { ClayStat, ConsoleRail } from "@/components/console";
+import { ConsoleRail } from "@/components/console";
 import { dispatchApi } from "@/services/dispatchApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
@@ -207,13 +207,12 @@ export function DispatchCommandPage() {
         }
       />
 
-      {/* KPI Strip */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <ClayStat Icon={Truck}         tone="fc-clay-amber"   iconCls="text-amber-700"   label="Unassigned Loads" value={summary.unassigned} caption="Waiting for a pairing" alert={summary.unassigned > 0} />
-        <ClayStat Icon={MapPin}        tone="fc-clay-teal"    iconCls="text-teal-700"    label="Active Assignments" value={summary.active} caption="Assigned through delivery" />
-        <ClayStat Icon={AlertTriangle} tone="fc-clay-red"     iconCls="text-rose-700"    label="Open Exceptions" value={summary.exceptions} caption={summary.exceptions > 0 ? "Needs dispatcher action" : "No open exceptions"} alert={summary.exceptions > 0} />
-        <ClayStat Icon={User}          tone="fc-clay-emerald" iconCls="text-emerald-700" label="Available Drivers" value={availDrivers.data?.length ?? "—"} caption="Cleared for assignment" />
-      </div>
+      <section className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Dispatch summary">
+        <KpiCard compact label="Unassigned Loads" value={summary.unassigned} trend="Waiting for a pairing" />
+        <KpiCard compact label="Active Assignments" value={summary.active} trend="Assigned through delivery" />
+        <KpiCard compact label="Open Exceptions" value={summary.exceptions} trend={summary.exceptions > 0 ? "Needs dispatcher action" : "No open exceptions"} />
+        <KpiCard compact label="Available Drivers" value={availDrivers.data?.length ?? "—"} trend="Cleared for assignment" />
+      </section>
 
       {operationError ? (
         <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
@@ -228,18 +227,18 @@ export function DispatchCommandPage() {
 
       {/* System Dispatch Insights */}
       {insights.length > 0 && (
-        <section className="panel p-5">
-          <h2 className="section-title">System Dispatch Insights</h2>
+        <details className="panel p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-700">System Dispatch Insights ({insights.length})</summary>
           <div className="mt-4 space-y-3">
             {insights.map((ins, i) => (
               <DispatchInsightRow key={i} insight={ins} />
             ))}
           </div>
-        </section>
+        </details>
       )}
 
       {/* Tabs */}
-      <section className="fc-neumo p-5">
+      <section className="fc-neumo p-3">
         {requestedJobId ? (
           <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
             Focused on {String(focusedJobNumber ?? `job ${requestedJobId}`)}. The current assignment is listed first;
@@ -260,7 +259,7 @@ export function DispatchCommandPage() {
           ))}
         </div>
 
-        <div className="mt-5">
+        <div className="mt-3">
           {activeTab === "Board" && (
             <BoardTab
               stageMap={stageMap}
