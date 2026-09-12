@@ -2,11 +2,14 @@ import type { ExpoConfig } from "expo/config";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
+const STAGE = process.env.EXPO_PUBLIC_STAGE?.trim().toLowerCase() || "pilot";
+const DEFAULT_API_BASE_URL = STAGE === "development" || STAGE === "local"
+  ? "http://localhost:8088"
+  : "https://opstrax-api.onrender.com";
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL?.trim() ||
   process.env.EXPO_PUBLIC_DOTNET_API_URL?.trim() ||
-  "http://localhost:8088";
-const STAGE = process.env.EXPO_PUBLIC_STAGE?.trim().toLowerCase() || "pilot";
+  DEFAULT_API_BASE_URL;
 const isProductionBuild = process.env.EAS_BUILD_PROFILE?.startsWith("production") || STAGE === "production";
 const allowedApiHosts = (process.env.EXPO_PUBLIC_ALLOWED_API_HOSTS ?? "")
   .split(",")
