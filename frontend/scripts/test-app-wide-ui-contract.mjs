@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import "./test-workspace-guidance-contract.mjs";
+import "./test-list-workspace-behavior.mjs";
 
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 const shell = read("../src/layouts/AppShell.tsx");
@@ -49,6 +51,7 @@ assert.match(maintenance, /if \(handledVehicleIntent\.current !== requestedVehic
 assert.match(maintenance, /key=\{requestedVehicleId \|\| "manual"\}/, "A changed vehicle handoff must remount the dialog with the requested vehicle selected.");
 assert.match(maintenance, /onClose=\{\(\) => \{[\s\S]*?handledVehicleIntent\.current = requestedVehicleId;[\s\S]*?setCreateOpen\(false\);[\s\S]*?next\.delete\("vehicleId"\);[\s\S]*?setSearchParams\(next, \{ replace: true \}\);/, "Closing the dialog must consume and remove the current vehicle handoff without reopening it.");
 assert.match(maintenance, /activeTab === "Overview" && insights\.length/, "Maintenance insight banners must not push route-specific queues below the fold.");
+assert.match(maintenance, /className=\{`maintenance-row[\s\S]*?aria-pressed=\{selected\?\.id === record\.id\}/, "Maintenance queue selection must expose its selected state alongside the visible inspector.");
 assert.match(admin, /location\.pathname === "\/user-management" \? "users"/, "User Management must open the Users workspace.");
 assert.match(commandCenterEndpoint, /j\.id job_id, COALESCE\(j\.job_number,j\.job_code\) shipment_number/, "Command Center shipment exceptions must expose their canonical job ID and shipment number.");
 assert.match(commandCenterEndpoint, /jobId\s*= r\.GetValueOrDefault\("jobId"\)[\s\S]*?shipmentNumber\s*= r\.GetValueOrDefault\("shipmentNumber"\)/, "Command Center must map persisted shipment identity into its exception response.");

@@ -69,3 +69,8 @@
  .alerts-disclosure summary { min-height:44px; display:flex; align-items:center; gap:6px; }
 }
 @media(pointer:coarse) { .alerts-disclosure summary,.alerts-related,.alerts-detail-error button { min-height:44px; } }
+/* Glass is reserved for the surrounding controls and inspector, not the data rows. */
+.alerts-workspace > .panel { background:linear-gradient(135deg,rgba(255,255,255,.96),rgba(242,250,251,.94)); box-shadow:inset 0 1px 0 #fff,0 4px 12px rgba(30,64,85,.07); border-color:#dae5ed; }
+.alerts-desktop-inspector { background:linear-gradient(145deg,#ffffff,#f5fafb); box-shadow:inset 0 1px 0 #fff,0 5px 14px rgba(30,64,85,.075); }
+.alerts-queue-heading { background:linear-gradient(120deg,#f9fcfd,#eff8f8); box-shadow:inset 0 1px 0 #fff; }
+@supports(backdrop-filter:blur(10px)) { .alerts-workspace > .panel { backdrop-filter:blur(10px); } }

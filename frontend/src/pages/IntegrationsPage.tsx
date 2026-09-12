@@ -36,6 +36,7 @@ import {
   StatusBadge,
 } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
+import { WorkspaceGuidance } from "@/components/WorkspaceGuidance";
 import { connectorAttemptHealth } from "@/lib/connectorFreshness";
 import {
   integrationsApi,
@@ -46,6 +47,7 @@ import {
   type IntegrationTestResult,
   type IntegrationWriteInput,
 } from "@/services/integrationsApi";
+import "./integrations-workspace.css";
 
 type ConfigField = {
   key: string;
@@ -1239,9 +1241,9 @@ function CustomConnectorDialog({
 }
 
 /* ============================================================
-   CONNECTOR CARD — claymorphic marketplace tile
+   CONNECTOR ROW — operational status, evidence and next action
    ============================================================ */
-function ConnectorCard({
+function ConnectorRow({
   integration,
   canManage,
   busy,
@@ -1266,202 +1268,77 @@ function ConnectorCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const isConnected = integration.status === "Connected";
-  const isError = integration.status === "Error";
+  const status = effectiveIntegrationStatus(integration);
+  const isConnected = status === "Connected";
+  const isError = status === "Error";
   const adapterAvailable = integration.adapterAvailable === true;
-  const meta = categoryMeta(integration.category);
   const primaryLabel =
-    integration.status === "Pending" ? "Authorize" : isError ? "Reconnect" : "Connect";
+    status === "Pending" ? "Authorize" : isError ? "Reconnect" : "Connect";
   const attemptHealth = connectorAttemptHealth(integration);
-  const healthAccent = attemptHealth?.state === "error"
-    ? "bg-red-400/70"
-    : attemptHealth?.state === "stale" || attemptHealth?.state === "awaiting"
-      ? "bg-amber-400/70"
-      : attemptHealth?.state === "in-progress"
-        ? "bg-sky-400/70"
-        : null;
 
   return (
-    <div className="clay-card card-hover flex flex-col gap-3 p-4">
-      <span
-        className={`pointer-events-none absolute inset-x-0 top-0 h-1 rounded-t-(--r-clay) ${
-          isError ? "bg-red-400/70" : healthAccent ?? (isConnected ? "bg-emerald-400/70" : integration.status === "Pending" ? "bg-amber-400/70" : "bg-slate-300/70")
-        }`}
-      />
-      <div className="flex items-start gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-[inset_0_1px_2px_rgba(255,255,255,.9),0_1px_3px_rgba(15,23,42,.08)]">
-          <span className="text-[11px] font-black tracking-tight text-slate-700">{integration.logo.slice(0, 3).toUpperCase()}</span>
+    <article className="integration-row" aria-label={`${integration.name} connector`}>
+      <div className="integration-provider">
+        <div className="integration-logo" aria-hidden="true">
+          {integration.logo.slice(0, 3).toUpperCase()}
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <p className="truncate text-sm font-bold leading-tight text-slate-900">{integration.name}</p>
-            {integration.isCustom && (
-              <span className="shrink-0 rounded-full border border-teal-200 bg-teal-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.12em] text-teal-600">
-                Custom
-              </span>
-            )}
-            {!adapterAvailable && (
-              <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.12em] text-amber-700">
-                Evaluation only
-              </span>
-            )}
+        <div className="min-w-0">
+          <div className="integration-provider-heading">
+            <button type="button" onClick={onConfigure} className="integration-name">{integration.name}</button>
+            {integration.isCustom && <span className="integration-custom">Custom</span>}
           </div>
-          <div className="mt-1.5">
-            <CategoryBadge category={integration.category} />
-          </div>
+          <p className="integration-description">{integration.description}</p>
+          {integration.connectedTo.length > 0 && <div className="integration-linked-systems">{integration.connectedTo.slice(0, 4).map(item => <ConnectorPill key={item} value={item} />)}</div>}
+          <span className="integration-mobile-category">{integration.category}</span>
+          {!adapterAvailable && <p className="integration-evaluation-note">Adapter unavailable. No credentials can be stored and no connection is claimed.</p>}
         </div>
-        <StatusBadge status={integration.status} />
       </div>
-
-      <p className="line-clamp-2 flex-1 text-xs leading-relaxed text-slate-500">{integration.description}</p>
-
-      {!adapterAvailable && (
-        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-800">
-          Adapter unavailable in this build. No credentials can be stored and no connection is claimed.
-        </div>
-      )}
-
-      {integration.connectedTo.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {integration.connectedTo.slice(0, 4).map((item) => (
-            <ConnectorPill key={item} value={item} />
-          ))}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200/70 bg-slate-50 px-3 py-2 shadow-[inset_0_1px_3px_rgba(148,163,184,.18)]">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Last successful sync</span>
-        <span className="text-[11px] font-semibold text-slate-600">
-          {integration.lastSyncAt ? formatRelativeTime(integration.lastSyncAt) : "Never"}
-        </span>
+      <div className="integration-category"><span className="sr-only">Category: </span>{integration.category}</div>
+      <div className="integration-state">
+        <span className="sr-only">Connection check: </span>
+        <StatusBadge status={status} />
+        {!adapterAvailable && <span className="integration-evaluation-label">Evaluation only</span>}
+        {integration.lastTestedAt ? <span className={`integration-handshake ${integration.lastTestOk ? "text-emerald-700" : "text-red-700"}`} title={integration.lastTestMessage ?? undefined}>
+          {integration.lastTestOk ? "Verified" : "Failed"} {formatRelativeTime(integration.lastTestedAt)}
+        </span> : null}
       </div>
-
-      {attemptHealth ? (
-        <div className={`rounded-xl border px-3 py-2 ${attemptHealth.tone}`} title={attemptHealth.detail}>
-          <span className="block text-[11px] font-semibold">{attemptHealth.label}</span>
+      <div className="integration-sync">
+        <span className="sr-only">Last successful sync: </span>
+        <span className="integration-mobile-label" aria-hidden="true">Last successful sync</span>
+        <strong title={integration.lastSyncAt ? new Date(integration.lastSyncAt).toLocaleString() : undefined}>{integration.lastSyncAt ? formatRelativeTime(integration.lastSyncAt) || "Unavailable" : "Never"}</strong>
+        {attemptHealth ? <div className={`integration-attempt ${attemptHealth.tone}`} title={attemptHealth.detail}>
+          <span>{attemptHealth.label}</span>
           <span className="sr-only">{attemptHealth.detail}</span>
           <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
             {attemptHealth.announcement}
           </span>
-        </div>
-      ) : null}
-
-      {/* Connector health from the last real handshake (credentials verified vs failed). */}
-      {integration.lastTestedAt ? (
-        <div
-          className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 ${
-            integration.lastTestOk
-              ? "border-emerald-200/70 bg-emerald-50 text-emerald-700"
-              : "border-red-200/70 bg-red-50 text-red-700"
-          }`}
-          title={integration.lastTestMessage ?? undefined}
-        >
-          {integration.lastTestOk ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> : <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
-          <span className="truncate text-[11px] font-semibold">
-            {integration.lastTestOk ? "Verified" : "Failed"} {formatRelativeTime(integration.lastTestedAt)}
-          </span>
-        </div>
-      ) : null}
-
-      {!adapterAvailable ? (
-        <button
-          type="button"
-          onClick={onConfigure}
-          className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100"
-        >
-          <Settings2 className="h-3.5 w-3.5" />
-          View evaluation status
-        </button>
-      ) : canManage ? (
-        <div className="flex gap-1.5">
-          {isConnected ? (
-            <>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={onSync}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100 disabled:opacity-50"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                Sync now
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={onDisconnect}
-                className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-50"
-              >
-                Disconnect
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onConnect}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100 disabled:opacity-50"
-            >
-              <Plug className="h-3.5 w-3.5" />
-              {primaryLabel}
+        </div> : null}
+      </div>
+      <div className="integration-actions" aria-label={`${integration.name} actions`}>
+        {!adapterAvailable ? <button type="button" onClick={onConfigure} className="btn-ghost btn-compact">View evaluation status</button> : canManage ? <>
+          <div className="integration-primary-actions">
+            <button type="button" disabled={busy} onClick={isConnected ? onSync : onConnect} className="btn-secondary btn-compact">
+              {isConnected ? <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> : <Plug className="h-3.5 w-3.5" aria-hidden="true" />}
+              {isConnected ? "Sync now" : primaryLabel}
             </button>
-          )}
-
-          <button
-            type="button"
-            title="Test connection"
-            aria-label={`Test connection for ${integration.name}`}
-            disabled={testing}
-            onClick={onTest}
-            className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
-          >
-            {testing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-          </button>
-
-          <button
-            type="button"
-            title="Configure"
-            aria-label={`Configure ${integration.name}`}
-            onClick={onConfigure}
-            className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-slate-500 transition hover:bg-slate-100"
-          >
-            <Settings2 className="h-3.5 w-3.5" />
-          </button>
-
-          {integration.isCustom && (
-            <>
-              <button
-                type="button"
-                title="Edit connector"
-                aria-label={`Edit ${integration.name}`}
-                onClick={onEdit}
-                className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-slate-500 transition hover:bg-slate-100"
-              >
-                <Pencil className="h-3.5 w-3.5" />
+            <button type="button" onClick={onConfigure} className="btn-ghost btn-compact" aria-label={`Configure ${integration.name}`}>Configure</button>
+          </div>
+          <details className="integration-more-actions">
+            <summary>More actions</summary>
+            <div>
+              <button type="button" disabled={testing} onClick={onTest} className="btn-ghost btn-compact" aria-label={`Test connection for ${integration.name}`}>
+                {testing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Zap className="h-3.5 w-3.5" aria-hidden="true" />} Test connection
               </button>
-              <button
-                type="button"
-                title="Delete connector"
-                aria-label={`Delete ${integration.name}`}
-                disabled={busy}
-                onClick={onDelete}
-                className="rounded-lg border border-red-200 bg-red-50 p-1.5 text-red-600 transition hover:bg-red-100 disabled:opacity-50"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </>
-          )}
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={onConfigure}
-          className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100"
-        >
-          <Settings2 className="h-3.5 w-3.5" />
-          View details
-        </button>
-      )}
-    </div>
+              {isConnected && <button type="button" disabled={busy} onClick={onDisconnect} className="btn-ghost btn-compact text-red-700">Disconnect</button>}
+              {integration.isCustom && <>
+                <button type="button" onClick={onEdit} className="btn-ghost btn-compact" aria-label={`Edit ${integration.name}`}><Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit connector</button>
+                <button type="button" disabled={busy} onClick={onDelete} className="btn-ghost btn-compact text-red-700" aria-label={`Delete ${integration.name}`}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete connector</button>
+              </>}
+            </div>
+          </details>
+        </> : <button type="button" onClick={onConfigure} className="btn-ghost btn-compact">View details</button>}
+      </div>
+    </article>
   );
 }
 
@@ -1476,13 +1353,13 @@ function activityTone(status: string) {
 
 function ActivityFeed({ activity, onRefresh }: { activity: IntegrationsPayload["activity"]; onRefresh: () => void }) {
   return (
-    <div className="clay-card flex h-full flex-col overflow-hidden p-4">
+    <div className="integrations-activity-feed">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-teal-500" />
           <div>
             <p className="text-sm font-bold text-slate-800">Activity feed</p>
-            <p className="text-[11px] text-slate-500">Live connect · configure · sync · disconnect</p>
+            <p className="text-[11px] text-slate-500">Recorded connection, configuration and sync events</p>
           </div>
         </div>
         <button
@@ -1496,13 +1373,12 @@ function ActivityFeed({ activity, onRefresh }: { activity: IntegrationsPayload["
       </div>
 
       {activity.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-10 text-center">
-          <Zap className="mb-2 h-5 w-5 text-slate-300" />
+        <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 p-3">
           <p className="text-sm font-semibold text-slate-600">No activity yet</p>
-          <p className="mt-1 max-w-56 text-xs text-slate-400">Connect or sync a connector to populate the live event feed.</p>
+          <p className="mt-1 text-xs text-slate-600">Connection, configuration and sync operations appear here after they are recorded.</p>
         </div>
       ) : (
-        <div className="-mr-1 flex-1 space-y-0 overflow-y-auto pr-1">
+        <div className="integrations-activity-scroll">
           {activity.map((row, index) => {
             const tone = activityTone(row.status);
             const isLast = index === activity.length - 1;
@@ -1806,26 +1682,25 @@ export function IntegrationsPage() {
   }
 
   return (
-    <div className="page-stack h-full overflow-y-auto">
+    <div className="integrations-workspace page-stack">
       <PageHeader
-        eyebrow="Connector marketplace"
         title="Integrations"
-        description="Tenant-scoped connector registry. Available adapters are shown first; evaluation-only catalog entries are separated and never presented as working connections."
+        description="Configure tenant connectors, check connection evidence, and review sync attempts."
         actions={
           <>
-            <button type="button" className="btn-ghost text-sm" onClick={() => exportCsv("integrations", filtered)}>
+            <button type="button" className="btn-ghost btn-compact" onClick={() => exportCsv("integrations", filtered)}>
               Export CSV
             </button>
             <button
               type="button"
-              className="btn-ghost text-sm"
+              className="btn-ghost btn-compact"
               onClick={() => void qc.invalidateQueries({ queryKey: ["integrations"] })}
             >
               <RefreshCw className="h-3.5 w-3.5" />
               Refresh
             </button>
             {canManage && (
-              <button type="button" className="btn-primary text-sm" onClick={() => setConnectorDialog({ mode: "create" })}>
+              <button type="button" className="btn-primary btn-compact" onClick={() => setConnectorDialog({ mode: "create" })}>
                 <Plus className="h-3.5 w-3.5" />
                 Add Custom Connector
               </button>
@@ -1911,7 +1786,7 @@ export function IntegrationsPage() {
         </div>
       )}
 
-      <div className="panel flex flex-col gap-3 p-4">
+      <div className="panel flex flex-col gap-3 p-3">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Connector inventory view">
             <button
@@ -1996,7 +1871,22 @@ export function IntegrationsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <WorkspaceGuidance
+        nextStep={connectorView === "available"
+          ? "Choose a connector and open Configure. Test its connection before running a sync."
+          : "These are reference entries. Open evaluation status for details; credentials cannot be saved."}
+        steps={connectorView === "available" ? [
+          "Open Configure and save only credentials authorized for this tenant. A stored configuration does not establish a working connection.",
+          "Run Test connection and review the recorded provider response. A successful handshake verifies the connection check, not live telemetry or recipient delivery.",
+          "Run a bounded sync when available, review its actual result, and map discovered devices in Device Health where required.",
+        ] : [
+          "Evaluation catalog entries describe potential integrations whose adapters are unavailable in this build.",
+          "Open evaluation status to review the entry. Credentials cannot be stored and connection or sync actions are unavailable.",
+          "Switch to Available adapters to find connectors that can be configured and tested.",
+        ]}
+      />
+
+      <div className="integrations-inventory">
         <div className="flex min-w-0 flex-col gap-3">
           {filtered.length === 0 ? (
             <EmptyState
@@ -2022,20 +1912,20 @@ export function IntegrationsPage() {
             grouped.map(([category, records]) => {
               const meta = categoryMeta(category);
               return (
-                <section key={category} className="flex flex-col gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <span className={`flex h-8 w-8 items-center justify-center rounded-xl border ${meta.accent}`}>{meta.icon}</span>
+                <section key={category} className="integrations-list" aria-label={`${category} connectors`}>
+                  <div className="integration-group-heading">
+                    <span className={meta.accent} aria-hidden="true">{meta.icon}</span>
                     <div className="min-w-0">
-                      <h2 className="text-sm font-black tracking-tight text-slate-900">{category}</h2>
-                      <p className="text-[11px] text-slate-500">{categoryText(category)}</p>
+                      <h2 className="text-sm font-semibold text-slate-900">{category}</h2>
                     </div>
                     <span className="ml-auto rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-bold text-slate-500">
                       {records.length}
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+                  <div className="integration-column-heading" aria-hidden="true"><span>Provider</span><span>Category</span><span>Connection check</span><span>Last successful sync / attempt</span><span>Actions</span></div>
+                  <div>
                     {records.map((integration) => (
-                      <ConnectorCard
+                      <ConnectorRow
                         key={integration.id}
                         integration={integration}
                         canManage={canManage}
@@ -2057,12 +1947,12 @@ export function IntegrationsPage() {
           )}
         </div>
 
-        <aside className="xl:sticky xl:top-6 xl:self-start">
-          <div className="xl:max-h-[calc(100vh-6rem)] xl:overflow-hidden">
-            <ActivityFeed activity={activity} onRefresh={() => void qc.invalidateQueries({ queryKey: ["integrations"] })} />
-          </div>
-        </aside>
       </div>
+
+      <details className="panel integrations-activity">
+        <summary><Activity className="h-4 w-4" aria-hidden="true" /><span>Recent connector activity</span><span className="tabular-nums">{activity.length} recorded events</span></summary>
+        <ActivityFeed activity={activity} onRefresh={() => void qc.invalidateQueries({ queryKey: ["integrations"] })} />
+      </details>
 
       {configTarget && (
         <ConfigDrawer integration={configTarget} canManage={canManage} onClose={() => setConfigTarget(null)} />

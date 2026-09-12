@@ -277,12 +277,15 @@ export function StatusBadge({ status }: { status?: unknown }) {
   // Tone map covers the canonical P4 dispatch vocabulary (assigned, accepted,
   // en_route_pickup, arrived_*, loaded, in_transit, delivered, exception,
   // cancelled) alongside the generic operational statuses.
-  if (/critical|failed|breach|expired|exception/i.test(text)) {
+  if (/critical|failed|error|breach|expired|exception/i.test(text)) {
     cls = "border-red-400/30 bg-red-500/10 text-red-700"; pulse = true;
   } else if (/risk|anomaly|overdue|missing|rejected/i.test(text)) {
     cls = "border-red-400/20 bg-red-500/8 text-red-700";
   } else if (/warning|review|pending|near|expiring|at.risk/i.test(text)) {
     cls = "border-amber-400/28 bg-amber-500/10 text-amber-700";
+  } else if (/disconnected/i.test(text)) {
+    // Check the negative state before "connected" can match its substring.
+    cls = "border-slate-300 bg-slate-100 text-slate-500";
   } else if (/complete|healthy|active|valid|sent|passed|available|connected|approved|compliant|delivered|resolved/i.test(text)) {
     cls = "border-emerald-400/28 bg-emerald-500/10 text-emerald-700";
   } else if (/in.?transit|en.?route|assigned|accepted|arrived|loaded|dispatch|scheduled/i.test(text)) {

@@ -250,7 +250,7 @@ export function AppShell() {
   ].some(hasDirectPermission);
   const tenantCountry = useTenantCountry();
   const runtimeQuery = useRuntimeDiagnostics();
-  const tenantIsExplicitlySynthetic = /\b(demo|synthetic|test)\b/i.test(String(session?.company?.name ?? ""));
+  const tenantNameSuggestsDemo = /\b(demo|synthetic|test)\b/i.test(String(session?.company?.name ?? ""));
   // Deployment health and data provenance are independent facts. A demo tenant
   // must never hide a stale bundle or a frontend/API SHA mismatch.
   const runtimeState = runtimeQuery.data?.state ?? "Unavailable";
@@ -649,17 +649,6 @@ export function AppShell() {
                   {runtimeState}
                 </div>
 
-                {tenantIsExplicitlySynthetic ? (
-                  <div
-                    className="hidden items-center gap-1.5 rounded-full border border-amber-300/60 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800 md:flex"
-                    title="This tenant contains demonstration or test data."
-                    data-testid="synthetic-data-badge"
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                    Demo Data
-                  </div>
-                ) : null}
-
                 {/* Notifications */}
                 {canViewNotifications ? <div className="relative" ref={notifRef}>
                   <button
@@ -770,6 +759,12 @@ export function AppShell() {
                           <p className="text-[11px] text-slate-500 truncate">{roleLabel} · {companyLabel}</p>
                         </div>
                       </div>
+                      {tenantNameSuggestsDemo ? (
+                        <div className="border-b border-slate-100 px-4 py-3 text-xs text-slate-600" data-testid="tenant-data-context">
+                          <p className="font-semibold text-slate-800">Demo / test workspace name</p>
+                          <p className="mt-1 leading-5">Based on the organization name. Check individual records for their source.</p>
+                        </div>
+                      ) : null}
                       {/* Actions */}
                       <div className="py-1">
                         {canViewSettings && (
