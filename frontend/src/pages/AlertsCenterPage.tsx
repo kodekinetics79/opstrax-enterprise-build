@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { WorkspaceGuidance } from "@/components/WorkspaceGuidance";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import {
@@ -532,6 +533,14 @@ export function AlertsCenterPage() {
         </div>
       </section>
 
+      <WorkspaceGuidance
+        nextStep={canAcknowledge ? "Select an alert, review its message, then acknowledge it or create follow-up work." : "Select an alert to review its message and history. Your role has view access to this queue."}
+        steps={[
+          "Use severity, status and search to narrow the queue. Select a row to read its full context; filters and sorting do not change records.",
+          "Acknowledge records your review. Create task adds follow-up work; it does not assign or close the alert.",
+          "Close ends the alert workflow after your review. It does not confirm that a vehicle or physical condition has recovered.",
+        ]}
+      />
       <div className="alerts-split">
         <section className="panel alerts-queue" aria-label="Alert work queue">
           <div className="alerts-queue-heading"><h2>Alert queue</h2><span>Choose a row to inspect and act</span></div>

@@ -75,7 +75,7 @@ assert.match(service, /purpose: "export"/, "Cluster export declares its server-e
 assert.match(service, /\^\[=\+\\-@\\t\\r\]/, "Cluster CSV neutralizes spreadsheet formulas");
 assert.match(integrationsApi, /syncLastAttemptAt\?: string \| null[\s\S]*syncLastCompletedAt\?: string \| null[\s\S]*syncLastOk\?: boolean \| null[\s\S]*providerLastEventAt\?: string \| null/, "Integration records expose sync-specific and provider-event freshness truth");
 assert.match(integrations, /Last successful sync[\s\S]*attemptHealth\.label[\s\S]*role="status"[\s\S]*attemptHealth\.announcement/, "Connector cards keep changing relative time outside a stable accessible state announcement");
-assert.match(integrations, /integration\.lastSyncAt \? formatRelativeTime\(integration\.lastSyncAt\) : "Never"/, "Last-success copy is derived from the timestamp rather than a persisted relative label");
+assert.match(integrations, /integration\.lastSyncAt \? formatRelativeTime\(integration\.lastSyncAt\)(?: \|\| "Unavailable")? : "Never"/, "Last-success copy is derived from the timestamp rather than a persisted relative label; invalid recorded times may remain unavailable");
 assert.match(integrations, /refetchInterval: 60_000[\s\S]*refetchIntervalInBackground: true/, "An already-open connector screen re-evaluates worker freshness on a bounded cadence");
 assert.match(connectorFreshness, /integration\.key !== "samsara"[\s\S]*CONNECTOR_STALE_AFTER_MS/, "Polling freshness is not incorrectly applied to connectors without the Samsara polling contract");
 assert.match(connectorFreshness, /CONNECTOR_STALE_AFTER_MS = 15 \* 60 \* 1000[\s\S]*Sync attempt stale/, "Connector freshness uses the approved pilot threshold");

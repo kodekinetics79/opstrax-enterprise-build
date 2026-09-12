@@ -2,15 +2,17 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useSearchParams } from "react-router";
 import {
-  AlertTriangle, CheckCircle, Clock, ClipboardList,
-  Plus, Settings, ShieldAlert, Truck, Wrench, X, XCircle, Zap,
+  AlertTriangle, ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, Clock, ClipboardList,
+  Plus, Search, Settings, ShieldAlert, Truck, Wrench, X, XCircle, Zap,
 } from "lucide-react";
 import { DataTable, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv } from "@/components/ui";
 import { maintenanceApi } from "@/services/maintenanceApi";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { useHasPermission } from "@/hooks/usePermission";
+import { WorkspaceGuidance } from "@/components/WorkspaceGuidance";
 import type { AnyRecord } from "@/types";
+import "./maintenance-workspace.css";
 
 const TABS = ["Overview", "Defects", "Inspections", "Work Orders", "PM Rules", "Fault Codes", "Diagnostic Holds"] as const;
 type Tab = (typeof TABS)[number];
@@ -183,11 +185,10 @@ export function MaintenanceCommandPage() {
   ];
 
   return (
-    <div className="fleet-console flex flex-col gap-3">
+    <div className="maintenance-workspace page-stack">
       <PageHeader
-        eyebrow="Fleet Maintenance"
-        title="Work Orders"
-        description="DVIR inspections, defect management, work orders, fault codes, and preventive maintenance — all persisted and RBAC-enforced."
+        title={activeTab === "Work Orders" ? "Work Orders" : activeTab === "Defects" ? "Defect Queue" : "Maintenance Center"}
+        description="Review vehicle blockers, prioritize service work, and record the outcome."
         actions={<div className="flex flex-wrap gap-2">
           {canManage && <button
             type="button"
@@ -211,16 +212,23 @@ export function MaintenanceCommandPage() {
         </div>
       )}
 
+      {ackDefect.isError && <p role="alert" className="maintenance-error">{errorMessage(ackDefect.error, "Defect could not be acknowledged. Select the record and retry.")}</p>}
+
       <section className="panel p-2" aria-label="Maintenance operating summary">
         <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
           {maintenanceMetrics.map((metric) => (
             <div key={metric.label} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
-              <dt className="flex items-center gap-1.5 truncate text-[10px] font-bold uppercase tracking-[0.1em] text-slate-500">{metric.icon}{metric.label}</dt>
+              <dt className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-600">{metric.icon}{metric.label}</dt>
               <dd className="mt-1 flex items-baseline gap-1.5"><strong className={`text-base font-black leading-none tabular-nums ${metric.tone}`}>{metric.value}</strong><span className="text-[10px] font-medium text-slate-400">{metric.detail}</span></dd>
             </div>
           ))}
         </dl>
       </section>
+
+      <WorkspaceGuidance
+        nextStep={activeTab === "Work Orders" ? "Select a work order to review its context and record completion." : activeTab === "Defects" ? "Review out-of-service and critical defects first." : "Review blockers and overdue work, then open the relevant queue."}
+        steps={["Filter the loaded queue by vehicle or status, then sort by recorded priority.", "Select a record to inspect its context and available actions.", "Record repair or service evidence before completing the work. Vehicle release remains a separate check."]}
+      />
 
       {/* System Maintenance Insights */}
       {activeTab === "Overview" && insights.length > 0 && (
@@ -240,7 +248,7 @@ export function MaintenanceCommandPage() {
       )}
 
       {/* Tabs */}
-      <section className="panel p-3">
+      <section className="maintenance-tabs-section">
         <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
           {TABS.map((tab) => (
             <button
@@ -266,6 +274,7 @@ export function MaintenanceCommandPage() {
               onAck={(record) => ackDefect.mutate(record)}
               onResolve={setResolveTarget}
               onCompleteWo={setCompletionTarget}
+              ackPending={ackDefect.isPending}
             />
           )}
 
@@ -277,6 +286,9 @@ export function MaintenanceCommandPage() {
               canClose={canClose}
               onAck={(record) => ackDefect.mutate(record)}
               onResolve={setResolveTarget}
+              actionPending={ackDefect.isPending}
+              error={defects.isError ? errorMessage(defects.error, "Defects could not be loaded.") : null}
+              onRetry={() => void defects.refetch()}
             />
           )}
 
@@ -296,6 +308,8 @@ export function MaintenanceCommandPage() {
               canManage={canManage}
               canClose={canClose}
               onComplete={setCompletionTarget}
+              error={workOrders.isError ? errorMessage(workOrders.error, "Work orders could not be loaded.") : null}
+              onRetry={() => void workOrders.refetch()}
             />
           )}
 
@@ -418,7 +432,7 @@ function InsightRow({ insight }: { insight: AnyRecord }) {
 // ── Overview Tab ──────────────────────────────────────────────────────────────
 function OverviewTab({
   openDefects, duePm, recentWos, kpis,
-  canManage, canClose, onAck, onResolve, onCompleteWo,
+  canManage, canClose, onAck, onResolve, onCompleteWo, ackPending,
 }: {
   openDefects: AnyRecord[];
   duePm: AnyRecord[];
@@ -429,29 +443,15 @@ function OverviewTab({
   onAck: (record: AnyRecord) => void;
   onResolve: (record: AnyRecord) => void;
   onCompleteWo: (record: AnyRecord) => void;
+  ackPending: boolean;
 }) {
   return (
-    <div className={`grid items-start gap-3 ${openDefects.length ? "lg:grid-cols-2" : ""}`}>
+    <div className="maintenance-overview">
       <section>
-        <h3 className="section-title mb-3">Open Defects Queue</h3>
-        {openDefects.length === 0
-          ? <p className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600"><CheckCircle className="h-4 w-4 text-teal-600" aria-hidden="true" />No open defects</p>
-          : openDefects.slice(0, 8).map((d) => (
-              <DefectCard
-                key={String(d["id"])}
-                defect={d}
-                canManage={canManage}
-                canClose={canClose}
-                onAck={() => onAck(d)}
-                onResolve={() => onResolve(d)}
-              />
-            ))
-        }
+        <MaintenanceQueue kind="defect" heading="Open defects" rows={openDefects.slice(0, 8)} preview canManage={canManage} canClose={canClose} onAck={onAck} onResolve={onResolve} actionPending={ackPending} />
       </section>
-
-      <div className="space-y-3">
-        <section>
-          <h3 className="section-title mb-3">PM Due / Overdue</h3>
+      <section>
+          <h3 className="maintenance-section-title">PM due / overdue</h3>
           {duePm.length === 0
             ? <Empty icon={<CheckCircle className="h-8 w-8 text-teal-400" />} message="No PM items due in 14 days" />
             : <DataTable
@@ -459,30 +459,17 @@ function OverviewTab({
                 columns={["vehicleCode", "serviceType", "status", "priority", "dueDate", "estimatedCost"]}
               />
           }
-        </section>
-
-        <section>
-          <h3 className="section-title mb-3">Recent Work Orders</h3>
-          {recentWos.length === 0
-            ? <Empty icon={<Wrench className="h-8 w-8 text-slate-300" />} message="No open work orders" />
-            : recentWos.slice(0, 5).map((wo) => (
-                <WorkOrderCard
-                  key={String(wo["id"])}
-                  wo={wo}
-                  canClose={canClose}
-                  onComplete={() => onCompleteWo(wo)}
-                />
-              ))
-          }
-        </section>
-      </div>
+      </section>
+      <section className="maintenance-overview-wide">
+        <MaintenanceQueue kind="work-order" heading="Recent work orders" rows={recentWos.slice(0, 5)} preview canManage={canManage} canClose={canClose} onComplete={onCompleteWo} />
+      </section>
     </div>
   );
 }
 
 // ── Defects Tab ───────────────────────────────────────────────────────────────
 function DefectsTab({
-  rows, isLoading, canManage, canClose, onAck, onResolve,
+  rows, isLoading, canManage, canClose, onAck, onResolve, actionPending, error, onRetry,
 }: {
   rows: AnyRecord[];
   isLoading: boolean;
@@ -490,22 +477,14 @@ function DefectsTab({
   canClose: boolean;
   onAck: (record: AnyRecord) => void;
   onResolve: (record: AnyRecord) => void;
+  actionPending: boolean;
+  error: string | null;
+  onRetry: () => void;
 }) {
   if (isLoading) return <LoadingState />;
-  if (!rows.length) return <Empty icon={<CheckCircle className="h-8 w-8 text-teal-400" />} message="No defects found" />;
+  if (error) return <QueueError message={error} onRetry={onRetry} />;
   return (
-    <div className="space-y-3">
-      {rows.map((d) => (
-        <DefectCard
-          key={String(d["id"])}
-          defect={d}
-          canManage={canManage}
-          canClose={canClose}
-          onAck={() => onAck(d)}
-          onResolve={() => onResolve(d)}
-        />
-      ))}
-    </div>
+    <MaintenanceQueue kind="defect" heading="Defect queue" rows={rows} canManage={canManage} canClose={canClose} onAck={onAck} onResolve={onResolve} actionPending={actionPending} />
   );
 }
 
@@ -571,26 +550,26 @@ function InspectionsTab({
 
 // ── Work Orders Tab ───────────────────────────────────────────────────────────
 function WorkOrdersTab({
-  rows, isLoading, canManage, canClose, onComplete,
+  rows, isLoading, canManage, canClose, onComplete, error, onRetry,
 }: {
   rows: AnyRecord[];
   isLoading: boolean;
   canManage: boolean;
   canClose: boolean;
   onComplete: (record: AnyRecord) => void;
+  error: string | null;
+  onRetry: () => void;
 }) {
   if (isLoading) return <LoadingState />;
+  if (error) return <QueueError message={error} onRetry={onRetry} />;
   return (
     <div className="space-y-3">
       {!canManage && (
         <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-          You have read-only access. Creating work orders requires maintenance management permission.
+          Creating work orders requires maintenance management permission. Completion has a separate permission.
         </p>
       )}
-      {!rows.length && <Empty icon={<Wrench className="h-8 w-8 text-slate-300" />} message="No work orders" />}
-      {rows.map((wo) => (
-        <WorkOrderCard key={String(wo["id"])} wo={wo} canClose={canClose} onComplete={() => onComplete(wo)} />
-      ))}
+      <MaintenanceQueue kind="work-order" heading="Work order queue" rows={rows} canManage={canManage} canClose={canClose} onComplete={onComplete} />
     </div>
   );
 }
@@ -670,94 +649,155 @@ function DiagnosticHoldsTab({
   </div>;
 }
 
-// ── Defect Card ───────────────────────────────────────────────────────────────
-const SEV_STYLES: Record<string, string> = {
-  Critical: "border-red-300 bg-red-50",
-  Major:    "border-amber-200 bg-amber-50",
-  Minor:    "border-slate-200 bg-slate-50",
-};
+type MaintenanceQueueKind = "defect" | "work-order";
 
-function DefectCard({
-  defect, canManage, canClose, onAck, onResolve,
-}: {
-  defect: AnyRecord;
-  canManage: boolean;
-  canClose: boolean;
-  onAck: () => void;
-  onResolve: () => void;
-}) {
-  const sev   = String(defect["severity"] ?? "Minor");
-  const oos   = Boolean(defect["outOfService"] ?? defect["out_of_service"]);
-  const style = SEV_STYLES[sev] ?? SEV_STYLES.Minor;
-  const status = String(defect["status"] ?? "Open");
-
-  return (
-    <div className={`mb-2 rounded-xl border p-3 ${style}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            {oos && <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-bold text-white">OUT OF SERVICE</span>}
-            <RiskBadge risk={sev} />
-            <StatusBadge status={status} />
-            <span className="text-xs text-slate-500">{String(defect["vehicleCode"] ?? "--")}</span>
-          </div>
-          <p className="mt-1.5 text-sm font-semibold text-slate-900">
-            {String(defect["defectDescription"] ?? defect["defect_description"] ?? "Defect")}
-          </p>
-          <p className="mt-0.5 text-xs text-slate-500">
-            {String(defect["defectCategory"] ?? defect["defect_category"] ?? "--")} · {String(defect["source"] ?? "dvir")} · {fmtDate(defect["createdAt"] ?? defect["created_at"])}
-          </p>
-        </div>
-      </div>
-      {status !== "resolved" && (
-        <div className="mt-3 flex gap-2">
-          {canManage && status === "Open" && (
-            <button type="button" className="btn-ghost text-xs py-1 px-2" onClick={onAck}>Acknowledge</button>
-          )}
-          {canClose && status !== "rejected" && (
-          <button type="button" className="btn-ghost text-xs py-1 px-2 text-teal-700" onClick={onResolve}>Resolve defect</button>
-          )}
-        </div>
-      )}
-    </div>
-  );
+function queueTitle(record: AnyRecord, kind: MaintenanceQueueKind) {
+  return String(kind === "defect" ? record.defectDescription ?? record.defect_description ?? "Defect" : record.title ?? record.issueType ?? "Work order");
 }
 
-// ── Work Order Card ───────────────────────────────────────────────────────────
-function WorkOrderCard({
-  wo, canClose, onComplete,
-}: {
-  wo: AnyRecord;
-  canClose: boolean;
-  onComplete: () => void;
-}) {
-  const status = String(wo["status"] ?? "Open");
-  const isOpen = !["Completed","completed","Cancelled","cancelled"].includes(status);
+function queueCode(record: AnyRecord, kind: MaintenanceQueueKind) {
+  return String(kind === "defect" ? record.defectNumber ?? record.id ?? "—" : record.woNumber ?? record.workOrderNumber ?? record.workOrderCode ?? record.id ?? "—");
+}
 
-  return (
-    <div className="mb-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <RiskBadge risk={wo["priority"]} />
-            <StatusBadge status={wo["status"]} />
-            {wo["recordOrigin"] === "seeded_synthetic_database" ? <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700">Demo Data</span> : null}
-            {wo["recordOrigin"] === "unknown_database_record" ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-600">Unverified DB Record</span> : null}
-            <span className="font-mono text-xs text-slate-500">{String(wo["woNumber"] ?? wo["workOrderNumber"] ?? wo["workOrderCode"] ?? "--")}</span>
-          </div>
-          <p className="mt-1.5 text-sm font-semibold text-slate-900">{String(wo["title"] ?? wo["issueType"] ?? "Work Order")}</p>
-          <p className="mt-0.5 text-xs text-slate-500">
-            {String(wo["vehicleCode"] ?? "--")}
-            {wo["assignedToName"] ? ` · Assigned: ${String(wo["assignedToName"])}` : ""}
-            {wo["estimatedCost"] ? ` · Est: $${Number(wo["estimatedCost"]).toLocaleString()}` : ""}
-          </p>
+function queueOrigin(record: AnyRecord) {
+  const origin = record.recordOrigin ?? record.record_origin;
+  if (origin === "seeded_synthetic_database") return "Demo Data";
+  if (origin === "unknown_database_record") return "Unverified DB Record";
+  return origin == null ? "" : String(origin);
+}
+
+function queuePriority(record: AnyRecord, kind: MaintenanceQueueKind) {
+  if (kind === "defect" && Boolean(record.outOfService ?? record.out_of_service)) return -1;
+  const level = String(kind === "defect" ? record.severity : record.priority).toLowerCase();
+  return ({ critical: 0, high: 1, major: 1, warning: 2, medium: 2, minor: 3, normal: 4, low: 4 } as Record<string, number>)[level] ?? 5;
+}
+
+function QueueError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return <div role="alert" className="maintenance-error"><p>{message}</p><button type="button" className="btn-ghost btn-compact mt-2" onClick={onRetry}>Retry loading</button></div>;
+}
+
+function MaintenanceQueue({
+  kind, heading, rows, canManage, canClose, onAck, onResolve, onComplete, actionPending = false, preview = false,
+}: {
+  kind: MaintenanceQueueKind;
+  heading: string;
+  rows: AnyRecord[];
+  canManage: boolean;
+  canClose: boolean;
+  onAck?: (record: AnyRecord) => void;
+  onResolve?: (record: AnyRecord) => void;
+  onComplete?: (record: AnyRecord) => void;
+  actionPending?: boolean;
+  preview?: boolean;
+}) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [sort, setSort] = useState("priority");
+  const [page, setPage] = useState(1);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [drawerRequested, setDrawerRequested] = useState(false);
+  const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 1199px)").matches);
+  const query = search.trim().toLowerCase();
+  const statuses = [...new Set(rows.map((record) => String(record.status ?? "Open")))];
+  const filtered = rows.filter((record) => (statusFilter === "All" || String(record.status ?? "Open") === statusFilter) && (!query || [queueTitle(record, kind), queueCode(record, kind), record.vehicleCode, record.assignedToName, record.source].some((value) => String(value ?? "").toLowerCase().includes(query)))).sort((a, b) => {
+    const dateA = new Date(String(a.createdAt ?? a.created_at ?? "")).getTime();
+    const dateB = new Date(String(b.createdAt ?? b.created_at ?? "")).getTime();
+    const dateOrder = !Number.isFinite(dateA) ? (Number.isFinite(dateB) ? 1 : 0) : !Number.isFinite(dateB) ? -1 : sort === "recent" ? dateB - dateA : dateA - dateB;
+    return sort === "priority" ? queuePriority(a, kind) - queuePriority(b, kind) || dateOrder : dateOrder;
+  });
+  const pageSize = 15;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const visible = preview ? filtered : filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const selected = filtered.find((record) => String(record.id) === selectedId) ?? (!preview ? visible[0] ?? null : null);
+  const drawerOpen = Boolean(selected && drawerRequested && (preview || narrow));
+  const closeDrawer = () => setDrawerRequested(false);
+  const drawerRef = useDialogFocus<HTMLElement>(drawerOpen, closeDrawer);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1199px)");
+    const update = () => setNarrow(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    if (selectedId && !filtered.some((record) => String(record.id) === selectedId)) {
+      setSelectedId(null);
+      setDrawerRequested(false);
+    }
+  }, [rows, search, statusFilter, selectedId]);
+
+  const openRecord = (record: AnyRecord) => {
+    setSelectedId(String(record.id));
+    if (preview || narrow) setDrawerRequested(true);
+  };
+  const openAction = (action: ((record: AnyRecord) => void) | undefined, record: AnyRecord) => {
+    closeDrawer();
+    action?.(record);
+  };
+  const inspector = selected ? <MaintenanceInspector record={selected} kind={kind} canManage={canManage} canClose={canClose} actionPending={actionPending} onAck={onAck} onResolve={(record) => openAction(onResolve, record)} onComplete={(record) => openAction(onComplete, record)} /> : null;
+
+  return <div className={`maintenance-queue-layout ${preview ? "is-preview" : ""}`}>
+    <section className="maintenance-queue-frame" aria-label={heading}>
+      <div className="maintenance-queue-heading"><h3>{heading}</h3><span>{preview ? `${rows.length} shown in overview` : `${rows.length} loaded records`}</span></div>
+      {!preview && <div className="maintenance-toolbar">
+        <label className="maintenance-search"><Search className="h-4 w-4" aria-hidden="true" /><span className="sr-only">Search {heading.toLowerCase()}</span><input type="search" className="field" placeholder="Search work, vehicle, assignment…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label>
+        <select aria-label={`Filter ${heading.toLowerCase()} by status`} className="field" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}><option value="All">All statuses</option>{statuses.map((status) => <option key={status}>{status}</option>)}</select>
+        <select aria-label={`Sort ${heading.toLowerCase()}`} className="field" value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); setSelectedId(null); }}><option value="priority">Priority · oldest first</option><option value="recent">Newest recorded</option><option value="oldest">Oldest recorded</option></select>
+        {(search || statusFilter !== "All") && <button type="button" className="btn-ghost btn-compact" onClick={() => { setSearch(""); setStatusFilter("All"); setPage(1); }}>Clear filters</button>}
+      </div>}
+      <div className="maintenance-list-scroll">
+        <div className="maintenance-column-head" aria-hidden="true"><span>Priority</span><span>{kind === "defect" ? "Defect / recorded source" : "Work order / origin"}</span><span>Vehicle</span><span>Status</span><span>{kind === "defect" ? "Recorded" : "Assigned"}</span></div>
+        <div role="list" aria-label={`${heading} records`}>
+          {visible.map((record) => <div role="listitem" key={String(record.id)}><button type="button" className={`maintenance-row ${selected?.id === record.id ? "is-selected" : ""}`} onClick={() => openRecord(record)} aria-pressed={selected?.id === record.id} aria-haspopup={preview || narrow ? "dialog" : undefined} aria-label={`Inspect ${queueTitle(record, kind)}, vehicle ${String(record.vehicleCode ?? "not recorded")}, ${String(record.status ?? "Open")}`}>
+            <span className="maintenance-row-priority"><RiskBadge risk={kind === "defect" ? record.severity ?? "Minor" : record.priority} />{kind === "defect" && Boolean(record.outOfService ?? record.out_of_service) && <span className="maintenance-oos">Out of service</span>}</span>
+            <span className="maintenance-row-description"><strong>{queueTitle(record, kind)}</strong><span>{queueCode(record, kind)} · {kind === "defect" ? String(record.defectCategory ?? record.defect_category ?? "Category not recorded") + " · " + String(record.source ?? "dvir") : queueOrigin(record) || "Origin not recorded"}</span></span>
+            <span className="maintenance-row-vehicle">{String(record.vehicleCode ?? "Not recorded")}</span>
+            <span className="maintenance-row-status"><StatusBadge status={record.status ?? "Open"} /></span>
+            <span className="maintenance-row-meta">{kind === "defect" ? fmtDate(record.createdAt ?? record.created_at) : String(record.assignedToName ?? "Unassigned")}</span>
+          </button></div>)}
         </div>
-        {canClose && isOpen && (
-          <button type="button" className="btn-ghost text-xs py-1 px-2" onClick={onComplete}>Complete work order</button>
-        )}
+        {!visible.length && <p className="maintenance-empty">{rows.length ? "No records match these filters. Clear filters to see the loaded queue." : kind === "defect" ? "No defect records loaded." : "No work orders loaded."}</p>}
       </div>
+      {!preview && <div className="maintenance-pagination"><span role="status">{filtered.length} matching · {visible.length} shown{kind === "work-order" ? " · up to 50 loaded" : ""}</span><div><button type="button" className="btn-ghost btn-compact" aria-label="Previous maintenance page" disabled={currentPage <= 1} onClick={() => { setPage(currentPage - 1); setSelectedId(null); }}><ChevronLeft className="h-4 w-4" /></button><span>Page {currentPage} of {pageCount}</span><button type="button" className="btn-ghost btn-compact" aria-label="Next maintenance page" disabled={currentPage >= pageCount} onClick={() => { setPage(currentPage + 1); setSelectedId(null); }}><ChevronRight className="h-4 w-4" /></button></div></div>}
+    </section>
+    {!preview && <aside className="maintenance-desktop-inspector maintenance-queue-frame">{inspector || <p className="maintenance-empty">Choose a record to inspect its context and available actions.</p>}</aside>}
+    {drawerOpen && <div className="maintenance-mobile-overlay" onClick={closeDrawer}><aside ref={drawerRef} className="maintenance-mobile-inspector" role="dialog" aria-modal="true" aria-label={`${kind === "defect" ? "Defect" : "Work order"} details`} onClick={(event) => event.stopPropagation()}><button type="button" className="btn-ghost maintenance-back" onClick={closeDrawer}><ArrowLeft className="h-4 w-4" /> Back to queue</button>{inspector}</aside></div>}
+  </div>;
+}
+
+function MaintenanceInspector({ record, kind, canManage, canClose, actionPending, onAck, onResolve, onComplete }: {
+  record: AnyRecord;
+  kind: MaintenanceQueueKind;
+  canManage: boolean;
+  canClose: boolean;
+  actionPending: boolean;
+  onAck?: (record: AnyRecord) => void;
+  onResolve: (record: AnyRecord) => void;
+  onComplete: (record: AnyRecord) => void;
+}) {
+  const status = String(record.status ?? "Open").toLowerCase();
+  const origin = queueOrigin(record);
+  const cost = (value: unknown) => value == null || value === "" || !Number.isFinite(Number(value)) ? "Not recorded" : `${Number(value).toLocaleString()}${record.currency ? ` ${String(record.currency)}` : " · currency not recorded"}`;
+  const notes = [["Description", record.description], ["Notes", record.notes], ["Service notes", record.serviceNotes]].filter(([, value]) => value != null && String(value).trim().length > 0);
+  const metadata = kind === "defect" ? [
+    ["Vehicle", record.vehicleCode ?? "Not recorded"], ["Category", record.defectCategory ?? record.defect_category ?? "Not recorded"], ["Source", record.source ?? "dvir"], ["Recorded", fmtDateTime(record.createdAt ?? record.created_at)], ["Out of service", Boolean(record.outOfService ?? record.out_of_service) ? "Yes" : "No"],
+  ] : [
+    ["Vehicle", record.vehicleCode ?? "Not recorded"], ["Assigned", record.assignedToName ?? "Unassigned"], ["Recorded", fmtDateTime(record.createdAt ?? record.created_at)], ["Scheduled", fmtDate(record.scheduledAt ?? record.dueDate ?? record.dueAt ?? record.due_date)], ["Estimated cost", cost(record.estimatedCost)], ["Actual cost", cost(record.actualCost)],
+  ];
+  return <div className="maintenance-inspector-content">
+    <div className="maintenance-inspector-badges"><RiskBadge risk={kind === "defect" ? record.severity ?? "Minor" : record.priority} /><StatusBadge status={record.status ?? "Open"} />{origin && <span className="maintenance-origin">{origin}</span>}</div>
+    <h3>{queueTitle(record, kind)}</h3><p className="maintenance-record-code">{queueCode(record, kind)}</p>
+    <div className="maintenance-record-actions">
+      {kind === "defect" && canManage && status === "open" && <button type="button" className="btn-primary btn-compact" disabled={actionPending} aria-busy={actionPending} onClick={() => onAck?.(record)}>{actionPending ? "Acknowledging…" : "Acknowledge"}</button>}
+      {kind === "defect" && canClose && !["resolved", "rejected"].includes(status) && <button type="button" className="btn-ghost btn-compact" onClick={() => onResolve(record)}>Resolve defect</button>}
+      {kind === "work-order" && canClose && !["completed", "cancelled"].includes(status) && <button type="button" className="btn-primary btn-compact" onClick={() => onComplete(record)}>Complete work order</button>}
     </div>
-  );
+    <dl className="maintenance-metadata">{metadata.map(([label, value]) => <div key={String(label)}><dt>{String(label)}</dt><dd>{String(value)}</dd></div>)}</dl>
+    {notes.length > 0 && <details className="maintenance-disclosure" open><summary>Recorded notes</summary>{notes.map(([label, value]) => <div key={String(label)}><strong>{String(label)}</strong><p>{String(value)}</p></div>)}</details>}
+    <p className="maintenance-source-note">{kind === "defect" ? "Resolving a defect does not release the vehicle. Repair certification and driver acknowledgment remain required." : "Completion requires actual cost and service notes. Recorded origin remains distinct from verified repair evidence."}</p>
+  </div>;
 }
 
 type WorkOrderPayload = Parameters<typeof maintenanceApi.createWorkOrder>[0];
