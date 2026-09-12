@@ -18238,7 +18238,11 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             return Results.BadRequest(ApiResponse<object>.Fail("Password does not meet this tenant's policy.", validation.failures));
 
         var sessionsRevoked = 0L;
-        var resetApplied = await db.RunInTenantTransactionAsync(companyId, async () =>
+        // Scope and permission checks above run under the authenticated tenant identity.
+        // Reset tokens are system-only under the private-user authority contract, so
+        // credential replacement, revocation, and audit commit in one isolated system
+        // transaction. The validated target tenant remains explicit on every mutation.
+        var resetApplied = await db.RunInSystemTransactionAsync(async () =>
         {
             var updated = await db.ExecuteAsync(
                 @"UPDATE users SET password_hash=@hash, demo_password='', password_changed_at=NOW(),
