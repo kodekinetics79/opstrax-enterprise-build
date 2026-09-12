@@ -22,7 +22,12 @@ public sealed class AdminPasswordResetContractTests
         var handler = Handler();
         Assert.Contains("securitySettings.GetAsync(companyId, ct)", handler, StringComparison.Ordinal);
         Assert.Contains("PasswordPolicyService.ValidatePassword", handler, StringComparison.Ordinal);
-        Assert.Contains("RunInTenantTransactionAsync(companyId", handler, StringComparison.Ordinal);
+        Assert.Contains("RunInSystemTransactionAsync", handler, StringComparison.Ordinal);
+        Assert.True(handler.IndexOf("GetScopedUser(http, db, id, ct)", StringComparison.Ordinal)
+            < handler.IndexOf("RunInSystemTransactionAsync", StringComparison.Ordinal),
+            "The system credential transaction must follow authenticated tenant validation.");
+        Assert.Contains("WHERE id=@id AND company_id=@companyId AND status='Active'", handler, StringComparison.Ordinal);
+        Assert.Contains("WHERE user_id=@id AND company_id=@companyId", handler, StringComparison.Ordinal);
         Assert.Contains("password_hash=@hash", handler, StringComparison.Ordinal);
         Assert.Contains("demo_password=''", handler, StringComparison.Ordinal);
         Assert.Contains("failed_login_attempts=0", handler, StringComparison.Ordinal);
