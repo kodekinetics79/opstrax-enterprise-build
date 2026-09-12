@@ -328,7 +328,7 @@ export function LoginPage() {
                 {step === "mfa" && <li aria-current="step"><span>3</span> Verify</li>}
               </ol>
               <div className="login-access-heading">
-                <h1 id="login-title">{step === "mfa" ? "Verify your sign-in" : step === "identify" ? "Welcome to OpsTrax" : "Sign in to your workspace"}</h1>
+                <h1 id="login-title">{step === "mfa" ? "Verify your sign-in" : step === "identify" ? "Sign in to OpsTrax" : "Sign in to your workspace"}</h1>
                 <p>
                   {step === "identify"
                     ? "Enter your organization code and work email to continue."
