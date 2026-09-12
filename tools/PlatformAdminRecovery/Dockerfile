@@ -9,6 +9,11 @@ COPY database/init/001_schema.sql database/init/001_schema.sql
 RUN dotnet publish tools/PlatformAdminRecovery/PlatformAdminRecovery.csproj -c Release -o /app/recovery --no-restore
 
 FROM mcr.microsoft.com/dotnet/runtime:8.0.30-bookworm-slim@sha256:a27922704a14d6d1ce103697aa3efa885902db33651b41a84ad1594fdf5be66e AS final
+# Apply Debian's PCRE2 security fix while retaining the pinned runtime base.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade libpcre2-8-0 \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libpcre2-8-0)" ge '10.42-1+deb12u1' \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/recovery .
 USER $APP_UID
