@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import {
-  Area, AreaChart, Bar, BarChart, Cell, ComposedChart, Line, Pie, PieChart,
+  Area, AreaChart, Bar, BarChart, ComposedChart, Line, XAxis, CartesianGrid,
   ResponsiveContainer, Tooltip,
 } from "recharts";
 import { exportCsv } from "@/components/ui";
@@ -85,7 +85,6 @@ export function CommandCenterPage() {
   });
   const navigate = useNavigate();
 
-  if (isLoading || !data) return <CenterState spin label="Synchronizing dashboard…" />;
   if (isError) return (
     <CenterState
       label="Dashboard feed unavailable"
@@ -93,6 +92,8 @@ export function CommandCenterPage() {
       action={<button type="button" onClick={() => refetch()} className="btn-primary h-9 px-4 text-xs mt-3">Reconnect</button>}
     />
   );
+
+  if (isLoading || !data) return <CenterState spin label="Synchronizing dashboard…" />;
 
   const kpis            = (data.kpis            as AnyRecord[]) ?? [];
   const fleetStatus     = (data.fleetStatus     as AnyRecord)  ?? {};
@@ -114,7 +115,6 @@ export function CommandCenterPage() {
   const costData   = ((charts.costLeakage as number[]) ?? []).map((v, i) => ({ d: `D${i + 1}`, v: Number(v) }));
 
   const fleetStatusAvailable = FLEET_CFG.every((item) => asNum(fleetStatus[item.key]) != null);
-  const donut = FLEET_CFG.map(f => ({ name: f.label, value: asNum(fleetStatus[f.key]) ?? 0, color: f.color }));
 
   // Real "as of" time from the payload. If the feed carries no parseable timestamp
   // we drop the label rather than imply a fresh sync.
@@ -126,10 +126,14 @@ export function CommandCenterPage() {
   const vehiclesTileEmpty = (label: string) => label === "Vehicles in Fleet";
 
   return (
-    <div className="control-tower space-y-3">
+    <div className="space-y-4 pb-4">
       {/* ── Status strip: the 5-second verdict ─────────────── */}
-      <header className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
-        <span className="text-sm font-bold text-slate-900">Operations</span>
+      <header className="flex flex-wrap items-center gap-3 rounded-2xl px-5 py-4 text-white" style={{ background: tokens.textPrimary }}>
+        <div className="mr-auto">
+          <h1 className="text-2xl font-bold tracking-tight text-white">Operations overview</h1>
+          <p className="mt-1 text-xs text-slate-300">Your fleet, priorities and operating performance.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
         {posture && (
           <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${POSTURE[posture]}`}>
             {posture} posture
@@ -152,21 +156,22 @@ export function CommandCenterPage() {
             <CheckCircle2 className="h-3 w-3" /> Clear
           </span>
         )}
-        <div className="ml-auto flex items-center gap-2">
-          {isFetching && <RefreshCw className="h-3 w-3 animate-spin text-teal-600" />}
-          {asOf && <span className="text-[11px] font-medium text-slate-500">as of {asOf} · refreshes every 15s</span>}
-          <button type="button" onClick={() => navigate("/control-tower")} className="btn-primary h-8 gap-1.5 px-3 text-xs">
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-slate-700 sm:border-l sm:pl-3">
+          {isFetching && <RefreshCw className="h-3 w-3 animate-spin text-teal-300" />}
+          {asOf && <span className="text-[11px] font-medium text-slate-300">Updated {asOf}</span>}
+          <button type="button" onClick={() => navigate("/control-tower")} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-teal-600 px-3 text-xs font-semibold text-white transition hover:bg-teal-700">
             Open Control Tower
           </button>
           <button type="button" onClick={() => exportCsv("dashboard", kpis)} title="Export KPIs as CSV"
-            className="btn-ghost h-8 w-8 items-center justify-center px-0" aria-label="Export KPIs as CSV">
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-600 text-slate-200 transition hover:bg-slate-800" aria-label="Export KPIs as CSV">
             <Download className="h-3.5 w-3.5" />
           </button>
         </div>
       </header>
 
       {/* Compact operating metrics keep the exception queue in the first viewport. */}
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-5" aria-label="Operations summary">
+      <div className="grid grid-cols-2 overflow-hidden rounded-2xl border border-slate-200 bg-white lg:grid-cols-5" aria-label="Operations summary">
         {kpis.slice(0, 5).map((kpi, i) => {
           const label = String(kpi.label ?? "");
           const raw = kpi.valueText ?? kpi.value;
@@ -178,18 +183,18 @@ export function CommandCenterPage() {
           const detail = onboarding ? "Add first vehicle" : measured ? status : "Not measured";
           return (
             <button key={label || i} type="button" onClick={() => navigate(KPI_ROUTES[i] ?? "/jobs")}
-              className="min-h-11 min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left shadow-sm transition hover:border-teal-300 focus:outline-none focus:ring-2 focus:ring-teal-400 focus:ring-offset-2">
+              className="group min-h-11 min-w-0 last:col-span-2 lg:last:col-span-1 border-b border-r border-slate-100 px-4 py-3 text-left transition hover:bg-teal-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-600">
               <div className="flex items-center justify-between gap-2">
-                <p className="truncate text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">{label}</p>
+                <p className="text-xs font-medium text-slate-600">{label}</p>
                 {measured && status && attention && (
                   <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">{status}</span>
                 )}
               </div>
               <div className="mt-1 flex min-w-0 items-baseline justify-between gap-2">
-                <p className={`shrink-0 text-lg font-bold leading-none tracking-tight tabular-nums ${measured ? "text-slate-900" : "text-slate-900/60"}`}>
+                <p className={`shrink-0 text-3xl font-bold leading-none tracking-tight tabular-nums ${measured ? "text-slate-900" : "text-slate-900/60"}`}>
                   {measured ? String(raw) : "—"}
                 </p>
-                <p className="min-w-0 truncate text-[10px] font-medium text-slate-400">{detail}</p>
+                <span className="inline-flex min-w-0 items-center gap-1 text-[11px] font-medium text-slate-500">{attention ? "View" : detail}<ArrowRight className="h-3 w-3 shrink-0 transition group-hover:translate-x-0.5" /></span>
               </div>
             </button>
           );
@@ -197,13 +202,13 @@ export function CommandCenterPage() {
       </div>
 
       {/* ── Triage grid: queue → actions → capacity ────────── */}
-      <div className="grid items-start gap-3 xl:grid-cols-[1.6fr_1fr_0.9fr]">
+      <div className="grid items-start gap-4 xl:grid-cols-[1.45fr_1fr]">
         {/* Current Exception Queue — the decision layer */}
-        <section className="flex min-w-0 max-h-[420px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5">
+        <section className="flex min-w-0 max-h-[460px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
             <AlertOctagon className="h-4 w-4 shrink-0 text-red-500" />
-            <p className="text-sm font-bold text-slate-900">Current Exception Queue</p>
-            <p className="hidden text-[11px] text-slate-400 sm:block">severity-first · act top-down</p>
+            <p className="text-sm font-bold text-slate-900">Current Exception Queue <span className="ml-1 text-xs font-medium text-slate-500">{exceptions.length}</span></p>
+            <p className="hidden text-[11px] text-slate-500 sm:block">severity-first · act top-down</p>
             <button type="button" onClick={() => navigate("/control-tower")} className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-semibold text-teal-700 hover:underline">
               All <ArrowRight className="h-3 w-3" />
             </button>
@@ -213,7 +218,7 @@ export function CommandCenterPage() {
             <div className="flex flex-1 flex-col items-center justify-center gap-1.5 py-10">
               <CheckCircle2 className="h-8 w-8 text-emerald-500" />
               <p className="text-sm font-semibold text-slate-600">No active exceptions{asOf ? ` · as of ${asOf}` : ""}</p>
-              <p className="text-xs text-slate-400">No current job, vehicle-service, or safety exception is recorded in this view.</p>
+              <p className="text-xs text-slate-500">No current job, vehicle-service, or safety exception is recorded in this view.</p>
             </div>
           ) : (
             <ul className="min-h-0 flex-1 divide-y divide-slate-50 overflow-y-auto">
@@ -223,11 +228,10 @@ export function CommandCenterPage() {
                 const Icon = cfg.icon;
                 const entity = [String(exc.vehicle ?? ""), String(exc.driver ?? "")].filter(Boolean).join(" · ");
                 return (
-                  <li key={i} className="relative flex items-center gap-2.5 px-4 py-2.5 transition hover:bg-slate-50/70">
-                    <span className="absolute left-0 top-0 h-full w-[3px]" style={{ background: cfg.dot }} />
+                  <li key={i} className="relative flex items-center gap-3 px-4 py-3 transition hover:bg-slate-50">
                     <Icon className="h-4 w-4 shrink-0" style={{ color: cfg.dot }} />
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <span className="truncate text-[13px] font-semibold text-slate-900">{String(exc.event ?? exc.title ?? "Exception")}</span>
                         <span className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] font-semibold uppercase ${cfg.chip}`}>{sev}</span>
                       </div>
@@ -246,22 +250,23 @@ export function CommandCenterPage() {
           )}
         </section>
 
+        <div className="min-w-0 space-y-4">
         {/* Priority Actions + operational notes */}
-        <section className="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-          <p className="flex items-center gap-1.5 text-sm font-bold text-slate-900"><Wrench className="h-3.5 w-3.5 text-slate-400" /> Priority Actions</p>
+        <section className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="flex items-center gap-1.5 text-sm font-bold text-slate-900"><Wrench className="h-3.5 w-3.5 text-slate-500" /> Priority Actions</p>
           {priorityActions.length === 0 ? (
-            <p className="mt-3 text-xs leading-relaxed text-slate-400">
+            <p className="mt-3 text-xs leading-relaxed text-slate-500">
               Nothing queued — actions appear when exceptions, overdue PM, or coaching tasks need an owner.
             </p>
           ) : (
-            <div className="mt-2.5 space-y-2">
+            <div className="mt-2 divide-y divide-slate-100">
               {priorityActions.slice(0, 4).map((a, i) => (
                 <button key={i} type="button" onClick={() => navigate(String(a.entityRoute ?? a.route ?? "/alerts"))}
-                  className="flex w-full items-center gap-2.5 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2 text-left transition hover:border-teal-300">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white text-[11px] font-bold text-slate-400 ring-1 ring-slate-200 tabular-nums">{i + 1}</span>
+                  className="group flex w-full items-center gap-3 rounded-lg px-1 py-2 text-left transition hover:bg-teal-50">
+                  <ArrowRight className="h-4 w-4 shrink-0 text-teal-700" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-semibold text-slate-900">{String(a.title ?? "Action")}</p>
-                    {a.detail ? <p className="truncate text-[11px] text-slate-500">{String(a.detail)}</p> : null}
+                    {a.detail ? <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{String(a.detail)}</p> : null}
                   </div>
                   <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" />
                 </button>
@@ -269,8 +274,8 @@ export function CommandCenterPage() {
             </div>
           )}
           {briefItems.length > 0 && (
-            <div className="mt-auto border-t border-slate-100 pt-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Notes</p>
+            <details className="mt-2 border-t border-slate-100 pt-3">
+              <summary className="cursor-pointer text-xs font-semibold text-slate-600">Operational notes</summary>
               <ul className="mt-1.5 space-y-1.5">
                 {briefItems.slice(0, 3).map((item, i) => (
                   <li key={i} className="flex items-start gap-2 text-xs leading-snug text-slate-600">
@@ -279,62 +284,48 @@ export function CommandCenterPage() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </details>
           )}
         </section>
 
         {/* Fleet Snapshot — response capacity */}
         <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           <div className="flex items-center justify-between gap-2">
-            <p className="flex items-center gap-1.5 text-sm font-bold text-slate-900"><Truck className="h-3.5 w-3.5 text-slate-400" /> Fleet Snapshot</p>
-            <span className="text-[11px] font-semibold text-slate-400 tabular-nums">{fleetTotal == null ? "— units" : `${fleetTotal} unit${fleetTotal === 1 ? "" : "s"}`}</span>
+            <p className="flex items-center gap-1.5 text-sm font-bold text-slate-900"><Truck className="h-3.5 w-3.5 text-slate-500" /> Fleet Snapshot</p>
+            <span className="text-[11px] font-semibold text-slate-500 tabular-nums">{fleetTotal == null ? "— units" : `${fleetTotal} unit${fleetTotal === 1 ? "" : "s"}`}</span>
           </div>
 
           {fleetTotal == null || !fleetStatusAvailable ? (
             <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-3 py-6 text-center">
               <p className="text-xs font-semibold text-slate-600">Fleet status evidence unavailable</p>
-              <p className="mt-1 text-[11px] text-slate-400">Refresh the dashboard to retry the current operational snapshot.</p>
+              <p className="mt-1 text-[11px] text-slate-500">Refresh the dashboard to retry the current operational snapshot.</p>
             </div>
           ) : fleetTotal === 0 ? (
             <button type="button" onClick={() => navigate("/vehicles")}
               className="mt-3 flex w-full flex-col items-center gap-1.5 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-3 py-6 text-center transition hover:border-teal-300">
               <Truck className="h-6 w-6 text-slate-300" />
               <p className="text-xs font-semibold text-slate-600">No vehicles yet</p>
-              <p className="text-[11px] text-slate-400">Add your first vehicle to see current fleet status.</p>
+              <p className="text-[11px] text-slate-500">Add your first vehicle to see current fleet status.</p>
             </button>
           ) : (
             <>
-              {fleetTotal >= 4 && (
-                <div className="relative mx-auto mt-2 h-[104px] w-[104px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={donut} dataKey="value" innerRadius={36} outerRadius={50} paddingAngle={2} stroke={tokens.surface} strokeWidth={2}>
-                        {donut.map((d, i) => <Cell key={i} fill={d.color} />)}
-                      </Pie>
-                      <Tooltip contentStyle={tipStyle} itemStyle={{ color: chart.slate700 }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  {readinessPct != null && (
-                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-lg font-bold leading-none text-slate-900 tabular-nums">{readinessPct}%</span>
-                      <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">operational</span>
-                    </div>
-                  )}
-                </div>
-              )}
-              {fleetTotal < 4 && readinessPct != null && (
-                <p className="mt-2 text-xs font-medium text-slate-500"><span className="font-bold text-slate-900 tabular-nums">{readinessPct}%</span> not marked for service</p>
-              )}
-              <div className="mt-3 grid grid-cols-2 gap-1.5">
+              <div className="mt-3 flex items-baseline justify-between gap-3">
+                <p className="text-xs text-slate-600">Not marked for service</p>
+                <p className="text-lg font-bold tabular-nums text-slate-900">{readinessPct != null ? `${readinessPct}%` : "—"}</p>
+              </div>
+              <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
+                {FLEET_CFG.map(f => <span key={f.key} style={{ width: `${Math.max(0, Number(fleetStatus[f.key])) / fleetTotal * 100}%`, background: f.color }} />)}
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
                 {FLEET_CFG.map(f => {
                   const c = Number(fleetStatus[f.key] ?? 0);
                   return (
                     <button key={f.key} type="button" onClick={() => navigate(f.key === "attention" ? "/work-orders" : "/vehicles")}
-                      className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/60 px-2 py-1.5 text-left transition hover:border-slate-300">
+                      className="flex items-center gap-2 rounded-lg px-1 py-2 text-left transition hover:bg-slate-50">
                       <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: f.color }} />
                       <div className="min-w-0">
                         <p className="text-sm font-bold leading-none text-slate-900 tabular-nums">{c}</p>
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{f.label}</p>
+                        <p className="text-[11px] font-medium text-slate-600">{f.label}</p>
                       </div>
                     </button>
                   );
@@ -343,12 +334,11 @@ export function CommandCenterPage() {
             </>
           )}
         </section>
+        </div>
       </div>
 
       {/* ── Domain Health: safety | maintenance | fleet health ── */}
-      {/* Each column leads with a chart over measured data (the safety feed already
-          ships a 30-day daily trend; counts render as scaled bars) so the band reads
-          at a glance instead of as label:value rows. */}
+      {/* Supporting domains stay compact; empty histories do not reserve chart space. */}
       <section className="grid min-w-0 gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-3 sm:gap-0 sm:divide-x sm:divide-slate-100">
         <DomainColumn
           title="Safety"
@@ -417,10 +407,11 @@ export function CommandCenterPage() {
             const oos = asNum(fleetHealthBridge.data?.oosVehicles);
             const blocked = asNum(fleetHealthBridge.data?.criticalDefectVehicles);
             // Bars scale against the whole fleet so ready-vs-blocked reads instantly.
-            const max = Math.max(asNum(fleetHealthBridge.data?.totalVehicles) ?? fleetTotal ?? 0, 1);
+            const coveredFleet = asNum(fleetHealthBridge.data?.totalVehicles);
+            const max = Math.max(coveredFleet ?? 0, 1);
             return (
               <div className="mt-3 space-y-2">
-                <MiniBar label={`Dispatch-ready of ${max}`} value={ready} max={max} color={chart.emerald600} absentReason={absent} />
+                <MiniBar label={coveredFleet != null ? `Dispatch-ready of ${coveredFleet}` : "Dispatch-ready"} value={ready} max={max} color={chart.emerald600} absentReason={absent} />
                 <MiniBar label="Out of service" value={oos} max={max} color={chart.amber600} absentReason={absent} />
                 <MiniBar label="Critical blockers" value={blocked} max={max} color={chart.red600} absentReason={absent} />
               </div>
@@ -451,22 +442,26 @@ function TrendCard({ title, unit, color, type, data, prefix = "" }: {
     <div className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div>
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{title}</p>
-        <p className="text-[10px] text-slate-400">{unit}</p>
+        <p className="text-[10px] text-slate-500">{unit}</p>
       </div>
       {data.length === 0 ? (
-        <p className="mt-4 text-xs text-slate-400">No history yet.</p>
+        <p className="mt-4 text-xs text-slate-500">No history yet.</p>
       ) : (
         <>
           <p className="mt-1.5 text-2xl font-bold leading-none text-slate-900 tabular-nums">{fmt(total)}</p>
-          <div className="mt-2 h-20 w-full min-w-0">
+          <div className="mt-3 h-28 w-full min-w-0">
             <ResponsiveContainer width="100%" height="100%">
               {type === "bar" ? (
                 <BarChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke={tokens.border} />
+                  <XAxis dataKey="d" tickLine={false} axisLine={false} tick={{ fill: chart.slate500, fontSize: 11 }} />
                   <Tooltip contentStyle={tipStyle} itemStyle={{ color: chart.slate700 }} cursor={{ fill: "rgba(0,0,0,0.03)" }} labelStyle={{ color: chart.slate500, fontSize: 10 }} />
                   <Bar dataKey="v" radius={[3, 3, 0, 0]} fill={color} />
                 </BarChart>
               ) : (
                 <AreaChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke={tokens.border} />
+                  <XAxis dataKey="d" tickLine={false} axisLine={false} tick={{ fill: chart.slate500, fontSize: 11 }} />
                   <defs>
                     <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={color} stopOpacity={0.28} />
@@ -498,21 +493,21 @@ function DomainColumn({ title, icon: Icon, loading, error, onOpen, headline, chi
   return (
     <div className="min-w-0 sm:px-4 sm:first:pl-0 sm:last:pr-0">
       <div className="flex items-center justify-between gap-2">
-        <p className="flex items-center gap-1.5 text-sm font-bold text-slate-900"><Icon className="h-3.5 w-3.5 text-slate-400" /> {title}</p>
+        <p className="flex items-center gap-1.5 text-sm font-bold text-slate-900"><Icon className="h-3.5 w-3.5 text-slate-500" /> {title}</p>
         <button type="button" onClick={onOpen} className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-teal-700 hover:underline">
           Open <ArrowRight className="h-3 w-3" />
         </button>
       </div>
 
       {loading ? (
-        <p className="mt-3 text-xs text-slate-400">Loading live data…</p>
+        <p className="mt-3 text-xs text-slate-500">Loading live data…</p>
       ) : error ? (
         <p className="mt-3 text-xs text-red-600">Feed unavailable — check backend connectivity.</p>
       ) : (
         <>
           <div className="mt-2.5">
             <p className={`text-2xl font-bold leading-none tabular-nums ${headline.value === "—" ? "text-slate-900/60" : "text-slate-900"}`}>{headline.value}</p>
-            <p className="mt-1 text-[11px] font-medium text-slate-400">{headline.note ?? headline.label}</p>
+            <p className="mt-1 text-[11px] font-medium text-slate-500">{headline.note ?? headline.label}</p>
           </div>
           {children}
         </>
@@ -542,11 +537,11 @@ function MiniBar({ label, value, max, color, absentReason = "Not yet measured" }
           {measured ? value : "—"}
         </span>
       </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
-        {measured && value > 0 && (
+      {measured && value > 0 && (
+        <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-100">
           <div className="h-full rounded-full" style={{ width: `${Math.max(pct, 3)}%`, background: color }} />
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -569,6 +564,9 @@ function SafetyTrendChart({ rows }: { rows: AnyRecord[] | undefined }) {
     const hit = byDay.get(key);
     series.push({ d: key.slice(5), events: hit?.events ?? 0, critical: hit?.critical ?? 0 });
   }
+  if (!series.some(point => point.events > 0 || point.critical > 0)) return (
+    <p className="mt-2 text-xs text-slate-500">No safety events recorded in the last 30 days.</p>
+  );
   return (
     <div className="mt-2">
       <div className="flex items-center gap-3 text-[10px] font-semibold text-slate-500">
@@ -605,7 +603,7 @@ function CenterState({ spin, label, sub, action }: { spin?: boolean; label: stri
           ? <RefreshCw className="h-7 w-7 animate-spin text-teal-500" />
           : <AlertTriangle className="h-8 w-8 text-rose-400" />}
         <p className="text-sm font-semibold text-slate-700">{label}</p>
-        {sub && <p className="text-xs text-slate-400">{sub}</p>}
+        {sub && <p className="text-xs text-slate-500">{sub}</p>}
         {action}
       </div>
     </div>
