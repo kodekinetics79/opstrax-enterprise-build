@@ -206,7 +206,7 @@ export function CommandCenterPage() {
                   const cfg = SEV[sev] ?? SEV.Info;
                   const Icon = cfg.icon;
                   return <tr key={String(exc.id ?? `${exc.event}-${exc.vehicle}-${i}`)}>
-                    <td><span className={`command-severity ${cfg.chip}`}><Icon size={13} aria-hidden="true" />{sev}</span></td>
+                    <td><span data-severity={sev.toLowerCase()} className={`command-severity ${cfg.chip}`}><Icon size={13} aria-hidden="true" />{sev}</span></td>
                     <td><strong>{String(exc.event ?? exc.title ?? "Exception")}</strong>{Boolean(exc.shipmentNumber) && <small>{String(exc.shipmentNumber)}</small>}</td>
                     <td><strong>{String(exc.vehicle || "Unassigned")}</strong><small>{String(exc.driver || "Unassigned")}</small></td>
                     <td className="command-age">{String(exc.timestamp ?? exc.time ?? "—")}</td>

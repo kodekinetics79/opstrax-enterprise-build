@@ -32,3 +32,11 @@ No remaining actionable P0/P1/P2 visual findings for this bounded dashboard revi
 - Browser console was not separately inspected; no rendered error observed.
 
 Final result: passed
+
+
+## Presentation refinement — 22:02 local
+User requested a more presentable version of the same selected design. Kept the light palette, content, layout, queries and navigation; strengthened typography and metric weight, softened severity labels, added subtle row striping, gave the agenda a teal header and first-priority emphasis, and aligned health-panel edges. Desktop exception-region maximum height reduced from 392px to 340px to raise the health band. Mobile retains its separate 420px limit and 44px controls.
+
+Evidence: docs/ux/dashboard-3d/polished-desktop.png, polished-mobile.png, polished-agenda.png. Native Firefox desktop and 390×844 responsive states reviewed in one bounded batch. No new wrapping/overlap defects observed; the table remains contained and horizontally scrollable on phones. Build and bundle budget passed. This refinement changes CSS and a severity styling attribute only; the earlier interaction checks are not claimed as rerun. Source design remains the selected light 3D concept above, intentionally refined by the subsequent user request.
+
+Final result: passed
