@@ -10842,7 +10842,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             if (!targetKeyPresent)
                 return Results.BadRequest(ApiResponse<object>.Fail("An explicit driverId, vehicleId, or null targetId is required."));
             var rawTarget = new[] { Get(body, "targetId"), Get(body, "driverId"), Get(body, "vehicleId") }
-                .FirstOrDefault(value => value is not null and not DBNull && !string.IsNullOrWhiteSpace(value.ToString()));
+                .FirstOrDefault(value => value is not null and not DBNull);
             long parsedTarget = 0;
             var hasTarget = rawTarget is not null and not DBNull && long.TryParse(rawTarget.ToString(), out parsedTarget) && parsedTarget > 0;
             if (rawTarget is not null and not DBNull && !hasTarget)

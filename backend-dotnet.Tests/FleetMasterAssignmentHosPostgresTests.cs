@@ -86,6 +86,105 @@ public sealed class FleetMasterAssignmentHosPostgresTests
         Assert.Equal(before, await f.Snapshot());
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task MasterPair_RequiresFleetManagePermissionWithoutWrites(bool fromVehicle)
+    {
+        await using var f = await Fixture.Create();
+        var pair = f.Pairs["A"];
+        var before = await f.Snapshot();
+        Assert.Equal(403, Status(await f.PairBody(fromVehicle, pair.Driver, pair.Vehicle,
+            new() { ["targetId"] = fromVehicle ? pair.Driver : pair.Vehicle }, allowed: false)));
+        Assert.Equal(before, await f.Snapshot());
+    }
+
+    public static IEnumerable<object[]> InvalidPairBodies()
+    {
+        foreach (var fromVehicle in new[] { true, false })
+            foreach (var json in new[] { "{}", "{\"targetId\":0}", "{\"targetId\":-1}",
+                "{\"targetId\":\"invalid\"}", "{\"targetId\":1.5}", "{\"targetId\":true}",
+                "{\"targetId\":{}}", "{\"targetId\":\"\"}", "{\"targetId\":\"   \"}" })
+                yield return new object[] { fromVehicle, json };
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidPairBodies))]
+    public async Task MasterPair_InvalidOrMissingTargetCannotClearExistingPair(bool fromVehicle, string json)
+    {
+        await using var f = await Fixture.Create();
+        var pair = f.Pairs["A"];
+        Assert.Equal(200, Status(await f.Pair(fromVehicle, pair.Driver, pair.Vehicle)));
+        var before = await f.Snapshot();
+        var body = JsonSerializer.Deserialize<Dictionary<string, object?>>(json)!;
+        Assert.Equal(400, Status(await f.PairBody(fromVehicle, pair.Driver, pair.Vehicle, body)));
+        Assert.Equal(before, await f.Snapshot());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task MasterPair_ExplicitNullUnassignsBothSidesAndReleasesHistoryIdempotently(bool fromVehicle)
+    {
+        await using var f = await Fixture.Create();
+        var pair = f.Pairs["A"];
+        Assert.Equal(200, Status(await f.Pair(fromVehicle, pair.Driver, pair.Vehicle)));
+        Assert.Equal(200, Status(await f.PairBody(fromVehicle, pair.Driver, pair.Vehicle, new() { ["targetId"] = null })));
+        Assert.Equal(JsonValueKind.Null, (await f.Row("drivers", pair.Driver)).GetProperty("assigned_vehicle_id").ValueKind);
+        Assert.Equal(JsonValueKind.Null, (await f.Row("vehicles", pair.Vehicle)).GetProperty("assigned_driver_id").ValueKind);
+        var history = Assert.Single(await f.History());
+        Assert.Equal("Released", history.GetProperty("status").GetString());
+        Assert.True(history.GetProperty("released_at").GetDateTimeOffset() >= history.GetProperty("assigned_at").GetDateTimeOffset());
+        var before = await f.Snapshot();
+        Assert.Equal(200, Status(await f.PairBody(fromVehicle, pair.Driver, pair.Vehicle, new() { ["targetId"] = null })));
+        Assert.Equal(before, await f.Snapshot());
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task MasterPair_ArchivedSourceOrTargetRejectedWithoutWrites(bool fromVehicle, bool sourceArchived)
+    {
+        await using var f = await Fixture.Create();
+        var pair = f.Pairs["A"];
+        var archiveVehicle = fromVehicle == sourceArchived;
+        await f.Archive(archiveVehicle ? "vehicles" : "drivers", archiveVehicle ? pair.Vehicle : pair.Driver);
+        var before = await f.Snapshot();
+        Assert.Equal(sourceArchived ? 404 : 400, Status(await f.Pair(fromVehicle, pair.Driver, pair.Vehicle)));
+        Assert.Equal(before, await f.Snapshot());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task MasterPair_CompetingUpdatesSerializeIntoOneSymmetricPairAndReleasedHistory(bool sharedVehicle)
+    {
+        await using var f = await Fixture.Create();
+        var first = f.Pairs["A"]; var second = f.Pairs["A2"];
+        var results = await f.CompetingPairs(sharedVehicle, first, second);
+        Assert.All(results, result => Assert.Equal(200, Status(result)));
+        var history = await f.History();
+        Assert.Equal(2, history.Length);
+        var active = Assert.Single(history, row => row.GetProperty("status").GetString() == "Active");
+        var released = Assert.Single(history, row => row.GetProperty("status").GetString() == "Released");
+        Assert.NotEqual(JsonValueKind.Null, released.GetProperty("released_at").ValueKind);
+        var driver = active.GetProperty("driver_id").GetInt64();
+        var vehicle = active.GetProperty("vehicle_id").GetInt64();
+        await f.AssertPair(driver, vehicle);
+        if (sharedVehicle)
+        {
+            Assert.Equal(first.Vehicle, vehicle);
+            Assert.Equal(JsonValueKind.Null, (await f.Row("drivers", driver == first.Driver ? second.Driver : first.Driver)).GetProperty("assigned_vehicle_id").ValueKind);
+        }
+        else
+        {
+            Assert.Equal(first.Driver, driver);
+            Assert.Equal(JsonValueKind.Null, (await f.Row("vehicles", vehicle == first.Vehicle ? second.Vehicle : first.Vehicle)).GetProperty("assigned_driver_id").ValueKind);
+        }
+    }
+
     private static int Status(IResult result) => ((IStatusCodeHttpResult)result).StatusCode ?? 200;
 
     private sealed class Fixture(string owner, IConfiguration config, WebApplication app) : IAsyncDisposable
@@ -126,10 +225,13 @@ public sealed class FleetMasterAssignmentHosPostgresTests
         public Task<IResult> Pair(bool fromVehicle, long driver, long vehicle, bool companyWide = false)
             => Call(fromVehicle ? "/api/vehicles/{id:long}/assign-driver" : "/api/drivers/{id:long}/assign-vehicle",
                 fromVehicle ? vehicle : driver, new() { ["targetId"] = fromVehicle ? driver : vehicle }, companyWide);
+        public Task<IResult> PairBody(bool fromVehicle, long driver, long vehicle, Dictionary<string, object?> body, bool allowed = true)
+            => Call(fromVehicle ? "/api/vehicles/{id:long}/assign-driver" : "/api/drivers/{id:long}/assign-vehicle",
+                fromVehicle ? vehicle : driver, body, allowed: allowed);
         public Task<IResult> Dispatch(long driver, long vehicle)
             => Call("/api/dispatch/assignments", 0, new() { ["DriverId"] = driver, ["VehicleId"] = vehicle });
 
-        private async Task<IResult> Call(string path, long id, Dictionary<string, object?> body, bool companyWide = false)
+        private async Task<IResult> Call(string path, long id, Dictionary<string, object?> body, bool companyWide = false, bool allowed = true, CancellationToken ct = default)
         {
             var db = new Database(config, new TenantScopeAccessor());
             return await db.RunInTenantScopeAsync(CompanyA, async () =>
@@ -139,19 +241,19 @@ public sealed class FleetMasterAssignmentHosPostgresTests
                 if (!companyWide) http.Items[EndpointMappings.AuthBranchIdItemKey] = BranchA;
                 http.Items[EndpointMappings.AuthUserIdItemKey] = 0L;
                 http.Items[EndpointMappings.AuthRoleItemKey] = "Synthetic fleet operator";
-                http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "fleet:manage", "dispatch:assign" };
+                http.Items[EndpointMappings.AuthPermissionsItemKey] = allowed ? new[] { "fleet:manage", "dispatch:assign" } : new[] { "fleet:view", "dispatch:assign" };
                 var handler = Registered(path);
                 var args = handler.Method.GetParameters().Select(p => p.ParameterType == typeof(HttpContext) ? (object)http :
                     p.ParameterType == typeof(long) ? id : p.ParameterType == typeof(Dictionary<string, object?>) ? body :
                     p.ParameterType == typeof(Database) ? db : p.ParameterType == typeof(AuditService) ? new AuditService(db) :
                     p.ParameterType == typeof(NotificationService) ? new NotificationService(db) :
-                    p.ParameterType == typeof(CancellationToken) ? CancellationToken.None :
+                    p.ParameterType == typeof(CancellationToken) ? ct :
                     p.ParameterType.Name == "DispatchAssignBody" ? JsonSerializer.Deserialize(JsonSerializer.Serialize(body), p.ParameterType)! :
                     throw new InvalidOperationException("Unexpected registered endpoint parameter")).ToArray();
                 try { return await (Task<IResult>)handler.DynamicInvoke(args)!; }
                 catch (TargetInvocationException error) when (error.InnerException is not null)
                 { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw(); throw; }
-            });
+            }, ct);
         }
         private Delegate Registered(string path)
         {
@@ -175,6 +277,55 @@ public sealed class FleetMasterAssignmentHosPostgresTests
             await using var command = new NpgsqlCommand(sql, connection);
             foreach (var (key, value) in values) command.Parameters.AddWithValue(key, value ?? DBNull.Value);
             return (await command.ExecuteScalarAsync())?.ToString() ?? "";
+        }
+        public Task<string> Archive(string table, long id)
+        {
+            Assert.Contains(table, new[] { "drivers", "vehicles" });
+            return Sql($"UPDATE {table} SET deleted_at=NOW() WHERE id=@id AND company_id=@c", ("id", id), ("c", CompanyA));
+        }
+        public async Task<IResult[]> CompetingPairs(bool sharedVehicle, (long Driver, long Vehicle) first, (long Driver, long Vehicle) second)
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var ct = deadline.Token;
+            await using var gate = new NpgsqlConnection(owner); await gate.OpenAsync(ct);
+            await using var transaction = await gate.BeginTransactionAsync(ct);
+            await using var hold = new NpgsqlCommand("SELECT pg_advisory_xact_lock(@company)", gate, transaction);
+            hold.Parameters.AddWithValue("company", CompanyA);
+            await hold.ExecuteNonQueryAsync(ct);
+            var path = sharedVehicle ? "/api/vehicles/{id:long}/assign-driver" : "/api/drivers/{id:long}/assign-vehicle";
+            var source = sharedVehicle ? first.Vehicle : first.Driver;
+            var requests = new[] {
+                Call(path, source, new() { ["targetId"] = sharedVehicle ? first.Driver : first.Vehicle }, ct: ct),
+                Call(path, source, new() { ["targetId"] = sharedVehicle ? second.Driver : second.Vehicle }, ct: ct)
+            };
+            try
+            {
+                // Both request transactions must demonstrably wait on this fixture's
+                // tenant lock before it is released; simultaneous Task starts alone
+                // would not prove contention or serialization.
+                await using var waiters = new NpgsqlCommand(@"SELECT COUNT(*) FROM pg_stat_activity
+                    WHERE @blocker=ANY(pg_blocking_pids(pid)) AND query LIKE '%pg_advisory_xact_lock%'", gate, transaction);
+                waiters.Parameters.AddWithValue("blocker", gate.ProcessID);
+                using var poll = new PeriodicTimer(TimeSpan.FromMilliseconds(10));
+                await using var refresh = new NpgsqlCommand("SELECT pg_stat_clear_snapshot()", gate, transaction);
+                while (true)
+                {
+                    await refresh.ExecuteNonQueryAsync(ct);
+                    if (Convert.ToInt64(await waiters.ExecuteScalarAsync(ct)) == 2) break;
+                    await poll.WaitForNextTickAsync(ct);
+                }
+                Assert.All(requests, request => Assert.False(request.IsCompleted));
+                await transaction.CommitAsync(ct);
+                return await Task.WhenAll(requests).WaitAsync(ct);
+            }
+            finally
+            {
+                deadline.Cancel();
+                await transaction.DisposeAsync();
+                var all = Task.WhenAll(requests);
+                try { await all.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch when (all.IsCompleted) { }
+            }
         }
         public async Task<JsonElement> Row(string table, long id)
         {
