@@ -167,13 +167,14 @@ WITH active_jobs AS (
     private sealed record QuerySpec(string Where, string OrderBy, DateTimeOffset AsOf, Action<NpgsqlCommand> Bind);
 
     private static (IResult? Error, QuerySpec? Spec) BuildQuery(HttpContext http, string? lifecycle, string? risk,
-        string? assignment, string? readiness, string? search, string? sort, string? direction)
+        string? assignment, string? readiness, string? search, string? jobId, string? sort, string? direction)
     {
         var rawLifecycle = lifecycle;
         var rawRisk = risk;
         var rawAssignment = assignment;
         var rawReadiness = readiness;
         var rawSearch = search;
+        var rawJobId = jobId;
         var rawSort = sort;
         var rawDirection = direction;
         lifecycle = Clean(lifecycle, 40);
@@ -192,6 +193,12 @@ WITH active_jobs AS (
         if (assignment is not null && assignment != "All" && !AssignmentFilters.Contains(assignment)) return (Bad("Invalid assignment filter."), null);
         if (readiness is not null && readiness != "All" && !ReadinessFilters.Contains(readiness)) return (Bad("Invalid readiness filter."), null);
         if (!string.IsNullOrWhiteSpace(rawSearch) && search is null) return (Bad("Search cannot exceed 120 characters."), null);
+        long? parsedJobId = null;
+        if (!string.IsNullOrWhiteSpace(rawJobId))
+        {
+            if (!long.TryParse(rawJobId, out var exactJobId) || exactJobId <= 0) return (Bad("jobId must be a positive integer."), null);
+            parsedJobId = exactJobId;
+        }
         if (!string.IsNullOrWhiteSpace(rawSort) && Clean(rawSort, 20) is null) return (Bad("Sort field cannot exceed 20 characters."), null);
         if (!string.IsNullOrWhiteSpace(rawDirection) && Clean(rawDirection, 5) is null) return (Bad("Sort direction cannot exceed 5 characters."), null);
         if (sort is not ("risk" or "eta" or "created" or "priority")) return (Bad("Invalid sort field."), null);
@@ -207,6 +214,7 @@ WITH active_jobs AS (
         if (readiness == "InvoiceReady") clauses.Add("is_invoice_ready");
         if (readiness == "InvoiceBlocked") clauses.Add("NOT is_invoice_ready");
         if (search is not null) clauses.Add("(shipment_number ILIKE @search OR customer_name ILIKE @search OR origin ILIKE @search OR destination ILIKE @search OR driver_name ILIKE @search OR vehicle_number ILIKE @search OR route_code ILIKE @search)");
+        if (parsedJobId is not null) clauses.Add("id=@jobId");
         var where = clauses.Count == 0 ? "" : " WHERE " + string.Join(" AND ", clauses);
         var orderColumn = sort switch
         {
@@ -226,18 +234,19 @@ WITH active_jobs AS (
             if (lifecycle is not null && lifecycle != "All") command.Parameters.AddWithValue("@lifecycle", lifecycle);
             if (risk is not null && risk != "All") command.Parameters.AddWithValue("@risk", risk);
             if (search is not null) command.Parameters.AddWithValue("@search", $"%{search}%");
+            if (parsedJobId is not null) command.Parameters.AddWithValue("@jobId", parsedJobId.Value);
         }
         return (null, new QuerySpec(where, orderBy, asOf, Bind));
     }
 
     private static async Task<IResult> List(HttpContext http, Database db, CancellationToken ct,
         string? lifecycle = null, string? risk = null, string? assignment = null, string? readiness = null,
-        string? search = null, string? sort = null, string? direction = null, int page = 1, int pageSize = 25)
+        string? search = null, string? jobId = null, string? sort = null, string? direction = null, int page = 1, int pageSize = 25)
     {
         if (RequireDirect(http, "shipments:view") is { } denied) return denied;
         if (page < 1) return Bad("page must be at least 1.");
         if (pageSize is < 1 or > 200) return Bad("pageSize must be between 1 and 200.");
-        var built = BuildQuery(http, lifecycle, risk, assignment, readiness, search, sort, direction);
+        var built = BuildQuery(http, lifecycle, risk, assignment, readiness, search, jobId, sort, direction);
         if (built.Error is not null) return built.Error;
         var spec = built.Spec!;
         var total = await db.ScalarLongAsync(Projection + "SELECT COUNT(*) FROM projected" + spec.Where, spec.Bind, ct);
@@ -258,10 +267,10 @@ FROM projected
 
     private static async Task<IResult> Export(HttpContext http, Database db, CancellationToken ct,
         string? lifecycle = null, string? risk = null, string? assignment = null, string? readiness = null,
-        string? search = null, string? sort = null, string? direction = null)
+        string? search = null, string? jobId = null, string? sort = null, string? direction = null)
     {
         if (RequireDirect(http, "shipments:export") is { } denied) return denied;
-        var built = BuildQuery(http, lifecycle, risk, assignment, readiness, search, sort, direction);
+        var built = BuildQuery(http, lifecycle, risk, assignment, readiness, search, jobId, sort, direction);
         if (built.Error is not null) return built.Error;
         var spec = built.Spec!;
         var rows = await db.QueryAsync(Projection + "SELECT * FROM projected" + spec.Where + spec.OrderBy + $" LIMIT {MaxExportRows + 1}", spec.Bind, ct);

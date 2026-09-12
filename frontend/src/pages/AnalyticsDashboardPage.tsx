@@ -387,7 +387,7 @@ export function AnalyticsDashboardPage() {
   const [tab, setTab] = useState<Tab>("executive");
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto">
+    <div className="page-stack min-w-0">
       <div>
         <h1 className="text-xl font-bold text-slate-800">Analytics Dashboard</h1>
         <p className="text-sm text-slate-500 mt-0.5">
@@ -414,7 +414,7 @@ export function AnalyticsDashboardPage() {
       </div>
 
       {/* Content + insights */}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_280px]">
+      <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div>
           {tab === "executive"   && <ExecutivePanel />}
           {tab === "operations"  && <OperationsPanel />}

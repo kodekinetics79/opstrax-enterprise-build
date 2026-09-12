@@ -103,7 +103,7 @@ export function CarbonTrackingPage() {
   if (q.isError) return <ErrorState message={(q.error as Error)?.message} />;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="page-stack min-w-0">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Carbon Tracking</h1>
@@ -113,41 +113,46 @@ export function CarbonTrackingPage() {
       </div>
 
       {/* KPI grid — every figure derived from live per-vehicle + trend data */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-5">
+      <section aria-label="Carbon indicators" className="panel flex flex-wrap divide-x divide-slate-200 overflow-hidden">
         <KpiCard
+          compact
           label="CO₂ This Month"
           value={`${totalCo2.toLocaleString()} kg`}
           delta={momDelta}
           trend={momTrendWord}
         />
         <KpiCard
+          compact
           label="Intensity (kg/km)"
           value={totalKm > 0 ? avgIntensity.toFixed(2) : "—"}
           delta={totalKm > 0 ? `${totalKm.toLocaleString()} km driven` : undefined}
         />
         <KpiCard
+          compact
           label="Idling CO₂"
           value={`${idlingCo2.toLocaleString()} kg`}
           status={idlingCo2 > 0 ? "Waste" : undefined}
           delta={totalCo2 > 0 ? `${idlingShare.toFixed(1)}% of fleet CO₂` : undefined}
         />
         <KpiCard
+          compact
           label="Scope 1 (tonnes)"
           value={scope1Tonnes.toFixed(1)}
           delta="Direct fuel combustion"
         />
         <KpiCard
+          compact
           label="Vehicles Reporting"
           value={String(vehicles.length)}
           delta={topEmitters.length > 0 ? `Top: ${String(topEmitters[0]?.vehicleCode ?? "—")}` : undefined}
         />
-      </div>
+      </section>
 
       {/* View tabs */}
-      <div className="clay-card flex gap-1 p-1.5">
+      <div className="clay-card flex gap-1 overflow-x-auto p-1.5">
         {(["overview", "vehicles", "targets"] as const).map((v) => (
           <button key={v} type="button" onClick={() => setActiveView(v)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
+            className={`min-h-11 shrink-0 rounded-lg px-4 py-2 text-sm font-medium capitalize transition-colors sm:min-h-9 ${
               activeView === v ? "bg-teal-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
             }`}>{v === "overview" ? "Overview" : v === "vehicles" ? "By Vehicle" : "Targets"}</button>
         ))}
@@ -157,10 +162,10 @@ export function CarbonTrackingPage() {
       {activeView === "overview" && (
         <div className="flex flex-col gap-4">
           {/* Dense two-column band: monthly trend chart beside top-emitter leaderboard */}
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-3">
             {/* Monthly trend chart — real fuel_transactions grouped by month */}
-            <ClayCard className="p-5 xl:col-span-2">
-              <div className="mb-4 flex items-center justify-between gap-3">
+            <ClayCard className="p-4 xl:col-span-2">
+              <div className="mb-3 flex items-center justify-between gap-3">
                 <p className="text-sm font-semibold text-slate-700">Monthly CO₂ Emissions (tonnes)</p>
                 {momDelta && (
                   <span className={`text-xs font-semibold ${momPct !== null && momPct <= 0 ? "text-teal-600" : "text-amber-600"}`}>
@@ -187,7 +192,7 @@ export function CarbonTrackingPage() {
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
-                <p className="text-xs text-slate-400 py-8 text-center">
+                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-center text-xs text-slate-500">
                   Monthly trend appears once at least two months of fuel data have accrued
                   {trend.length === 1 ? " (1 month recorded so far)." : "."}
                 </p>
@@ -195,15 +200,15 @@ export function CarbonTrackingPage() {
             </ClayCard>
 
             {/* Top emitters leaderboard — ranked from live per-vehicle rows */}
-            <ClayCard className="p-5">
-              <div className="mb-4 flex items-center justify-between gap-3">
+            <ClayCard className="p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
                 <p className="text-sm font-semibold text-slate-700">Top Emitters (this month)</p>
                 <button type="button" className="text-xs font-semibold text-teal-600 hover:underline" onClick={() => setActiveView("vehicles")}>
                   View all
                 </button>
               </div>
               {topEmitters.length > 0 ? (
-                <ol className="flex flex-col gap-3">
+                <ol className="flex flex-col gap-2.5">
                   {topEmitters.map((v, i) => {
                     const co2 = Number(v.co2ThisMonth ?? 0);
                     const pct = maxVehCo2 > 0 ? (co2 / maxVehCo2) * 100 : 0;
@@ -223,15 +228,15 @@ export function CarbonTrackingPage() {
                   })}
                 </ol>
               ) : (
-                <p className="text-xs text-slate-400 py-8 text-center">No fuel activity recorded this month.</p>
+                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-center text-xs text-slate-500">No fuel activity recorded this month.</p>
               )}
             </ClayCard>
           </div>
 
           {/* Scope breakdown + idling-by-month — honest: only Scope 1 is measured today */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <ClayCard className="p-5">
-              <p className="text-sm font-semibold text-slate-700 mb-4">Scope Breakdown (GHG Protocol)</p>
+          <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2">
+            <ClayCard className="p-4">
+              <p className="mb-3 text-sm font-semibold text-slate-700">Scope Breakdown (GHG Protocol)</p>
               <div className="flex flex-col gap-3">
                 <div>
                   <div className="flex justify-between text-xs mb-1.5">
@@ -257,8 +262,8 @@ export function CarbonTrackingPage() {
               </div>
             </ClayCard>
 
-            <ClayCard className="p-5">
-              <p className="text-sm font-semibold text-slate-700 mb-4">Idling CO₂ by Month (tonnes)</p>
+            <ClayCard className="p-4">
+              <p className="mb-3 text-sm font-semibold text-slate-700">Idling CO₂ by Month (tonnes)</p>
               {trend.length >= 2 ? (
                 <ResponsiveContainer width="100%" height={160}>
                   <BarChart data={trend} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
@@ -269,7 +274,7 @@ export function CarbonTrackingPage() {
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
-                <p className="text-xs text-slate-400 py-8 text-center">Accrues with monthly fuel data.</p>
+                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-center text-xs text-slate-500">Accrues with monthly fuel data.</p>
               )}
             </ClayCard>
           </div>

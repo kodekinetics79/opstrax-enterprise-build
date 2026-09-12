@@ -5,9 +5,7 @@ import { useLocation, useNavigate } from "react-router";
 import {
   ArrowRight,
   Clock3,
-  Fuel,
   Gauge,
-  Sparkles,
   Truck,
   Wrench,
 } from "lucide-react";
@@ -22,7 +20,7 @@ import {
 } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { EmptyState, ErrorState, exportCsv, LoadingState, StatusBadge } from "@/components/ui";
-import { ClayStat, ConsoleNav, ConsoleRail } from "@/components/console";
+import { ConsoleNav, ConsoleRail } from "@/components/console";
 import type { AnyRecord } from "@/types";
 
 type UtilSection = "overview" | "capacity" | "efficiency" | "opportunities";
@@ -286,7 +284,7 @@ export function FleetUtilizationPage() {
     rows;
 
   return (
-    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto pb-6">
+    <div className="fleet-console page-stack min-w-0">
       <ConsoleRail
         eyebrow="Fleet · Capacity"
         icon={<Gauge className="h-3.5 w-3.5 text-teal-700" />}
@@ -309,50 +307,55 @@ export function FleetUtilizationPage() {
 
       <ConsoleNav sections={SECTIONS} active={section} onSelect={(key) => navigate(`/fleet-utilization/${key}`)} />
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <ClayStat Icon={Gauge}  tone="fc-clay-teal"    iconCls="text-teal-700"    label="30-day utilization" value={utilization === null ? "—" : `${Math.round(utilization)}%`} caption={evidenceGaps ? `${utilizationEvidenceVehicles} of ${total} units have qualified trip-hour evidence` : estimatedOpenTrips ? `${estimatedOpenTrips} open trip(s) estimated and capped at 24h` : "Qualified active trip hours ÷ 240-hour baseline"} />
-        <ClayStat Icon={Truck}  tone="fc-clay-emerald" iconCls="text-emerald-700" label="Available status" value={available} caption="Persisted vehicle status; readiness evidence unavailable" />
-        <ClayStat Icon={Wrench} tone="fc-clay-red"     iconCls="text-rose-700"    label="Maintenance status" value={maintenance} caption="Persisted Maintenance or Out of Service status" alert={maintenance > 0} />
-        <ClayStat Icon={Clock3} tone="fc-clay-amber"   iconCls="text-amber-700"   label="Qualified idle evidence" value={idleCost !== null ? `$${idleCost.toLocaleString()}` : idleHours !== null ? `${idleHours}h` : "—"} caption={idleHours === null ? "No qualified idling evidence is available" : idleCost === null ? `${idleHours} recorded hours; cost evidence unavailable` : `${idleHours} qualified idle hours recorded`} alert={idleHours !== null && idleHours > 0} />
-      </div>
+      <section aria-label="Fleet utilization indicators" className="panel grid grid-cols-2 gap-px overflow-hidden bg-slate-200 p-px xl:grid-cols-4">
+        <UtilMetric Icon={Gauge} iconClass="text-teal-700" label="30-day utilization" value={utilization === null ? "—" : `${Math.round(utilization)}%`} caption={evidenceGaps ? `${utilizationEvidenceVehicles} of ${total} units have qualified trip-hour evidence` : estimatedOpenTrips ? `${estimatedOpenTrips} open trip(s) estimated and capped at 24h` : "Qualified active trip hours ÷ 240-hour baseline"} />
+        <UtilMetric Icon={Truck} iconClass="text-emerald-700" label="Available status" value={String(available)} caption="Persisted vehicle status; readiness evidence unavailable" />
+        <UtilMetric Icon={Wrench} iconClass="text-rose-700" label="Maintenance status" value={String(maintenance)} caption="Persisted Maintenance or Out of Service status" attention={maintenance > 0} />
+        <UtilMetric Icon={Clock3} iconClass="text-amber-700" label="Qualified idle evidence" value={idleCost !== null ? `$${idleCost.toLocaleString()}` : idleHours !== null ? `${idleHours}h` : "—"} caption={idleHours === null ? "No qualified idling evidence is available" : idleCost === null ? `${idleHours} recorded hours; cost evidence unavailable` : `${idleHours} qualified idle hours recorded`} attention={idleHours !== null && idleHours > 0} />
+      </section>
 
       {section === "overview" && (
-        <div className="space-y-6">
-          <div className="grid gap-4 lg:grid-cols-3">
-            <ModuleCard
-              title="Capacity board"
-              body="Compare persisted status and qualified trip utilization. Confirm readiness in its source workflow before dispatching."
-              action="Open capacity"
-              onClick={() => navigate("/fleet-utilization/capacity")}
-              icon={<Truck className="h-5 w-5" />}
-            />
-            <ModuleCard
-              title="Efficiency view"
-              body="Spot idle leakage, fuel drag and under-performing assets before costs become normalized."
-              action="Open efficiency"
-              onClick={() => navigate("/fleet-utilization/efficiency")}
-              icon={<Fuel className="h-5 w-5" />}
-            />
-            <ModuleCard
-              title="Action queue"
-              body="Review bounded cues derived from qualified trip, fuel and idle evidence or persisted maintenance status."
-              action="Open action queue"
-              onClick={() => navigate("/fleet-utilization/opportunities")}
-              icon={<Sparkles className="h-5 w-5" />}
-            />
-          </div>
-
-          <section className="panel p-5">
+        <div className="space-y-3">
+          <section className="panel p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Where capacity is getting trapped</h2>
-                <p className="text-sm text-slate-500">Coverage, idle and maintenance pressure across the current fleet.</p>
+                <h2 className="text-lg font-semibold text-slate-900">Top action queue</h2>
+                <p className="text-sm text-slate-500">Items supported by qualified source evidence or persisted maintenance status.</p>
               </div>
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                Operations pressure radar
-              </span>
+              <button type="button" className="btn-ghost min-h-11 sm:min-h-9" onClick={() => navigate("/fleet-utilization/opportunities")}>Open full queue</button>
             </div>
-            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <div className="mt-3 grid gap-2 xl:grid-cols-3">
+              {opportunities.slice(0, 3).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => navigate(item.actionRoute)}
+                  className={`min-h-11 rounded-xl border p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${toneClass(item.severity)}`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <StatusBadge status={item.severity} />
+                    <ArrowRight className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <h3 className="mt-2 text-sm font-semibold text-slate-900">{item.title}</h3>
+                  <p className="mt-1 text-sm text-slate-600">{item.detail}</p>
+                  <p className="mt-2 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">{item.actionLabel}</p>
+                </button>
+              ))}
+              {!opportunities.length && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 xl:col-span-3">
+                  No evidence-qualified utilization action is available. An empty queue does not prove that capacity, readiness, fuel, or idle performance is within range.
+                </div>
+              )}
+            </div>
+          </section>
+
+          <details className="panel group">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-sm font-semibold text-slate-800 marker:content-none sm:min-h-9">
+              <span>Capacity evidence breakdown</span>
+              <span className="text-xs font-medium text-slate-500 group-open:hidden">Available, idle and maintenance details</span>
+              <span className="hidden text-xs font-medium text-slate-500 group-open:inline">Hide details</span>
+            </summary>
+            <div className="grid gap-2 border-t border-slate-200 p-3 lg:grid-cols-3">
               <InsightTile
                 icon={<Gauge className="h-4 w-4" />}
                 label="Available coverage"
@@ -372,42 +375,9 @@ export function FleetUtilizationPage() {
                 body={`${maintenance} units are blocked from contributing capacity and should stay tied to work orders, defects and service readiness.`}
               />
             </div>
-          </section>
+          </details>
 
-          <section className="panel p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Top action queue</h2>
-                <p className="text-sm text-slate-500">Items supported by qualified source evidence or persisted maintenance status.</p>
-              </div>
-              <button type="button" className="btn-ghost h-9" onClick={() => navigate("/fleet-utilization/opportunities")}>Open full queue</button>
-            </div>
-            <div className="mt-4 grid gap-3 xl:grid-cols-3">
-              {opportunities.slice(0, 3).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => navigate(item.actionRoute)}
-                  className={`rounded-2xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${toneClass(item.severity)}`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <StatusBadge status={item.severity} />
-                    <ArrowRight className="h-4 w-4 text-slate-400" />
-                  </div>
-                  <h3 className="mt-3 text-sm font-semibold text-slate-900">{item.title}</h3>
-                  <p className="mt-2 text-sm text-slate-600">{item.detail}</p>
-                  <p className="mt-4 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">{item.actionLabel}</p>
-                </button>
-              ))}
-              {!opportunities.length && (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 xl:col-span-3">
-                  No evidence-qualified utilization action is available. An empty queue does not prove that capacity, readiness, fuel, or idle performance is within range.
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className="panel p-5">
+          <section className="panel p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Entity links</h2>
@@ -417,19 +387,19 @@ export function FleetUtilizationPage() {
                 Connected workflows
               </span>
             </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
               {RELATED_ENTITIES.map((item) => (
                 <button
                   key={item.label}
                   type="button"
                   onClick={() => navigate(item.route)}
-                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
+                  className="group min-h-11 rounded-xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-900">{item.label}</span>
                     <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-500" />
                   </div>
-                  <p className="mt-2 text-sm text-slate-500">{item.note}</p>
+                  <p className="mt-1 text-sm text-slate-500">{item.note}</p>
                 </button>
               ))}
             </div>
@@ -630,44 +600,41 @@ export function FleetUtilizationPage() {
   );
 }
 
-function ModuleCard({
-  title,
-  body,
-  action,
-  onClick,
-  icon,
+function UtilMetric({
+  Icon,
+  iconClass,
+  label,
+  value,
+  caption,
+  attention = false,
 }: {
-  title: string;
-  body: string;
-  action: string;
-  onClick: () => void;
-  icon: React.ReactNode;
+  Icon: React.ComponentType<{ className?: string }>;
+  iconClass: string;
+  label: string;
+  value: string;
+  caption: string;
+  attention?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 text-slate-500">{icon}</div>
-        <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5" />
+    <div className="min-w-0 bg-white px-3 py-2">
+      <div className="flex items-center gap-2">
+        <Icon className={`h-4 w-4 shrink-0 ${iconClass}`} />
+        <p className="min-w-0 text-xs font-medium text-slate-600">{label}</p>
+        <p className={`ml-auto shrink-0 text-lg font-bold tabular-nums ${attention ? "text-rose-700" : "text-slate-950"}`}>{value}</p>
       </div>
-      <h3 className="mt-4 text-base font-semibold text-slate-900">{title}</h3>
-      <p className="mt-2 text-sm text-slate-500">{body}</p>
-      <p className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-teal-600">{action}</p>
-    </button>
+      <p className="mt-1 text-[11px] leading-4 text-slate-500">{caption}</p>
+    </div>
   );
 }
 
 function InsightTile({ icon, label, value, body }: { icon: React.ReactNode; label: string; value: string; body: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-      <div className="flex items-center justify-between">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-500 shadow-sm">{icon}</div>
-        <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</span>
+    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+      <div className="flex items-center gap-2">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm">{icon}</div>
+        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</span>
+        <span className="ml-auto text-lg font-bold tracking-tight text-slate-900">{value}</span>
       </div>
-      <p className="mt-4 text-2xl font-bold tracking-tight text-slate-900">{value}</p>
       <p className="mt-2 text-sm text-slate-500">{body}</p>
     </div>
   );

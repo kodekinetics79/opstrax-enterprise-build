@@ -151,7 +151,7 @@ export function SlaKpiPage() {
 
   if (isLoading) {
     return (
-      <div className="flex h-full flex-col gap-6 overflow-y-auto">
+      <div className="page-stack min-w-0">
         <div>
           <h1 className="text-xl font-extrabold text-slate-900">SLA / KPI Center</h1>
           <p className="mt-0.5 text-sm text-slate-500">Recorded KPI measurements and verified SLA evidence</p>
@@ -162,7 +162,7 @@ export function SlaKpiPage() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack min-w-0">
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">

@@ -95,7 +95,7 @@ export function AboutPage() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto pb-8">
+    <div className="page-stack h-full overflow-y-auto">
 
       {/* ── Product identity ── */}
       <div className="panel p-6">

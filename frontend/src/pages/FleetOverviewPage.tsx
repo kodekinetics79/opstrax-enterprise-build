@@ -5,7 +5,7 @@ import {
   MapPin, Package, Radio, Search, ShieldAlert, Truck, Wifi, WifiOff, Wrench, Zap,
 } from "lucide-react";
 import { useNavigate } from "react-router";
-import { LoadingState } from "@/components/ui";
+import { LoadingState, PageHeader } from "@/components/ui";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { alertsApi } from "@/services/alertsApi";
 import { jobsApi } from "@/services/jobsApi";
@@ -263,8 +263,8 @@ export function FleetOverviewPage() {
 
   if (!canViewVehicles) {
     return (
-      <div className="ops-deck flex h-full flex-col gap-3">
-        <div className="deck-neumo m-auto max-w-md p-10 text-center">
+      <div className="ops-deck flex flex-col gap-3">
+        <div className="deck-neumo mx-auto my-10 max-w-md p-6 text-center">
           <p className="text-sm font-bold text-slate-700">Fleet data is not available for this role</p>
           <p className="mt-1 text-xs text-slate-500">The current session does not include vehicle read access.</p>
         </div>
@@ -276,8 +276,8 @@ export function FleetOverviewPage() {
 
   if (vehiclesQ.isError) {
     return (
-      <div className="ops-deck flex h-full flex-col gap-3">
-        <div className="deck-neumo m-auto max-w-md p-10 text-center">
+      <div className="ops-deck flex flex-col gap-3">
+        <div className="deck-neumo mx-auto my-10 max-w-md p-6 text-center">
           <AlertTriangle className="mx-auto h-8 w-8 text-red-500" />
           <p className="mt-3 text-sm font-bold text-slate-700">Unable to load fleet data</p>
           <p className="mt-1 text-xs text-slate-500">The vehicles service did not respond. Retry in a moment.</p>
@@ -288,73 +288,51 @@ export function FleetOverviewPage() {
   }
 
   return (
-    <div className="ops-deck flex min-h-full shrink-0 flex-col gap-3">
+    <div className="ops-deck flex flex-col gap-3">
 
-      {/* ── Console rail: title, live meta, clock, primary action ─────────── */}
-      <header className="deck-rail relative shrink-0 px-5 py-2.5 pl-7 pr-7">
-        <Screw className="left-2.5 top-2.5"   slot="18deg" />
-        <Screw className="right-2.5 top-2.5"  slot="-42deg" />
-        <Screw className="bottom-2.5 left-2.5" slot="66deg" />
-        <Screw className="bottom-2.5 right-2.5" slot="-12deg" />
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-          <div className="min-w-0">
-            <span className="section-title inline-flex items-center gap-2">
-              <span className="live-dot h-1.5 w-1.5" />
-              Fleet Operations Deck
-            </span>
-            <h1 className="mt-0.5 text-[22px] font-black leading-none tracking-tight text-slate-950">Fleet Command</h1>
-            <p className="mt-1 text-[12px] font-medium text-slate-500">
-              {totalFleet} vehicles evaluated · {counts.Active} operationally active · {flagged} dispatch flags
-            </p>
-          </div>
-          <div className="ml-auto flex flex-wrap items-center gap-3">
-            <DeckClock />
-            <button type="button" className="btn-primary" onClick={() => navigate("/vehicles")}>
-              Full Fleet Registry
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="Fleet Operations"
+        title="Fleet Overview"
+        description={`${totalFleet} vehicles evaluated · ${counts.Active} operationally active · ${flagged} dispatch flags`}
+        actions={(
+          <button type="button" className="btn-primary btn-compact min-h-11 sm:min-h-9" onClick={() => navigate("/vehicles")}>
+            Full Fleet Registry
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        )}
+      />
 
-      {/* ── Clay status tiles — puffy, pressable fleet filters ────────────── */}
-      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-        <ClayKpi label={COMMAND_STATE_LABELS.Active}    count={counts.Active}    total={totalFleet} Icon={Truck}       tone="deck-clay-emerald" fill="deck-fill-emerald" icon="text-emerald-700" dot="bg-emerald-500 animate-pulse" active={tab === "Active"}    onClick={() => toggleTab("Active")} />
-        <ClayKpi label={COMMAND_STATE_LABELS.Idle}      count={counts.Idle}      total={totalFleet} Icon={Zap}         tone="deck-clay-amber"   fill="deck-fill-amber"   icon="text-amber-700"   dot="bg-amber-400"             active={tab === "Idle"}      onClick={() => toggleTab("Idle")} />
-        <ClayKpi label={COMMAND_STATE_LABELS.Available} count={counts.Available} total={totalFleet} Icon={Clock}       tone="deck-clay-sky"     fill="deck-fill-sky"     icon="text-sky-700"     dot="bg-sky-400"               active={tab === "Available"} onClick={() => toggleTab("Available")} />
-        <ClayKpi label={COMMAND_STATE_LABELS.OOS}       count={counts.OOS}       total={totalFleet} Icon={ShieldAlert} tone="deck-clay-red"     fill="deck-fill-red"     icon="text-red-700"     dot="bg-red-500 animate-pulse" active={tab === "OOS"}       onClick={() => toggleTab("OOS")} />
-        <ClayKpi label={COMMAND_STATE_LABELS.Offline}   count={counts.Offline}   total={totalFleet} Icon={WifiOff}     tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"             active={tab === "Offline"}   onClick={() => toggleTab("Offline")} />
-        <ClayKpi label={COMMAND_STATE_LABELS.Unknown}   count={counts.Unknown}   total={totalFleet} Icon={Radio}       tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"             active={tab === "Unknown"}   onClick={() => toggleTab("Unknown")} />
+      {/* Command-state summary also acts as the single status filter surface. */}
+      <div className="flex shrink-0 gap-2 overflow-x-auto pb-1" aria-label="Filter fleet by command state">
+        <ClayKpi label={COMMAND_STATE_LABELS.Active}    count={counts.Active}    total={totalFleet} Icon={Truck}       icon="text-emerald-700" dot="bg-emerald-500 animate-pulse" active={tab === "Active"}    onClick={() => toggleTab("Active")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Idle}      count={counts.Idle}      total={totalFleet} Icon={Zap}         icon="text-amber-700"   dot="bg-amber-400"             active={tab === "Idle"}      onClick={() => toggleTab("Idle")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Available} count={counts.Available} total={totalFleet} Icon={Clock}       icon="text-sky-700"     dot="bg-sky-400"               active={tab === "Available"} onClick={() => toggleTab("Available")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.OOS}       count={counts.OOS}       total={totalFleet} Icon={ShieldAlert} icon="text-red-700"     dot="bg-red-500 animate-pulse" active={tab === "OOS"}       onClick={() => toggleTab("OOS")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Offline}   count={counts.Offline}   total={totalFleet} Icon={WifiOff}     icon="text-slate-600"   dot="bg-slate-400"             active={tab === "Offline"}   onClick={() => toggleTab("Offline")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Unknown}   count={counts.Unknown}   total={totalFleet} Icon={Radio}       icon="text-slate-600"   dot="bg-slate-400"             active={tab === "Unknown"}   onClick={() => toggleTab("Unknown")} />
       </div>
 
-      <p role="note" className="shrink-0 px-1 text-[11px] font-medium text-slate-500">
-        Command-state buckets are mutually exclusive. Dispatch restricted covers maintenance or out-of-service units; when authorized telemetry is visible, offline or unknown telemetry takes precedence. Operational states do not prove connectivity, and Fleet Registry availability is a separate master-data summary.
-      </p>
+      <div role="note" className="shrink-0 px-1 text-[11px] font-medium text-slate-500">
+        <p>Operational status does not prove device connectivity.</p>
+        <details className="mt-0.5">
+          <summary className="inline-flex min-h-11 cursor-pointer items-center font-bold text-teal-700 sm:min-h-8">How statuses are calculated</summary>
+          <p className="max-w-5xl pb-1 leading-relaxed">
+            Command-state buckets are mutually exclusive. Dispatch restricted covers maintenance or out-of-service units; when authorized telemetry is visible, offline or unknown telemetry takes precedence. Operational states do not prove connectivity, and Fleet Registry availability is a separate master-data summary.
+          </p>
+        </details>
+      </div>
 
-      {/* ── Main deck: roster console + instrument rail ───────────────────── */}
-      <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
+      {/* The fleet registry owns the full content width and sizes to its rows. */}
+      <div className="min-w-0">
 
         {/* Roster console — neumorphic chassis with an inset bezel screen */}
         <section className="deck-neumo flex min-w-0 flex-col overflow-hidden">
           <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
-            <div className="deck-seg flex flex-wrap items-center gap-1 p-1">
-              {STATUS_TABS.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => selectTab(t)}
-                  className={`deck-seg-btn ${tab === t ? "deck-seg-btn-active" : ""}`}
-                >
-                  {STATUS_TAB_LABELS[t]}
-                  {t !== "All" && (
-                    <span className={`ml-1.5 rounded-full px-1.5 py-px text-[10px] font-bold tabular-nums ${
-                      tab === t ? "bg-teal-100 text-teal-700" : "bg-slate-200/70 text-slate-500"
-                    }`}>
-                      {counts[t as Exclude<Tab, "All">] ?? 0}
-                    </span>
-                  )}
-                </button>
-              ))}
+            <div className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 sm:min-h-9" aria-live="polite">
+              <span>Showing {STATUS_TAB_LABELS[tab]}</span>
+              {tab !== "All" && (
+                <button type="button" className="inline-flex min-h-11 items-center font-bold text-teal-700 hover:underline sm:min-h-8" onClick={() => selectTab("All")}>Clear filter</button>
+              )}
             </div>
             <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
               <Activity className="h-3 w-3 text-teal-600" />
@@ -370,7 +348,7 @@ export function FleetOverviewPage() {
                 placeholder="Search vehicle or driver"
                 aria-controls="fleet-roster"
                 aria-describedby={isFleetSettling ? "fleet-query-status" : undefined}
-                className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs text-slate-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                className="min-h-11 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs text-slate-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100 sm:min-h-9"
               />
             </label>
             <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-slate-500">
@@ -378,7 +356,7 @@ export function FleetOverviewPage() {
               <select
                 value={sort}
                 onChange={(event) => { setSort(event.target.value); setPage(1); }}
-                className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700"
+                className="min-h-11 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 sm:min-h-9"
                 aria-label="Sort fleet"
               >
                 <option value="vehicle">Vehicle</option>
@@ -390,7 +368,7 @@ export function FleetOverviewPage() {
             </label>
             <button
               type="button"
-              className="btn-ghost h-9 px-3 text-xs"
+              className="btn-ghost min-h-11 px-3 text-xs sm:min-h-9"
               onClick={() => { setSortOrder((current) => current === "asc" ? "desc" : "asc"); setPage(1); }}
               aria-label={`Sort ${sortOrder === "asc" ? "descending" : "ascending"}`}
             >
@@ -401,7 +379,7 @@ export function FleetOverviewPage() {
           <div className="deck-bezel mx-2.5 flex min-w-0 flex-col">
             <div
               id="fleet-roster"
-              className="deck-screen h-[min(52dvh,560px)] min-h-[280px] overflow-auto"
+              className="deck-screen max-h-[min(52dvh,560px)] overflow-auto"
               aria-busy={isFleetSettling || vehiclesQ.isFetching}
             >
               <table className="w-full min-w-[1040px] text-sm">
@@ -470,7 +448,7 @@ export function FleetOverviewPage() {
                           </div>
                         </td>
                         <td className="px-3 py-3">
-                          <button type="button" className="btn-ghost btn-compact h-8 gap-1 px-3 text-xs" onClick={() => navigate(`/vehicles/${v.vehicleId}/live`)}>
+                          <button type="button" className="btn-ghost btn-compact min-h-11 gap-1 px-3 text-xs sm:min-h-8" onClick={() => navigate(`/vehicles/${v.vehicleId}/live`)}>
                             Live detail
                             <ChevronRight className="h-3 w-3" />
                           </button>
@@ -524,7 +502,7 @@ export function FleetOverviewPage() {
             <nav className="ml-auto inline-flex items-center gap-2" aria-label="Fleet pages">
               <button
                 type="button"
-                className="btn-ghost btn-compact h-8 px-3 text-xs"
+                className="btn-ghost btn-compact min-h-11 px-3 text-xs sm:min-h-8"
                 disabled={displayPage <= 1 || vehiclesQ.isFetching || isFleetSettling}
                 onClick={() => setPage(Math.max(1, displayPage - 1))}
                 aria-label="Previous fleet page"
@@ -536,7 +514,7 @@ export function FleetOverviewPage() {
               </span>
               <button
                 type="button"
-                className="btn-ghost btn-compact h-8 px-3 text-xs"
+                className="btn-ghost btn-compact min-h-11 px-3 text-xs sm:min-h-8"
                 disabled={pageCount === 0 || displayPage >= pageCount || vehiclesQ.isFetching || isFleetSettling}
                 onClick={() => setPage(Math.min(pageCount, displayPage + 1))}
                 aria-label="Next fleet page"
@@ -547,55 +525,27 @@ export function FleetOverviewPage() {
           </div>
         </section>
 
-        {/* Instrument rail — gauge, signal bay, jobs pulse, alert feed */}
-        <aside className="flex min-h-0 flex-col gap-3 xl:overflow-y-auto">
-          <ReadinessGauge readiness={readiness} flagged={flagged} />
-          {canViewDevices && <SignalBay counts={deviceCounts} total={totalFleet} onOpen={() => navigate("/iot-devices")} />}
-          <JobsPulse authorized={canViewJobs} query={jobsQ} onOpen={() => navigate("/jobs")} />
-          <AlertsFeed authorized={canViewAlerts} query={alertsQ} alerts={alerts} onOpen={() => navigate("/alerts")} />
-        </aside>
       </div>
+
+      <div className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <ReadinessGauge readiness={readiness} flagged={flagged} />
+        {canViewDevices && <SignalBay counts={deviceCounts} total={totalFleet} onOpen={() => navigate("/iot-devices")} />}
+        <JobsPulse authorized={canViewJobs} query={jobsQ} onOpen={() => navigate("/jobs")} />
+      </div>
+
+      <AlertsFeed authorized={canViewAlerts} query={alertsQ} alerts={alerts} onOpen={() => navigate("/alerts")} />
     </div>
   );
 }
 
-/* ── Skeuomorphic corner screw ─────────────────────────────────────────── */
-function Screw({ className, slot }: { className: string; slot: string }) {
-  return <span aria-hidden className={`deck-screw absolute ${className}`} style={{ "--slot": slot } as React.CSSProperties} />;
-}
-
-/* ── LCD console clock ─────────────────────────────────────────────────── */
-function DeckClock() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
-  const hh = String(now.getHours()).padStart(2, "0");
-  const mm = String(now.getMinutes()).padStart(2, "0");
-  const ss = String(now.getSeconds()).padStart(2, "0");
-  return (
-    <div className="deck-lcd px-3.5 py-2 text-right" role="timer" aria-label="Current time">
-      <p className="font-mono text-[17px] font-bold leading-none tracking-[0.14em] tabular-nums">
-        {hh}:{mm}<span className="opacity-60">:{ss}</span>
-      </p>
-      <p className="mt-1 text-[9px] font-semibold uppercase tracking-[0.22em] opacity-60">
-        {now.toLocaleDateString(undefined, { weekday: "short", day: "2-digit", month: "short" })}
-      </p>
-    </div>
-  );
-}
-
-/* ── Clay KPI tile — puffy pressable filter ────────────────────────────── */
+/* ── Compact command-state filter ──────────────────────────────────────── */
 function ClayKpi({
-  label, count, total, Icon, tone, fill, icon, dot, active, onClick,
+  label, count, total, Icon, icon, dot, active, onClick,
 }: {
   label: string;
   count: number;
   total: number;
   Icon: React.ElementType;
-  tone: string;
-  fill: string;
   icon: string;
   dot: string;
   active: boolean;
@@ -607,34 +557,18 @@ function ClayKpi({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`deck-clay ${tone} ${active ? "deck-clay-pressed" : ""} grid min-h-14 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 p-2.5 text-left`}
+      aria-label={`${label}: ${count} of ${total}. ${active ? "Selected; activate to clear filter" : "Activate to filter"}`}
+      className={`grid min-h-12 w-[170px] min-w-0 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-xl border bg-white px-3 py-2 text-left shadow-sm transition hover:border-teal-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/60 xl:w-auto xl:min-w-[150px] xl:flex-1 ${active ? "border-teal-400 ring-1 ring-teal-300" : "border-slate-200"}`}
     >
-      <span className="deck-blob row-span-2">
-        <Icon className={`h-4.5 w-4.5 ${icon}`} />
-      </span>
+      <Icon className={`h-4 w-4 shrink-0 ${icon}`} aria-hidden />
       <p className="flex min-w-0 items-start gap-1.5 text-[10.5px] font-bold leading-tight text-slate-600">
         <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
         <span className="line-clamp-2">{label}</span>
+        <span className="shrink-0 text-[9.5px] font-medium text-slate-400">{total > 0 ? `${pct}%` : "—"}</span>
       </p>
-      <p className="row-span-2 text-[20px] font-black leading-none tabular-nums text-slate-900">{count}</p>
-      <div className="flex min-w-0 items-center gap-1.5">
-        <div className="deck-track min-w-0 flex-1"><div className={`deck-fill ${fill}`} style={{ width: `${pct}%` }} /></div>
-        <span className="w-7 text-right text-[9.5px] font-bold tabular-nums text-slate-500">{total > 0 ? `${pct}%` : "—"}</span>
-      </div>
+      <p className="text-lg font-black leading-none tabular-nums text-slate-900">{count}</p>
     </button>
   );
-}
-
-/* ── Analog readiness gauge — real instrument, honest when unmetered ──── */
-function polarPoint(cx: number, cy: number, r: number, fraction: number) {
-  const theta = Math.PI * (1 - fraction);
-  return { x: cx + r * Math.cos(theta), y: cy - r * Math.sin(theta) };
-}
-
-function arcPath(cx: number, cy: number, r: number, from: number, to: number) {
-  const a = polarPoint(cx, cy, r, from);
-  const b = polarPoint(cx, cy, r, to);
-  return `M ${a.x.toFixed(2)} ${a.y.toFixed(2)} A ${r} ${r} 0 0 1 ${b.x.toFixed(2)} ${b.y.toFixed(2)}`;
 }
 
 function ReadinessGauge({
@@ -644,10 +578,8 @@ function ReadinessGauge({
   flagged: number;
 }) {
   const value = readiness ? Math.round(readiness.avg) : 0;
-  const needleDeg = (readiness ? Math.min(100, Math.max(0, readiness.avg)) : 0) * 1.8;
-  const ticks = [0, 0.2, 0.4, 0.6, 0.8, 1];
   return (
-    <div className="deck-neumo shrink-0 p-4">
+    <div className="deck-neumo shrink-0 p-3">
       <div className="flex items-center justify-between">
         <span className="section-title inline-flex items-center gap-2">
           <GaugeIcon className="h-3.5 w-3.5 text-teal-700" />
@@ -658,40 +590,17 @@ function ReadinessGauge({
         </span>
       </div>
 
-      <svg viewBox="0 0 200 118" className="mx-auto mt-2 block w-full max-w-[230px]" role="img"
-        aria-label={readiness ? `Average fleet readiness ${value} percent` : "Fleet readiness unavailable"}>
-        <defs>
-          <linearGradient id="deckNeedle" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#64748b" />
-            <stop offset="100%" stopColor="#1e293b" />
-          </linearGradient>
-          <radialGradient id="deckCap" cx="35%" cy="30%" r="80%">
-            <stop offset="0%" stopColor="#ffffff" />
-            <stop offset="45%" stopColor="#cbd5e1" />
-            <stop offset="100%" stopColor="#64748b" />
-          </radialGradient>
-        </defs>
-        {/* recessed dial track */}
-        <path d={arcPath(100, 100, 78, 0, 1)} fill="none" stroke="#d3dcea" strokeWidth="13" strokeLinecap="round" />
-        {/* colored zones */}
-        <path d={arcPath(100, 100, 78, 0, 0.6)}   fill="none" stroke="#f87171" strokeWidth="9" strokeLinecap="round" opacity=".85" />
-        <path d={arcPath(100, 100, 78, 0.6, 0.8)} fill="none" stroke="#fbbf24" strokeWidth="9" opacity=".9" />
-        <path d={arcPath(100, 100, 78, 0.8, 1)}   fill="none" stroke="#34d399" strokeWidth="9" strokeLinecap="round" opacity=".95" />
-        {/* ticks */}
-        {ticks.map((f) => {
-          const o = polarPoint(100, 100, 66, f);
-          const i = polarPoint(100, 100, 58, f);
-          return <line key={f} x1={i.x} y1={i.y} x2={o.x} y2={o.y} stroke="#94a3b8" strokeWidth="1.6" strokeLinecap="round" />;
-        })}
-        {/* needle */}
-        <g className="deck-needle" style={{ "--needle": `${needleDeg}deg` } as React.CSSProperties}>
-          <line x1="100" y1="100" x2="48" y2="100" stroke="url(#deckNeedle)" strokeWidth="3.4" strokeLinecap="round" />
-        </g>
-        <circle cx="100" cy="100" r="7.5" fill="url(#deckCap)" stroke="#94a3b8" strokeWidth=".8" />
-        <text x="100" y="88" textAnchor="middle" fill="#0f172a" fontSize="24" fontWeight="800" className="tabular-nums">
+      <div className="mt-2 flex items-end justify-between gap-3">
+        <p className="text-2xl font-black leading-none tabular-nums text-slate-900" aria-label={readiness ? `Average fleet readiness ${value} percent` : "Fleet readiness unavailable"}>
           {readiness ? `${value}%` : "—"}
-        </text>
-      </svg>
+        </p>
+        <p className="text-right text-[10.5px] font-medium text-slate-500">
+          {readiness ? "Average of metered units" : "Readiness evidence unavailable"}
+        </p>
+      </div>
+      <div className="deck-track mt-2" aria-hidden>
+        <div className="deck-fill deck-fill-teal" style={{ width: readiness ? `${Math.min(100, Math.max(0, value))}%` : 0 }} />
+      </div>
 
       <div className="mt-2 grid grid-cols-2 gap-2">
         <div className="deck-inset rounded-xl px-3 py-2">
@@ -726,7 +635,7 @@ function SignalBay({
     { label: "Unknown",  value: counts.Unknown,  led: "deck-led-slate",   fill: "deck-fill-slate" },
   ];
   return (
-    <div className="deck-neumo shrink-0 p-4">
+    <div className="deck-neumo shrink-0 p-3">
       <div className="flex items-center justify-between">
         <span className="section-title inline-flex items-center gap-2">
           <Radio className="h-3.5 w-3.5 text-teal-700" />
@@ -736,7 +645,7 @@ function SignalBay({
           Devices →
         </button>
       </div>
-      <div className="mt-3 space-y-2.5">
+      <div className="mt-2 space-y-2">
         {rows.map((r) => (
           <div key={r.label} className="flex items-center gap-2.5">
             <span className={`deck-led ${r.value > 0 ? r.led : "deck-led-slate"}`} />
@@ -766,7 +675,7 @@ function JobsPulse({ authorized, query, onOpen }: { authorized: boolean; query: 
   const summary = (query.data ?? {}) as AnyRecord;
   const total = Number(summary.totalJobsToday ?? 0);
   return (
-    <div className="deck-neumo shrink-0 p-4">
+    <div className="deck-neumo shrink-0 p-3">
       <div className="flex items-center justify-between">
         <span className="section-title inline-flex items-center gap-2">
           <Package className="h-3.5 w-3.5 text-teal-700" />
@@ -778,17 +687,17 @@ function JobsPulse({ authorized, query, onOpen }: { authorized: boolean; query: 
       </div>
 
       {query.isLoading && (
-        <div className="mt-3 space-y-2.5">
+        <div className="mt-2 space-y-2">
           {[...Array(3)].map((_, i) => <div key={i} className="skeleton h-3.5 w-full" />)}
         </div>
       )}
 
       {query.isError && (
-        <p className="mt-3 text-[11.5px] font-medium italic text-slate-400">Jobs service unreachable — pipeline hidden.</p>
+        <p className="mt-2 text-[11.5px] font-medium italic text-slate-400">Jobs service unreachable — pipeline hidden.</p>
       )}
 
       {!query.isLoading && !query.isError && (
-        <div className="mt-3 space-y-2">
+        <div className="mt-2 space-y-2">
           {PULSE_ROWS.map((row) => {
             const value = Number(summary[row.key] ?? 0);
             return (
@@ -816,9 +725,9 @@ function AlertsFeed({
   alerts: Array<{ id: string; title: string; severity: string; status: string; createdAt?: string }>;
   onOpen: () => void;
 }) {
-  if (!authorized) return <RoleUnavailablePanel icon={<BellRing className="h-3.5 w-3.5 text-slate-500" />} title="Open Alerts" tall />;
+  if (!authorized) return <RoleUnavailablePanel icon={<BellRing className="h-3.5 w-3.5 text-slate-500" />} title="Open Alerts" />;
   return (
-    <div className="deck-neumo flex min-h-[240px] flex-1 flex-col overflow-hidden p-4 xl:min-h-[190px]">
+    <section className="deck-neumo p-3">
       <div className="flex shrink-0 items-center justify-between">
         <span className="section-title inline-flex items-center gap-2">
           <BellRing className="h-3.5 w-3.5 text-teal-700" />
@@ -829,15 +738,15 @@ function AlertsFeed({
         </button>
       </div>
 
-      <div className="deck-inset mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto rounded-2xl p-2.5">
+      <div className="deck-inset mt-2 grid gap-2 rounded-xl p-2 md:grid-cols-2 xl:grid-cols-4">
         {query.isLoading && [...Array(3)].map((_, i) => <div key={i} className="skeleton h-11 w-full rounded-xl" />)}
 
         {query.isError && (
-          <p className="px-2 py-3 text-[11.5px] font-medium italic text-slate-400">Alerts service unreachable.</p>
+          <p className="px-2 py-3 text-[11.5px] font-medium italic text-slate-400 md:col-span-2 xl:col-span-4">Alerts service unreachable.</p>
         )}
 
         {!query.isLoading && !query.isError && alerts.length === 0 && (
-          <div className="flex items-center gap-2.5 px-2 py-3">
+          <div className="flex items-center gap-2.5 px-2 py-3 md:col-span-2 xl:col-span-4">
             <span className="deck-led deck-led-emerald" />
             <p className="text-[12px] font-semibold text-slate-500">No open alert records in the current result.</p>
           </div>
@@ -847,7 +756,7 @@ function AlertsFeed({
           const sev = a.severity.toLowerCase();
           const age = timeAgo(a.createdAt);
           return (
-            <button key={a.id} type="button" onClick={onOpen} className="deck-alert flex w-full items-center gap-2.5 px-3 py-2.5 text-left">
+            <button key={a.id} type="button" onClick={onOpen} className="deck-alert flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left">
               <span className={`deck-led shrink-0 ${SEVERITY_LED[sev] ?? "deck-led-sky"}`} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[12.5px] font-bold text-slate-800">{a.title}</span>
@@ -861,15 +770,15 @@ function AlertsFeed({
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }
 
-function RoleUnavailablePanel({ icon, title, tall = false }: { icon: React.ReactNode; title: string; tall?: boolean }) {
+function RoleUnavailablePanel({ icon, title }: { icon: React.ReactNode; title: string }) {
   return (
-    <div className={`deck-neumo shrink-0 p-4 ${tall ? "min-h-[190px]" : ""}`}>
+    <div className="deck-neumo shrink-0 p-3">
       <span className="section-title inline-flex items-center gap-2">{icon}{title}</span>
-      <p className="mt-3 text-[11.5px] font-medium text-slate-500">Not available for this role.</p>
+      <p className="mt-2 text-[11.5px] font-medium text-slate-500">Not available for this role.</p>
     </div>
   );
 }

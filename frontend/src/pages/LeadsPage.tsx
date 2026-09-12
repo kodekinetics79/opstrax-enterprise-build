@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
+import { requireCommercialModuleRecords } from "@/services/commercialModulePayload";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 const leadsApi = {
   list: () =>
-    unwrap<AnyRecord[]>(apiClient.get("/api/leads")).then((rows) =>
-      rows.map((r) => ({
+    unwrap<unknown>(apiClient.get("/api/leads")).then((payload) =>
+      requireCommercialModuleRecords(payload, "leads").map((r) => ({
         ...r,
         leadId: r.leadId ?? r.code ?? `LD-${String(r.id)}`,
         company: r.company ?? r.title ?? "",
@@ -150,7 +151,7 @@ export function LeadsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="page-stack min-w-0">
       {showCreate && <CreateLeadModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
 
       <div className="flex items-start justify-between gap-4 flex-wrap">

@@ -1,12 +1,12 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowRight, CheckCircle2, Download, Edit3, FileCheck2, Info, MapPin, Package, Plus,
-  Search, Send, Sparkles, Trash2, TriangleAlert, Truck, Upload, UserCheck, X,
+  ArrowRight, CheckCircle2, Download, Edit3, FileCheck2, Info, MoreHorizontal, Plus,
+  Search, Send, Trash2, TriangleAlert, Upload, UserCheck, X,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 import {
-  AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader,
+  AiInsightCard, DataTable, EmptyState, ErrorState, LoadingState, PageHeader,
   RiskBadge, StatusBadge, exportCsv, labelize,
 } from "@/components/ui";
 import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
@@ -263,15 +263,6 @@ export function JobsPage() {
   if (jobs.isLoading) return <LoadingState />;
   if (jobs.isError) return <ErrorState message={jobs.error instanceof Error ? jobs.error.message : "Unable to load jobs."} onRetry={() => void jobsPaged.refetch()} />;
 
-  const headline = [
-    { label: surface === "active-shipments" ? "Active Now" : surface === "shipments" ? "Shipment Rows" : "Jobs Today", value: surface === "active-shipments" ? rows.length : visibleSummary.totalJobsToday, icon: <Package className="h-4 w-4" /> },
-    { label: "SLA At Risk", value: visibleSummary.slaAtRisk, status: "Review", icon: <TriangleAlert className="h-4 w-4" /> },
-    { label: "Proof Pending", value: visibleSummary.proofPending, status: "Review", icon: <FileCheck2 className="h-4 w-4" /> },
-    { label: "On-Time ETA", value: visibleSummary.averageEtaAccuracy, icon: <MapPin className="h-4 w-4" /> },
-    { label: "Updates Sent", value: visibleSummary.customerUpdatesSent, icon: <Send className="h-4 w-4" /> },
-    { label: "Revenue Margin", value: visibleSummary.revenueMargin, icon: <Truck className="h-4 w-4" /> },
-  ];
-
   const slaRisk = Number(visibleSummary.slaAtRisk ?? 0);
   const proofPending = Number(visibleSummary.proofPending ?? 0);
   const unassigned = Number(visibleSummary.unassignedJobs ?? 0);
@@ -286,50 +277,30 @@ export function JobsPage() {
         description={surfaceConfig.description}
         actions={<>
           {canCreate ? <button type="button" className="btn-primary" onClick={() => setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button> : null}
-          {canImport ? <>
-            <input ref={importInput} className="sr-only" type="file" accept=".csv,text/csv" onChange={chooseImport} tabIndex={-1} aria-hidden="true" />
-            <button type="button" className="btn-ghost" disabled={previewImport.isPending} onClick={() => importInput.current?.click()}><Upload className="h-4 w-4" /> {previewImport.isPending ? "Validating..." : "Import CSV"}</button>
-          </> : null}
-          {canExport ? <button type="button" className="btn-ghost" onClick={exportRoster}><Download className="h-4 w-4" /> Export Roster</button> : null}
+          {canImport || canExport ? <details className="group relative">
+            <summary className="btn-ghost cursor-pointer list-none [&::-webkit-details-marker]:hidden"><MoreHorizontal className="h-4 w-4" /> More</summary>
+            <div className="panel absolute right-0 z-40 mt-2 flex min-w-48 flex-col gap-2 p-2 shadow-xl">
+              {canImport ? <>
+                <input ref={importInput} className="sr-only" type="file" accept=".csv,text/csv" onChange={chooseImport} tabIndex={-1} aria-hidden="true" />
+                <button type="button" className="btn-ghost justify-start" disabled={previewImport.isPending} onClick={() => importInput.current?.click()}><Upload className="h-4 w-4" /> {previewImport.isPending ? "Validating..." : "Import CSV"}</button>
+              </> : null}
+              {canExport ? <button type="button" className="btn-ghost justify-start" onClick={exportRoster}><Download className="h-4 w-4" /> Export Roster</button> : null}
+            </div>
+          </details> : null}
         </>}
       />
 
-      {/* Ops intelligence bar — derived from live data, one-click triage */}
-      <div className="anim-fade-up flex flex-col gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 p-4 text-white sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10"><Sparkles className="h-5 w-5 text-teal-300" /></span>
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-300">Live operations signal</p>
-            <p className="mt-0.5 text-sm font-medium text-slate-100">
-              {slaRisk + proofPending + unassigned === 0
-                ? surface === "active-shipments"
-                  ? "Active shipment execution is stable — no immediate SLA, proof, or assignment exceptions."
-                  : surface === "shipments"
-                    ? "Shipment lifecycle is stable end to end — no immediate SLA, proof, or assignment exceptions."
-                    : "All jobs on track — no SLA, proof, or assignment exceptions right now."
-                : [
-                    slaRisk > 0 ? `${slaRisk} at SLA risk` : null,
-                    unassigned > 0 ? `${unassigned} unassigned` : null,
-                    proofPending > 0 ? `${proofPending} awaiting proof` : null,
-                  ].filter(Boolean).join(" · ")}
-            </p>
-          </div>
-        </div>
-        {slaRisk > 0 && (
-          <button type="button" onClick={() => setStatus("SLA At Risk")} className="inline-flex items-center gap-1.5 self-start rounded-lg bg-teal-500 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-teal-400 sm:self-auto">
-            Triage at-risk jobs <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
+      <section className="panel flex flex-wrap items-center gap-x-5 gap-y-2 px-3 py-2" aria-label="Current shipment exceptions">
+        <p className="text-xs font-semibold text-slate-600"><strong className="text-sm text-slate-950">{rows.length}</strong> shown · {jobsTotal.toLocaleString()} total</p>
+        <button type="button" onClick={() => setStatus("SLA At Risk")} className={`text-xs font-bold ${slaRisk > 0 ? "text-amber-700" : "text-slate-500"}`}>{slaRisk} SLA risk</button>
+        <span className={`text-xs font-bold ${unassigned > 0 ? "text-amber-700" : "text-slate-500"}`}>{unassigned} unassigned</span>
+        <span className={`text-xs font-bold ${proofPending > 0 ? "text-amber-700" : "text-slate-500"}`}>{proofPending} proof pending</span>
+        <span className="ml-auto text-[11px] text-slate-500">On-time ETA {String(visibleSummary.averageEtaAccuracy ?? "—")}</span>
+      </section>
 
-      {/* Headline KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        {headline.map((k) => <KpiCard key={k.label} label={k.label} value={String(k.value ?? "0")} status={k.status} />)}
-      </div>
-
-      {/* Lifecycle pipeline — clickable status filter with live counts */}
-      <div className="panel p-2">
-        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 lg:grid-cols-8">
+      {/* Lifecycle and filters share one register toolbar so records start above the fold. */}
+      <div className="panel p-3">
+        <div className="flex gap-1.5 overflow-x-auto pb-2" aria-label="Shipment lifecycle filter">
           <PipelineChip label="All" count={String(visibleSummary.total ?? scopedRows.length)} active={status === "All"} onClick={() => setStatus("All")} />
           {PIPELINE.map((stage) => (
             <PipelineChip
@@ -342,29 +313,26 @@ export function JobsPage() {
             />
           ))}
         </div>
-      </div>
-
-      {/* Toolbar */}
-      <div className="panel flex flex-col gap-3 p-3.5 lg:flex-row lg:items-center">
-        <div className="relative flex-1 lg:max-w-md">
+        <div className="flex flex-col gap-2 border-t border-slate-100 pt-2 lg:flex-row lg:items-center">
+          <div className="relative flex-1 lg:max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input className="field h-10 pl-9" aria-label="Search shipments" value={query} onChange={(e) => { setQuery(e.target.value); setJobsOffset(0); }} placeholder="Search jobs, customers, drivers, addresses..." />
-        </div>
-        <select className="field h-10 lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
+            <input className="field pl-9" aria-label="Search shipments" value={query} onChange={(e) => { setQuery(e.target.value); setJobsOffset(0); }} placeholder="Search jobs, customers, drivers, addresses..." />
+          </div>
+          <select className="field lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
           <option value="All">All priorities</option><option>Low</option><option>Normal</option><option>High</option><option>Critical</option>
-        </select>
-        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500">{rows.length} shown · {jobsTotal.toLocaleString()} total</span>
-        {jobsTotal > JOBS_PAGE_SIZE && (
-          <span className="ml-auto flex items-center gap-2 text-xs text-slate-500">
-            <button type="button" disabled={jobsOffset === 0 || jobsPaged.isFetching}
-              onClick={() => setJobsOffset(Math.max(0, jobsOffset - JOBS_PAGE_SIZE))}
-              className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">← Prev</button>
-            <span>Page {Math.floor(jobsOffset / JOBS_PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(jobsTotal / JOBS_PAGE_SIZE))}</span>
-            <button type="button" disabled={jobsOffset + JOBS_PAGE_SIZE >= jobsTotal || jobsPaged.isFetching}
-              onClick={() => setJobsOffset(jobsOffset + JOBS_PAGE_SIZE)}
-              className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">Next →</button>
-          </span>
-        )}
+          </select>
+          {jobsTotal > JOBS_PAGE_SIZE && (
+            <span className="ml-auto flex items-center gap-2 text-xs text-slate-500">
+              <button type="button" disabled={jobsOffset === 0 || jobsPaged.isFetching}
+                onClick={() => setJobsOffset(Math.max(0, jobsOffset - JOBS_PAGE_SIZE))}
+                className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">← Prev</button>
+              <span>Page {Math.floor(jobsOffset / JOBS_PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(jobsTotal / JOBS_PAGE_SIZE))}</span>
+              <button type="button" disabled={jobsOffset + JOBS_PAGE_SIZE >= jobsTotal || jobsPaged.isFetching}
+                onClick={() => setJobsOffset(jobsOffset + JOBS_PAGE_SIZE)}
+                className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">Next →</button>
+            </span>
+          )}
+        </div>
       </div>
 
       {rows.length ? (
@@ -431,10 +399,10 @@ function PipelineChip({ label, count, active, tone = "default", onClick }: { lab
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${active ? "border-teal-300 bg-teal-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}
+      className={`flex shrink-0 items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition ${active ? "border-teal-300 bg-teal-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}
     >
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
-      <span className={`mt-0.5 text-xl font-bold tabular-nums ${active ? "text-teal-700" : accent}`}>{count}</span>
+      <span className="text-[11px] font-semibold text-slate-500">{label}</span>
+      <span className={`text-xs font-bold tabular-nums ${active ? "text-teal-700" : accent}`}>{count}</span>
     </button>
   );
 }

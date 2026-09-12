@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Npgsql;
+using NpgsqlTypes;
 using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
@@ -270,8 +271,12 @@ public sealed class BillingConsolidationService(Database db)
             @"SELECT * FROM billing_consolidation_runs
               WHERE company_id=@c AND (@cust IS NULL OR customer_id=@cust) AND (@status IS NULL OR status=@status)
               ORDER BY created_at DESC, id DESC LIMIT 500",
-            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@cust", (object?)customerId ?? DBNull.Value);
-                   c.Parameters.AddWithValue("@status", (object?)status ?? DBNull.Value); }, ct);
+            c =>
+            {
+                c.Parameters.AddWithValue("@c", companyId);
+                c.Parameters.Add("@cust", NpgsqlDbType.Bigint).Value = (object?)customerId ?? DBNull.Value;
+                c.Parameters.Add("@status", NpgsqlDbType.Text).Value = (object?)status ?? DBNull.Value;
+            }, ct);
 
     public async Task<Dictionary<string, object?>?> GetRunAsync(long companyId, long runId, CancellationToken ct = default)
         => await db.QuerySingleAsync("SELECT * FROM billing_consolidation_runs WHERE company_id=@c AND id=@id",

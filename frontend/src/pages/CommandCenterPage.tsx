@@ -42,6 +42,17 @@ const FLEET_CFG = [
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+function exceptionActionRoute(exception: AnyRecord) {
+  const route = String(exception.actionRoute ?? "/alerts");
+  if (route !== "/active-shipments") return route;
+  const jobId = String(exception.jobId ?? "").trim();
+  if (jobId) return `${route}?jobId=${encodeURIComponent(jobId)}`;
+  const context = [exception.shipmentNumber, exception.vehicle, exception.driver]
+    .map((value) => String(value ?? "").trim())
+    .find(Boolean);
+  return context ? `${route}?search=${encodeURIComponent(context)}` : route;
+}
+
 /* Three-state doctrine for every metric line:
    measured value (incl. 0) → the number; absent → "—" + a named reason. Fetch
    failures are handled at column level. Never a default number. */
@@ -154,8 +165,8 @@ export function CommandCenterPage() {
         </div>
       </header>
 
-      {/* ── Hero KPI strip ─────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      {/* Compact operating metrics keep the exception queue in the first viewport. */}
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-5" aria-label="Operations summary">
         {kpis.slice(0, 5).map((kpi, i) => {
           const label = String(kpi.label ?? "");
           const raw = kpi.valueText ?? kpi.value;
@@ -164,28 +175,29 @@ export function CommandCenterPage() {
           const status = String(kpi.status ?? "");
           const attention = /attention|review|risk|critical|warn/i.test(status) && numeric > 0;
           const onboarding = vehiclesTileEmpty(label) && measured && numeric === 0;
+          const detail = onboarding ? "Add first vehicle" : measured ? status : "Not measured";
           return (
             <button key={label || i} type="button" onClick={() => navigate(KPI_ROUTES[i] ?? "/jobs")}
-              className="min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-slate-300">
+              className="min-h-11 min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left shadow-sm transition hover:border-teal-300 focus:outline-none focus:ring-2 focus:ring-teal-400 focus:ring-offset-2">
               <div className="flex items-center justify-between gap-2">
-                <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+                <p className="truncate text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">{label}</p>
                 {measured && status && attention && (
                   <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">{status}</span>
                 )}
               </div>
-              <p className={`mt-1.5 text-2xl font-bold leading-none tracking-tight tabular-nums ${measured ? "text-slate-900" : "text-slate-900/60"}`}>
-                {measured ? String(raw) : "—"}
-              </p>
-              <p className="mt-1 truncate text-[11px] font-medium text-slate-400">
-                {onboarding ? "Add your first vehicle →" : measured ? " " : "Not yet measured"}
-              </p>
+              <div className="mt-1 flex min-w-0 items-baseline justify-between gap-2">
+                <p className={`shrink-0 text-lg font-bold leading-none tracking-tight tabular-nums ${measured ? "text-slate-900" : "text-slate-900/60"}`}>
+                  {measured ? String(raw) : "—"}
+                </p>
+                <p className="min-w-0 truncate text-[10px] font-medium text-slate-400">{detail}</p>
+              </div>
             </button>
           );
         })}
       </div>
 
       {/* ── Triage grid: queue → actions → capacity ────────── */}
-      <div className="grid items-stretch gap-3 xl:grid-cols-[1.6fr_1fr_0.9fr]">
+      <div className="grid items-start gap-3 xl:grid-cols-[1.6fr_1fr_0.9fr]">
         {/* Current Exception Queue — the decision layer */}
         <section className="flex min-w-0 max-h-[420px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5">
@@ -223,7 +235,7 @@ export function CommandCenterPage() {
                         {entity || "Unassigned"}<span className="text-slate-300"> · </span>{String(exc.timestamp ?? exc.time ?? "")}
                       </p>
                     </div>
-                    <button type="button" onClick={() => navigate(String(exc.actionRoute ?? "/alerts"))}
+                    <button type="button" onClick={() => navigate(exceptionActionRoute(exc))}
                       className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-teal-300 hover:text-teal-700">
                       {String(exc.actionLabel ?? "View")}
                     </button>
@@ -235,7 +247,7 @@ export function CommandCenterPage() {
         </section>
 
         {/* Priority Actions + operational notes */}
-        <section className="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section className="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           <p className="flex items-center gap-1.5 text-sm font-bold text-slate-900"><Wrench className="h-3.5 w-3.5 text-slate-400" /> Priority Actions</p>
           {priorityActions.length === 0 ? (
             <p className="mt-3 text-xs leading-relaxed text-slate-400">
@@ -272,7 +284,7 @@ export function CommandCenterPage() {
         </section>
 
         {/* Fleet Snapshot — response capacity */}
-        <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           <div className="flex items-center justify-between gap-2">
             <p className="flex items-center gap-1.5 text-sm font-bold text-slate-900"><Truck className="h-3.5 w-3.5 text-slate-400" /> Fleet Snapshot</p>
             <span className="text-[11px] font-semibold text-slate-400 tabular-nums">{fleetTotal == null ? "— units" : `${fleetTotal} unit${fleetTotal === 1 ? "" : "s"}`}</span>

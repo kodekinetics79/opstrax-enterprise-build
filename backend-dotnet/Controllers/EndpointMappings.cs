@@ -2298,10 +2298,11 @@ public static partial class EndpointMappings
         // module_records CRUD so it renders + supports create/edit (full quote→contract
         // conversion is a separate roadmap feature).
         MapDedicatedModule(app, "quotations");
-        // CRM: the Leads + Opportunities pages call /api/leads + /api/opportunities; back
+        // CRM: the register pages call /api/leads, /api/opportunities and /api/campaigns; back
         // them with the tenant-scoped module_records CRUD (LoadModule scopes by company_id).
         MapDedicatedModule(app, "leads");
         MapDedicatedModule(app, "opportunities");
+        MapDedicatedModule(app, "campaigns");
         MapDedicatedModule(app, "settings");
         MapDedicatedModule(app, "billing");
         MapDedicatedModule(app, "companies");
@@ -4353,6 +4354,7 @@ public static partial class EndpointMappings
             @"WITH ex AS (
                 -- one row per delayed/at-risk vehicle (most urgent state wins)
                 SELECT DISTINCT ON (COALESCE(v.vehicle_code, j.job_code))
+                       j.id job_id, COALESCE(j.job_number,j.job_code) shipment_number,
                        CASE WHEN j.status='Delayed' THEN 'Critical' ELSE 'Warning' END severity,
                        v.vehicle_code vehicle, d.full_name driver,
                        CASE WHEN j.status='Delayed' THEN 'Shipment delayed' ELSE 'SLA at risk' END event,
@@ -4367,7 +4369,8 @@ public static partial class EndpointMappings
                          CASE WHEN j.status='Delayed' THEN 0 ELSE 1 END,
                          COALESCE(j.updated_at, j.created_at) DESC
               ), ev AS (
-                SELECT CASE WHEN v.out_of_service THEN 'Critical' ELSE 'Warning' END severity,
+                SELECT NULL::bigint job_id, NULL::text shipment_number,
+                       CASE WHEN v.out_of_service THEN 'Critical' ELSE 'Warning' END severity,
                        v.vehicle_code vehicle, d.full_name driver,
                        CASE WHEN v.out_of_service THEN 'Vehicle out of service' ELSE 'In maintenance' END event,
                        '/work-orders' action_route, 'Create WO' action_label, v.created_at ts, 1 ord
@@ -4375,7 +4378,8 @@ public static partial class EndpointMappings
                 WHERE v.company_id=@cid AND v.deleted_at IS NULL AND (v.out_of_service OR v.status='Maintenance')
                   AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
               ), sf AS (
-                SELECT CASE WHEN se.severity='Critical' THEN 'Critical' ELSE 'Warning' END severity,
+                SELECT NULL::bigint job_id, NULL::text shipment_number,
+                       CASE WHEN se.severity='Critical' THEN 'Critical' ELSE 'Warning' END severity,
                        v.vehicle_code vehicle, d.full_name driver, COALESCE(NULLIF(se.event_type,''),'Safety event') event,
                        '/incidents' action_route, 'Review' action_label,
                        COALESCE(se.occurred_at, se.event_time, se.created_at) ts, 2 ord
@@ -4389,7 +4393,7 @@ public static partial class EndpointMappings
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY ord ORDER BY ts DESC) rn
                 FROM (SELECT * FROM ex UNION ALL SELECT * FROM ev UNION ALL SELECT * FROM sf) u
               )
-              SELECT severity, vehicle, driver, event, action_route, action_label, ts
+              SELECT job_id, shipment_number, severity, vehicle, driver, event, action_route, action_label, ts
               FROM ranked WHERE rn <= 5
               ORDER BY ARRAY_POSITION(ARRAY['Critical','Warning','Info'], severity), ord, ts DESC
               LIMIT 12", Bind, ct);
@@ -4407,6 +4411,8 @@ public static partial class EndpointMappings
 
         var exceptions = exRows.Select(r => new
         {
+            jobId       = r.GetValueOrDefault("jobId"),
+            shipmentNumber = r.GetValueOrDefault("shipmentNumber"),
             severity    = r.GetValueOrDefault("severity"),
             vehicle     = r.GetValueOrDefault("vehicle"),
             driver      = r.GetValueOrDefault("driver"),
@@ -11629,6 +11635,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         ["quotations"] = "customers:view",
         ["leads"] = "customers:view",
         ["opportunities"] = "customers:view",
+        ["campaigns"] = "customers:view",
         ["settings"] = "settings:view",
         ["billing"] = "billing:view",
         ["companies"] = "users:view",
@@ -11657,6 +11664,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         ["quotations"] = "customers:update",
         ["leads"] = "customers:update",
         ["opportunities"] = "customers:update",
+        ["campaigns"] = "customers:update",
         ["white-label"] = "settings:update",
     };
 

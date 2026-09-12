@@ -230,7 +230,7 @@ export function AuditLogsPage() {
   const maxModule = stats.topModules.length ? stats.topModules[0][1] : 0;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack min-w-0">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -268,28 +268,28 @@ export function AuditLogsPage() {
 
       {/* KPI row — all values computed from data already in scope. "—" means the
           measurement is unavailable (loading or failed), never a measured zero. */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiCard
+      <div className="panel flex flex-wrap divide-x divide-slate-200 overflow-hidden">
+        <KpiCard compact
           label="Total Events"
           value={logsUnavailable || logsLoading ? "—" : stats.total.toLocaleString()}
           trend={logsUnavailable ? "Audit trail unavailable" : logsLoading ? "Loading…" : `${stats.modules} module${stats.modules === 1 ? "" : "s"} active`}
           icon={<Activity className="h-5 w-5" />}
         />
-        <KpiCard
+        <KpiCard compact
           label="Critical & High"
           value={logsUnavailable || logsLoading ? "—" : stats.criticalHigh.toLocaleString()}
           status={!logsUnavailable && !logsLoading && stats.criticalHigh > 0 ? "Critical" : undefined}
           trend={logsUnavailable ? "Audit trail unavailable" : logsLoading ? "Loading…" : stats.criticalHigh > 0 ? `${stats.sevCounts.Critical ?? 0} critical` : "No high-severity events"}
           icon={<Shield className="h-5 w-5" />}
         />
-        <KpiCard
+        <KpiCard compact
           label="Export Requests"
           value={exportsUnknown ? "—" : stats.exportsTotal.toLocaleString()}
           status={!exportsUnknown && stats.pendingExports > 0 ? "Pending" : undefined}
           trend={exportsUnavailable ? "Export list unavailable" : exportsLoading ? "Loading…" : stats.pendingExports > 0 ? `${stats.pendingExports} in progress` : "All resolved"}
           icon={<FileDown className="h-5 w-5" />}
         />
-        <KpiCard
+        <KpiCard compact
           label="Distinct Actors"
           value={logsUnavailable || logsLoading ? "—" : stats.actors.toLocaleString()}
           trend={logsUnavailable ? "Audit trail unavailable" : logsLoading ? "Loading…" : `${stats.modules} module${stats.modules === 1 ? "" : "s"} touched`}
@@ -326,12 +326,12 @@ export function AuditLogsPage() {
             </div>
             <div className="flex items-center gap-1.5">
               <Filter className="h-3.5 w-3.5 text-slate-500" />
-              <select className="field text-sm" value={filterModule} onChange={(e) => setFilterModule(e.target.value)}>
+              <select aria-label="Filter audit module" className="field text-sm sm:w-40" value={filterModule} onChange={(e) => setFilterModule(e.target.value)}>
                 <option value="">All modules</option>
                 {MODULE_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
-            <select className="field text-sm" value={filterSev} onChange={(e) => setFilterSev(e.target.value)}>
+            <select aria-label="Filter audit severity" className="field w-full text-sm sm:w-40" value={filterSev} onChange={(e) => setFilterSev(e.target.value)}>
               <option value="">All severities</option>
               {SEVERITY_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>

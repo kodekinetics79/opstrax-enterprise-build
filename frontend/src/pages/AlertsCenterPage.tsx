@@ -2,20 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import {
-  AlertTriangle,
-  ArrowRight,
-  BadgeCheck,
   Clock3,
   RefreshCw,
   Search,
-  ShieldAlert,
-  Wrench,
   X,
 } from "lucide-react";
 import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
-import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, exportCsv, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type Alert = {
@@ -260,35 +255,35 @@ function AlertCard({
 }) {
   return (
     <article
-      className={`rounded-[22px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,.07)] transition hover:-translate-y-0.5 hover:shadow-[0_16px_34px_rgba(15,23,42,.10)] ${active ? "border-sky-300 bg-[linear-gradient(180deg,rgba(248,252,255,.98),rgba(235,243,255,.94))]" : `bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] ${severityTone(alert.severity)}`}`}
+      className={`rounded-xl border p-3 shadow-sm transition hover:border-sky-300 hover:shadow-md ${active ? "border-sky-300 bg-sky-50/70" : severityTone(alert.severity)}`}
     >
       <button type="button" onClick={onSelect} className="w-full text-left">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge status={alert.severity} />
-              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(alert.status)}`}>{alert.status}</span>
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statusClass(alert.status)}`}>{alert.status}</span>
             </div>
-            <h3 className="mt-3 text-sm font-semibold text-slate-900">{alert.title}</h3>
+            <h3 className="mt-2 text-sm font-semibold text-slate-900">{alert.title}</h3>
           </div>
           <span className="text-xs font-semibold text-slate-400">{alert.age ?? "Age unavailable"}</span>
         </div>
-        <p className="mt-2 text-sm text-slate-600">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
-        <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
+        <p className="mt-1.5 text-sm text-slate-600">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
+        <p className="mt-1.5 line-clamp-2 text-sm leading-5 text-slate-500">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
       </button>
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-black/5 pt-3">
+      <div className="mt-3 flex flex-wrap gap-2 border-t border-black/5 pt-2">
         {canAcknowledge && /open/i.test(alert.status) && (
-          <button type="button" className="btn-ghost h-9 border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" onClick={() => onAction("acknowledge", alert)}>
+          <button type="button" className="btn-ghost btn-compact border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" onClick={() => onAction("acknowledge", alert)}>
             Acknowledge
           </button>
         )}
         {canAcknowledge && (
-          <button type="button" className="btn-ghost h-9 border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100" onClick={() => onAction("task", alert)}>
+          <button type="button" className="btn-ghost btn-compact border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100" onClick={() => onAction("task", alert)}>
             Create task
           </button>
         )}
         {canClose && !/closed/i.test(alert.status) && (
-          <button type="button" className="btn-ghost h-9" onClick={() => onAction("close", alert)}>
+          <button type="button" className="btn-ghost btn-compact" onClick={() => onAction("close", alert)}>
             Close
           </button>
         )}
@@ -549,11 +544,7 @@ export function AlertsCenterPage() {
   const unownedOpen = alerts.filter((alert) => /open/i.test(alert.status) && !alert.acknowledgedBy).length;
   const criticalUnresolved = alerts.filter((alert) => !/closed/i.test(alert.status) && alert.severity === "Critical").length;
   const highUnresolved = alerts.filter((alert) => !/closed/i.test(alert.status) && alert.severity === "High").length;
-  const categoryBuckets = CATEGORIES.filter((category) => category !== "All").map((category) => ({
-    category,
-    count: alerts.filter((alert) => alert.category === category && !/closed/i.test(alert.status)).length,
-    route: routeForCategory(category),
-  })).filter((row) => row.count > 0).sort((a, b) => b.count - a.count);
+  const hasActiveFilters = categoryFilter !== "All" || statusFilter !== "All" || severityFilter !== "All" || search.trim().length > 0;
   const detailRecord = normalizeAlertDetail(detailQuery.data as AnyRecord | undefined);
   const liveDetail = detailRecord.alert;
 
@@ -590,7 +581,7 @@ export function AlertsCenterPage() {
   }
 
   return (
-    <div className="control-tower space-y-4 pb-8">
+    <div className="control-tower page-stack pb-4">
       {toastMsg ? (
         <div className="fixed right-4 top-4 z-50 rounded-2xl border border-emerald-500/20 bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-2xl shadow-emerald-900/20">
           {toastMsg}
@@ -620,143 +611,66 @@ export function AlertsCenterPage() {
         }
       />
 
-      <section className="panel p-4" aria-label="Alert queue summary">
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <MiniStat label="Unresolved queue" value={unresolvedCount} sublabel={`${criticalUnresolved} critical / ${highUnresolved} high`} />
-          <MiniStat label="Aging unresolved" value={agingUnresolved} sublabel="24h+ and not closed" />
-          <MiniStat label="Awaiting acknowledgement" value={unownedOpen} sublabel="Open and unowned" />
-          <MiniStat label="Resolved" value={summary.closed} sublabel={`${summary.total || alerts.length} records in scope`} />
-        </div>
+      <section className="panel p-3" aria-label="Alert queue summary and filters">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,.8fr)] xl:items-center">
+          <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Alert queue summary">
+            <CompactMetric label="Unresolved" value={unresolvedCount} detail={`${criticalUnresolved} critical · ${highUnresolved} high`} tone={criticalUnresolved > 0 ? "danger" : "neutral"} />
+            <CompactMetric label="Aging unresolved" value={agingUnresolved} detail="24h+ and not closed" tone={agingUnresolved > 0 ? "warning" : "neutral"} />
+            <CompactMetric label="Unowned" value={unownedOpen} detail="Awaiting acknowledgement" tone={unownedOpen > 0 ? "info" : "neutral"} />
+            <CompactMetric label="Resolved" value={summary.closed} detail={`${summary.total || alerts.length} total`} tone="success" />
+          </dl>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-700">Current backend records</span>
-          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">Auto refresh 15s</span>
-          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">Persisted records only</span>
-        </div>
-
-        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_0.85fr]">
-          <div>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">Current categories</h2>
-                <p className="text-xs text-slate-500">Built from the current authorized telemetry alert records.</p>
-              </div>
-              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                {filtered.length} visible
-              </span>
-            </div>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-              {categoryBuckets.slice(0, 4).map((bucket) => (
-                <button
-                  key={bucket.category}
-                  type="button"
-                  onClick={() => navigate(bucket.route)}
-                  className="rounded-2xl border border-slate-200 bg-white p-2.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{bucket.category}</p>
-                    <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
-                  </div>
-                  <p className="mt-1.5 text-xl font-black tracking-tight text-slate-900">{bucket.count}</p>
-                  <p className="mt-0.5 text-[11px] text-slate-500">Open alert{bucket.count === 1 ? "" : "s"}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_8px_18px_rgba(15,23,42,.05)]">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">Queue health</h2>
-                <p className="text-xs text-slate-500">Recorded queue pressure in the current authorized scope.</p>
-              </div>
-              <ShieldAlert className="h-4 w-4 text-sky-500" />
-            </div>
-            <div className="mt-2 space-y-2.5">
-              <HealthLine label="Critical unresolved" value={criticalUnresolved} total={Math.max(unresolvedCount, 1)} tone="red" />
-              <HealthLine label="Aging 24h+" value={agingUnresolved} total={Math.max(unresolvedCount, 1)} tone="amber" />
-              <HealthLine label="Unowned" value={unownedOpen} total={Math.max(unresolvedCount, 1)} tone="sky" />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="panel p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Workspace controls</h2>
-            <p className="text-sm text-slate-500">Compact filters for a dense queue view.</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <div className="relative w-full min-w-[16rem] sm:w-[20rem]">
+          <div className="relative min-w-0">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 type="search"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search alerts, entities, categories…"
-                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
+                className="field w-full pl-9"
               />
-            </div>
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2" role="group" aria-label="Alert categories">
-          <span className="mr-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Category</span>
-          <button type="button" aria-pressed={categoryFilter === "All"} className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition ${categoryFilter === "All" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600"}`} onClick={() => setCategoryFilter("All")}>
-            All lanes
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+          <label className="min-w-0">
+            <span className="sr-only">Filter alerts by category</span>
+            <select aria-label="Alert categories" className="field min-w-36" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as (typeof CATEGORIES)[number])}>
+              {CATEGORIES.map((category) => <option key={category} value={category}>{category === "All" ? "All categories" : category}</option>)}
+            </select>
+          </label>
+          <label className="min-w-0">
+            <span className="sr-only">Filter alerts by severity</span>
+            <select aria-label="Alert severity" className="field min-w-32" value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value as (typeof SEVERITY_FILTERS)[number])}>
+              {SEVERITY_FILTERS.map((severity) => <option key={severity} value={severity}>{severity === "All" ? "All severities" : severity}</option>)}
+            </select>
+          </label>
+          <label className="min-w-0">
+            <span className="sr-only">Filter alerts by status</span>
+            <select aria-label="Alert status" className="field min-w-36" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as (typeof STATUS_FILTERS)[number])}>
+              {STATUS_FILTERS.map((status) => <option key={status} value={status}>{status === "All" ? "All statuses" : status}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            aria-pressed={statusFilter === "Open"}
+            className={`${statusFilter === "Open" ? "btn-primary" : "btn-ghost"} btn-compact`}
+            onClick={() => setStatusFilter((current) => current === "Open" ? "All" : "Open")}
+          >
+            Open only
           </button>
-          {CATEGORIES.filter((category) => category !== "All").map((category) => (
-            <button
-              key={category}
-              type="button"
-              aria-pressed={categoryFilter === category}
-              onClick={() => setCategoryFilter(category)}
-              className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
-                categoryFilter === category ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
-              }`}
-            >
-              {category}
+          {hasActiveFilters ? (
+            <button type="button" className="btn-ghost btn-compact" onClick={() => { setCategoryFilter("All"); setSeverityFilter("All"); setStatusFilter("All"); setSearch(""); }}>
+              Clear filters
             </button>
-          ))}
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-2" role="group" aria-label="Alert severity">
-          <span className="mr-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Severity</span>
-          {SEVERITY_FILTERS.map((severity) => (
-            <button
-              key={severity}
-              type="button"
-              aria-pressed={severityFilter === severity}
-              onClick={() => setSeverityFilter(severity)}
-              className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
-                severityFilter === severity ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
-              }`}
-            >
-              {severity}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-2" role="group" aria-label="Alert status">
-          <span className="mr-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Status</span>
-          {STATUS_FILTERS.map((status) => (
-            <button
-              key={status}
-              type="button"
-              aria-pressed={statusFilter === status}
-              onClick={() => setStatusFilter(status)}
-              className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
-                statusFilter === status ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
-              }`}
-            >
-              {status}
-            </button>
-          ))}
+          ) : null}
+          <span className="ml-auto text-xs font-medium text-slate-500" role="status" aria-live="polite">
+            <strong className="font-semibold text-slate-700">{filtered.length}</strong> visible · persisted records · auto refresh 15s
+          </span>
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
+      <div className="grid gap-3 xl:grid-cols-[1.35fr_0.95fr]">
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
           {filtered.length ? filtered.map((alert) => (
             <AlertCard
@@ -808,44 +722,32 @@ export function AlertsCenterPage() {
   );
 }
 
-function GuidanceCard({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_10px_24px_rgba(15,23,42,.05)]">
-      <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-50 text-sky-600 shadow-sm">{icon}</div>
-        <p className="text-sm font-semibold text-slate-900">{title}</p>
-      </div>
-      <p className="mt-3 text-sm text-slate-500">{body}</p>
-    </div>
-  );
-}
-
-function MiniStat({ label, value, sublabel }: { label: string; value: number | string; sublabel: string }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,.85),0_8px_20px_rgba(15,23,42,.06)]">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-black tracking-tight text-slate-900">{value}</p>
-      <p className="mt-1 text-xs font-medium text-slate-500">{sublabel}</p>
-    </div>
-  );
-}
-
-function HealthLine({ label, value, total, tone }: { label: string; value: number; total: number; tone: "red" | "amber" | "sky" }) {
-  const pct = Math.min(100, Math.round((value / total) * 100));
-  const toneClass =
-    tone === "red" ? "bg-red-500" :
-    tone === "amber" ? "bg-amber-500" :
-    "bg-sky-500";
+function CompactMetric({
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  label: string;
+  value: number | string;
+  detail: string;
+  tone: "danger" | "warning" | "info" | "success" | "neutral";
+}) {
+  const toneClass = {
+    danger: "border-red-200 bg-red-50/70 text-red-700",
+    warning: "border-amber-200 bg-amber-50/70 text-amber-700",
+    info: "border-sky-200 bg-sky-50/70 text-sky-700",
+    success: "border-emerald-200 bg-emerald-50/70 text-emerald-700",
+    neutral: "border-slate-200 bg-slate-50/70 text-slate-700",
+  }[tone];
 
   return (
-    <div>
-      <div className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-600">
-        <span>{label}</span>
-        <span>{value}</span>
-      </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-        <div className={`h-full rounded-full ${toneClass}`} style={{ width: `${pct}%` }} />
-      </div>
+    <div className={`min-w-0 rounded-xl border px-3 py-2 ${toneClass}`}>
+      <dt className="text-[10px] font-bold uppercase tracking-[0.12em] opacity-75">{label}</dt>
+      <dd className="mt-0.5 flex min-w-0 items-baseline gap-2">
+        <strong className="text-lg font-bold leading-none tabular-nums">{value}</strong>
+        <span className="min-w-0 truncate text-[11px] font-medium opacity-75" title={detail}>{detail}</span>
+      </dd>
     </div>
   );
 }

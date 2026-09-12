@@ -234,7 +234,7 @@ export function DigitalFormsPage() {
   if (templatesQ.isLoading) return <LoadingState />;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="page-stack min-w-0">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Digital Forms</h1>
@@ -249,10 +249,10 @@ export function DigitalFormsPage() {
         {[
           { label: "Active Forms",      val: activeTemplates.length },
           { label: "Submissions (30d)", val: submissions.length,    accent: "text-teal-600" },
-          { label: "Compliance Rate",   val: `${complianceRate}%`,  accent: complianceRate >= 90 ? "text-teal-600" : "text-amber-600" },
+          { label: "Compliance Rate",   val: submissions.length ? `${complianceRate}%` : "—",  accent: complianceRate >= 90 ? "text-teal-600" : "text-amber-600" },
           { label: "Defects Found",     val: defects,               accent: defects > 0 ? "text-red-600" : "text-teal-600" },
         ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-28">
+          <div key={label} className="panel flex flex-col gap-1 min-w-28 px-3 py-2">
             <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{val}</span>
             <span className="text-xs text-slate-500 font-medium">{label}</span>
           </div>
@@ -280,6 +280,7 @@ export function DigitalFormsPage() {
                 }`}>{c}</button>
             ))}
           </div>
+          {filteredTemplates.length === 0 && <EmptyState title="No forms available" subtitle="No active templates match this category. Choose another category or ask your administrator to configure a template." />}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredTemplates.map((tmpl) => (
               <div key={String(tmpl.formKey)} className={`panel flex flex-col gap-3 ${!tmpl.active ? "opacity-60" : ""}`}>

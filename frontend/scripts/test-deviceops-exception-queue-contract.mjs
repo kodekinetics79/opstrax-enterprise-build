@@ -26,8 +26,9 @@ test("missing assessment fields cannot become a healthy result", () => {
   assert.match(service, /projectedDeviceOpsGapCount === derivedDeviceOpsGaps\.length/);
   assert.match(service, /Assessment unavailable/);
   assert.match(service, /readinessGaps:[\s\S]*\? null/);
-  assert.match(page, /readinessGapCount == null \? "Pending"/);
-  assert.match(page, /readinessGapCount \? "Watch" : "Healthy"/);
+  assert.match(page, /value: readinessGapCount \?\? "Unknown"/);
+  assert.match(page, /readinessGapCount == null \? "text-slate-500"/);
+  assert.match(page, /readinessGapCount \? "text-amber-700" : "text-emerald-700"/);
 });
 
 test("software queue never becomes certification evidence", () => {

@@ -278,30 +278,11 @@ function InvoicesTab() {
   return (
     <div className="flex flex-col gap-4">
       {notice && <div className={`rounded-lg border p-3 text-sm ${notice.kind === "error" ? "border-red-300 bg-red-50 text-red-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</div>}
-      <div className="flex flex-wrap gap-3">
-        <KpiCard label="Total Invoices" value={rows.length} />
-        {outstandingBalances.map(({ currency, total }) => <KpiCard key={`outstanding-${currency}`} label={`Outstanding (${currency})`} value={money(total, currency)} status="Review" />)}
-        <KpiCard label="Overdue" value={overdue} status={overdue > 0 ? "Overdue" : undefined} />
-        <KpiCard label="Paid" value={paidCount} />
-        {totalValues.map(({ currency, total }) => <KpiCard key={`total-${currency}`} label={`Total Value (${currency})`} value={money(total, currency)} />)}
-      </div>
-      <div className="panel grid gap-3 md:grid-cols-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">AR posture</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">
-            {overdue > 0 ? `${overdue} overdue invoice${overdue === 1 ? "" : "s"}` : "No overdue invoices in the recorded ledger"}
-          </p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Recorded collection status</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">
-            {paidCount > 0 ? `${paidCount} invoice${paidCount === 1 ? "" : "s"} fully collected` : "No invoices collected yet"}
-          </p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Persisted source</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Calculated from tenant-scoped issued invoice records.</p>
-        </div>
+      <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Invoice summary">
+        <KpiCard compact label="Total invoices" value={rows.length} />
+        <KpiCard compact label="Overdue" value={overdue} status={overdue > 0 ? "Overdue" : "No recorded overdue invoices"} />
+        <KpiCard compact label="Paid" value={paidCount} />
+        {outstandingBalances.map(({ currency, total }) => <KpiCard compact key={`outstanding-${currency}`} label={`Outstanding (${currency})`} value={money(total, currency)} status="Review" />)}
       </div>
       {canReadDrafts && (
         <section className="panel overflow-hidden p-0" aria-labelledby="invoice-drafts-title">
@@ -358,6 +339,19 @@ function InvoicesTab() {
           })}</div>
         </section>
       )}
+      <details className="panel p-3">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-700">Issued value totals and invoice evidence</summary>
+        <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+          <div className="panel flex flex-wrap divide-x divide-slate-100">
+            {totalValues.map(({ currency, total }) => <KpiCard compact key={`total-${currency}`} label={`Total value (${currency})`} value={money(total, currency)} />)}
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">AR posture</p><p className="mt-1 text-sm font-semibold text-slate-900">{overdue > 0 ? `${overdue} overdue invoice${overdue === 1 ? "" : "s"}` : "No overdue invoices in the recorded ledger"}</p></div>
+            <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Recorded collection status</p><p className="mt-1 text-sm font-semibold text-slate-900">{paidCount > 0 ? `${paidCount} invoice${paidCount === 1 ? "" : "s"} fully collected` : "No invoices collected yet"}</p></div>
+            <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Persisted source</p><p className="mt-1 text-sm font-semibold text-slate-900">Calculated from tenant-scoped issued invoice records.</p></div>
+          </div>
+        </div>
+      </details>
       {paymentTarget && <PaymentDialog target={paymentTarget} saving={recordPayment.isPending} serverError={recordPayment.isError ? apiErrorMessage(recordPayment.error, "The payment could not be recorded. Check the amount and invoice status, then try again.") : null} onClose={() => { if (!recordPayment.isPending) { recordPayment.reset(); setPaymentTarget(null); } }} onSubmit={(input) => recordPayment.mutate({ invoiceId: paymentTarget.id, input })} />}
     </div>
   );
@@ -403,15 +397,23 @@ function ArAgingTab() {
   })));
 
   return <div className="flex flex-col gap-4">
-    <div className="flex flex-wrap gap-3">
-      {groups.flatMap((group) => [...buckets.map((bucket) => <KpiCard key={`${group.currency}-${bucket.key}`} label={`${bucket.label} (${group.currency})`} value={money(Number(group[bucket.key] ?? 0), String(group.currency))} status={bucket.status} />), <KpiCard key={`${group.currency}-total`} label={`Total Outstanding (${group.currency})`} value={money(Number(group.totalOutstanding ?? 0), String(group.currency))} status="Review" />])}
-    </div>
-    <div className="panel grid gap-3 md:grid-cols-3">
-      <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Aging basis</p><p className="mt-1 text-sm font-semibold text-slate-900">Outstanding balance bucketed by days past due and separated by currency.</p></div>
-      <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Collections risk</p><div className="mt-1 space-y-1 text-sm font-semibold text-slate-900">{groups.map((group) => <p key={String(group.currency)}>{Number(group.days90Plus ?? 0) > 0 ? `${money(Number(group.days90Plus), String(group.currency))} is 90+ days overdue` : `No ${String(group.currency)} balances past 90 days`}</p>)}</div></div>
-      <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Persisted source</p><p className="mt-1 text-sm font-semibold text-slate-900">Calculated from tenant-scoped issued invoices; currencies are never combined.</p></div>
+    <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Receivables aging summary by currency">
+      {groups.map((group) => <KpiCard compact key={`${group.currency}-summary`} label={`Outstanding (${group.currency})`} value={money(Number(group.totalOutstanding ?? 0), String(group.currency))} status={Number(group.days90Plus ?? 0) > 0 ? "Overdue" : undefined} trend={`90+ days: ${money(Number(group.days90Plus ?? 0), String(group.currency))}`} />)}
     </div>
     {custRows.length === 0 ? <EmptyState title="No outstanding receivables" /> : <DataTable rows={custRows} columns={["Currency", "Customer", "Current", "1–30", "31–60", "61–90", "90+", "Total Outstanding"]} />}
+    {groups.length > 0 && <details className="panel p-3">
+      <summary className="cursor-pointer text-sm font-semibold text-slate-700">Detailed aging buckets and calculation basis</summary>
+      <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+        <div className="panel flex flex-wrap divide-x divide-slate-100">
+          {groups.flatMap((group) => buckets.map((bucket) => <KpiCard compact key={`${group.currency}-${bucket.key}`} label={`${bucket.label} (${group.currency})`} value={money(Number(group[bucket.key] ?? 0), String(group.currency))} status={bucket.status} />))}
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Aging basis</p><p className="mt-1 text-sm font-semibold text-slate-900">Outstanding balance bucketed by days past due and separated by currency.</p></div>
+          <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Collections risk</p><div className="mt-1 space-y-1 text-sm font-semibold text-slate-900">{groups.map((group) => <p key={String(group.currency)}>{Number(group.days90Plus ?? 0) > 0 ? `${money(Number(group.days90Plus), String(group.currency))} is 90+ days overdue` : `No ${String(group.currency)} balances past 90 days`}</p>)}</div></div>
+          <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Persisted source</p><p className="mt-1 text-sm font-semibold text-slate-900">Calculated from tenant-scoped issued invoices; currencies are never combined.</p></div>
+        </div>
+      </div>
+    </details>}
   </div>;
 }
 
@@ -423,15 +425,9 @@ function PaymentsTab() {
   if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load payments."} />;
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-3">
-        <div className="panel flex min-w-32 flex-col gap-1"><span className="text-xl font-bold text-slate-900">{rows.length}</span><span className="text-xs font-medium text-slate-500">Total Payments</span></div>
-        {recorded.map(({ currency, total }) => ({ label: `Recorded Amount (${currency})`, val: money(total, currency), accent: "text-sky-700" }))
-          .map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-32">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-          ))}
+      <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Payment summary">
+        <KpiCard compact label="Total payments" value={rows.length} />
+        {recorded.map(({ currency, total }) => <KpiCard compact key={currency} label={`Recorded amount (${currency})`} value={money(total, currency)} />)}
       </div>
       {rows.length === 0 ? <EmptyState title="No payments found" /> : (
         <div className="panel overflow-hidden p-0">
@@ -483,45 +479,12 @@ function ProfitabilityTab() {
   }));
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-3">
-        {totalRev.map(({ currency, total }) => ({ label: `Total Revenue (${currency})`, val: money(total, currency), accent: "text-teal-600" }))
-          .concat(totalCost.map(({ currency, total }) => ({ label: `Total Cost (${currency})`, val: money(total, currency), accent: "text-slate-700" })))
-          .concat([{ label: "Customers with cost evidence", val: `${marginRows.length} / ${rows.length}`, accent: "text-sky-700" }])
-          .concat(avgMarginPct == null ? [] : [{ label: "Avg Margin % (covered)", val: `${avgMarginPct.toFixed(1)}%`, accent: avgMarginPct >= 25 ? "text-teal-600" : "text-amber-600" }])
-          .map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-36">
-            <span className={`text-xl font-bold ${accent}`}>{val}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-          ))}
+      <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Profitability summary">
+        {totalRev.map(({ currency, total }) => <KpiCard compact key={`revenue-${currency}`} label={`Revenue (${currency})`} value={money(total, currency)} />)}
+        {totalCost.map(({ currency, total }) => <KpiCard compact key={`cost-${currency}`} label={`Cost (${currency})`} value={money(total, currency)} />)}
+        <KpiCard compact label="Customers with cost evidence" value={`${marginRows.length} / ${rows.length}`} />
+        {avgMarginPct == null ? null : <KpiCard compact label="Avg margin % (covered)" value={`${avgMarginPct.toFixed(1)}%`} />}
       </div>
-      <div className="panel grid gap-3 md:grid-cols-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Revenue evidence</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Revenue uses persisted issued invoice totals after recorded credits.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Cost evidence</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Costs include approved customer-linked expense records in the same currency.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Data policy</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Margin stays unavailable where allocated cost evidence is missing.</p>
-        </div>
-      </div>
-      {chartData.length > 0 && (
-        <div className="panel">
-          <p className="text-sm font-semibold text-slate-700 mb-3">Margin % by Customer</p>
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-              <YAxis unit="%" tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(val) => [`${String(val)}%`, "Margin"]} />
-              <Bar dataKey="margin" fill={chart.teal600} radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
       {rows.length === 0 ? <EmptyState title="No profitability data" /> : (
         <div className="panel overflow-hidden p-0">
           <div className="overflow-x-auto">
@@ -550,6 +513,27 @@ function ProfitabilityTab() {
           </div>
         </div>
       )}
+      {(chartData.length > 0 || rows.length > 0) && <details className="panel p-3">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-700">Margin analysis and evidence policy</summary>
+        <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+          {chartData.length > 0 && <div>
+            <p className="mb-3 text-sm font-semibold text-slate-700">Margin % by customer</p>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis unit="%" tick={{ fontSize: 11 }} />
+                <Tooltip formatter={(val) => [`${String(val)}%`, "Margin"]} />
+                <Bar dataKey="margin" fill={chart.teal600} radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>}
+          <div className="grid gap-3 md:grid-cols-3">
+            <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Revenue evidence</p><p className="mt-1 text-sm font-semibold text-slate-900">Revenue uses persisted issued invoice totals after recorded credits.</p></div>
+            <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Cost evidence</p><p className="mt-1 text-sm font-semibold text-slate-900">Costs include approved customer-linked expense records in the same currency.</p></div>
+            <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Data policy</p><p className="mt-1 text-sm font-semibold text-slate-900">Margin stays unavailable where allocated cost evidence is missing.</p></div>
+          </div>
+        </div>
+      </details>}
     </div>
   );
 }
@@ -608,7 +592,7 @@ export function FinancialAnalyticsPage() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="page-stack min-w-0">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">{TITLES[tab]}</h1>
@@ -617,14 +601,15 @@ export function FinancialAnalyticsPage() {
         <button type="button" className="btn-secondary text-sm" onClick={() => void exportFns[tab]()}>Export CSV</button>
       </div>
 
-      <div className="panel flex gap-1 p-1.5">
+      <nav className="panel flex gap-1 overflow-x-auto p-1.5" aria-label="Financial analytics sections">
         {TABS.map((t) => (
           <button key={t.key} type="button" onClick={() => setTab(t.key)}
+            aria-current={tab === t.key ? "page" : undefined}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               tab === t.key ? "bg-teal-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
             }`}>{t.label}</button>
         ))}
-      </div>
+      </nav>
 
       {tab === "invoices"      && <InvoicesTab />}
       {tab === "ar-aging"      && <ArAgingTab />}

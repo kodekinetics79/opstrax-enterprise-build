@@ -433,7 +433,7 @@ export function GeofenceManagementPage() {
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} />;
 
   return (
-    <div className="control-tower flex flex-col gap-4">
+    <div className="control-tower flex flex-col gap-3">
       {toast && (
         <div className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">{toast}</div>
       )}
@@ -470,7 +470,7 @@ export function GeofenceManagementPage() {
       />
 
       {/* KPI strip */}
-      <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5" aria-label="Geofence summary">
+      <section className="panel flex flex-wrap items-center gap-x-6 gap-y-2 px-3 py-2" aria-label="Geofence summary">
         {[
           { label: "Total Zones",       val: s?.total ?? zones.length },
           { label: "Active",            val: s?.activeCount ?? zones.filter((z) => z.status === "Active").length, accent: "text-teal-600" },
@@ -478,9 +478,9 @@ export function GeofenceManagementPage() {
           { label: "Exit Events Today", val: summaryQ.isSuccess && s?.exitEventsToday != null ? s.exitEventsToday : "—", accent: "text-amber-600" },
           { label: "Vehicles Triggered",val: summaryQ.isSuccess && s?.vehiclesTriggered != null ? s.vehiclesTriggered : "—", accent: "text-slate-700" },
         ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex min-w-0 items-center justify-between gap-3 p-3">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{label}</span>
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
+          <div key={label} className="flex min-w-[118px] items-baseline gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">{label}</span>
+            <span className={`text-sm font-black tabular-nums ${accent ?? "text-slate-900"}`}>{String(val)}</span>
           </div>
         ))}
       </section>
@@ -494,9 +494,9 @@ export function GeofenceManagementPage() {
       ) : null}
 
       {/* Map + list split */}
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* Map */}
-        <div className="panel p-4">
+        <div className="panel p-3">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-slate-900">Zone Map</h2>
             <div className="flex items-center gap-2">

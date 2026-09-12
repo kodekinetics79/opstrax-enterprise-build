@@ -35,6 +35,7 @@ public sealed class FeatureFlagSchemaService(Database db)
                 environment  VARCHAR(40)  NOT NULL DEFAULT 'production',
                 created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
                 updated_at   TIMESTAMPTZ  NULL,
+                updated_by   VARCHAR(220) NULL,
                 CONSTRAINT uq_feature_flags_company_key UNIQUE (company_id, flag_key)
             )
             """, ct: ct);
@@ -49,6 +50,7 @@ public sealed class FeatureFlagSchemaService(Database db)
             ("environment", "VARCHAR(40) NOT NULL DEFAULT 'production'"),
             ("created_at",  "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
             ("updated_at",  "TIMESTAMPTZ NULL"),
+            ("updated_by",  "VARCHAR(220) NULL"),
         })
         {
             await db.ExecuteAsync($"ALTER TABLE feature_flags ADD COLUMN IF NOT EXISTS {col} {def}", ct: ct);

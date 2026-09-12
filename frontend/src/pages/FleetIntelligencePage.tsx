@@ -319,31 +319,31 @@ export function FleetIntelligencePage() {
       {anyCriticalError ? (
         <ErrorState message="Unable to reach the intelligence services." onRetry={() => { healthSummary.refetch(); healthRisks.refetch(); }} />
       ) : kpiLoading ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        <div className="panel flex flex-wrap divide-x divide-slate-100">
           {Array.from({ length: 7 }).map((_, i) => <SkeletonCard key={i} />)}
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-          <KpiCard label="Fleet Availability" value={availabilityPct === null ? "--" : `${availabilityPct}%`}
+        <div className="panel flex flex-wrap divide-x divide-slate-100">
+          <KpiCard compact label="Fleet Availability" value={availabilityPct === null ? "--" : `${availabilityPct}%`}
             trend={dispatchReady !== null && totalVehicles !== null ? `${dispatchReady}/${totalVehicles} dispatch-ready records` : undefined} icon={<Truck className="h-5 w-5" />} />
-          <KpiCard label="Open Safety Events" value={openSafetyEvents ?? "--"} status={openSafetyEvents !== null && openSafetyEvents > 0 ? "risk" : undefined}
+          <KpiCard compact label="Open Safety Events" value={openSafetyEvents ?? "--"} status={openSafetyEvents !== null && openSafetyEvents > 0 ? "risk" : undefined}
             trend={belowSafety !== null && belowSafety > 0 ? `${belowSafety} drivers below threshold` : undefined} icon={<ShieldAlert className="h-5 w-5" />} />
-          <KpiCard label="Active Fault Codes" value={activeFaults ?? "--"} status={activeFaults !== null && activeFaults > 0 ? "critical" : undefined}
+          <KpiCard compact label="Active Fault Codes" value={activeFaults ?? "--"} status={activeFaults !== null && activeFaults > 0 ? "critical" : undefined}
             trend={activeFaults === null ? undefined : "Verified diagnostic records"} icon={<Cpu className="h-5 w-5" />} />
-          <KpiCard label="Vehicles In Downtime" value={vehiclesDowntime ?? "--"} status={vehiclesDowntime !== null && vehiclesDowntime > 0 ? "warning" : undefined}
+          <KpiCard compact label="Vehicles In Downtime" value={vehiclesDowntime ?? "--"} status={vehiclesDowntime !== null && vehiclesDowntime > 0 ? "warning" : undefined}
             icon={<Wrench className="h-5 w-5" />} />
-          <KpiCard label="Overdue PM" value={overduePm ?? "--"} status={overduePm !== null && overduePm > 0 ? "overdue" : undefined}
+          <KpiCard compact label="Overdue PM" value={overduePm ?? "--"} status={overduePm !== null && overduePm > 0 ? "overdue" : undefined}
             trend={pick(maint, "pm_compliance") ? `${pick(maint, "pm_compliance")} compliant` : undefined} icon={<Gauge className="h-5 w-5" />} />
-          <KpiCard label="Open Incidents" value={openIncidents ?? "--"} status={openIncidents !== null && openIncidents > 0 ? "review" : undefined}
+          <KpiCard compact label="Open Incidents" value={openIncidents ?? "--"} status={openIncidents !== null && openIncidents > 0 ? "review" : undefined}
             icon={<AlertTriangle className="h-5 w-5" />} />
-          <KpiCard label="Registered Devices" value={registeredDevices ?? "--"}
+          <KpiCard compact label="Registered Devices" value={registeredDevices ?? "--"}
             trend={pick(teleKpis, "connectivityCoverage") != null ? `${pick(teleKpis, "connectivityCoverage")}% coverage` : undefined}
             icon={<Radio className="h-5 w-5" />} />
         </div>
       )}
 
       {/* ── MAIN GRID: vehicle risk graph (left) + alerts rail (right) ────── */}
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* Vehicle risk — the entity graph made visible */}
         <section className="space-y-3">
           <SectionHeader icon={<Truck className="h-4 w-4" />} title="Vehicle Risk — Entity Graph"

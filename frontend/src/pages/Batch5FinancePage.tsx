@@ -253,7 +253,7 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
   const s = summaryData;
 
   return (
-    <div className="flex h-full flex-col gap-8 overflow-y-auto">
+    <div className="page-stack min-w-0">
       {/* Header */}
       <PageHeader
         eyebrow={config.eyebrow}
@@ -274,9 +274,9 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
       />
 
       {/* KPI Grid */}
-      <div className="grid gap-6 sm:grid-cols-3 xl:grid-cols-5">
+      <div className="panel flex flex-wrap divide-x divide-slate-100">
         {config.kpis.slice(0, 5).map(([label, key]) => (
-          <KpiCard
+          <KpiCard compact
             key={key}
             label={label}
             value={s[key] == null ? "—" : String(s[key])}
@@ -285,6 +285,45 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
         ))}
       </div>
 
+      {act.isError && (
+        <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {apiErrorMessage(act.error, "The expense workflow action was rejected. Reload the record and try again.")}
+        </p>
+      )}
+
+      {/* Search + Filter bar */}
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+        <input
+          aria-label="Search records" className="field xl:max-w-md"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={kind === "cost-margin"
+            ? "Search evidence by job, customer or status…"
+            : `Search ${config.eyebrow.toLowerCase()} by vehicle, driver, status…`}
+        />
+        <select aria-label="Filter records" className="field xl:max-w-[200px]" value={filter} onChange={(e) => setFilter(e.target.value)}>
+          {FILTER_OPTIONS[kind].map((opt) => <option key={opt}>{opt}</option>)}
+        </select>
+        <div className="ml-auto flex items-center gap-2">
+          {kind === "fuel" && <span className="text-xs text-slate-500">Fuel-card provider import: not configured</span>}
+        </div>
+      </div>
+
+      {/* Tabs (multi-view modules) */}
+      {tabDefs && (
+        <TabBar
+          tabs={tabDefs.map((t, i) => ({ label: t.label, count: tabSources[i]?.length ?? 0 }))}
+          active={safeTab}
+          onChange={(i) => { setActiveTab(i); setSelected(null); }}
+        />
+      )}
+
+      {/* Data Table */}
+      <DataTable rows={displayRows} columns={tabCols} onSelect={setSelected} />
+
+      <details className="panel p-3">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-700">Trends, currency totals and calculation details</summary>
+        <div className="mt-3 space-y-3">
       {/* Module Chart */}
       <ModuleChart kind={kind} rows={rowsQ.data ?? []} vehicleSummary={vehicleAggQ.data as AnyRecord[] | undefined} />
 
@@ -367,41 +406,8 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
         </div>
       )}
 
-      {act.isError && (
-        <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {apiErrorMessage(act.error, "The expense workflow action was rejected. Reload the record and try again.")}
-        </p>
-      )}
-
-      {/* Search + Filter bar */}
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-        <input
-          className="field xl:max-w-md"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={kind === "cost-margin"
-            ? "Search evidence by job, customer or status…"
-            : `Search ${config.eyebrow.toLowerCase()} by vehicle, driver, status…`}
-        />
-        <select className="field xl:max-w-[200px]" value={filter} onChange={(e) => setFilter(e.target.value)}>
-          {FILTER_OPTIONS[kind].map((opt) => <option key={opt}>{opt}</option>)}
-        </select>
-        <div className="ml-auto flex items-center gap-2">
-          {kind === "fuel" && <span className="text-xs text-slate-500">Fuel-card provider import: not configured</span>}
         </div>
-      </div>
-
-      {/* Tabs (multi-view modules) */}
-      {tabDefs && (
-        <TabBar
-          tabs={tabDefs.map((t, i) => ({ label: t.label, count: tabSources[i]?.length ?? 0 }))}
-          active={safeTab}
-          onChange={(i) => { setActiveTab(i); setSelected(null); }}
-        />
-      )}
-
-      {/* Data Table */}
-      <DataTable rows={displayRows} columns={tabCols} onSelect={setSelected} />
+      </details>
 
       {/* Detail Drawer */}
       <Drawer

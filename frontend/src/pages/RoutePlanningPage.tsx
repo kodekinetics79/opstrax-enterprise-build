@@ -2,8 +2,8 @@ import { FormEvent, type ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Download, Pencil, Plus, Route, Sparkles, Trash2, UserCheck, X } from "lucide-react";
-import { AiInsightCard, DataTable, EmptyState, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
-import { ClayStat } from "@/components/console";
+import { AiInsightCard, KpiCard, DataTable, EmptyState, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
+
 import { usePermissions } from "@/hooks/usePermission";
 import { useRouteDetail, useRoutes, useRouteSummary } from "@/hooks/useBatch2";
 import { routesApi } from "@/services/routesApi";
@@ -96,12 +96,12 @@ export function RoutePlanningPage() {
       <button type="button" className="btn-primary" disabled={!canManage} title={!canManage ? "dispatch:manage is required" : undefined} onClick={() => { if (canManage) { save.reset(); setEditing({ status: "Planned", routeType: "Delivery", optimizationMode: "Balanced" }); } }}><Plus className="h-4 w-4" /> Create Route</button>
       <button type="button" className="btn-ghost" disabled={!canExport} onClick={() => void exportRoutes()}><Download className="h-4 w-4" /> Export Route Plan</button>
     </>} />
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-      {[["Total Routes Today","totalRoutesToday"],["Active Routes","activeRoutes"],["Planned Routes","plannedRoutes"],["Completed Routes","completedRoutes"],["Delayed Routes","delayedRoutes"],["Avg Stops","averageStopsPerRoute"],["Avg Route ETA","averageRouteEta"],["Efficiency","routeEfficiencyScore"],["High-Risk","highRiskRoutes"],["Cost Estimate","routeCostEstimate"]].map(([label,key], i) => <ClayStat key={key} Icon={Route} tone={["fc-clay-teal","fc-clay-emerald","fc-clay-sky","fc-clay-amber","fc-clay-red"][i % 5]} iconCls={["text-teal-700","text-emerald-700","text-sky-700","text-amber-700","text-rose-700"][i % 5]} label={label} value={String(s[key] ?? 0)} alert={/Risk|Delayed/.test(label)} />)}
+    <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Route summary">
+      {[["Total Routes Today","totalRoutesToday"],["Active Routes","activeRoutes"],["Planned Routes","plannedRoutes"],["Completed Routes","completedRoutes"],["Delayed Routes","delayedRoutes"],["Avg Stops","averageStopsPerRoute"],["Avg Route ETA","averageRouteEta"],["Efficiency","routeEfficiencyScore"],["High-Risk","highRiskRoutes"],["Cost Estimate","routeCostEstimate"]].map(([label,key]) => <KpiCard compact key={key} label={label} value={key === "averageRouteEta" && !/\d/.test(String(s[key] ?? "")) ? "—" : String(s[key] ?? "—")} />)}
     </div>
     <div className="panel flex flex-col gap-3 p-4 lg:flex-row lg:items-center">
-      <input className="field lg:max-w-md" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search routes, regions, driver, vehicle..." />
-      <select className="field lg:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>Planned</option><option>Active</option><option>Completed</option><option>Delayed</option><option>At Risk</option><option>Cancelled</option></select>
+      <input aria-label="Search routes" className="field lg:max-w-md" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search routes, regions, driver, vehicle..." />
+      <select aria-label="Route status" className="field lg:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>Planned</option><option>Active</option><option>Completed</option><option>Delayed</option><option>At Risk</option><option>Cancelled</option></select>
       <span className="text-xs font-semibold text-slate-500">{routeRows.length} shown · {routeTotal.toLocaleString()} total</span>
       {routeTotal > PAGE_SIZE ? <span className="ml-auto flex items-center gap-2 text-xs text-slate-500"><button type="button" className="btn-ghost h-8" disabled={offset === 0 || routes.isFetching} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>← Prev</button><span>Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(routeTotal / PAGE_SIZE))}</span><button type="button" className="btn-ghost h-8" disabled={offset + PAGE_SIZE >= routeTotal || routes.isFetching} onClick={() => setOffset(offset + PAGE_SIZE)}>Next →</button></span> : null}
     </div>

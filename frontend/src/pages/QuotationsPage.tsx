@@ -1,14 +1,15 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
+import { requireCommercialModuleRecords } from "@/services/commercialModulePayload";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import { useTenantCurrency } from "@/hooks/useTenantRegion";
 import type { AnyRecord } from "@/types";
 
 const quotationsApi = {
   list: () =>
-    unwrap<AnyRecord[]>(apiClient.get("/api/quotations")).then((rows) =>
-      rows.map((r) => ({
+    unwrap<unknown>(apiClient.get("/api/quotations")).then((payload) =>
+      requireCommercialModuleRecords(payload, "quotations").map((r) => ({
         ...r,
         quoteId: r.quoteId ?? r.code ?? `QT-${String(r.id)}`,
         customer: r.customer ?? r.title ?? "",
@@ -152,7 +153,7 @@ export function QuotationsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="page-stack min-w-0">
       {showCreate && <CreateQuoteModal defaultCurrency={tenantCurrency} onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>

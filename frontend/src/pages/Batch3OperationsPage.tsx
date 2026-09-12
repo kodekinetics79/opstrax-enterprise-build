@@ -292,9 +292,11 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
     return <EmptyState title={`${config.eyebrow} unavailable`} subtitle="Unable to load maintenance records right now. Refresh to try again." />;
   }
   const s = (summary.data || {}) as AnyRecord;
+  const primaryKpis = kind === "documents" ? config.kpis.slice(0, 4) : config.kpis;
+  const secondaryKpis = kind === "documents" ? config.kpis.slice(4) : [];
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack">
       <PageHeader
         eyebrow={config.eyebrow}
         title={config.title}
@@ -320,9 +322,15 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
           </>
         }
       />
-      <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-6">
-        {config.kpis.map(([label, key]) => <KpiCard key={key} label={label} value={String(s[key] ?? (kind === "documents" ? "Unknown" : 0))} icon={config.icon} status={kind === "documents" ? "Recorded indicator" : /overdue|critical|unsafe|expired|missing|risk/i.test(label) ? "Review" : "Active"} />)}
-      </div>
+      {kind === "documents" ? (
+        <section aria-label="Primary document indicators" className="panel grid grid-cols-2 gap-px overflow-hidden bg-slate-200 p-px sm:grid-cols-4">
+          {primaryKpis.map(([label, key]) => <KpiCard compact key={key} label={label} value={String(s[key] ?? "Unknown")} status="Recorded indicator" />)}
+        </section>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-6">
+          {primaryKpis.map(([label, key]) => <KpiCard key={key} label={label} value={String(s[key] ?? 0)} icon={config.icon} status={/overdue|critical|unsafe|expired|missing|risk/i.test(label) ? "Review" : "Active"} />)}
+        </div>
+      )}
       {action.isError ? <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{kind === "documents" ? apiErrorMessage(action.error, "The document action could not be completed. Reload before trying again.") : (action.error as Error)?.message || "The requested action could not be completed."}</p> : null}
       {kind === "documents" && documentUiError ? <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{documentUiError}</p> : null}
       {kind === "documents" && fence.requiresReload && !editing ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">A document change requires reconciliation; no automatic retry was sent. {fence.target === "new-upload" ? "Refresh the vault and check the intended document number before attempting another upload." : "Select the original document and reload its current state before another write."}{fence.target !== "new-upload" && String(selected?.id) === fence.target ? <button type="button" className="btn-ghost ml-3" disabled={fence.pending} onClick={() => void reloadDocument().catch(failure => setDocumentUiError(apiErrorMessage(failure, "The current document could not be loaded. No retry was sent.")))}>Reload current document</button> : null}</div> : null}
@@ -338,6 +346,18 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
       ) : (
         <DataTable rows={rows} columns={config.columns} onSelect={setSelected} />
       )}
+      {kind === "documents" && secondaryKpis.length ? (
+        <details className="panel group">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-sm font-semibold text-slate-800 marker:content-none sm:min-h-9">
+            <span>Document indicator breakdown</span>
+            <span className="text-xs font-medium text-slate-500 group-open:hidden">{secondaryKpis.length} recorded indicators</span>
+            <span className="hidden text-xs font-medium text-slate-500 group-open:inline">Hide details</span>
+          </summary>
+          <div className="grid grid-cols-2 gap-px border-t border-slate-200 bg-slate-200 p-px sm:grid-cols-4">
+            {secondaryKpis.map(([label, key]) => <KpiCard compact key={key} label={label} value={String(s[key] ?? "Unknown")} status="Recorded indicator" />)}
+          </div>
+        </details>
+      ) : null}
       <DetailDrawer
         kind={kind}
         config={config}

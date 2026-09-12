@@ -211,7 +211,7 @@ export function CustomerVisibilityPage() {
   const insightStats: AnyRecord = (insights.data?.["stats"] as AnyRecord) ?? {};
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack min-w-0">
       <PageHeader
         eyebrow="Customer Visibility"
         title="Shipment Tracking & ETA Risk Engine"
@@ -228,28 +228,32 @@ export function CustomerVisibilityPage() {
       />
 
       {/* KPIs */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <KpiCard label="Total Tracked" value={String(insightStats["totalTracked"] ?? rows.length)} icon={<Package />} status="Active" />
-        <KpiCard label="Active Shares" value={String(insightStats["activeShares"] ?? "--")} icon={<Share2 />} status="Active" />
-        <KpiCard label="In Exception" value={String(insightStats["exceptionCount"] ?? "--")} icon={<AlertTriangle />} status={Number(insightStats["exceptionCount"] ?? 0) > 0 ? "Review" : "Active"} />
-        <KpiCard label="Delivered" value={String(insightStats["deliveredCount"] ?? "--")} icon={<CheckCircle />} status="Active" />
+      <div className="panel flex flex-wrap divide-x divide-slate-200 overflow-hidden">
+        <KpiCard compact label="Total Tracked" value={String(insightStats["totalTracked"] ?? rows.length)} icon={<Package />} status="Active" />
+        <KpiCard compact label="Active Shares" value={String(insightStats["activeShares"] ?? "--")} icon={<Share2 />} status="Active" />
+        <KpiCard compact label="In Exception" value={String(insightStats["exceptionCount"] ?? "--")} icon={<AlertTriangle />} status={Number(insightStats["exceptionCount"] ?? 0) > 0 ? "Review" : "Active"} />
+        <KpiCard compact label="Delivered" value={String(insightStats["deliveredCount"] ?? "--")} icon={<CheckCircle />} status="Active" />
       </div>
 
       {/* ETA insights */}
       {insightList.length > 0 && (
-        <div className="grid gap-3 md:grid-cols-2">
+        <details className="panel p-3">
+          <summary className="cursor-pointer text-sm font-semibold">ETA insights ({insightList.length})</summary>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
           {insightList.map((ins, i) => (
             <AiInsightCard key={i} insight={{ title: String(ins["code"] ?? "ETA Insight"), body: String(ins["message"]) }} />
           ))}
-        </div>
+          </div>
+        </details>
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 rounded-xl bg-slate-100 p-1 w-fit">
+      <div className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1 w-fit">
         {TABS.map((t) => (
           <button
             key={t}
             type="button"
+            aria-pressed={tab === t}
             onClick={() => setTab(t)}
             className={`rounded-lg px-4 py-2 text-sm font-medium transition ${tab === t ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-700"}`}
           >

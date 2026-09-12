@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { API_BASE_URL, apiClient } from "./apiClient";
+import { exactDeploymentSha } from "./runtimeDeploymentIdentity";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -51,8 +52,8 @@ export function evaluateRuntimeTruth(readyValue: unknown, deepValue: unknown): R
   // worker, including TelemetryBackgroundService. Browser clients must not call
   // /health/deep because that operator endpoint deliberately requires a secret.
   const telemetryFresh = criticalWorkersFresh;
-  const frontendSha = String(frontendBuild.sha || "").trim().toLowerCase();
-  const apiSha = String(ready.version || deep.version || "").trim().toLowerCase();
+  const frontendSha = exactDeploymentSha(frontendBuild.sha);
+  const apiSha = exactDeploymentSha(ready.version || deep.version);
   const frontendEnvironment = frontendBuild.environment.trim().toLowerCase();
   const apiEnvironment = String(ready.environment || deep.environment || "").trim().toLowerCase();
   const provenanceMatches = frontendSha.length === 40

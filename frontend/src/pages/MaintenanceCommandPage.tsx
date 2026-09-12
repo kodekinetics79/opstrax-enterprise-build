@@ -1,11 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import {
   AlertTriangle, CheckCircle, Clock, ClipboardList,
   Plus, Settings, ShieldAlert, Truck, Wrench, X, XCircle, Zap,
 } from "lucide-react";
-import { DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv } from "@/components/ui";
+import { DataTable, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv } from "@/components/ui";
 import { maintenanceApi } from "@/services/maintenanceApi";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
@@ -16,17 +16,45 @@ const TABS = ["Overview", "Defects", "Inspections", "Work Orders", "PM Rules", "
 type Tab = (typeof TABS)[number];
 
 export function MaintenanceCommandPage() {
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedVehicleId = searchParams.get("vehicleId") ?? "";
   const requestedTab = searchParams.get("tab");
-  const initialTab = TABS.find((tab) => tab === requestedTab) ?? (requestedVehicleId ? "Work Orders" : "Overview");
+  const routeTab: Tab = location.pathname === "/work-orders"
+    ? "Work Orders"
+    : location.pathname === "/inspections"
+      ? "Inspections"
+      : "Overview";
+  const initialTab = TABS.find((tab) => tab === requestedTab) ?? (requestedVehicleId ? "Work Orders" : routeTab);
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [createOpen, setCreateOpen] = useState(Boolean(requestedVehicleId));
+  const handledVehicleIntent = useRef(requestedVehicleId);
   const [completionTarget, setCompletionTarget] = useState<AnyRecord | null>(null);
   const [resolveTarget, setResolveTarget] = useState<AnyRecord | null>(null);
   const [resolveHoldTarget, setResolveHoldTarget] = useState<AnyRecord | null>(null);
   const [notice, setNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const qc = useQueryClient();
+
+  useEffect(() => {
+    const nextTab = TABS.find((tab) => tab === requestedTab) ?? (requestedVehicleId ? "Work Orders" : routeTab);
+    setActiveTab(nextTab);
+    if (!requestedVehicleId) {
+      handledVehicleIntent.current = "";
+      return;
+    }
+    if (handledVehicleIntent.current !== requestedVehicleId) {
+      handledVehicleIntent.current = requestedVehicleId;
+      setCreateOpen(true);
+    }
+  }, [requestedTab, requestedVehicleId, routeTab]);
+
+  const selectTab = (tab: Tab) => {
+    setActiveTab(tab);
+    const next = new URLSearchParams(searchParams);
+    if (tab === routeTab) next.delete("tab");
+    else next.set("tab", tab);
+    setSearchParams(next, { replace: true });
+  };
 
   const dashboard = useQuery<AnyRecord>({
     queryKey: ["maintenance", "dashboard"],
@@ -146,9 +174,16 @@ export function MaintenanceCommandPage() {
   const duePmList        = (d?.duePm        as AnyRecord[]) ?? [];
   const recentWos        = (d?.recentWorkOrders as AnyRecord[]) ?? [];
   const insights         = (d?.insights     as AnyRecord[]) ?? [];
+  const maintenanceMetrics = [
+    { label: "Fleet available", value: kpis["fleetAvailabilityPct"] == null ? "—" : `${String(kpis["fleetAvailabilityPct"])}%`, detail: "readiness", tone: kpis["fleetAvailabilityPct"] == null ? "text-slate-500" : Number(kpis["fleetAvailabilityPct"]) >= 80 ? "text-emerald-700" : "text-amber-700", icon: <Truck className="h-3.5 w-3.5" /> },
+    { label: "Out of service", value: String(kpis["vehiclesOutOfService"] ?? 0), detail: "vehicles", tone: Number(kpis["vehiclesOutOfService"] ?? 0) > 0 ? "text-rose-700" : "text-slate-800", icon: <XCircle className="h-3.5 w-3.5" /> },
+    { label: "Critical defects", value: String(kpis["criticalOpenDefects"] ?? 0), detail: "open", tone: Number(kpis["criticalOpenDefects"] ?? 0) > 0 ? "text-rose-700" : "text-slate-800", icon: <ShieldAlert className="h-3.5 w-3.5" /> },
+    { label: "Work orders", value: String(kpis["openWorkOrders"] ?? 0), detail: "open", tone: "text-slate-800", icon: <Wrench className="h-3.5 w-3.5" /> },
+    { label: "PM overdue", value: String(kpis["overduePm"] ?? 0), detail: "items", tone: Number(kpis["overduePm"] ?? 0) > 0 ? "text-amber-700" : "text-slate-800", icon: <Clock className="h-3.5 w-3.5" /> },
+  ];
 
   return (
-    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
+    <div className="fleet-console flex flex-col gap-3">
       <PageHeader
         eyebrow="Fleet Maintenance"
         title="Work Orders"
@@ -176,68 +211,50 @@ export function MaintenanceCommandPage() {
         </div>
       )}
 
-      {/* KPI Strip */}
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-5">
-        <KpiCard
-          label="Fleet Available"
-          value={`${String(kpis["fleetAvailabilityPct"] ?? "--")}%`}
-          icon={<Truck />}
-          status={Number(kpis["fleetAvailabilityPct"] ?? 100) >= 80 ? "Active" : "Warning"}
-        />
-        <KpiCard
-          label="Vehicles Out of Service"
-          value={String(kpis["vehiclesOutOfService"] ?? 0)}
-          icon={<XCircle />}
-          status={Number(kpis["vehiclesOutOfService"] ?? 0) > 0 ? "Critical" : "Active"}
-        />
-        <KpiCard
-          label="Critical Open Defects"
-          value={String(kpis["criticalOpenDefects"] ?? 0)}
-          icon={<ShieldAlert />}
-          status={Number(kpis["criticalOpenDefects"] ?? 0) > 0 ? "Critical" : "Active"}
-        />
-        <KpiCard
-          label="Open Work Orders"
-          value={String(kpis["openWorkOrders"] ?? 0)}
-          icon={<Wrench />}
-          status="Review"
-        />
-        <KpiCard
-          label="PM Overdue"
-          value={String(kpis["overduePm"] ?? 0)}
-          icon={<Clock />}
-          status={Number(kpis["overduePm"] ?? 0) > 0 ? "Warning" : "Active"}
-        />
-      </div>
+      <section className="panel p-2" aria-label="Maintenance operating summary">
+        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+          {maintenanceMetrics.map((metric) => (
+            <div key={metric.label} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
+              <dt className="flex items-center gap-1.5 truncate text-[10px] font-bold uppercase tracking-[0.1em] text-slate-500">{metric.icon}{metric.label}</dt>
+              <dd className="mt-1 flex items-baseline gap-1.5"><strong className={`text-base font-black leading-none tabular-nums ${metric.tone}`}>{metric.value}</strong><span className="text-[10px] font-medium text-slate-400">{metric.detail}</span></dd>
+            </div>
+          ))}
+        </dl>
+      </section>
 
       {/* System Maintenance Insights */}
-      {insights.length > 0 && (
-        <section className="panel p-5">
-          <h2 className="section-title">System Maintenance Insights</h2>
-          <div className="mt-4 space-y-3">
+      {activeTab === "Overview" && insights.length > 0 && (
+        <details className="panel px-3 py-2">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 sm:min-h-8">
+            <Zap className="h-4 w-4 shrink-0 text-amber-600" />
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-600">Maintenance insights</span>
+            <span className="min-w-0 flex-1 truncate text-xs text-slate-500">{String(insights[0]?.message ?? "Recorded maintenance guidance available")}</span>
+            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{insights.length}</span>
+          </summary>
+          <div className="mt-2 space-y-2 border-t border-slate-100 pt-2">
             {insights.map((ins, i) => (
               <InsightRow key={i} insight={ins} />
             ))}
           </div>
-        </section>
+        </details>
       )}
 
       {/* Tabs */}
-      <section className="panel p-5">
-        <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-4">
+      <section className="panel p-3">
+        <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
           {TABS.map((tab) => (
             <button
               key={tab}
               type="button"
               className={tab === activeTab ? "control-tab control-tab-active" : "control-tab"}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => selectTab(tab)}
             >
               {tab}
             </button>
           ))}
         </div>
 
-        <div className="mt-5">
+        <div className="mt-3">
           {activeTab === "Overview" && (
             <OverviewTab
               openDefects={openDefectsList}
@@ -316,6 +333,7 @@ export function MaintenanceCommandPage() {
       </section>
 
       {createOpen && canManage && <CreateWorkOrderDialog
+        key={requestedVehicleId || "manual"}
         initialVehicleId={requestedVehicleId}
         vehicles={vehicles.data ?? []}
         vehiclesLoading={vehicles.isLoading}
@@ -323,7 +341,14 @@ export function MaintenanceCommandPage() {
         pending={createWo.isPending}
         error={createWo.isError ? errorMessage(createWo.error, "Work order could not be created.") : null}
         onRetryVehicles={() => void vehicles.refetch()}
-        onClose={() => { if (!createWo.isPending) { setCreateOpen(false); setSearchParams({}, { replace: true }); } }}
+        onClose={() => {
+          if (createWo.isPending) return;
+          handledVehicleIntent.current = requestedVehicleId;
+          setCreateOpen(false);
+          const next = new URLSearchParams(searchParams);
+          next.delete("vehicleId");
+          setSearchParams(next, { replace: true });
+        }}
         onSubmit={(payload) => createWo.mutate(payload)}
       />}
       {completionTarget && <CompleteWorkOrderDialog
@@ -378,7 +403,7 @@ function InsightRow({ insight }: { insight: AnyRecord }) {
   };
   const Icon = icons[level] ?? Zap;
   return (
-    <div className={`rounded-xl border p-4 ${styles[level] ?? styles.info}`}>
+    <div className={`rounded-xl border p-3 ${styles[level] ?? styles.info}`}>
       <div className="flex items-start gap-3">
         <Icon className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
@@ -406,11 +431,11 @@ function OverviewTab({
   onCompleteWo: (record: AnyRecord) => void;
 }) {
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className={`grid items-start gap-3 ${openDefects.length ? "lg:grid-cols-2" : ""}`}>
       <section>
         <h3 className="section-title mb-3">Open Defects Queue</h3>
         {openDefects.length === 0
-          ? <Empty icon={<CheckCircle className="h-8 w-8 text-teal-400" />} message="No open defects" />
+          ? <p className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600"><CheckCircle className="h-4 w-4 text-teal-600" aria-hidden="true" />No open defects</p>
           : openDefects.slice(0, 8).map((d) => (
               <DefectCard
                 key={String(d["id"])}
@@ -424,7 +449,7 @@ function OverviewTab({
         }
       </section>
 
-      <div className="space-y-6">
+      <div className="space-y-3">
         <section>
           <h3 className="section-title mb-3">PM Due / Overdue</h3>
           {duePm.length === 0
@@ -667,7 +692,7 @@ function DefectCard({
   const status = String(defect["status"] ?? "Open");
 
   return (
-    <div className={`mb-3 rounded-xl border p-4 ${style}`}>
+    <div className={`mb-2 rounded-xl border p-3 ${style}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -710,7 +735,7 @@ function WorkOrderCard({
   const isOpen = !["Completed","completed","Cancelled","cancelled"].includes(status);
 
   return (
-    <div className="mb-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="mb-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

@@ -6,6 +6,7 @@ import { AiInsightCard, EmptyState, ErrorState, KpiCard, LoadingState, RiskBadge
 import { useCustomerEtaRecommendations, useCustomerEtaSummary, useCustomerTracking } from "@/hooks/useBatch2";
 import { customerEtaApi } from "@/services/customerEtaApi";
 import { apiClient, unwrap } from "@/services/apiClient";
+import { formatDateTime } from "@/utils/formatters";
 import type { AnyRecord } from "@/types";
 
 // ── Job row ───────────────────────────────────────────────────────────────────
@@ -47,7 +48,7 @@ function JobRow({
       </td>
       <td className="px-4 py-3 text-sm text-slate-700">{String(job.customerName ?? job.customer_name ?? "--")}</td>
       <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
-      <td className="px-4 py-3 text-sm text-slate-700">{String(job.eta ?? "--")}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">{hasEta ? formatDateTime(String(job.eta)) : "—"}</td>
       <td className="px-4 py-3"><RiskBadge risk={sla} /></td>
       <td className="px-4 py-3">
         <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
@@ -70,7 +71,7 @@ function JobRow({
         )}
       </td>
       <td className="px-4 py-3 text-sm text-slate-500">{String(job.driverName ?? job.driver_name ?? "--")}</td>
-      <td className="px-4 py-3 text-right">
+      <td className="sticky right-0 bg-inherit px-4 py-3 text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,.35)]">
         <button
           type="button"
           disabled={sending || !hasEta}
@@ -104,7 +105,7 @@ function CommRow({ comm }: { comm: AnyRecord }) {
       <td className="px-4 py-3 text-xs text-slate-500 max-w-60 truncate">{String(comm.message ?? "--")}</td>
       <td className="px-4 py-3"><StatusBadge status={comm.status} /></td>
       <td className="px-4 py-3 text-xs text-slate-400">
-        {comm.sentAt ? new Date(String(comm.sentAt)).toLocaleString() : "--"}
+        {comm.sentAt ? formatDateTime(String(comm.sentAt)) : "—"}
       </td>
     </tr>
   );
@@ -178,9 +179,10 @@ export function CustomerEtaPage() {
     );
   });
   const comms = (commsQ.data ?? []) as AnyRecord[];
+  const recommendationRows = ((recommendations.data as AnyRecord[]) ?? []).slice(0, 4);
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="page-stack">
       {toast && (
         <div className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">{toast}</div>
       )}
@@ -211,20 +213,15 @@ export function CustomerEtaPage() {
       </div>
 
       {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
+      <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Customer ETA summary">
         {[
           { label: "Tracked Jobs",        val: s.totalTracked ?? s.total_tracked ?? jobs.length },
-          { label: "ETA Risk Records",    val: s.etaRisk ?? s.eta_risk ?? "—", accent: "text-red-600" },
-          { label: "Updates Needed",      val: s.updatesNeeded ?? s.updates_needed ?? "—", accent: "text-amber-600" },
-          { label: "Recorded In-App",     val: s.communicationsSent ?? s.communications_sent ?? "—", accent: "text-teal-600" },
-          { label: "Queued for Provider", val: s.pendingCommunications ?? s.pending_communications ?? "—", accent: "text-amber-600" },
-          { label: "Feedback Rating",     val: s.averageFeedbackRating ?? s.average_feedback_rating ?? "—", accent: "text-violet-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-30">
-            <span className={`text-2xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
+          { label: "ETA Risk Records",    val: s.etaRisk ?? s.eta_risk ?? "—" },
+          { label: "Updates Needed",      val: s.updatesNeeded ?? s.updates_needed ?? "—" },
+          { label: "Recorded In-App",     val: s.communicationsSent ?? s.communications_sent ?? "—" },
+          { label: "Queued for Provider", val: s.pendingCommunications ?? s.pending_communications ?? "—" },
+          { label: "Feedback Rating",     val: s.averageFeedbackRating ?? s.average_feedback_rating ?? "—" },
+        ].map(({ label, val }) => <KpiCard compact key={label} label={label} value={String(val)} />)}
       </div>
 
       <div className="panel p-4 text-sm text-slate-600">
@@ -232,13 +229,14 @@ export function CustomerEtaPage() {
       </div>
 
       {/* Tab bar + search */}
-      <div className="panel flex gap-2 items-center">
+      <div className="panel flex flex-wrap items-center gap-2 p-3">
         {([["jobs", "At-Risk Jobs"], ["comms", "Communication Log"]] as const).map(([key, label]) => (
           <button
             key={key}
             type="button"
+            aria-pressed={tab === key}
             onClick={() => setTab(key)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+            className={`min-h-11 whitespace-nowrap rounded-lg border px-4 py-1.5 text-sm font-medium transition-colors sm:min-h-9 ${
               tab === key ? "bg-teal-50 border-teal-300 text-teal-700" : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
             }`}
           >
@@ -251,24 +249,25 @@ export function CustomerEtaPage() {
         {tab === "jobs" && (
           <input
             type="search"
+            aria-label="Search ETA jobs"
             placeholder="Search jobs, customers…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-52"
+            className="min-h-11 min-w-52 flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 sm:ml-auto sm:min-h-9 sm:max-w-72"
           />
         )}
       </div>
 
       {/* Jobs table */}
       {tab === "jobs" && (
-        <div className="grid gap-6 xl:grid-cols-[1fr_300px]">
+        <div className={recommendations.isError || recommendationRows.length > 0 ? "grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_280px]" : "min-w-0"}>
           <div className="panel overflow-hidden p-0">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[1040px] text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50">
-                    {["Job", "Customer", "Status", "ETA", "SLA", "Confidence", "Update", "Driver", ""].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
+                    {["Job", "Customer", "Status", "ETA", "SLA", "Confidence", "Update", "Driver", ""].map((h, index) => (
+                      <th key={h || "actions"} className={`${index === 8 ? "sticky right-0 bg-slate-50 shadow-[-8px_0_12px_-12px_rgba(15,23,42,.35)]" : ""} whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -291,16 +290,12 @@ export function CustomerEtaPage() {
           </div>
 
           {/* AI recommendations */}
-          <div className="flex flex-col gap-3">
+          {(recommendations.isError || recommendationRows.length > 0) && <aside className="flex flex-col gap-3">
             <h2 className="text-sm font-semibold text-slate-700">Grounded recommendations</h2>
             {recommendations.isError ? (
               <ErrorState message="Recommendation records could not be loaded." />
-            ) : ((recommendations.data as AnyRecord[]) ?? []).length ? (
-              ((recommendations.data as AnyRecord[]) ?? []).slice(0, 4).map((x) => <AiInsightCard key={String(x.id)} insight={x} />)
-            ) : (
-              <EmptyState title="No grounded recommendations" subtitle="No source-linked recommendation records are available for the current scope." />
-            )}
-          </div>
+            ) : recommendationRows.map((x) => <AiInsightCard key={String(x.id)} insight={x} />)}
+          </aside>}
         </div>
       )}
 
@@ -371,7 +366,7 @@ export function PublicEtaTrackingPage() {
               <StatusBadge status={row.status} />
             </div>
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <KpiCard label="Recorded ETA" value={String(row.eta || "Unavailable")} icon={<Truck />} status={String(row.etaConfidenceLevel ?? row.eta_confidence_level ?? "Unknown")} />
+              <KpiCard label="Recorded ETA" value={row.eta ? formatDateTime(String(row.eta)) : "Unavailable"} icon={<Truck />} status={String(row.etaConfidenceLevel ?? row.eta_confidence_level ?? "Unknown")} />
               <KpiCard label="Recorded ETA Confidence" value={String(row.etaConfidenceLevel ?? row.eta_confidence_level ?? "Unavailable")} icon={<Star />} status={String(row.etaConfidenceLevel ?? row.eta_confidence_level ?? "Unknown")} />
             </div>
             <div className="mt-8 grid gap-3 sm:grid-cols-5">

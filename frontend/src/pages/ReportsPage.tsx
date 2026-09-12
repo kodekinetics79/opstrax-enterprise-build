@@ -616,7 +616,7 @@ export function ReportsPage() {
   if (datasetsQ.isLoading) return <LoadingState />;
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto">
+    <div className="page-stack min-w-0">
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>

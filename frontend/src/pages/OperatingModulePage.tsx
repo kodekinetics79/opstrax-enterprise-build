@@ -530,7 +530,7 @@ function LiveDashboardPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <PageHeader
         eyebrow="Control Tower"
         title="Operations Dashboard"
@@ -546,8 +546,8 @@ function LiveDashboardPage() {
         <KpiCard label="Critical Alert Records" value={criticalAlerts.length} status={criticalAlerts.length ? "Critical" : undefined} />
         <KpiCard label="Acknowledged Open Records" value={acknowledgedAlerts.length} status="Recorded" />
       </div>
-      <div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
-        <div className="panel p-5">
+      <div className="grid gap-3 xl:grid-cols-[1.15fr_.85fr]">
+        <div className="panel p-4">
           <p className="section-title">Open Alert Register</p>
           <div className="mt-4 space-y-3">
             {topAlerts.length ? topAlerts.map((alert) => (
@@ -687,7 +687,7 @@ function AlertsPage() {
   if (isError) return <EmptyState title="Alerts unavailable" subtitle="Unable to load the alert register right now. Refresh to try again." />;
 
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <PageHeader
         eyebrow="Control Tower"
         title="Alerts"
@@ -715,11 +715,11 @@ function AlertsPage() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Open Alerts" value={summary.open} status="Open" />
-        <KpiCard label="Critical Alerts" value={summary.critical} status="Critical" />
-        <KpiCard label="Acknowledged" value={summary.acknowledged} status="Review" />
-        <KpiCard label="Closed" value={summary.closed} status="Recorded" />
+      <div className="panel flex flex-wrap divide-x divide-slate-100">
+        <KpiCard compact label="Open Alerts" value={summary.open} status="Open" />
+        <KpiCard compact label="Critical Alerts" value={summary.critical} status="Critical" />
+        <KpiCard compact label="Acknowledged" value={summary.acknowledged} status="Review" />
+        <KpiCard compact label="Closed" value={summary.closed} status="Recorded" />
       </div>
 
       <div className="panel flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -902,7 +902,7 @@ function exportCsv(name: string, rows: AnyRecord[]) {
 
 function PriceSimulationPage() {
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <PageHeader
         eyebrow="Commercial"
         title="Price Simulation"
@@ -973,7 +973,7 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
 
   if (!definition) {
     return (
-      <div className="control-tower space-y-6">
+      <div className="control-tower page-stack">
         <PageHeader
           eyebrow="OpsTrax"
           title="Module Workspace"
@@ -992,7 +992,7 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
   }
 
   return (
-    <div className="control-tower space-y-6">
+    <div className="control-tower page-stack">
       <PageHeader
         eyebrow={definition.eyebrow}
         title={definition.title}
@@ -1008,11 +1008,11 @@ export function OperatingModulePage({ moduleKey }: { moduleKey: string }) {
           </button>
         </>}
       />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {definition.kpis.map((kpi) => <KpiCard key={kpi.label} label={kpi.label} value={hasConnectedRecords ? kpi.value : "—"} status={hasConnectedRecords ? kpi.status : "Unavailable"} trend={hasConnectedRecords ? kpi.trend : undefined} />)}
+      <div className="panel flex flex-wrap divide-x divide-slate-100">
+        {definition.kpis.map((kpi) => <KpiCard compact key={kpi.label} label={kpi.label} value={hasConnectedRecords ? kpi.value : "—"} status={hasConnectedRecords ? kpi.status : "Unavailable"} trend={hasConnectedRecords ? kpi.trend : undefined} />)}
       </div>
       <ModuleToolbar search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} />
-      <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
+      <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
         {hasConnectedRecords
           ? <DataTable rows={rows} columns={definition.columns} onSelect={setSelected} />
           : <EmptyState title="No connected production records" subtitle="This workspace has no production data source yet. Fixed example records, percentages, and recommendations are not shown." />}
