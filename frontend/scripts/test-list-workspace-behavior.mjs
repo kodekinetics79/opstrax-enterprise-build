@@ -57,6 +57,19 @@ function production(file, helpers) {
 }
 const integrations = production("IntegrationsPage.tsx", ["effectiveIntegrationStatus", "formatRelativeTime", "ConnectorPill"]);
 const maintenance = production("MaintenanceCommandPage.tsx", ["queueTitle", "queueCode", "queueOrigin", "queuePriority", "fmtDate", "fmtDateTime"]);
+const sharedUi = production("../components/ui.tsx", []);
+for (const [status, tone] of [["Connected", "emerald"], ["Disconnected", "slate"], ["Error", "red"], ["Pending", "amber"]]) {
+  test(`Actual StatusBadge renders ${status} with its ${tone} semantic tone`, () => {
+    const badge = sharedUi.fn("StatusBadge");
+    for (const value of [status, status.toLowerCase()]) {
+      const element = badge({ status: value });
+      const html = renderToStaticMarkup(element);
+      assert.match(element.props.className, new RegExp(`text-${tone}-`));
+      assert.match(html, new RegExp(`>${status}<`), "the owning status label remains human readable");
+      if (status === "Disconnected" || status === "Error") assert.doesNotMatch(element.props.className, /emerald/, "unavailable or failed connectivity must not signal a healthy connection");
+    }
+  });
+}
 const decoration = {
   StatusBadge: ({ status }) => status, RiskBadge: ({ risk }) => risk,
   RefreshCw: () => null, Plug: () => null, Zap: () => null, Pencil: () => null, Trash2: () => null,
