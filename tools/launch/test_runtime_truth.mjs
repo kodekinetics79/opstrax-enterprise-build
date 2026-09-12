@@ -29,10 +29,15 @@ test("runtime Live is fail-closed on API, database, worker and telemetry truth",
   assert.match(shell, /runtimeState === "Live"/);
   assert.match(shell, /const runtimeState = runtimeQuery\.data\?\.state \?\? "Unavailable"/,
     "deployment health must remain the shell's authoritative runtime state");
-  assert.doesNotMatch(shell, /tenantIsExplicitlySynthetic \? "Demo Data"/,
+  assert.doesNotMatch(shell, /tenantNameSuggestsDemo \? "Demo Data"/,
     "demo provenance must never mask a deployment mismatch or unhealthy runtime");
-  assert.match(shell, /data-testid="synthetic-data-badge"/,
-    "synthetic tenant provenance must remain separately visible");
+  assert.doesNotMatch(shell, /data-testid="synthetic-data-badge"/,
+    "a tenant name heuristic must not be presented as verified data provenance in the header");
+  assert.match(shell, /tenantNameSuggestsDemo &&|tenantNameSuggestsDemo \?/, "name-based account context remains conditional");
+  assert.match(shell, /aria-label="Account menu"[\s\S]+data-testid="tenant-data-context"/,
+    "name-based context must remain accessible in the account menu");
+  assert.match(shell, /Based on the organization name\. Check individual records for their source\./,
+    "account context must explain the heuristic and direct users to record provenance");
   assert.match(shell, /data-testid="release-mismatch-banner"/,
     "frontend\/API mismatch must stop a POC with a visible recovery action");
 });
