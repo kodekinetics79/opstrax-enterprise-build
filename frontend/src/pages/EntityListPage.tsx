@@ -1,3 +1,4 @@
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -444,7 +445,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
       />
       {mutationError ? (
         <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {mutationError instanceof Error ? mutationError.message : "The requested change could not be completed."}
+          {apiErrorMessage(mutationError, "The requested change could not be completed.")}
         </div>
       ) : null}
 
@@ -587,7 +588,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
           record={selectedRecord}
           options={(kind === "vehicles" ? driverOptions.data : vehicleOptions.data) || []}
           saving={assignMutation.isPending}
-          serverError={assignMutation.error instanceof Error ? assignMutation.error.message : undefined}
+          serverError={assignMutation.error ? apiErrorMessage(assignMutation.error, "The assignment could not be saved. Please try again.") : undefined}
           onClose={() => setAssignmentOpen(false)}
           onSave={(targetId) => assignMutation.mutate(targetId)}
         />
@@ -781,7 +782,7 @@ function FleetMasterAssignmentModal({ kind, record, options, saving, serverError
           <div>
             <p className="section-title text-teal-700">Fleet master assignment</p>
             <h2 id="fleet-master-assignment-title" className="mt-1 text-xl font-bold text-slate-900">{currentTargetId ? "Reassign" : "Assign"} {recordLabel}</h2>
-            <p className="mt-1 text-sm text-slate-500">Select the intended {targetLabel} and confirm. Reassignment preserves the previous effective-dated history row.</p>
+            <p className="mt-1 text-sm text-slate-500">Select the intended {targetLabel} and confirm. Reassignment keeps the previous pairing in history. Dispatch readiness is checked separately before a job is assigned.</p>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} disabled={saving} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
