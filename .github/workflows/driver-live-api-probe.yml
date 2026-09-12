@@ -1,0 +1,35 @@
+name: Driver Live API Probe
+
+on:
+  push:
+    branches:
+      - fix/driver-new-face-and-api
+    paths:
+      - .github/workflows/driver-live-api-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe-live-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prove OpsTrax API readiness
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 30 --output /tmp/ready.json --write-out '%{http_code}' https://opstrax-api.onrender.com/health/ready)
+          cat /tmp/ready.json
+          test "$code" = "200"
+      - name: Prove login route is reachable
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --max-time 30 --output /tmp/login.json --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -X POST https://opstrax-api.onrender.com/api/auth/login \
+            --data '{"email":"mobile-probe-invalid@example.invalid","password":"invalid-probe-only","companyCode":"OPX-DEMO"}')
+          cat /tmp/login.json
+          echo "HTTP $code"
+          case "$code" in
+            400|401|403|422) exit 0 ;;
+            *) echo "Unexpected login probe status: $code"; exit 1 ;;
+          esac
