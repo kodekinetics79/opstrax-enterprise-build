@@ -1,0 +1,68 @@
+/* Task-first access screen. Glass belongs to the frame; inputs remain opaque. */
+.login-access { min-height: 100svh; display: grid; grid-template-columns: minmax(340px, .9fr) minmax(480px, 1.1fr); background: #eff5f8; color: #0f172a; }
+.login-access-brand { display: flex; flex-direction: column; justify-content: space-between; gap: 32px; padding: 40px clamp(32px, 4vw, 72px); background: linear-gradient(145deg, #102a36, #101e31 70%); color: #f1faf9; overflow: hidden; }
+.login-access-logo, .login-access-mobile-logo { display: flex; align-items: center; gap: 12px; font-size: 24px; font-weight: 650; letter-spacing: -.03em; }
+.login-access-story { max-width: 520px; margin: 16px 0; }
+.login-access-story h2 { margin: 0; font-size: clamp(36px, 3.5vw, 58px); font-weight: 650; line-height: 1.1; letter-spacing: -.035em; }
+.login-access-story h2 span { color: #5eead4; }
+.login-access-story > p { color: #bed3d9; font-size: 16px; line-height: 1.7; max-width: 39ch; margin: 24px 0 0; }
+.login-access-illustration { position: relative; height: 200px; margin: 24px 0 48px; perspective: 900px; }
+.login-access-plane { position: absolute; inset: 16px 12px; border-radius: 20px; transform: rotateX(32deg) rotateZ(-12deg); }
+.login-access-plane-back { background: #153b48; border: 1px solid #30606a; transform: translateY(18px) rotateX(32deg) rotateZ(-12deg); box-shadow: 0 22px 32px -16px #030e18; }
+.login-access-plane-front { background: linear-gradient(135deg, #234955e6, #132d40e6); border: 1px solid #548783; color: #6fe1d0; box-shadow: inset 0 1px 0 #a1ded84d, 0 16px 30px -20px #020b16; }
+.login-access-plane-front svg { width: 100%; height: 100%; }
+.login-access-capabilities { display: flex; gap: 16px 24px; flex-wrap: wrap; color: #d1e5e8; font-size: 13px; }
+.login-access-capabilities span { display: inline-flex; gap: 8px; align-items: center; }
+.login-access-capabilities svg { color: #5eead4; }
+.login-access-brand-footer { font-size: 12px; line-height: 1.6; color: #b8d0d5; }
+.login-access-brand-footer a { color: #dbf7f3; text-underline-offset: 4px; }
+.login-access-form-panel { padding: 32px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(145deg, #f8fbfd, #e8f4f3); }
+.login-access-mobile-logo { display: none; }
+.login-access-form-wrap { width: 100%; max-width: 460px; }
+.login-access .login-access-card { border-radius: 20px; padding: 32px; border: 1px solid #fff; background: linear-gradient(145deg, #ffffff, #f6fbfc); box-shadow: inset 0 1px 0 #fff, 0 12px 32px -18px #164e6366, 0 2px 5px #0f172a08; }
+.login-access-steps { display: flex; list-style: none; gap: 20px; margin: 0 0 24px; padding: 0; color: #64748b; font-size: 12px; }
+.login-access-steps li { display: flex; gap: 6px; align-items: center; }
+.login-access-steps li span { display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid #cbd5e1; border-radius: 50%; }
+.login-access-steps [aria-current="step"] { color: #0f766e; font-weight: 650; }
+.login-access-steps [aria-current="step"] span { background: #e0f5ef; border-color: #74b9ac; }
+.login-access-heading { margin-bottom: 24px; }
+.login-access-heading h1 { margin: 0; font-size: 28px; font-weight: 700; line-height: 1.2; letter-spacing: -.03em; text-wrap: balance; }
+.login-access-heading p { margin: 12px 0 0; color: #526478; font-size: 14px; line-height: 1.6; }
+.login-access .login2-field { min-height: 48px; height: auto; border-radius: 10px; border: 1px solid #b8c8d2; padding: 11px 12px; background: #fff; color: #142b3d; font-size: 16px; line-height: 24px; box-shadow: inset 0 1px 2px #0f172a05; }
+.login-access .login2-field::placeholder { color: #64748b; }
+.login-access .login2-field:focus { border-color: #0f766e; outline: 2px solid #0f766e; outline-offset: 2px; box-shadow: none; }
+.login-access .login2-field[aria-invalid="true"] { border-color: #b91c1c; outline-color: #b91c1c; box-shadow: inset 0 0 0 1px #b91c1c; }
+.login-access .login2-field.pr-20 { padding-right: 80px; }
+.login-access .login2-cta, .login-access .login2-sso { min-height: 48px; height: auto; border-radius: 10px; padding: 12px 16px; background: linear-gradient(#0f766e, #116961); color: #fff; font-size: 15px; font-weight: 650; border: 1px solid #0e6962; box-shadow: inset 0 1px 0 #ffffff33, 0 4px 10px -4px #0f766e66; transform: none; }
+.login-access .login2-cta:hover:not(:disabled), .login-access .login2-sso:hover { background: #115e59; transform: none; }
+.login-access .login2-cta:disabled { background: #e2e8f0; color: #526478; border-color: #cbd5e1; box-shadow: none; opacity: 1; cursor: not-allowed; }
+.login-access .login2-idchip { padding: 12px; border-radius: 10px; border: 1px solid #d1e1e6; background: #eef5f7; box-shadow: none; align-items: center; gap: 8px; }
+.login-access-identity { display: block; overflow-wrap: anywhere; }
+.login-access-change, .login-access .login2-eye { min-width: 44px; min-height: 44px; padding: 8px; display: inline-flex; align-items: center; justify-content: center; color: #0f766e; font-size: 12px; font-weight: 650; background: transparent; border: 0; box-shadow: none; flex-shrink: 0; }
+.login-access .login2-eye:hover, .login-access-change:hover { background: #e0f2ef; border-radius: 6px; }
+.login-access a[href="/forgot-password"] { min-height: 44px; display: inline-flex; align-items: center; }
+.login-access-help { margin: 20px 4px 0; font-size: 13px; color: #475569; line-height: 1.6; }
+.login-access-help summary { min-height: 44px; padding: 10px 0; cursor: pointer; color: #245b59; font-weight: 600; }
+.login-access-help p { margin: 8px 0 16px; }
+.login-access-help dl { margin: 12px 0; }
+.login-access-help dl > div { display: grid; grid-template-columns: 110px 1fr; gap: 12px; padding: 10px 0; border-bottom: 1px solid #dce7e9; }
+.login-access-help dt { font-weight: 600; color: #243d4c; }
+.login-access-help dd { margin: 0; }
+.login-access-footer { display: flex; justify-content: center; gap: 24px; margin-top: 12px; font-size: 12px; color: #526478; }
+.login-access-footer a { display: inline-flex; align-items: center; min-height: 44px; text-underline-offset: 4px; }
+.login-access a:hover { text-decoration: underline; }
+.login-access :is(button, a, summary):focus-visible { outline: 2px solid #0f766e; outline-offset: 3px; }
+.login-access ::selection { color: #103c38; background: #b8e7dd; }
+@media (max-width: 959px) {
+  .login-access { display: block; }
+  .login-access-brand { display: none; }
+  .login-access-form-panel { min-height: 100svh; padding: 24px; }
+  .login-access-mobile-logo { display: flex; margin-bottom: 24px; color: #183a43; }
+}
+@media (max-width: 480px) {
+  .login-access-form-panel { padding: 20px 16px; justify-content: flex-start; }
+  .login-access .login-access-card { padding: 24px 20px; border-radius: 16px; }
+  .login-access-heading h1 { font-size: 25px; }
+  .login-access-steps { gap: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .login-access *, .login-access *::before, .login-access *::after { animation: none !important; transition: none !important; } }
