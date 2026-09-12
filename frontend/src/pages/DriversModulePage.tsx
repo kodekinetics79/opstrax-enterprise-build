@@ -207,7 +207,7 @@ export function DriversModulePage() {
           <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
             <OverviewClay Icon={UserCheck}     tone="fc-clay-teal"    iconCls="text-teal-700"    label="Driver readiness" value={`${readiness}%`} caption={`${rows.length} live operators`} />
             <OverviewClay Icon={ShieldAlert}   tone="fc-clay-emerald" iconCls="text-emerald-700" label="Safety average"   value={safetyAvg}       caption="Fleet-wide behavior score" />
-            <OverviewClay Icon={Users}         tone="fc-clay-sky"     iconCls="text-sky-700"     label="Available now"    value={ready}           caption="Ready for dispatch" />
+            <OverviewClay Icon={Users}         tone="fc-clay-sky"     iconCls="text-sky-700"     label="Available now"    value={ready}           caption="Registry status · dispatch checks apply" />
             <OverviewClay Icon={AlertTriangle} tone="fc-clay-red"     iconCls="text-rose-700"    label="At risk"          value={atRisk}          caption="Compliance or safety watch" alert={atRisk > 0} />
           </div>
           <div className="grid gap-2 lg:grid-cols-3">
