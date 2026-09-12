@@ -181,7 +181,7 @@ export function VehiclesModulePage() {
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
             <OverviewClay Icon={Gauge}       tone="fc-clay-teal"    iconCls="text-teal-700"    label="Fleet readiness" value={readiness == null ? "Unknown" : `${readiness}%`} caption={`${readinessRows.length} assessed · ${rows.length - readinessRows.length} unknown`} />
-            <OverviewClay Icon={Truck}       tone="fc-clay-emerald" iconCls="text-emerald-700" label="Available now"   value={available}       caption="Ready for dispatch" />
+            <OverviewClay Icon={Truck}       tone="fc-clay-emerald" iconCls="text-emerald-700" label="Available now"   value={available}       caption="Registry status · dispatch checks apply" />
             <OverviewClay Icon={ShieldAlert} tone="fc-clay-red"     iconCls="text-rose-700"    label="At risk"         value={atRisk}          caption="High risk or down" alert={atRisk > 0} />
             <OverviewClay Icon={Boxes}       tone="fc-clay-amber"   iconCls="text-amber-700"   label="Device gaps"     value={deviceEx}        caption="Telematics blind spots" alert={deviceEx > 0} />
           </div>

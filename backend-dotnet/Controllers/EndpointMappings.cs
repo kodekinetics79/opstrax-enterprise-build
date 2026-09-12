@@ -4897,7 +4897,7 @@ public static partial class EndpointMappings
                      CASE WHEN d.assigned_vehicle_id IS NULL THEN 'Assign best-fit available vehicle'
                           WHEN d.compliance_score < 85 THEN 'Review certifications'
                           WHEN d.safety_score < 88 THEN 'Queue coaching review'
-                          ELSE 'Ready for dispatch' END recommended_action,
+                          ELSE 'Check HOS and eligibility before dispatch' END recommended_action,
                      -- Driver-portal access, so the roster can show who can actually use the
                      -- app and offer the invite action. NULL user_id = never provisioned.
                      CASE WHEN d.user_id IS NULL       THEN 'none'
