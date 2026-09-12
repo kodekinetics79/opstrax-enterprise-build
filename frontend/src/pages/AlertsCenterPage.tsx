@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import {
@@ -10,8 +11,9 @@ import {
 import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
-import { EmptyState, ErrorState, exportCsv, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, exportCsv, LoadingState, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
+import "./alerts-workspace.css";
 
 type Alert = {
   id: string | number;
@@ -142,13 +144,6 @@ function statusClass(status: string) {
   return "bg-slate-100 border-slate-200 text-slate-600";
 }
 
-function severityTone(severity: string) {
-  if (/critical/i.test(severity)) return "border-red-200 bg-red-50/90";
-  if (/high/i.test(severity)) return "border-orange-200 bg-orange-50/90";
-  if (/warning/i.test(severity)) return "border-amber-200 bg-amber-50/90";
-  return "border-sky-200 bg-sky-50/90";
-}
-
 function ageHours(createdAt?: string) {
   if (!createdAt) return 0;
   const created = new Date(createdAt).getTime();
@@ -170,11 +165,15 @@ function ActionModal({
   alert,
   onClose,
   onConfirm,
+  pending,
+  error,
 }: {
   type: ActionType;
   alert: Alert | null;
   onClose: () => void;
   onConfirm: (payload: AnyRecord) => void;
+  pending: boolean;
+  error: string | null;
 }) {
   const [note, setNote] = useState("");
   const dialogRef = useDialogFocus<HTMLDivElement>(Boolean(type && alert), onClose);
@@ -217,11 +216,13 @@ function ActionModal({
             placeholder={type === "task" ? `Follow-up for ${alert.title}` : "Add context for the team"}
           />
         </div>
+        {error ? <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" className="btn-ghost h-10" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-ghost h-10" disabled={pending} onClick={onClose}>Cancel</button>
           <button
             type="button"
-            className={`rounded-xl px-4 py-2 text-sm font-semibold text-white transition ${buttonClass}`}
+            disabled={pending}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold text-white transition disabled:opacity-50 ${buttonClass}`}
             onClick={() => {
               const payload =
                 type === "acknowledge" ? { note } :
@@ -230,7 +231,7 @@ function ActionModal({
               onConfirm(payload);
             }}
           >
-            {type === "acknowledge" ? "Acknowledge" : type === "close" ? "Close alert" : "Create task"}
+            {pending ? "Saving…" : type === "acknowledge" ? "Acknowledge" : type === "close" ? "Close alert" : "Create task"}
           </button>
         </div>
       </div>
@@ -238,190 +239,47 @@ function ActionModal({
   );
 }
 
-function AlertCard({
-  alert,
-  active,
-  onSelect,
-  canAcknowledge,
-  canClose,
-  onAction,
-}: {
-  alert: Alert;
-  active: boolean;
-  onSelect: () => void;
-  canAcknowledge: boolean;
-  canClose: boolean;
-  onAction: (type: ActionType, alert: Alert) => void;
+function AlertInspector({ alert, detail, loading, failed, retry, canAcknowledge, canClose, onAction, onNavigate }: {
+  alert: Alert; detail: AlertDetailRecord; loading: boolean; failed: boolean; retry: () => void;
+  canAcknowledge: boolean; canClose: boolean; onAction: (type: ActionType, alert: Alert) => void; onNavigate: (route: string) => void;
 }) {
-  return (
-    <article
-      className={`rounded-xl border p-3 shadow-sm transition hover:border-sky-300 hover:shadow-md ${active ? "border-sky-300 bg-sky-50/70" : severityTone(alert.severity)}`}
-    >
-      <button type="button" onClick={onSelect} className="w-full text-left">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={alert.severity} />
-              <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statusClass(alert.status)}`}>{alert.status}</span>
-            </div>
-            <h3 className="mt-2 text-sm font-semibold text-slate-900">{alert.title}</h3>
-          </div>
-          <span className="text-xs font-semibold text-slate-400">{alert.age ?? "Age unavailable"}</span>
-        </div>
-        <p className="mt-1.5 text-sm text-slate-600">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
-        <p className="mt-1.5 line-clamp-2 text-sm leading-5 text-slate-500">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
-      </button>
-      <div className="mt-3 flex flex-wrap gap-2 border-t border-black/5 pt-2">
-        {canAcknowledge && /open/i.test(alert.status) && (
-          <button type="button" className="btn-ghost btn-compact border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" onClick={() => onAction("acknowledge", alert)}>
-            Acknowledge
-          </button>
-        )}
-        {canAcknowledge && (
-          <button type="button" className="btn-ghost btn-compact border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100" onClick={() => onAction("task", alert)}>
-            Create task
-          </button>
-        )}
-        {canClose && !/closed/i.test(alert.status) && (
-          <button type="button" className="btn-ghost btn-compact" onClick={() => onAction("close", alert)}>
-            Close
-          </button>
-        )}
-      </div>
-    </article>
-  );
-}
-
-function DetailPanel({
-  alert,
-  liveDetail,
-  tasks,
-  auditTrail,
-  loading,
-  onNavigate,
-  canAcknowledge,
-  canClose,
-  onAction,
-}: {
-  alert: Alert | null;
-  liveDetail: Alert | null;
-  tasks: AlertTask[];
-  auditTrail: AlertAuditEntry[];
-  loading: boolean;
-  onNavigate: (route: string) => void;
-  canAcknowledge: boolean;
-  canClose: boolean;
-  onAction: (type: ActionType, alert: Alert) => void;
-}) {
-  const record = liveDetail ?? alert;
-
-  if (!record) {
-    return (
-      <div className="panel p-5">
-        <EmptyState title="No alert selected" subtitle="Choose an alert from the current queue to inspect its recorded context." />
-      </div>
-    );
-  }
-
-  const actionRoute = record.entityRoute || routeForCategory(record.category);
-  const evidenceNote = `Severity is recorded as ${record.severity}. Review the source event and current asset context before deciding the operational response.`;
-
-  return (
-    <aside className="panel p-4 lg:p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Selected alert</p>
-          <h2 className="mt-1 text-lg font-semibold text-slate-900">{record.title}</h2>
-          <p className="mt-1 text-sm text-slate-500">{record.alertId} · {record.category}</p>
-        </div>
-        {loading ? <RefreshCw className="h-4 w-4 animate-spin text-slate-400" /> : null}
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        <StatusBadge status={record.severity} />
-        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(record.status)}`}>{record.status}</span>
-        {record.entity ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">{record.entity}</span> : null}
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <MetaCard label="Entity type" value={record.entityType || "Not tagged"} />
-        <MetaCard label="Age" value={record.age || "Unavailable"} />
-        <MetaCard label="Acknowledged by" value={record.acknowledgedBy || "Unowned"} />
-        <MetaCard label="Created" value={record.createdAt ? new Date(record.createdAt).toLocaleString() : "Unknown"} />
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_10px_22px_rgba(15,23,42,.05)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-600">Recommended action</p>
-        <p className="mt-2 text-sm text-slate-700">{record.recommendedAction || record.body || "No action guidance recorded on this alert."}</p>
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-600">Evidence note</p>
-        <p className="mt-2 text-sm text-slate-600">{evidenceNote}</p>
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Follow-up tasks</p>
-          <span className="text-xs font-medium text-slate-400">{tasks.length} linked</span>
-        </div>
-        <div className="mt-3 space-y-3">
-          {tasks.length ? tasks.map((task) => (
-            <div key={String(task.id)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">{task.title}</p>
-                  <p className="mt-1 text-xs text-slate-500">{task.owner || "Unassigned"} · {task.priority || "Priority not set"}</p>
-                </div>
-                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(task.status || "Open")}`}>{task.status || "Open"}</span>
-              </div>
-              {task.description ? <p className="mt-2 text-sm text-slate-600">{task.description}</p> : null}
-            </div>
-          )) : (
-            <p className="text-sm text-slate-500">No follow-up task has been created from this alert yet.</p>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Audit trail</p>
-          <span className="text-xs font-medium text-slate-400">{auditTrail.length} events</span>
-        </div>
-        <div className="mt-3 space-y-3">
-          {auditTrail.length ? auditTrail.map((entry) => (
-            <div key={String(entry.id)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-              <p className="text-sm font-semibold text-slate-900">{entry.actionName || "Alert event"}</p>
-              <p className="mt-1 text-xs text-slate-500">{entry.actorName || "system"} · {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "Unknown time"}</p>
-            </div>
-          )) : (
-            <p className="text-sm text-slate-500">No audit entries are available for this alert yet.</p>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-black/5 pt-3">
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate(actionRoute)}>Open related module</button>
-        {canAcknowledge && /open/i.test(record.status) && (
-          <button type="button" className="btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", record)}>
-            Acknowledge
-          </button>
-        )}
-        {canClose && !/closed/i.test(record.status) && (
-          <button type="button" className="btn-ghost h-9" onClick={() => onAction("close", record)}>Close</button>
-        )}
-      </div>
-    </aside>
-  );
-}
-
-function MetaCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] px-3 py-2 shadow-[0_6px_14px_rgba(15,23,42,.04)]">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-slate-900">{value}</p>
+  const record = { ...detail.alert, ...alert };
+  return <div className="alerts-inspector-content">
+    <header>
+      <div className="alerts-inline"><StatusBadge status={record.severity} /><span className={`alerts-status ${statusClass(record.status)}`}>{record.status}</span></div>
+      <h2>{record.title}</h2>
+      <p className="alerts-context">{record.entity || "Unmapped entity"} · {record.category} · #{record.alertId}</p>
+    </header>
+    <p className="alerts-message">{record.body || "No event description recorded."}</p>
+    <div className="alerts-actions" aria-label="Selected alert actions">
+      {canAcknowledge && /open/i.test(record.status) && <button type="button" className="btn-primary btn-compact" onClick={() => onAction("acknowledge", record)}>Acknowledge</button>}
+      {canAcknowledge && <button type="button" className="btn-secondary btn-compact" onClick={() => onAction("task", record)}>Create task</button>}
+      {canClose && !/closed/i.test(record.status) && <button type="button" className="btn-ghost btn-compact" onClick={() => onAction("close", record)}>Close alert</button>}
     </div>
-  );
+    <dl className="alerts-metadata">
+      <div><dt>Recorded</dt><dd>{record.createdAt ? new Date(record.createdAt).toLocaleString() : "Unavailable"}</dd></div>
+      <div><dt>Age</dt><dd>{record.age || "Unavailable"}</dd></div>
+      <div><dt>Acknowledged by</dt><dd>{record.acknowledgedBy || "Not recorded"}</dd></div>
+      <div><dt>Entity type</dt><dd>{record.entityType || "Not tagged"}</dd></div>
+    </dl>
+    <button type="button" className="alerts-related" onClick={() => onNavigate(record.entityRoute || routeForCategory(record.category))}>Open related module →</button>
+    {record.recommendedAction && <details className="alerts-disclosure"><summary>Action guidance</summary><p>{record.recommendedAction}</p></details>}
+    {loading ? <p role="status" className="alerts-context">Loading linked tasks and history…</p> : failed ? <div role="alert" className="alerts-detail-error">Linked tasks and history could not be loaded. <button type="button" onClick={retry}>Retry details</button></div> : <>
+      <details className="alerts-disclosure" open={detail.tasks.length > 0}>
+        <summary>Follow-up tasks <span>{detail.tasks.length}</span></summary>
+        {detail.tasks.length ? detail.tasks.map(task => <div className="alerts-history" key={String(task.id)}><strong>{task.title}</strong><p>{task.status || "Open"} · {task.owner || "Unassigned"} · {task.priority || "Priority not set"}</p>{task.description && <p>{task.description}</p>}</div>) : <p>No follow-up tasks recorded.</p>}
+      </details>
+      <details className="alerts-disclosure"><summary>Activity history <span>{detail.auditTrail.length}</span></summary>
+        {detail.auditTrail.length ? detail.auditTrail.map(entry => <div className="alerts-history" key={String(entry.id)}><strong>{entry.actionName || "Alert event"}</strong><p>{entry.actorName || "system"} · {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "Unknown time"}</p></div>) : <p>No activity history recorded.</p>}
+      </details>
+    </>}
+    <p className="alerts-source-note">Recorded alert severity. Confirm the source event and current asset context before acting.</p>
+  </div>;
+}
+
+function MobileInspector({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  const ref = useDialogFocus<HTMLDivElement>(true, onClose);
+  return <div className="alerts-mobile-overlay" onClick={onClose}><div ref={ref} role="dialog" aria-modal="true" aria-label="Selected alert details" className="alerts-mobile-inspector" onClick={event => event.stopPropagation()}><button type="button" className="btn-ghost alerts-back" onClick={onClose}>← Back to alert queue</button>{children}</div></div>;
 }
 
 export function AlertsCenterPage() {
@@ -439,6 +297,11 @@ export function AlertsCenterPage() {
   const [actionType, setActionType] = useState<ActionType>(null);
   const [actionAlert, setActionAlert] = useState<Alert | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [mobileDetail, setMobileDetail] = useState(false);
+  const [page, setPage] = useState(0);
+  const [sortOrder, setSortOrder] = useState("priority");
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   const alertsQuery = useQuery({
     queryKey: ["alerts"],
@@ -456,6 +319,7 @@ export function AlertsCenterPage() {
     queryKey: ["alerts", "detail", selectedAlert?.id],
     queryFn: () => alertsApi.detail(String(selectedAlert?.id)),
     enabled: selectedAlert != null,
+    refetchInterval: 15_000,
   });
 
   const acknowledgeMutation = useMutation({
@@ -529,6 +393,8 @@ export function AlertsCenterPage() {
         if (!query) return true;
         return [
           alert.title,
+          alert.body,
+          alert.alertType,
           alert.alertId,
           alert.entity,
           alert.entityType,
@@ -536,39 +402,57 @@ export function AlertsCenterPage() {
           alert.recommendedAction,
         ].some((value) => String(value ?? "").toLowerCase().includes(query));
       })
-      .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9) || ageHours(b.createdAt) - ageHours(a.createdAt));
-  }, [alerts, categoryFilter, statusFilter, severityFilter, search]);
+      .sort((a, b) => {
+        const aKnown = Boolean(a.createdAt && Number.isFinite(Date.parse(a.createdAt)));
+        const bKnown = Boolean(b.createdAt && Number.isFinite(Date.parse(b.createdAt)));
+        if (sortOrder !== "priority" && aKnown !== bKnown) return aKnown ? -1 : 1;
+        if (sortOrder === "newest") return ageHours(a.createdAt) - ageHours(b.createdAt);
+        if (sortOrder === "oldest") return ageHours(b.createdAt) - ageHours(a.createdAt);
+        return Number(/closed/i.test(a.status)) - Number(/closed/i.test(b.status)) || (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9) || ageHours(b.createdAt) - ageHours(a.createdAt);
+      });
+  }, [alerts, categoryFilter, statusFilter, severityFilter, search, sortOrder]);
 
   const unresolvedCount = alerts.filter((alert) => !/closed/i.test(alert.status)).length;
   const agingUnresolved = alerts.filter((alert) => !/closed/i.test(alert.status) && ageHours(alert.createdAt) >= 24).length;
-  const unownedOpen = alerts.filter((alert) => /open/i.test(alert.status) && !alert.acknowledgedBy).length;
+  const awaitingAcknowledgement = alerts.filter((alert) => /open/i.test(alert.status) && !alert.acknowledgedBy).length;
   const criticalUnresolved = alerts.filter((alert) => !/closed/i.test(alert.status) && alert.severity === "Critical").length;
   const highUnresolved = alerts.filter((alert) => !/closed/i.test(alert.status) && alert.severity === "High").length;
   const hasActiveFilters = categoryFilter !== "All" || statusFilter !== "All" || severityFilter !== "All" || search.trim().length > 0;
   const detailRecord = normalizeAlertDetail(detailQuery.data as AnyRecord | undefined);
-  const liveDetail = detailRecord.alert;
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 25) - 1));
+  const visibleRows = filtered.slice(currentPage * 25, (currentPage + 1) * 25);
+  const currentSelection = filtered.find(alert => alert.id === selectedAlert?.id) ?? null;
+  const actionPending = acknowledgeMutation.isPending || closeMutation.isPending || taskMutation.isPending;
 
+  useEffect(() => { setPage(0); }, [categoryFilter, statusFilter, severityFilter, search, sortOrder]);
   useEffect(() => {
-    if (!filtered.length) return;
-    if (!selectedAlert || !filtered.some((alert) => alert.id === selectedAlert.id)) {
-      setSelectedAlert(filtered[0]);
-    }
+    if (!filtered.length) { setSelectedAlert(null); setMobileDetail(false); return; }
+    if (!selectedAlert || !filtered.some(alert => alert.id === selectedAlert.id)) setSelectedAlert(filtered[0]);
   }, [filtered, selectedAlert]);
 
   function handleAction(type: ActionType, alert: Alert) {
+    setActionError(null);
     setActionType(type);
     setActionAlert(alert);
   }
 
-  function handleActionConfirm(payload: AnyRecord) {
-    if (!actionType || !actionAlert) return;
+  async function handleActionConfirm(payload: AnyRecord) {
+    if (!actionType || !actionAlert || actionPending) return;
+    setActionError(null);
     const id = actionAlert.id;
-    if (actionType === "acknowledge") acknowledgeMutation.mutate({ id, payload });
-    else if (actionType === "close") closeMutation.mutate({ id, payload });
-    else taskMutation.mutate({ id, payload });
-    setActionType(null);
-    setActionAlert(null);
+    try {
+      if (actionType === "acknowledge") await acknowledgeMutation.mutateAsync({ id, payload });
+      else if (actionType === "close") await closeMutation.mutateAsync({ id, payload });
+      else await taskMutation.mutateAsync({ id, payload });
+      setActionType(null);
+      setActionAlert(null);
+    } catch (error) {
+      const reason = axios.isAxiosError(error) ? (error.response?.data?.message ?? error.response?.data?.error) : error instanceof Error ? error.message : null;
+      setActionError(`${typeof reason === "string" ? reason + " " : "The action could not be saved. "}Your text is still here. Retry, or cancel and refresh the alert.`);
+    }
   }
+
+  const inspector = currentSelection ? <AlertInspector alert={currentSelection} detail={detailRecord} loading={detailQuery.isLoading} failed={detailQuery.isError} retry={() => void detailQuery.refetch()} canAcknowledge={canAcknowledge} canClose={canClose} onAction={handleAction} onNavigate={navigate} /> : null;
 
   if (alertsQuery.isLoading) return <LoadingState />;
   if (alertsQuery.isError) {
@@ -581,49 +465,33 @@ export function AlertsCenterPage() {
   }
 
   return (
-    <div className="control-tower page-stack pb-4">
+    <div className="alerts-workspace page-stack pb-4">
       {toastMsg ? (
         <div className="fixed right-4 top-4 z-50 rounded-2xl border border-emerald-500/20 bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-2xl shadow-emerald-900/20">
           {toastMsg}
         </div>
       ) : null}
 
-      <PageHeader
-        eyebrow="Operations"
-        title="Alerts Center"
-        description="Persisted telemetry alerts generated by the available ingest and detection services, limited to your authorized tenant and branch scope."
-        actions={
-          <>
-            <button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-secondary btn-compact">
-              Export current records
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void queryClient.invalidateQueries({ queryKey: ["alerts"] });
-                void queryClient.invalidateQueries({ queryKey: ["alerts", "summary"] });
-              }}
-              className="btn-primary btn-compact"
-            >
-              <RefreshCw className="h-4 w-4" /> Refresh alerts
-            </button>
-          </>
-        }
-      />
+      <header className="alerts-page-header">
+        <div><h1>Alerts Center</h1><p>Review exceptions, act on priorities, and track follow-up.</p></div>
+        <div className="alerts-actions"><button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-secondary btn-compact">Export filtered</button><button type="button" onClick={() => void queryClient.invalidateQueries({ queryKey: ["alerts"] })} className="btn-primary btn-compact"><RefreshCw className="h-4 w-4" /> Refresh</button></div>
+      </header>
 
       <section className="panel p-3" aria-label="Alert queue summary and filters">
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,.8fr)] xl:items-center">
-          <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Alert queue summary">
+        <p className="alerts-scope-label">Loaded queue · {alerts.length} records in your authorized scope</p>
+        <div className="alerts-summary-bar">
+          <dl className="alerts-summary" aria-label="Alert queue summary for loaded records">
             <CompactMetric label="Unresolved" value={unresolvedCount} detail={`${criticalUnresolved} critical · ${highUnresolved} high`} tone={criticalUnresolved > 0 ? "danger" : "neutral"} />
             <CompactMetric label="Aging unresolved" value={agingUnresolved} detail="24h+ and not closed" tone={agingUnresolved > 0 ? "warning" : "neutral"} />
-            <CompactMetric label="Unowned" value={unownedOpen} detail="Awaiting acknowledgement" tone={unownedOpen > 0 ? "info" : "neutral"} />
-            <CompactMetric label="Resolved" value={summary.closed} detail={`${summary.total || alerts.length} total`} tone="success" />
+            <CompactMetric label="Not acknowledged" value={awaitingAcknowledgement} detail="Open alerts" tone={awaitingAcknowledgement > 0 ? "info" : "neutral"} />
+            <CompactMetric label="Closed" value={alerts.filter(alert => /closed/i.test(alert.status)).length} detail={`${alerts.length} loaded of ${summary.total || alerts.length}` } tone="success" />
           </dl>
 
           <div className="relative min-w-0">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 type="search"
+                aria-label="Search alerts"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search alerts, entities, categories…"
@@ -632,7 +500,8 @@ export function AlertsCenterPage() {
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+        <button type="button" className="alerts-filter-toggle btn-ghost" aria-expanded={filtersExpanded} aria-controls="alerts-filters" onClick={() => setFiltersExpanded(value => !value)}>Filters and sort{hasActiveFilters ? " · active" : ""}</button>
+        <div id="alerts-filters" className={`alerts-filter-controls mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 ${filtersExpanded ? "is-expanded" : ""}`}>
           <label className="min-w-0">
             <span className="sr-only">Filter alerts by category</span>
             <select aria-label="Alert categories" className="field min-w-36" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as (typeof CATEGORIES)[number])}>
@@ -651,58 +520,37 @@ export function AlertsCenterPage() {
               {STATUS_FILTERS.map((status) => <option key={status} value={status}>{status === "All" ? "All statuses" : status}</option>)}
             </select>
           </label>
-          <button
-            type="button"
-            aria-pressed={statusFilter === "Open"}
-            className={`${statusFilter === "Open" ? "btn-primary" : "btn-ghost"} btn-compact`}
-            onClick={() => setStatusFilter((current) => current === "Open" ? "All" : "Open")}
-          >
-            Open only
-          </button>
+          <select aria-label="Sort alerts" className="field alerts-sort" value={sortOrder} onChange={event => setSortOrder(event.target.value)}><option value="priority">Priority · unresolved first</option><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select>
           {hasActiveFilters ? (
             <button type="button" className="btn-ghost btn-compact" onClick={() => { setCategoryFilter("All"); setSeverityFilter("All"); setStatusFilter("All"); setSearch(""); }}>
               Clear filters
             </button>
           ) : null}
           <span className="ml-auto text-xs font-medium text-slate-500" role="status" aria-live="polite">
-            <strong className="font-semibold text-slate-700">{filtered.length}</strong> visible · persisted records · auto refresh 15s
+            <strong className="font-semibold text-slate-700">{filtered.length}</strong> matching · {alerts.length} loaded
           </span>
         </div>
       </section>
 
-      <div className="grid gap-3 xl:grid-cols-[1.35fr_0.95fr]">
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
-          {filtered.length ? filtered.map((alert) => (
-            <AlertCard
-              key={String(alert.id)}
-              alert={alert}
-              active={selectedAlert?.id === alert.id}
-              onSelect={() => setSelectedAlert(alert)}
-              canAcknowledge={canAcknowledge}
-              canClose={canClose}
-              onAction={handleAction}
-            />
-          )) : (
-            <div className="md:col-span-2">
-              <EmptyState title="No alerts match your filters" subtitle="Adjust the search or filters to broaden the current record set." />
-            </div>
-          )}
+      <div className="alerts-split">
+        <section className="panel alerts-queue" aria-label="Alert work queue">
+          <div className="alerts-queue-heading"><h2>Alert queue</h2><span>Choose a row to inspect and act</span></div>
+          <div className="alerts-list-scroll">
+            <div className="alerts-column-head" aria-hidden="true"><span>Severity</span><span>Alert / recorded message</span><span>Asset</span><span>Status</span><span>Age</span></div>
+            {visibleRows.map(alert => <button type="button" key={String(alert.id)} className={`alerts-row ${currentSelection?.id === alert.id ? "is-selected" : ""}`} aria-pressed={currentSelection?.id === alert.id} onClick={() => { setSelectedAlert(alert); if (window.matchMedia("(max-width: 1199px)").matches) setMobileDetail(true); }}>
+              <span className={`alerts-severity severity-${alert.severity.toLowerCase()}`}>{alert.severity}</span>
+              <span className="alerts-row-description"><strong>{alert.title}</strong><span>{alert.body || "No event description recorded"}</span></span>
+              <span className="alerts-row-asset">{alert.entity || "Unmapped"}</span>
+              <span className={`alerts-status ${statusClass(alert.status)}`}>{alert.status}</span>
+              <span className="alerts-row-age" title={alert.createdAt ? new Date(alert.createdAt).toLocaleString() : "Recorded time unavailable"}>{alert.age || "—"}</span>
+            </button>)}
+          </div>
+          {!filtered.length && <EmptyState title="No alerts match your filters" subtitle="Adjust the search or filters to broaden the current record set." />}
+          <footer className="alerts-pagination"><span>{filtered.length ? currentPage * 25 + 1 : 0}–{Math.min((currentPage + 1) * 25, filtered.length)} of {filtered.length} matching</span><div><button type="button" className="btn-ghost btn-compact" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button><span>Page {currentPage + 1} / {Math.max(1, Math.ceil(filtered.length / 25))}</span><button type="button" className="btn-ghost btn-compact" disabled={(currentPage + 1) * 25 >= filtered.length} onClick={() => setPage(currentPage + 1)}>Next</button></div></footer>
         </section>
-
-        <div className="xl:sticky xl:top-4 xl:self-start">
-          <DetailPanel
-            alert={selectedAlert}
-            liveDetail={liveDetail}
-            tasks={detailRecord.tasks}
-            auditTrail={detailRecord.auditTrail}
-            loading={detailQuery.isLoading}
-            onNavigate={navigate}
-            canAcknowledge={canAcknowledge}
-            canClose={canClose}
-            onAction={handleAction}
-          />
-        </div>
+        <aside className="panel alerts-desktop-inspector" aria-label="Selected alert details">{inspector || <EmptyState title="No alert selected" subtitle="Choose an alert from the queue." />}</aside>
       </div>
+      {mobileDetail && inspector && <MobileInspector onClose={() => setMobileDetail(false)}>{inspector}</MobileInspector>}
 
       <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
         <Clock3 className="h-3.5 w-3.5" />
@@ -710,9 +558,13 @@ export function AlertsCenterPage() {
       </div>
 
       <ActionModal
+        key={`${actionType}:${actionAlert?.id}`}
+        pending={actionPending}
+        error={actionError}
         type={actionType}
         alert={actionAlert}
         onClose={() => {
+          if (actionPending) return;
           setActionType(null);
           setActionAlert(null);
         }}
@@ -744,9 +596,9 @@ function CompactMetric({
   return (
     <div className={`min-w-0 rounded-xl border px-3 py-2 ${toneClass}`}>
       <dt className="text-[10px] font-bold uppercase tracking-[0.12em] opacity-75">{label}</dt>
-      <dd className="mt-0.5 flex min-w-0 items-baseline gap-2">
+      <dd className="mt-1 flex min-w-0 items-baseline gap-2 flex-wrap">
         <strong className="text-lg font-bold leading-none tabular-nums">{value}</strong>
-        <span className="min-w-0 truncate text-[11px] font-medium opacity-75" title={detail}>{detail}</span>
+        <span className="min-w-0 text-[11px] font-medium" title={detail}>{detail}</span>
       </dd>
     </div>
   );
