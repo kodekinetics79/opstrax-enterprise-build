@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import "./test-alerts-workspace-behavior.mjs";
 
 const pages = {
   fleetHealth: fs.readFileSync(new URL("../src/pages/FleetHealthPage.tsx", import.meta.url), "utf8"),
@@ -10,12 +11,17 @@ const pages = {
 };
 
 for (const [name, source] of Object.entries(pages)) {
-  assert.match(source, /control-tower/, `${name} must use the shared Operations workspace shell`);
-  assert.match(source, /<PageHeader/, `${name} must use the shared Operations page header`);
+  if (name !== "alerts") {
+    assert.match(source, /control-tower/, `${name} must use the shared Operations workspace shell`);
+    assert.match(source, /<PageHeader/, `${name} must use the shared Operations page header`);
+  }
 }
 
 assert.doesNotMatch(pages.liveMap, /live-map-workbench|live-map-stage|live-map-tactile-card/, "Fleet Position Map must not restore its one-off warm theme");
 assert.doesNotMatch(pages.alerts, /alerts-command-room|alerts-center-workbench/, "Alerts Center must not restore its oversized one-off command-room theme");
+assert.match(pages.alerts, /className="alerts-workspace page-stack/, "Alerts must retain the shared page rhythm in its purpose-built list workspace");
+assert.match(pages.alerts, /<header className="alerts-page-header"[\s\S]*?<h1>Alerts Center<\/h1>/, "Alerts must expose a compact, named page header");
+assert.match(pages.alerts, /className="alerts-split"[\s\S]*?aria-label="Alert work queue"[\s\S]*?aria-label="Selected alert details"/, "Alerts must place the primary work queue before its selected-record inspector");
 
 assert.match(pages.fleetHealth, /Entity/, "Fleet Health filters must visibly label their entity group");
 assert.match(pages.fleetHealth, /Severity/, "Fleet Health filters must visibly label their severity group");
@@ -33,7 +39,12 @@ assert.match(pages.alerts, /Aging unresolved/, "Alerts Center must label the age
 assert.match(pages.alerts, /useDialogFocus/, "Alerts action dialogs must trap and restore focus and close on Escape");
 assert.match(pages.alerts, /aria-labelledby="alert-action-title"/, "Alerts action dialogs must expose an accessible name");
 assert.match(pages.alerts, /aria-label="Alert categories"[\s\S]*aria-label="Alert severity"[\s\S]*aria-label="Alert status"/, "Alerts filters must expose labeled groups");
-assert.match(pages.alerts, /aria-pressed=/, "Alerts filters must expose their selected state");
+assert.match(pages.alerts, /className=\{`alerts-row[\s\S]*?aria-pressed=\{currentSelection\?\.id === alert\.id\}/, "Alert rows must expose which record is selected");
+assert.match(pages.alerts, /aria-label="Search alerts"/, "Alerts search must have an accessible name");
+assert.match(pages.alerts, /key=\{`\$\{actionType\}:\$\{actionAlert\?\.id\}`\}/, "A new action/alert must remount its note field rather than reuse a prior note");
+assert.match(pages.alerts, /pending=\{actionPending\}/, "Action dialogs must receive the combined in-flight state");
+assert.match(pages.alerts, /disabled=\{pending\}/, "Action confirmation must prevent duplicate submissions while saving");
+assert.match(pages.alerts, /error=\{actionError\}/, "A failed mutation must remain visible inside the action dialog");
 
 assert.match(pages.geofences, /aria-label="Geofence status"/, "Geofence status filters must be grouped and labeled");
 assert.match(pages.geofences, /aria-pressed=/, "Geofence status filters must expose their selected state");
@@ -46,4 +57,4 @@ assert.match(pages.geofences, /aria-labelledby="geofence-editor-title"/, "The ge
 assert.match(pages.geofences, /Pan with arrow keys and press Enter or Space/, "The geofence map creation flow must expose a keyboard path");
 assert.match(pages.geofences, /aria-pressed=\{Boolean\(isSel\)\}/, "Zone selection must use a keyboard-operable control with selected state");
 
-console.log("Operations UX coherence contract passed.");
+console.log("Operations UI source contract passed; Alerts state checks run below (no browser or viewport claim).");
