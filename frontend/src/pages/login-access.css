@@ -1,21 +1,7 @@
 /* Task-first access screen. Glass belongs to the frame; inputs remain opaque. */
-.login-access { min-height: 100svh; display: grid; grid-template-columns: minmax(340px, .9fr) minmax(480px, 1.1fr); background: #eff5f8; color: #0f172a; }
-.login-access-brand { display: flex; flex-direction: column; justify-content: space-between; gap: 32px; padding: 40px clamp(32px, 4vw, 72px); background: linear-gradient(145deg, #102a36, #101e31 70%); color: #f1faf9; overflow: hidden; }
-.login-access-logo, .login-access-mobile-logo { display: flex; align-items: center; gap: 12px; font-size: 24px; font-weight: 650; letter-spacing: -.03em; }
-.login-access-story { max-width: 520px; margin: 16px 0; }
-.login-access-story h2 { margin: 0; font-size: clamp(36px, 3.5vw, 58px); font-weight: 650; line-height: 1.1; letter-spacing: -.035em; }
-.login-access-story h2 span { color: #5eead4; }
-.login-access-story > p { color: #bed3d9; font-size: 16px; line-height: 1.7; max-width: 39ch; margin: 24px 0 0; }
-.login-access-illustration { position: relative; height: 200px; margin: 24px 0 48px; perspective: 900px; }
-.login-access-plane { position: absolute; inset: 16px 12px; border-radius: 20px; transform: rotateX(32deg) rotateZ(-12deg); }
-.login-access-plane-back { background: #153b48; border: 1px solid #30606a; transform: translateY(18px) rotateX(32deg) rotateZ(-12deg); box-shadow: 0 22px 32px -16px #030e18; }
-.login-access-plane-front { background: linear-gradient(135deg, #234955e6, #132d40e6); border: 1px solid #548783; color: #6fe1d0; box-shadow: inset 0 1px 0 #a1ded84d, 0 16px 30px -20px #020b16; }
-.login-access-plane-front svg { width: 100%; height: 100%; }
-.login-access-capabilities { display: flex; gap: 16px 24px; flex-wrap: wrap; color: #d1e5e8; font-size: 13px; }
-.login-access-capabilities span { display: inline-flex; gap: 8px; align-items: center; }
-.login-access-capabilities svg { color: #5eead4; }
-.login-access-brand-footer { font-size: 12px; line-height: 1.6; color: #b8d0d5; }
-.login-access-brand-footer a { color: #dbf7f3; text-underline-offset: 4px; }
+.login-access { min-height: 100svh; display: grid; grid-template-columns: minmax(0, 58fr) minmax(400px, 42fr); background: #eff5f8; color: #0f172a; }
+.login-access > .login-brand-panel { width: auto; min-width: 0; }
+.login-access-mobile-logo { align-items: center; gap: 12px; font-size: 24px; font-weight: 650; letter-spacing: -.03em; }
 .login-access-form-panel { padding: 32px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(145deg, #f8fbfd, #e8f4f3); }
 .login-access-mobile-logo { display: none; }
 .login-access-form-wrap { width: 100%; max-width: 460px; }
@@ -53,9 +39,9 @@
 .login-access a:hover { text-decoration: underline; }
 .login-access :is(button, a, summary):focus-visible { outline: 2px solid #0f766e; outline-offset: 3px; }
 .login-access ::selection { color: #103c38; background: #b8e7dd; }
-@media (max-width: 959px) {
+@media (max-width: 1023px) {
   .login-access { display: block; }
-  .login-access-brand { display: none; }
+  .login-access > .login-brand-panel { display: none; }
   .login-access-form-panel { min-height: 100svh; padding: 24px; }
   .login-access-mobile-logo { display: flex; margin-bottom: 24px; color: #183a43; }
 }
@@ -66,3 +52,5 @@
   .login-access-steps { gap: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .login-access *, .login-access *::before, .login-access *::after { animation: none !important; transition: none !important; } }
+
+@media (min-width: 1280px) { .login-access { grid-template-columns: minmax(0, 62fr) minmax(400px, 38fr); } }

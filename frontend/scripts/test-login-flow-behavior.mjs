@@ -25,7 +25,10 @@ const declarations = component.body.statements.filter(ts.isVariableStatement).fl
 const hookNames = name => declarations.filter(declaration => ts.isCallExpression(declaration.initializer) && declaration.initializer.expression.getText(tree) === name)
   .map(declaration => ts.isArrayBindingPattern(declaration.name) ? declaration.name.elements[0].name.getText(tree) : declaration.name.getText(tree));
 const stateNames = hookNames("useState"), refNames = hookNames("useRef"), mutationNames = hookNames("useMutation");
-const relevant = tree.statements.filter(node => !ts.isImportDeclaration(node));
+// Decorative canvas/animation hooks are outside this authentication harness.
+const decorationNames = new Set(["usePointerTilt", "TelemetryCanvas", "FloatingStatusCards", "LiveTicker", "RouteMap"]);
+const relevant = tree.statements.filter(node => !ts.isImportDeclaration(node) &&
+  !(ts.isFunctionDeclaration(node) && decorationNames.has(node.name?.text)));
 const code = ts.transpileModule(`${relevant.map(node => node.getText(tree)).join("\n")}\n${challengeGuard.getText(apiTree)}\nexport const helpers = { getLoginErrorMessage, getMfaErrorMessage };`, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
@@ -59,7 +62,9 @@ function fixture(initial = {}, search = "") {
   runInNewContext(code, {
     exports, require, axios, URLSearchParams, API_BASE_URL: "http://local-api.invalid", authApi: api,
     AlertCircle: blankIcon, ArrowRight: blankIcon, Building2: blankIcon, ClipboardCheck: blankIcon,
-    Route: blankIcon, ShieldCheck: blankIcon, Wrench: blankIcon, OpsTraxLogo: blankIcon, Link,
+    Lock: blankIcon, Route: blankIcon, ShieldCheck: blankIcon, Wrench: blankIcon, OpsTraxLogo: blankIcon, Link,
+    usePointerTilt: () => ({ panelRef: { current: null }, sceneRef: { current: null } }),
+    TelemetryCanvas: blankIcon, FloatingStatusCards: blankIcon, LiveTicker: blankIcon, RouteMap: blankIcon,
     window: { location: { search, assign: url => calls.push(["redirect", url]) } },
     useAuth: () => ({ setSession: session => calls.push(["session", session]) }),
     useNavigate: () => (route, options) => calls.push(["navigate", route, options]),
