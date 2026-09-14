@@ -418,7 +418,7 @@ export function DataTable({
   }, [filtered, sortKey, sortDir]);
 
   const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
-  const pageRows = useMemo(() => sorted.slice(page * pageSize, (page + 1) * pageSize), [sorted, page]);
+  const pageRows = useMemo(() => sorted.slice(page * pageSize, (page + 1) * pageSize), [sorted, page, pageSize]);
 
   useEffect(() => setPage(0), [rows, search, sortKey, sortDir, pageSize]);
   useEffect(() => {

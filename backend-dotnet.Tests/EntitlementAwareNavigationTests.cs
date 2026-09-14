@@ -78,7 +78,8 @@ public sealed class EntitlementAwareNavigationTests
         Assert.Contains("requiredPermission: \"shipments:view\", permissionMatch: \"direct\"", modules, StringComparison.Ordinal);
         Assert.Contains("module.permissionMatch === \"direct\"", shell, StringComparison.Ordinal);
         Assert.DoesNotContain("resolveSearchRoute(sidebarQuery)", shell, StringComparison.Ordinal);
-        Assert.Contains("No accessible modules match.", shell, StringComparison.Ordinal);
+        Assert.Contains("filteredSections.length === 0", shell, StringComparison.Ordinal);
+        Assert.Contains("No modules match", shell, StringComparison.Ordinal);
         Assert.Contains("enabled: canViewAlerts", overview, StringComparison.Ordinal);
         Assert.Contains("enabled: canViewJobs", overview, StringComparison.Ordinal);
         Assert.Contains("enabled: canViewVehicles", overview, StringComparison.Ordinal);
