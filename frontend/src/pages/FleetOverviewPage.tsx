@@ -302,6 +302,12 @@ export function FleetOverviewPage() {
         )}
       />
 
+      <section className="fleet-overview-metrics grid gap-2 md:grid-cols-3" aria-label="Fleet performance summary">
+        <ReadinessGauge readiness={readiness} flagged={flagged} />
+        {canViewDevices && <SignalBay counts={deviceCounts} total={totalFleet} onOpen={() => navigate("/iot-devices")} />}
+        <JobsPulse authorized={canViewJobs} query={jobsQ} onOpen={() => navigate("/jobs")} />
+      </section>
+
       {/* Command-state summary also acts as the single status filter surface. */}
       <div className="fleet-status-strip flex shrink-0 gap-2 overflow-x-auto pb-1" aria-label="Filter fleet by command state">
         <ClayKpi label={COMMAND_STATE_LABELS.Active}    count={counts.Active}    total={totalFleet} Icon={Truck}       icon="text-emerald-700" dot="bg-emerald-500 animate-pulse" active={tab === "Active"}    onClick={() => toggleTab("Active")} />
@@ -527,12 +533,6 @@ export function FleetOverviewPage() {
 
       </div>
 
-      <div className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <ReadinessGauge readiness={readiness} flagged={flagged} />
-        {canViewDevices && <SignalBay counts={deviceCounts} total={totalFleet} onOpen={() => navigate("/iot-devices")} />}
-        <JobsPulse authorized={canViewJobs} query={jobsQ} onOpen={() => navigate("/jobs")} />
-      </div>
-
       <AlertsFeed authorized={canViewAlerts} query={alertsQ} alerts={alerts} onOpen={() => navigate("/alerts")} />
     </div>
   );
@@ -645,7 +645,7 @@ function SignalBay({
           Devices →
         </button>
       </div>
-      <div className="mt-2 space-y-2">
+      <div className="fleet-signal-metrics mt-2 space-y-2">
         {rows.map((r) => (
           <div key={r.label} className="flex items-center gap-2.5">
             <span className={`deck-led ${r.value > 0 ? r.led : "deck-led-slate"}`} />
@@ -697,7 +697,7 @@ function JobsPulse({ authorized, query, onOpen }: { authorized: boolean; query: 
       )}
 
       {!query.isLoading && !query.isError && (
-        <div className="mt-2 space-y-2">
+        <div className="fleet-job-metrics mt-2 space-y-2">
           {PULSE_ROWS.map((row) => {
             const value = Number(summary[row.key] ?? 0);
             return (
