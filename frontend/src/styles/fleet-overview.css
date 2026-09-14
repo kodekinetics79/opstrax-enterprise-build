@@ -21,16 +21,17 @@
 .fleet-status-note details[open] { flex-basis: 100%; margin-left: 0; }
 .fleet-roster-table { font-size: 12px; }
 .fleet-roster-table :is(th, td) { padding-top: 7px; padding-bottom: 7px; }
-.fleet-overview-metrics > .deck-neumo { min-width: 0; padding: 8px 10px; }
+.fleet-overview-metrics > .deck-neumo { min-width: 0; padding: 8px 10px; container: fleet-metric / inline-size; }
 .fleet-overview-metrics .deck-inset { padding: 4px 6px; border-radius: 6px; box-shadow: none; }
 
-@media (min-width: 768px) {
+@container fleet-metric (min-width: 300px) {
   .fleet-signal-metrics, .fleet-job-metrics { display: grid; gap: 8px; align-items: start; }
   .fleet-signal-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .fleet-job-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .fleet-signal-metrics > div, .fleet-job-metrics > div { display: grid; min-width: 0; gap: 4px; margin-block: 0; }
   .fleet-signal-metrics .deck-led { display: none; }
   .fleet-signal-metrics > div > span, .fleet-job-metrics > div > span { width: auto; text-align: left; }
+  .fleet-job-metrics > div > span:first-child { font-size: 10px; line-height: 1.25; }
   .fleet-signal-metrics > div > span:last-child, .fleet-job-metrics > div > span:last-child { grid-row: 2; font-size: 20px; line-height: 1.1; }
   .fleet-signal-metrics .deck-track, .fleet-job-metrics .deck-track { width: 100%; grid-row: 3; height: 4px; }
 }
