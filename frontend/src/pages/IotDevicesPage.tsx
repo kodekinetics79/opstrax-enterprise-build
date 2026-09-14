@@ -2714,12 +2714,14 @@ function DeviceDetailDrawer({
         <button type="button" className="btn-primary" onClick={() => configurationRef.current?.scrollIntoView({ block: "start" })}>Device configuration</button>
         <button type="button" className="btn-ghost" onClick={() => commandsRef.current?.scrollIntoView({ block: "start" })}>Restart / commands</button>
       </div>
+      <details className="record-detail-section mt-3">
+        <summary>Installation & lifecycle actions</summary>
       <div className="mt-2 flex flex-wrap gap-2">
         {actionContracts.filter((contract) => contract.visible).map((contract) => (
           <ActionContractBadge key={`contract-${contract.key}`} contract={contract} />
         ))}
       </div>
-      <div className="mt-6 flex flex-wrap gap-3">
+      <div className="mt-3 flex flex-wrap gap-3">
         {actionContracts.filter((contract) => contract.visible).map((contract) => (
           <ActionButton
             key={contract.key}
@@ -2732,6 +2734,7 @@ function DeviceDetailDrawer({
           />
         ))}
       </div>
+      </details>
       {lifecycleError ? (
         <div role="alert" className="mt-4 flex items-start justify-between gap-4 rounded-xl border border-red-300/30 bg-red-500/10 p-4 text-sm text-red-100">
           <span>
