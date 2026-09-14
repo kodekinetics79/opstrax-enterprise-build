@@ -10876,18 +10876,37 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
 
             var oldTargetId = source["currentTargetId"] is { } oldTarget && oldTarget is not DBNull ? Convert.ToInt64(oldTarget) : (long?)null;
             var targetOldSourceId = target?.GetValueOrDefault("reciprocalId") is { } oldSource && oldSource is not DBNull ? Convert.ToInt64(oldSource) : (long?)null;
+
+            // Legacy pairs can have only one populated direction. Inspect the actual
+            // inverse links under row locks before clearing displaced responsibility;
+            // trusting just the two selected rows leaves a unique-index collision.
+            var sourceBacklinks = await db.QueryAsync(
+                $"SELECT id, branch_id FROM {targetTable} WHERE {reciprocalColumn}=@id AND company_id=@companyId AND deleted_at IS NULL FOR UPDATE",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+            var targetBacklinks = targetId is null ? [] : await db.QueryAsync(
+                $"SELECT id, branch_id FROM {table} WHERE {column}=@targetId AND company_id=@companyId AND deleted_at IS NULL FOR UPDATE",
+                c => { c.Parameters.AddWithValue("@targetId", targetId.Value); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+            var pairBranch = source["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(source["branchId"]);
+            if (sourceBacklinks.Concat(targetBacklinks).Any(row =>
+                (row["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(row["branchId"])) != pairBranch))
+                return Results.Conflict(ApiResponse<object>.Fail("An existing assignment points across branches. Ask a fleet administrator to resolve it before reassigning."));
+
             if (oldTargetId == targetId && (targetId is null || targetOldSourceId == id))
-                return Results.Ok(ApiResponse<object>.Ok(new { id }, "Assignment already current"));
+            {
+                // A null forward pointer does not mean unassigned if an inverse remains.
+                if (targetId is not null || sourceBacklinks.Count == 0)
+                    return Results.Ok(ApiResponse<object>.Ok(new { id }, "Assignment already current"));
+            }
 
             // Clear both sides of any prior pair before writing the new symmetric link. All
             // request DB calls share the request transaction, so a database failure rolls the
             // complete reassignment back instead of leaving a half-linked driver/vehicle.
-            if (oldTargetId is not null && oldTargetId != targetId)
-                await db.ExecuteAsync($"UPDATE {targetTable} SET {reciprocalColumn}=NULL WHERE id=@oldTargetId AND company_id=@companyId AND {reciprocalColumn}=@id",
-                    c => { c.Parameters.AddWithValue("@oldTargetId", oldTargetId.Value); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-            if (targetOldSourceId is not null && targetOldSourceId != id)
-                await db.ExecuteAsync($"UPDATE {table} SET {column}=NULL WHERE id=@oldSourceId AND company_id=@companyId AND {column}=@targetId",
-                    c => { c.Parameters.AddWithValue("@oldSourceId", targetOldSourceId.Value); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@targetId", targetId!.Value); }, ct);
+            foreach (var displaced in sourceBacklinks.Where(row => Convert.ToInt64(row["id"]) != targetId))
+                await db.ExecuteAsync($"UPDATE {targetTable} SET {reciprocalColumn}=NULL WHERE id=@displacedId AND company_id=@companyId AND {reciprocalColumn}=@id",
+                    c => { c.Parameters.AddWithValue("@displacedId", Convert.ToInt64(displaced["id"])); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+            foreach (var displaced in targetBacklinks.Where(row => Convert.ToInt64(row["id"]) != id))
+                await db.ExecuteAsync($"UPDATE {table} SET {column}=NULL WHERE id=@displacedId AND company_id=@companyId AND {column}=@targetId",
+                    c => { c.Parameters.AddWithValue("@displacedId", Convert.ToInt64(displaced["id"])); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@targetId", targetId!.Value); }, ct);
 
             var affected = await db.ExecuteAsync($"UPDATE {table} SET {column}=@targetId WHERE id=@id AND company_id=@companyId" + (branchId is null ? "" : " AND branch_id=@branchId"), c =>
             {

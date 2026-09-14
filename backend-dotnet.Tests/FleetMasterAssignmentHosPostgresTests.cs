@@ -70,6 +70,65 @@ public sealed class FleetMasterAssignmentHosPostgresTests
     }
 
     [Theory]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    public async Task ReplacingOneSidedLegacyPairs_ClearsInverseLinksAndPreservesHistory(bool fromVehicle, bool breakSource, bool breakTarget)
+    {
+        await using var f = await Fixture.Create();
+        var first = f.Pairs["A"]; var second = f.Pairs["A2"];
+        Assert.Equal(200, Status(await f.Pair(fromVehicle, first.Driver, first.Vehicle)));
+        Assert.Equal(200, Status(await f.Pair(fromVehicle, second.Driver, second.Vehicle)));
+        if (breakSource)
+            await f.Link(fromVehicle ? "vehicles" : "drivers", fromVehicle ? first.Vehicle : first.Driver, null);
+        if (breakTarget)
+            await f.Link(fromVehicle ? "drivers" : "vehicles", fromVehicle ? second.Driver : second.Vehicle, null);
+        var driver = fromVehicle ? second.Driver : first.Driver;
+        var vehicle = fromVehicle ? first.Vehicle : second.Vehicle;
+        Assert.Equal(200, Status(await f.Pair(fromVehicle, driver, vehicle)));
+        await f.AssertPair(driver, vehicle);
+        Assert.Equal(JsonValueKind.Null, (await f.Row("drivers", fromVehicle ? first.Driver : second.Driver)).GetProperty("assigned_vehicle_id").ValueKind);
+        Assert.Equal(JsonValueKind.Null, (await f.Row("vehicles", fromVehicle ? second.Vehicle : first.Vehicle)).GetProperty("assigned_driver_id").ValueKind);
+        var history = await f.History();
+        Assert.Equal(3, history.Length);
+        Assert.Equal(2, history.Count(row => row.GetProperty("status").GetString() == "Released" && row.GetProperty("released_at").ValueKind != JsonValueKind.Null));
+        Assert.Single(history, row => row.GetProperty("status").GetString() == "Active");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UnassigningOneSidedLegacyPair_ReleasesInverseLinkAndHistory(bool fromVehicle)
+    {
+        await using var f = await Fixture.Create();
+        var pair = f.Pairs["A"];
+        Assert.Equal(200, Status(await f.Pair(fromVehicle, pair.Driver, pair.Vehicle)));
+        await f.Link(fromVehicle ? "vehicles" : "drivers", fromVehicle ? pair.Vehicle : pair.Driver, null);
+        Assert.Equal(200, Status(await f.PairBody(fromVehicle, pair.Driver, pair.Vehicle, new() { ["targetId"] = null })));
+        Assert.Equal(JsonValueKind.Null, (await f.Row("drivers", pair.Driver)).GetProperty("assigned_vehicle_id").ValueKind);
+        Assert.Equal(JsonValueKind.Null, (await f.Row("vehicles", pair.Vehicle)).GetProperty("assigned_driver_id").ValueKind);
+        Assert.Equal("Released", Assert.Single(await f.History()).GetProperty("status").GetString());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OneSidedCrossBranchInverseLink_ReturnsConflictWithoutWrites(bool fromVehicle)
+    {
+        await using var f = await Fixture.Create();
+        var source = f.Pairs["A"]; var target = f.Pairs["A2"]; var otherBranch = f.Pairs["B"];
+        await f.Link(fromVehicle ? "drivers" : "vehicles", fromVehicle ? otherBranch.Driver : otherBranch.Vehicle,
+            fromVehicle ? source.Vehicle : source.Driver);
+        var before = await f.Snapshot();
+        Assert.Equal(409, Status(await f.Pair(fromVehicle, fromVehicle ? target.Driver : source.Driver,
+            fromVehicle ? source.Vehicle : target.Vehicle)));
+        Assert.Equal(before, await f.Snapshot());
+    }
+
+    [Theory]
     [InlineData(true, "FOREIGN", false, 400)]
     [InlineData(false, "FOREIGN", false, 400)]
     [InlineData(true, "B", false, 400)]
@@ -202,8 +261,11 @@ public sealed class FleetMasterAssignmentHosPostgresTests
             var system = new NpgsqlConnectionStringBuilder(TestDb.SystemConnectionString);
             foreach (var connection in new[] { owner, runtime, system })
             {
-                Assert.Equal("127.0.0.1", connection.Host); Assert.Equal(5433, connection.Port);
-                Assert.Equal("opstrax_local", connection.Database);
+                Assert.Equal("127.0.0.1", connection.Host);
+                Assert.True(connection.Database == "opstrax_local" && connection.Port == 5433 ||
+                    connection.Database?.StartsWith("opstrax_assignment_http_", StringComparison.Ordinal) == true,
+                    "Only the local fixture or an explicitly named disposable assignment database is allowed.");
+                Assert.Equal(owner.Port, connection.Port); Assert.Equal(owner.Database, connection.Database);
             }
             Assert.Equal("opstrax_app", runtime.Username); Assert.Equal("opstrax_system", system.Username);
             Assert.DoesNotContain(owner.Username, new[] { "opstrax_app", "opstrax_system" });
@@ -282,6 +344,12 @@ public sealed class FleetMasterAssignmentHosPostgresTests
         {
             Assert.Contains(table, new[] { "drivers", "vehicles" });
             return Sql($"UPDATE {table} SET deleted_at=NOW() WHERE id=@id AND company_id=@c", ("id", id), ("c", CompanyA));
+        }
+        public Task<string> Link(string table, long id, long? target)
+        {
+            Assert.Contains(table, new[] { "drivers", "vehicles" });
+            var column = table == "drivers" ? "assigned_vehicle_id" : "assigned_driver_id";
+            return Sql($"UPDATE {table} SET {column}=@target::BIGINT WHERE id=@id AND company_id=@c", ("target", target), ("id", id), ("c", CompanyA));
         }
         public async Task<IResult[]> CompetingPairs(bool sharedVehicle, (long Driver, long Vehicle) first, (long Driver, long Vehicle) second)
         {
