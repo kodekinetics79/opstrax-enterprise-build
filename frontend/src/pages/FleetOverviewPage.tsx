@@ -13,6 +13,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 import { fleetQueryFingerprint, resolveFleetQueryPresentation } from "@/utils/fleetQueryPresentation";
+import "@/styles/fleet-overview.css";
 
 // Vehicle movement status is derived from real vehicle + telemetry fields. We do NOT
 // fabricate GPS speed/location — where live telemetry is absent we show honest blanks.
@@ -288,10 +289,9 @@ export function FleetOverviewPage() {
   }
 
   return (
-    <div className="ops-deck flex flex-col gap-3">
+    <div className="ops-deck fleet-overview flex flex-col gap-3">
 
       <PageHeader
-        eyebrow="Fleet Operations"
         title="Fleet Overview"
         description={`${totalFleet} vehicles evaluated · ${counts.Active} operationally active · ${flagged} dispatch flags`}
         actions={(
@@ -303,7 +303,7 @@ export function FleetOverviewPage() {
       />
 
       {/* Command-state summary also acts as the single status filter surface. */}
-      <div className="flex shrink-0 gap-2 overflow-x-auto pb-1" aria-label="Filter fleet by command state">
+      <div className="fleet-status-strip flex shrink-0 gap-2 overflow-x-auto pb-1" aria-label="Filter fleet by command state">
         <ClayKpi label={COMMAND_STATE_LABELS.Active}    count={counts.Active}    total={totalFleet} Icon={Truck}       icon="text-emerald-700" dot="bg-emerald-500 animate-pulse" active={tab === "Active"}    onClick={() => toggleTab("Active")} />
         <ClayKpi label={COMMAND_STATE_LABELS.Idle}      count={counts.Idle}      total={totalFleet} Icon={Zap}         icon="text-amber-700"   dot="bg-amber-400"             active={tab === "Idle"}      onClick={() => toggleTab("Idle")} />
         <ClayKpi label={COMMAND_STATE_LABELS.Available} count={counts.Available} total={totalFleet} Icon={Clock}       icon="text-sky-700"     dot="bg-sky-400"               active={tab === "Available"} onClick={() => toggleTab("Available")} />
@@ -312,7 +312,7 @@ export function FleetOverviewPage() {
         <ClayKpi label={COMMAND_STATE_LABELS.Unknown}   count={counts.Unknown}   total={totalFleet} Icon={Radio}       icon="text-slate-600"   dot="bg-slate-400"             active={tab === "Unknown"}   onClick={() => toggleTab("Unknown")} />
       </div>
 
-      <div role="note" className="shrink-0 px-1 text-[11px] font-medium text-slate-500">
+      <div role="note" className="fleet-status-note shrink-0 px-1 text-[11px] font-medium text-slate-500">
         <p>Operational status does not prove device connectivity.</p>
         <details className="mt-0.5">
           <summary className="inline-flex min-h-11 cursor-pointer items-center font-bold text-teal-700 sm:min-h-8">How statuses are calculated</summary>
@@ -327,7 +327,7 @@ export function FleetOverviewPage() {
 
         {/* Roster console — neumorphic chassis with an inset bezel screen */}
         <section className="deck-neumo flex min-w-0 flex-col overflow-hidden">
-          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
+          <div className="fleet-roster-toolbar flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
             <div className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 sm:min-h-9" aria-live="polite">
               <span>Showing {STATUS_TAB_LABELS[tab]}</span>
               {tab !== "All" && (
@@ -336,7 +336,7 @@ export function FleetOverviewPage() {
             </div>
             <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
               <Activity className="h-3 w-3 text-teal-600" />
-              Registry · refreshes every 30 s
+              Registry · 30 s
             </span>
             <label className="relative min-w-[210px] flex-1 sm:max-w-[280px]">
               <span className="sr-only">Search fleet</span>
@@ -382,7 +382,7 @@ export function FleetOverviewPage() {
               className="deck-screen max-h-[min(52dvh,560px)] overflow-auto"
               aria-busy={isFleetSettling || vehiclesQ.isFetching}
             >
-              <table className="w-full min-w-[1040px] text-sm">
+              <table className="fleet-roster-table w-full min-w-[960px] text-sm">
                 <thead className="sticky top-0 z-10 bg-[#fcfdff]">
                   <tr className="border-b border-slate-200/80">
                     <th className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Vehicle</th>
@@ -479,7 +479,7 @@ export function FleetOverviewPage() {
           </div>
 
           {/* Instrument strip */}
-          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 text-[11.5px] font-semibold text-slate-500">
+          <div className="fleet-roster-footer flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 text-[11.5px] font-semibold text-slate-500">
             <span className="tabular-nums">
               {isFleetSettling
                 ? "Updating fleet view…"

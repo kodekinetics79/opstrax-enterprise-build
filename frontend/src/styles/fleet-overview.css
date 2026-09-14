@@ -1,0 +1,38 @@
+/* The shell owns the outer gutter; the roster gets the remaining screen space. */
+.ops-deck.fleet-overview {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  gap: 8px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.fleet-overview .page-header { padding: 10px 14px; }
+.fleet-overview .page-header__title { font-size: 22px; }
+.fleet-overview .page-header__description { margin-top: 2px; font-size: 12px; }
+.fleet-overview .deck-neumo { border-radius: 12px; box-shadow: 0 2px 8px rgb(30 64 100 / .08); }
+.fleet-overview .deck-bezel { margin: 0 6px; padding: 4px; border-radius: 12px; }
+.fleet-overview .deck-screen { border-radius: 8px; max-height: clamp(240px, calc(100dvh - 280px), 640px); }
+.fleet-roster-toolbar, .fleet-roster-footer { padding: 6px 10px; gap: 8px; }
+.fleet-status-note { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+.fleet-status-note details { margin-top: 0; margin-left: auto; }
+.fleet-status-note details[open] { flex-basis: 100%; margin-left: 0; }
+.fleet-roster-table { font-size: 12px; }
+.fleet-roster-table :is(th, td) { padding-top: 7px; padding-bottom: 7px; }
+
+@media (min-width: 640px) and (pointer: fine) {
+  .fleet-status-strip > button { min-height: 40px; padding: 6px 10px; }
+  .fleet-status-note summary { min-height: 24px; }
+  .fleet-overview .page-header__actions .btn-primary { min-height: 32px; }
+  .fleet-roster-toolbar :is(input, select, button),
+  .fleet-roster-toolbar > div,
+  .fleet-roster-footer button { min-height: 32px; }
+}
+@media (max-width: 639px) {
+  .fleet-overview .page-header__title { font-size: 20px; }
+  .fleet-status-note { gap: 0; }
+  .fleet-status-note details { margin-left: 0; }
+  .fleet-overview .deck-screen { max-height: 55dvh; }
+}
