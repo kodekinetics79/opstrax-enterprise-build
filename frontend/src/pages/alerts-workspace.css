@@ -118,8 +118,8 @@
  .alerts-column-head,.alerts-row { padding:7px 12px; gap:10px; }
  .alerts-row { min-height:48px; }
  .alerts-pagination { padding:6px 10px; }
- .alerts-list-scroll { max-height:clamp(220px,calc(100dvh - 365px),620px); }
- .alerts-desktop-inspector { max-height:clamp(300px,calc(100dvh - 280px),700px); }
+ .alerts-list-scroll { max-height:clamp(180px,calc(100dvh - 450px),540px); }
+ .alerts-desktop-inspector { max-height:clamp(240px,calc(100dvh - 400px),600px); }
 }
 @media(min-width:640px) and (max-width:1000px) {
  .alerts-summary-bar { grid-template-columns:minmax(0,1fr); }
