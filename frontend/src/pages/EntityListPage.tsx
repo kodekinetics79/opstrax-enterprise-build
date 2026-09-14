@@ -481,9 +481,9 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         </div>
       </div>
 
-      <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
-          {rows.length ? <DataTable rows={rows} columns={cfg.columns} onSelect={setSelected} /> : <EmptyState title={`No ${cfg.title.toLowerCase()} found`} subtitle="Try another search or filter, or create a new record if you have permission." />}
-        <div className="space-y-3 xl:self-start">
+      <div className="flex min-w-0 flex-col gap-3">
+          {rows.length ? <DataTable rows={rows} columns={cfg.columns} showToolbar={false} onSelect={setSelected} /> : <EmptyState title={`No ${cfg.title.toLowerCase()} found`} subtitle="Try another search or filter, or create a new record if you have permission." />}
+        <details className="panel p-3"><summary className="cursor-pointer text-sm font-semibold">Insights and recommendations</summary><div className="mt-3 space-y-3">
           {kind !== "drivers" ? (
             <div className="panel p-3">
               <div className="flex items-center gap-2 text-teal-700"><Sparkles className="h-4 w-4" /><span className="section-title">Account Intelligence</span></div>
@@ -496,7 +496,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
           {(recommendations.length ? recommendations : [{ title: "Select a record", body: "Open a row to inspect detail evidence, timeline, recommendations, documents, assignments and audit trail." }]).slice(0, 3).map((item, i) => (
             <AiInsightCard key={String(item.id || i)} insight={item} />
           ))}
-        </div>
+        </div></details>
       </div>
 
       {isFleetMaster ? (

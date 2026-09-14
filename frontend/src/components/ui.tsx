@@ -387,16 +387,19 @@ export function ProgressBar({
    DATA TABLE  (sortable, count badge)
    ============================================================ */
 export function DataTable({
-  rows, columns, onSelect, showToolbar = true, columnLabels = {},
+  rows, columns, onSelect, showToolbar = true, columnLabels = {}, cellRenderers = {}, actions,
 }: {
   rows: AnyRecord[]; columns: string[]; onSelect?: (row: AnyRecord) => void;
   showToolbar?: boolean; columnLabels?: Record<string, string>;
+  cellRenderers?: Record<string, (row: AnyRecord) => ReactNode>;
+  actions?: (row: AnyRecord) => ReactNode;
 }) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
-  const pageSize = 100;
+  const [pageSize, setPageSize] = useState(50);
+  const hasActions = Boolean(onSelect || actions);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -417,7 +420,7 @@ export function DataTable({
   const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
   const pageRows = useMemo(() => sorted.slice(page * pageSize, (page + 1) * pageSize), [sorted, page]);
 
-  useEffect(() => setPage(0), [rows, search, sortKey, sortDir]);
+  useEffect(() => setPage(0), [rows, search, sortKey, sortDir, pageSize]);
   useEffect(() => {
     if (page >= pageCount) setPage(pageCount - 1);
   }, [page, pageCount]);
@@ -439,7 +442,7 @@ export function DataTable({
   }, [rows, columns]);
 
   return (
-    <div className="panel overflow-hidden">
+    <div className="panel data-table overflow-hidden">
       {/* Table toolbar */}
       {showToolbar && <div className="data-table__toolbar flex flex-col border-b border-slate-100 md:flex-row md:items-center md:justify-between">
         <div className="relative max-w-xs flex-1">
@@ -457,7 +460,7 @@ export function DataTable({
         </span>
       </div>}
 
-      <div className="overflow-x-auto">
+      <div className="data-table__scroll" tabIndex={0} role="region" aria-label="Scrollable records">
         <table className="w-full min-w-[760px] text-left text-sm">
           <thead className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50">
             <tr>
@@ -490,12 +493,13 @@ export function DataTable({
                   </th>
                 );
               })}
+              {hasActions && <th className="data-table__actions-heading">Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {pageRows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="data-table__empty text-center text-sm text-slate-500">
+                <td colSpan={columns.length + Number(hasActions)} className="data-table__empty text-center text-sm text-slate-500">
                   No records found. Try a different search or filter.
                 </td>
               </tr>
@@ -504,27 +508,18 @@ export function DataTable({
                 <tr
                   key={String(row.id ?? index)}
                   onClick={onSelect ? () => onSelect(row) : undefined}
-                  onKeyDown={
-                    onSelect
-                      ? (e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            onSelect(row);
-                          }
-                        }
-                      : undefined
-                  }
-                  tabIndex={onSelect ? 0 : undefined}
-                  role={onSelect ? "button" : undefined}
-                  aria-label={onSelect ? "View record details" : undefined}
                   data-interactive={onSelect ? "true" : undefined}
                   className={`group transition-colors hover:bg-slate-50 ${onSelect ? "cursor-pointer" : ""}`}
                 >
                   {columns.map((col) => (
                     <td key={col} className={`data-table__cell text-slate-600 ${numericCols.has(col) ? "text-right tabular-nums" : ""}`}>
-                      {renderCell(col, row[col])}
+                      {cellRenderers[col] ? cellRenderers[col](row) : renderCell(col, row[col])}
                     </td>
                   ))}
+                  {hasActions && <td className="data-table__cell data-table__actions"><div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                    {onSelect && <button type="button" className="btn-ghost btn-compact" aria-label={`View details for ${String(row[columns[0]] ?? row.id ?? "record")}`} onClick={() => onSelect(row)}>Details</button>}
+                    {actions?.(row)}
+                  </div></td>}
                 </tr>
               ))
             )}
@@ -538,6 +533,7 @@ export function DataTable({
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <button className="btn-ghost btn-compact px-3 py-1 text-xs" type="button" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</button>
             <span className="text-xs text-slate-600">Page {page + 1} of {pageCount}</span>
+            <select className="field text-xs" aria-label="Records per page" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(0); }}><option value={25}>25 rows</option><option value={50}>50 rows</option><option value={100}>100 rows</option></select>
             <button className="btn-ghost btn-compact px-3 py-1 text-xs" type="button" disabled={page + 1 >= pageCount} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>Next</button>
           </div>
         </div>

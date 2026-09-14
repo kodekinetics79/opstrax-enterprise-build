@@ -162,7 +162,7 @@ export function DriversModulePage() {
 
   return (
     <PageStack className="fleet-console pb-6">
-      <PageHeader
+      {section !== "roster" && <PageHeader
         eyebrow="Workforce · Master Data"
         title="Drivers"
         description={`${rows.length} operators in the live registry · ${ready} available · ${atRisk} need attention`}
@@ -183,7 +183,7 @@ export function DriversModulePage() {
             </button>
           </>
         )}
-      />
+      />}
 
       <nav className="panel sticky top-4 z-20 overflow-x-auto p-1.5" aria-label="Driver workspace">
         <div className="flex min-w-max gap-1">

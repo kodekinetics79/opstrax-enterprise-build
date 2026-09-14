@@ -1,3 +1,4 @@
+import { DataTable } from "@/components/ui";
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { Archive, Barcode, Boxes, CheckCheck, ChevronLeft, ChevronRight, Search, Truck } from 'lucide-react';
@@ -323,7 +324,7 @@ export function FleetAssetManagementPage() {
           </dl>
         </section>
 
-        <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.65fr)]">
+        <div className="flex min-w-0 flex-col gap-3">
           <section className="panel min-w-0 p-3 text-slate-900" aria-labelledby="asset-inventory-heading">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -361,18 +362,8 @@ export function FleetAssetManagementPage() {
                   {assetDirection === 'asc' ? 'Ascending' : 'Descending'}
                 </button>
             </div>
-            <div className="mt-3 space-y-2 xl:max-h-[34rem] xl:overflow-y-auto xl:pr-1">
-                {assets.map((asset) => (
-                <button key={asset.id} onClick={() => setSelectedAssetId(asset.id)} className={`min-h-11 w-full rounded-xl border p-3 text-left text-slate-900 transition ${selectedAssetId === asset.id ? 'border-teal-300 bg-teal-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="font-bold text-slate-950">{asset.assetTag}</p>
-                        <p className="text-sm text-slate-500">{asset.name} · {asset.currentLocation}</p>
-                      </div>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-700">{asset.status}</span>
-                    </div>
-                  </button>
-                ))}
+            <div className="mt-3 space-y-2 ">
+                <DataTable rows={assets.map((asset) => ({ ...asset }))} columns={["assetTag", "name", "assetTypeName", "currentLocation", "status", "condition"]} showToolbar={false} onSelect={(asset) => setSelectedAssetId(String(asset.id))} />
             </div>
             <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-200 pt-3 text-xs text-slate-500">
                 <span>Page {assetPage} of {assetPageCount} · {assets.length} shown · {assetTotal} total</span>

@@ -1,0 +1,44 @@
+/* Dense back-office records. Forms and portal touch targets keep their sizing. */
+.tenant-workspace .page-header { padding: 10px 14px; }
+.tenant-workspace .page-header__layout { gap: 8px 14px; }
+.tenant-workspace .page-header__eyebrow { padding: 2px 7px; font-size: 9px; }
+.tenant-workspace .page-header__eyebrow + .page-header__title { margin-top: 4px; }
+.tenant-workspace .page-header__title { font-size: clamp(20px, 1.4vw, 24px); }
+.tenant-workspace .page-header__description { margin-top: 3px; font-size: 12px; line-height: 1.4; }
+.tenant-workspace .page-stack { gap: 10px; }
+.tenant-workspace .kpi-card { padding: 8px 12px; }
+.tenant-workspace .kpi-card__value { font-size: 20px; }
+.tenant-workspace .kpi-card__value-row { margin-top: 3px; }
+.data-table { min-width: 0; padding: 0; }
+.data-table__scroll { min-width: 0; overflow: auto; max-height: clamp(240px, 60dvh, 760px); scrollbar-width: thin; scrollbar-color: #9ab9c9 #edf4f8; overscroll-behavior: contain; }
+.data-table__scroll:focus-visible { outline: 2px solid #0d9488; outline-offset: -2px; }
+.data-table__cell { padding: 6px 12px; line-height: 18px; }
+.data-table tbody tr:nth-child(even) { background: #f8fbfd; }
+.data-table tbody tr:hover { background: #edf9f7; }
+.data-table__actions-heading { padding: 6px 12px; font-size: 11px; color: #64748b; text-transform: uppercase; }
+.data-table__actions { width: 1%; white-space: nowrap; }
+.data-table__pager { background: #f8fbfd; padding: 6px 12px; }
+.data-table__pager select { width: auto; min-height: 30px; padding: 4px 8px; }
+.data-table__toolbar { padding: 6px 12px; }
+/* Native record tables follow the same density without touching nested dialogs. */
+@media (min-width: 640px) and (pointer: fine) {
+  .tenant-workspace table:not([role="presentation"]) :is(th, td)[class*="py-3"],
+  .tenant-workspace table:not([role="presentation"]) :is(th, td)[class*="py-4"] { padding-top: 6px; padding-bottom: 6px; }
+  .tenant-workspace .data-table__actions .btn-compact { min-height: 30px; padding: 4px 9px; }
+}
+@media (pointer: coarse), (max-width: 639px) {
+  .data-table__cell { padding-top: 8px; padding-bottom: 8px; }
+  .data-table :is(button, select) { min-height: 44px; }
+  .data-table__scroll { max-height: 65dvh; }
+  .data-table__pager { gap: 8px; }
+}
+.tenant-workspace .console-rail { padding: 10px 14px; }
+.tenant-workspace .console-stat { padding: 8px 12px; }
+.tenant-workspace .console-stat .fc-blob { width: 28px; height: 28px; }
+.tenant-workspace .console-stat > div:nth-child(2) { font-size: 20px; }
+.tenant-workspace .console-nav > div { display: flex; overflow-x: auto; }
+.tenant-workspace .console-nav button { flex: 1 0 auto; min-height: 36px; }
+.tenant-workspace .console-nav button > div:last-child:not(:first-child) { display: none; }
+@media (pointer: coarse), (max-width: 639px) {
+  .tenant-workspace .console-nav button { min-height: 44px; }
+}

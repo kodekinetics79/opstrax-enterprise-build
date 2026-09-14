@@ -1,3 +1,4 @@
+import { DataTable } from "@/components/ui";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock, DollarSign, Bell, CheckCircle2, Share2 } from "lucide-react";
@@ -148,13 +149,12 @@ function DwellQueue({ rows, kind, onApprove, onDismiss, onShare, onSetAppointmen
     </p>;
 
   return (
-    <div className="space-y-3">
-      {rows.map((r) => {
+    <DataTable rows={rows} columns={["siteName", "vehicleId", "status", "dwellMinutes", "billableMinutes", "amount"]} actions={(r) => {
         const id = Number(r.id);
         const needsOverride = r.status === "late_arrival";
         const daysLeft = Number(r.claimDaysLeft ?? 0);
         return (
-          <div key={id} className="panel space-y-2 p-4">
+          <details className="max-w-lg whitespace-normal"><summary className="cursor-pointer font-semibold text-teal-700">Review actions</summary><div className="mt-2 space-y-2">
             <p className="text-sm text-slate-800">
               <strong>{String(r.siteName ?? "Site")}</strong> — vehicle #{String(r.vehicleId)} dwelled{" "}
               {r.dwellMinutes != null ? `${Math.floor(Number(r.dwellMinutes) / 60)}h ${Number(r.dwellMinutes) % 60}m` : "…"}
@@ -238,10 +238,9 @@ function DwellQueue({ rows, kind, onApprove, onDismiss, onShare, onSetAppointmen
               </button>
             </div>
             {apptError?.id === id ? <p className="text-xs text-red-600">{apptError.message}</p> : null}
-          </div>
+          </div></details>
         );
-      })}
-    </div>
+      }} />
   );
 }
 

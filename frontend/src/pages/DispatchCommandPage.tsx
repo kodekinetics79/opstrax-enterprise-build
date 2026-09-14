@@ -67,7 +67,7 @@ export function DispatchCommandPage() {
   const [searchParams] = useSearchParams();
   const requestedJobId = searchParams.get("jobId");
   const requestedJobOpened = useRef<string | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("Board");
+  const [activeTab, setActiveTab] = useState<Tab>("Assignments");
   const [selectedAssignment, setSelectedAssignment] = useState<AnyRecord | null>(null);
   const [eligVehicleId, setEligVehicleId] = useState("");
   const [eligDriverId,  setEligDriverId]  = useState("");
