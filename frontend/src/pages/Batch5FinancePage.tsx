@@ -319,7 +319,7 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
       )}
 
       {/* Data Table */}
-      <DataTable rows={displayRows} columns={tabCols} onSelect={setSelected} />
+      <DataTable rows={displayRows} columns={tabCols} showToolbar={false} onSelect={setSelected} />
 
       <details className="panel p-3">
         <summary className="cursor-pointer text-sm font-semibold text-slate-700">Trends, currency totals and calculation details</summary>

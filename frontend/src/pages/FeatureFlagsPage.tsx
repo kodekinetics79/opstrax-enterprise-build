@@ -69,7 +69,7 @@ export function FeatureFlagsPage() {
       ) : (
         <DataTable rows={rows} columns={["name", "flagKey", "enabled", "rolloutPct", "environment", "description"]}
           columnLabels={{ enabled: "State", rolloutPct: "Rollout" }}
-          cellRenderers={{ enabled: (f) => f.enabled ? "On" : "Off", rolloutPct: (f) => `${f.enabled ? Number(f.rolloutPct ?? 100) : 0}%` }}
+          cellRenderers={{ description: (f) => f.description ? <details className="max-w-xs whitespace-normal"><summary className="cursor-pointer text-xs font-semibold text-teal-700">Read description</summary><p className="mt-2 text-xs">{String(f.description)}</p></details> : "—", enabled: (f) => f.enabled ? "On" : "Off", rolloutPct: (f) => `${f.enabled ? Number(f.rolloutPct ?? 100) : 0}%` }}
           actions={canManage ? (f) => <>
             <button type="button" className="btn-ghost btn-compact" disabled={mut.isPending} onClick={() => mut.mutate({ action: "update", key: String(f.flagKey), body: { enabled: !f.enabled } })}>{f.enabled ? "Turn off" : "Turn on"}</button>
             <button type="button" className="btn-ghost btn-compact" disabled={mut.isPending} onClick={() => { setCreating(false); setEditing({ ...f }); }}>Edit</button>

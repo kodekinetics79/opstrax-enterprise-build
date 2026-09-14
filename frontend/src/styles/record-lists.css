@@ -42,3 +42,7 @@
 @media (pointer: coarse), (max-width: 639px) {
   .tenant-workspace .console-nav button { min-height: 44px; }
 }
+
+.tenant-workspace :is(section, div):has(> table) { min-width: 0; max-width: 100%; overflow: auto; max-height: 60dvh; scrollbar-width: thin; }
+.tenant-workspace table:has(tr > th:nth-child(6)) { min-width: 680px; }
+.tenant-workspace table:has(tr > th:nth-child(6)) thead { position: sticky; top: 0; z-index: 1; background: #f1f6fa; }

@@ -241,7 +241,7 @@ export function DigitalFormsPage() {
           <p className="text-sm text-slate-500 mt-0.5">Pre-trip, DVIR, incident, delivery and compliance digital checklists — fill, submit and track compliance</p>
         </div>
         <button type="button" className="btn-secondary text-sm"
-          onClick={() => exportCsv("form-submissions", submissions)}>Export Submissions</button>
+          disabled={submissions.length === 0} onClick={() => exportCsv("form-submissions", submissions)}>Export Submissions</button>
       </div>
 
       {/* KPI strip */}
@@ -281,11 +281,11 @@ export function DigitalFormsPage() {
             ))}
           </div>
           {filteredTemplates.length === 0 && <EmptyState title="No forms available" subtitle="No active templates match this category. Choose another category or ask your administrator to configure a template." />}
-          <DataTable rows={filteredTemplates} columns={["title", "category", "fields", "frequency", "requiredRole", "active"]}
+          {filteredTemplates.length > 0 && <DataTable rows={filteredTemplates} columns={["title", "category", "fields", "frequency", "requiredRole", "active"]}
             columnLabels={{ active: "State", requiredRole: "Role" }}
             cellRenderers={{ category: (tmpl) => <CategoryBadge cat={String(tmpl.category ?? "")} />, active: (tmpl) => tmpl.active ? "Active" : "Inactive" }}
             actions={(tmpl) => <button type="button" className="btn-primary btn-compact" disabled={!tmpl.active} onClick={() => setFilling(tmpl)}>Fill form</button>}
-          />
+          />}
         </div>
       )}
 
