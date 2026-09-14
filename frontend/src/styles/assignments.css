@@ -141,3 +141,27 @@
     padding: 7px 8px;
   }
 }
+
+/* The shell supplies the available height; keep only the records scrollable. */
+.assignments-page--list {
+  flex: 1;
+  min-height: 0;
+}
+.assignments-page--list
+  > :is(header, nav, .assignment-metrics, [role="status"], [role="alert"]) {
+  flex-shrink: 0;
+}
+.assignments-page--list .assignment-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.assignments-page--list .assignment-table-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+.assignments-page--list :is(.assignment-toolbar, .assignment-pagination) {
+  flex-shrink: 0;
+}

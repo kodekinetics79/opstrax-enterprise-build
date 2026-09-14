@@ -392,7 +392,9 @@ export function FleetAssignmentsPage() {
           : fleetHistory;
 
   return (
-    <div className="fleet-console assignments-page flex flex-col gap-2 pb-3">
+    <div
+      className={`fleet-console assignments-page ${section === "board" ? "assignments-page--list" : ""} flex flex-col gap-2 pb-3`}
+    >
       {supportingError ? (
         <div
           role="alert"
