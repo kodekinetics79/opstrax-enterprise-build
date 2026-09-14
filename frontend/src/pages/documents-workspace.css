@@ -1,0 +1,39 @@
+.documents-workspace.page-stack { min-width:0; gap:8px; }
+.documents-workspace :is(.page-header,.panel) {
+ border-radius:12px;
+ background:linear-gradient(145deg,#fff,#edf3fa);
+ box-shadow:inset 1px 1px 0 #fff,inset -1px -1px 0 #dce5ee,3px 3px 8px #b8c8dc55,-2px -2px 6px #ffffffbb;
+}
+.documents-workspace .page-header { padding:7px 12px; }
+.documents-workspace .page-header__title { font-size:20px; }
+.documents-workspace .page-header__description { margin-top:2px; font-size:11px; line-height:1.4; }
+.documents-indicators > div { min-width:0; padding:6px 10px; display:flex; align-items:center; gap:8px; }
+.documents-indicators > div > p:first-child { flex:1; font-size:11px; }
+.documents-workspace > .panel.flex { padding:6px 10px; gap:8px; }
+.documents-record-count { margin-left:auto; color:#52647b; font-size:11px; white-space:nowrap; }
+.documents-list { min-width:0; }
+.documents-list > .panel { overflow:hidden; }
+.documents-list .overflow-x-auto { overflow:auto; scrollbar-color:#94b8b4 #f1f5f9; }
+.documents-list table { table-layout:fixed; min-width:760px; }
+.documents-list th:nth-child(3) { width:20%; }
+.documents-list th:nth-child(7) { width:8%; }
+.documents-list .data-table__sort { padding:7px 10px; font-size:10px; letter-spacing:.07em; }
+.documents-list .data-table__cell { padding:7px 10px; font-size:12px; overflow-wrap:anywhere; }
+.documents-list .data-table__pager { padding:5px 10px; flex-shrink:0; }
+.documents-workspace > details > summary { padding:5px 10px; }
+.documents-workspace .field { background:linear-gradient(145deg,#f2f6fb,#fff); box-shadow:inset 2px 2px 4px #b8c8dc44,inset -2px -2px 4px #fff; }
+@media(min-width:640px) and (pointer:fine) {
+ .documents-workspace.page-stack { flex:1; min-height:0; }
+ .documents-workspace.page-stack > :not(.documents-list) { flex-shrink:0; }
+ .documents-workspace .page-header__layout > div:first-of-type { display:flex; align-items:baseline; flex-wrap:wrap; gap:2px 12px; }
+ .documents-workspace .page-header__description { margin-top:0; max-width:72ch; }
+ .documents-workspace > .panel.flex { flex-direction:row; flex-wrap:wrap; align-items:center; }
+ .documents-workspace :is(.field,.btn-primary,.btn-ghost) { min-height:32px; }
+ .documents-list { flex:1; min-height:240px; }
+ .documents-list > .panel { height:100%; display:flex; flex-direction:column; }
+ .documents-list .overflow-x-auto { flex:1; min-height:0; }
+}
+@media(max-width:639px) {
+ .documents-record-count { margin-left:0; white-space:normal; }
+ .documents-list .overflow-x-auto { max-height:65dvh; }
+}

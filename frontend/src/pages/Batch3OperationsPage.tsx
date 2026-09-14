@@ -26,8 +26,11 @@ import { DocumentEditor } from "@/components/DocumentEditor";
 import { documentExport, documentOrigin, documentScore, documentVersion, presentDocument } from "@/utils/documentLifecycle";
 import { documentFailureNeedsReload, documentWriteFence } from "@/utils/documentWriteFence";
 import type { AnyRecord, UserSession } from "@/types";
+import "./documents-workspace.css";
 
 type Batch3Kind = "maintenance" | "work-orders" | "dvir" | "documents";
+const DOCUMENT_LIST_COLUMNS = ["documentNumber", "documentType", "entityName", "expiresAt", "displayedState", "displayedRenewal", "assessmentScore"];
+const DOCUMENT_LIST_LABELS = { documentNumber: "Document", documentType: "Type", entityName: "Entity", expiresAt: "Expires (UTC)", displayedState: "Displayed state", displayedRenewal: "Renewal", assessmentScore: "Score" };
 
 const configs = {
   maintenance: {
@@ -269,7 +272,7 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
     .map(row => kind === "documents" ? presentDocument(row) : row).filter((row) => {
     // Expanded search fields to ensure searching by driver, customer or document entity feels responsive
     const searchLower = search.toLowerCase();
-    const matchesSearch = !search || 
+    const matchesSearch = !search || (kind === "documents" && [...config.columns, "title", "countryCode", "category", "riskScore"].some(key => String(row[key] ?? "").toLowerCase().includes(searchLower))) ||
       String(row.vehicleCode || "").toLowerCase().includes(searchLower) ||
       String(row.driverName || "").toLowerCase().includes(searchLower) ||
       String(row.customerName || row.entityName || "").toLowerCase().includes(searchLower) ||
@@ -296,9 +299,9 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
   const secondaryKpis = kind === "documents" ? config.kpis.slice(4) : [];
 
   return (
-    <div className="page-stack">
+    <div className={`page-stack ${kind === "documents" ? "documents-workspace" : ""}`}>
       <PageHeader
-        eyebrow={config.eyebrow}
+        eyebrow={kind === "documents" ? undefined : config.eyebrow}
         title={config.title}
         description={config.description}
         actions={
@@ -323,8 +326,8 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
         }
       />
       {kind === "documents" ? (
-        <section aria-label="Primary document indicators" className="panel grid grid-cols-2 gap-px overflow-hidden bg-slate-200 p-px sm:grid-cols-4">
-          {primaryKpis.map(([label, key]) => <KpiCard compact key={key} label={label} value={String(s[key] ?? "Unknown")} status="Recorded indicator" />)}
+        <section aria-label="Primary recorded document indicators" className="panel documents-indicators grid grid-cols-2 gap-px overflow-hidden bg-slate-200 p-px sm:grid-cols-4">
+          {primaryKpis.map(([label, key]) => <KpiCard compact key={key} label={label} value={String(s[key] ?? "Unknown")} />)}
         </section>
       ) : (
         <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-6">
@@ -335,16 +338,19 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
       {kind === "documents" && documentUiError ? <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{documentUiError}</p> : null}
       {kind === "documents" && fence.requiresReload && !editing ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">A document change requires reconciliation; no automatic retry was sent. {fence.target === "new-upload" ? "Refresh the vault and check the intended document number before attempting another upload." : "Select the original document and reload its current state before another write."}{fence.target !== "new-upload" && String(selected?.id) === fence.target ? <button type="button" className="btn-ghost ml-3" disabled={fence.pending} onClick={() => void reloadDocument().catch(failure => setDocumentUiError(apiErrorMessage(failure, "The current document could not be loaded. No retry was sent.")))}>Reload current document</button> : null}</div> : null}
       <div className="panel flex flex-col gap-3 p-4 xl:flex-row xl:items-center">
-        <input className="field xl:max-w-md" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by entity, status, country, vendor, risk...`} />
-        <select className="field xl:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}>
+        <input aria-label={`Search ${config.eyebrow.toLowerCase()}`} className="field xl:max-w-md" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by entity, status, country, vendor, risk...`} />
+        <select aria-label={`Filter ${config.eyebrow.toLowerCase()} by state`} className="field xl:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}>
           {kind === "documents" ? ["All", "Active", "Expiring", "Expired", "Unknown"].map(value => <option key={value}>{value}</option>) : <><option>All</option><option>Open</option><option>Active</option><option>Scheduled</option><option>In Progress</option><option>Pending</option><option>Overdue</option><option>Expired</option><option>Completed</option></>}
         </select>
         <span className="badge">{kind === "documents" ? "UTC date assessment / recorded workflow" : <><Sparkles className="h-3.5 w-3.5" /> AI recommendations active</>}</span>
+        {kind === "documents" && <span className="documents-record-count" role="status">{rows.length} records · Select a row for details</span>}
       </div>
       {!rows.length ? (
         <EmptyState title={`No ${config.eyebrow.toLowerCase()} records`} subtitle="Try another filter or create the first record." />
       ) : (
-        <DataTable rows={rows} columns={config.columns} onSelect={setSelected} />
+        <div className={kind === "documents" ? "documents-list" : undefined}>
+          <DataTable rows={rows} columns={kind === "documents" ? DOCUMENT_LIST_COLUMNS : config.columns} columnLabels={kind === "documents" ? DOCUMENT_LIST_LABELS : undefined} showToolbar={kind !== "documents"} onSelect={setSelected} />
+        </div>
       )}
       {kind === "documents" && secondaryKpis.length ? (
         <details className="panel group">

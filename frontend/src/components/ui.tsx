@@ -387,9 +387,10 @@ export function ProgressBar({
    DATA TABLE  (sortable, count badge)
    ============================================================ */
 export function DataTable({
-  rows, columns, onSelect,
+  rows, columns, onSelect, showToolbar = true, columnLabels = {},
 }: {
   rows: AnyRecord[]; columns: string[]; onSelect?: (row: AnyRecord) => void;
+  showToolbar?: boolean; columnLabels?: Record<string, string>;
 }) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -440,7 +441,7 @@ export function DataTable({
   return (
     <div className="panel overflow-hidden">
       {/* Table toolbar */}
-      <div className="data-table__toolbar flex flex-col border-b border-slate-100 md:flex-row md:items-center md:justify-between">
+      {showToolbar && <div className="data-table__toolbar flex flex-col border-b border-slate-100 md:flex-row md:items-center md:justify-between">
         <div className="relative max-w-xs flex-1">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
           <input
@@ -454,7 +455,7 @@ export function DataTable({
         <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-500">
           {filtered.length === rows.length ? `${rows.length} records` : `${filtered.length} of ${rows.length}`}
         </span>
-      </div>
+      </div>}
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-sm">
@@ -475,9 +476,9 @@ export function DataTable({
                       type="button"
                       onClick={() => handleSort(col)}
                       className={`data-table__sort group ${numeric ? "justify-end" : ""}`}
-                      aria-label={`Sort by ${labelize(col)}${isActive ? `, currently ${sortDir === "asc" ? "ascending" : "descending"}` : ""}`}
+                      aria-label={`Sort by ${columnLabels[col] ?? labelize(col)}${isActive ? `, currently ${sortDir === "asc" ? "ascending" : "descending"}` : ""}`}
                     >
-                      {labelize(col)}
+                      {columnLabels[col] ?? labelize(col)}
                       <span className="sort-icon">
                         {isActive
                           ? sortDir === "asc"
