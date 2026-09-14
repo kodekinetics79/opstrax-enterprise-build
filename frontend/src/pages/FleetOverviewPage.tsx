@@ -579,7 +579,7 @@ function ReadinessGauge({
 }) {
   const value = readiness ? Math.round(readiness.avg) : 0;
   return (
-    <div className="deck-neumo shrink-0 p-3">
+    <div className="deck-neumo fleet-readiness-metric shrink-0 p-3">
       <div className="flex items-center justify-between">
         <span className="section-title inline-flex items-center gap-2">
           <GaugeIcon className="h-3.5 w-3.5 text-teal-700" />

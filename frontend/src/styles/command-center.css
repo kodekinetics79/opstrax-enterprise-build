@@ -159,6 +159,20 @@
 @media (prefers-reduced-motion: reduce) { .command-overview *, .command-overview *::before { transition: none !important; animation: none !important; } }
 
 .command-metric-copy small { color: var(--text-muted, #64748b); font-size: 10px; line-height: 1.2; }
+@media (min-width: 901px) and (pointer: fine) {
+ .command-overview { gap: 8px; }
+ .command-overview-header { padding: 2px 0; gap: 12px; }
+ .command-overview-header > div:first-child { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 12px; }
+ .command-overview-header h1 { font-size: 22px; }
+ .command-overview-header p { margin: 0; font-size: 11px; }
+ .command-metrics > button { padding: 7px 10px; gap: 8px; }
+ .command-metric-copy { grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 8px; }
+ .command-metric-copy strong { font-size: 25px; }
+ .command-metric-copy > span { font-size: 11px; }
+ .command-metric-copy small { grid-column: 2; }
+ .command-metrics :is(.command-dimension-image,.command-dimension-icon) { width: 26px; height: 26px; }
+ .command-table-scroll { max-height: clamp(220px, calc(100dvh - 390px), 420px); }
+}
 @media (pointer: coarse), (max-width: 639px) {
  .command-control, .command-filter, .command-search, .command-open, .command-agenda li > button, .command-fleet-counts button, .command-notes summary, .command-history summary, .command-trends > summary { min-height: 44px; }
  .command-icon-control, .command-open { min-width: 44px; }

@@ -37,6 +37,18 @@
 }
 
 @media (min-width: 640px) and (pointer: fine) {
+  .fleet-overview .page-header { padding: 5px 10px; }
+  .fleet-overview .page-header__layout > div:first-of-type { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 12px; }
+  .fleet-overview .page-header__title { font-size: 19px; line-height: 1.2; }
+  .fleet-overview .page-header__description { margin-top: 0; font-size: 11px; }
+  .fleet-overview-metrics > .deck-neumo { padding: 6px 9px; }
+  .fleet-overview-metrics .section-title { font-size: 10px; letter-spacing: .14em; }
+  .fleet-readiness-metric > .mt-2 { margin-top: 4px; }
+  .fleet-readiness-metric > .grid { display: flex; gap: 12px; }
+  .fleet-readiness-metric .deck-inset { display: flex; align-items: baseline; gap: 5px; padding: 0; background: none; }
+  .fleet-readiness-metric .deck-inset p { margin-top: 0; font-size: 10px; }
+  .fleet-overview .deck-screen { max-height: clamp(240px, calc(100dvh - 320px), 650px); }
+  .fleet-roster-toolbar, .fleet-roster-footer { padding: 4px 8px; }
   .fleet-status-strip > button { min-height: 40px; padding: 6px 10px; }
   .fleet-status-note summary { min-height: 24px; }
   .fleet-overview .page-header__actions .btn-primary { min-height: 32px; }
