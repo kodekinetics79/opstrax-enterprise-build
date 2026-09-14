@@ -1,8 +1,10 @@
+import { useDialogFocus } from "@/hooks/useDialogFocus";
+import { deviceDetailsRoute, displayRecordValue } from "@/utils/recordDetailsPresentation";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArchiveRestore, Bot, ClipboardCheck, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Trash2, Upload, UserCheck, X } from "lucide-react";
+import { Activity, AlertTriangle, ArchiveRestore, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Trash2, Upload, UserCheck, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { AiInsightCard, DataTable, EmptyState, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
@@ -825,72 +827,54 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
   canAssign: boolean;
   canReactivate: boolean;
 }) {
+  const dialogRef = useDialogFocus<HTMLElement>(Boolean(record), onClose);
+  const hasPermission = useHasPermission();
+  const canViewDevices = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_VIEW);
+  const vehicleId = kind === "drivers" ? record?.assignedVehicleId ?? record?.assigned_vehicle_id : kind === "vehicles" ? record?.id : null;
+  const linkedVehicle = useQuery({
+    queryKey: ["vehicles", "linked-device-detail", vehicleId],
+    queryFn: () => vehiclesApi.detail(String(vehicleId)),
+    enabled: Boolean(record && vehicleId && canViewDevices && hasPermission(PERMISSIONS.VEHICLES_VIEW)),
+  });
   if (!record) return null;
   const timeline = (detail?.timeline as AnyRecord[] | undefined) || [];
-  const recommendations = (detail?.recommendations as AnyRecord[] | undefined) || [];
-  const snapshot = buildSnapshot(kind, record, detail);
-
+  const devices = (linkedVehicle.data?.currentDevices as AnyRecord[] | undefined) || [];
+  const heading = String(record.fullName || record.title || record.name || record.vehicleCode || record.driverCode || record.customerCode || record.assetCode || `Record ${record.id}`);
+  const entries = customerVisibleRecordEntries(record).filter(([key, value]) =>
+    !/(?:^id$|Id$|_id$|score|status|assignedVehicle|assigned_vehicle|assignedDriver|assigned_driver|recommendedAction|recommended_action)/i.test(key)
+    && value != null && typeof value !== "object");
+  const scores = customerVisibleRecordEntries(record).filter(([key, value]) => /score/i.test(key) && value != null && typeof value !== "object");
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm">
-      <aside className="h-full w-full max-w-3xl overflow-y-auto border-l border-white/10 bg-slate-950 p-6 shadow-2xl">
-        <button className="float-right rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white" onClick={onClose}><X className="h-5 w-5" /></button>
-        <p className="text-xs font-bold uppercase tracking-[0.25em] text-teal-300">OpsTrax Batch 1 Detail</p>
-        <h2 className="mt-3 text-2xl font-semibold text-white">{String(record.title || record.name || record.vehicleCode || record.driverCode || record.customerCode || record.assetCode || `Record ${record.id}`)}</h2>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <StatusBadge status={record.status} />
-          <RiskBadge risk={record.riskHeatScore || record.geofenceRiskBadge || record.riskScore || "Low"} />
-          <span className="badge"><Bot className="h-4 w-4" /> {String(record.recommendedAction || "Monitoring active")}</span>
-        </div>
-        <div className="mt-5 flex gap-3">
-          {canUpdate ? <button className="btn-primary" onClick={() => onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button> : null}
-          {onSmartAssign ? <button className="btn-ghost" onClick={onSmartAssign} disabled={assignPending || !canAssign} title={!canAssign ? "You do not have permission to perform this action." : undefined}><UserCheck className="h-4 w-4" /> {assignPending ? "Assigning..." : ((kind === "vehicles" ? record.assignedDriverId ?? record.assigned_driver_id : kind === "drivers" ? record.assignedVehicleId ?? record.assigned_vehicle_id : null) ? "Reassign" : "Assign")}</button> : null}
-          {canDelete ? <button className="btn-ghost" onClick={() => onDelete(record)}><Trash2 className="h-4 w-4" /> Archive</button> : null}
-          {canReactivate ? <button className="btn-primary" onClick={() => onReactivate(record)}><ArchiveRestore className="h-4 w-4" /> Reactivate</button> : null}
-          <button className="btn-ghost" onClick={() => onNavigate("/audit-logs")}><FileText className="h-4 w-4" /> Audit trail</button>
-        </div>
-
-        <section className="mt-6 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-teal-50 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="section-title">Operational Snapshot</p>
-              <h3 className="mt-1 text-lg font-semibold text-slate-950">Live context for this record</h3>
-            </div>
-            <span className="badge border-blue-200 bg-blue-50 text-blue-700">Connected workflow</span>
+    <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-[2px]" onClick={onClose}>
+      <aside ref={dialogRef} role="dialog" aria-modal="true" aria-label={`${heading} details`} className="record-detail-drawer" onClick={event => event.stopPropagation()}>
+        <header className="record-detail-head">
+          <div className="flex items-start justify-between gap-3">
+            <div><p className="text-xs font-semibold text-teal-700">{cfg.title} · {String(record.driverCode || record.vehicleCode || record.customerCode || record.assetCode || "Details")}</p><h2 className="text-xl font-bold text-slate-900">{heading}</h2></div>
+            <button type="button" className="icon-btn" aria-label="Close record details" onClick={onClose}><X className="h-5 w-5" /></button>
           </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {snapshot.map((item) => (
-              <div key={item.label} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">{item.label}</p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">{item.value}</p>
-                {item.route ? (
-                  <button type="button" className="mt-3 text-xs font-semibold text-blue-700 hover:text-blue-800" onClick={() => onNavigate(item.route)}>
-                    Open {item.buttonLabel}
-                  </button>
-                ) : null}
-              </div>
-            ))}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <StatusBadge status={record.status} />
+            {canUpdate ? <button className="btn-primary" onClick={() => onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button> : null}
+            {onSmartAssign ? <button className="btn-ghost" onClick={onSmartAssign} disabled={assignPending || !canAssign} title={!canAssign ? "Assignment permission required" : "Change this record’s pairing"}><UserCheck className="h-4 w-4" /> {assignPending ? "Saving…" : kind === "drivers" ? "Change vehicle" : "Change pairing"}</button> : null}
+            <details className="record-detail-more"><summary className="btn-ghost cursor-pointer">More</summary><div className="flex flex-wrap gap-2 pt-2">
+              {canDelete ? <button className="btn-ghost" onClick={() => onDelete(record)}><Trash2 className="h-4 w-4" /> Archive</button> : null}
+              {canReactivate ? <button className="btn-ghost" onClick={() => onReactivate(record)}><ArchiveRestore className="h-4 w-4" /> Reactivate</button> : null}
+              <button className="btn-ghost" onClick={() => onNavigate("/audit-logs")}><FileText className="h-4 w-4" /> All audit logs</button>
+            </div></details>
           </div>
-        </section>
-
-        <DecisionBrief config={cfg} record={record} />
-
-        <div className="mt-6 grid gap-3 sm:grid-cols-2">
-          {customerVisibleRecordEntries(record).slice(0, 18).map(([key, value]) => (
-            <div key={key} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{labelize(key)}</p>
-              <p className="mt-1 break-words text-sm text-slate-200">{String(value ?? "--")}</p>
-            </div>
-          ))}
+        </header>
+        <div className="record-detail-body">
+          {loading ? <p role="status" className="text-sm text-slate-500">Loading linked records…</p> : null}
+          {scores.length ? <dl className="record-detail-scores">{scores.map(([key, value]) => <div key={key}><dt>{labelize(key)}</dt><dd>{String(value)}</dd></div>)}</dl> : null}
+          <h3 className="text-sm font-bold text-slate-900">Profile</h3>
+          <dl className="record-detail-fields">{entries.map(([key, value]) => <div key={key}><dt>{labelize(key)}</dt><dd>{displayRecordValue(value)}</dd></div>)}</dl>
+          {(kind === "drivers" || kind === "vehicles") ? <section className="record-detail-devices">
+            <h3 className="text-sm font-bold text-slate-900">{kind === "drivers" ? `Vehicle & devices · ${String(record.assignedVehicle || record.assignedVehicleCode || "Unassigned")}` : "Installed devices"}</h3>
+            {!vehicleId ? <p className="text-sm text-slate-500">Assign a vehicle to see its installed devices.</p> : !canViewDevices ? <p className="text-sm text-slate-500">Device viewing permission is required.</p> : !hasPermission(PERMISSIONS.VEHICLES_VIEW) ? <p className="text-sm text-slate-500">Vehicle viewing permission is required.</p> : linkedVehicle.isPending ? <p role="status" className="text-sm text-slate-500">Loading installed devices…</p> : linkedVehicle.isError ? <div role="alert" className="text-sm text-rose-700">Could not load this vehicle’s devices. <button type="button" className="text-teal-700 underline" onClick={() => void linkedVehicle.refetch()}>Retry</button></div> : devices.length ? <ul className="divide-y divide-slate-200">{devices.map(device => <li key={String(device.deviceId ?? device.device_id)} className="flex items-center justify-between gap-2 py-2"><span className="text-sm"><strong>{String(device.deviceSerial ?? device.device_serial ?? "Installed device")}</strong><span className="block text-xs text-slate-500">{String(device.deviceRole ?? device.device_role ?? "Device")} · {String(device.status ?? "Unknown")}</span></span><button type="button" className="btn-ghost" onClick={() => onNavigate(deviceDetailsRoute(device.deviceId ?? device.device_id))}>Configure / restart</button></li>)}</ul> : <p className="text-sm text-slate-500">No installed device is recorded for this vehicle.</p>}
+          </section> : null}
+          <Section title="Timeline" rows={timeline} columns={["eventType", "title", "severity", "eventTime"]} loading={loading} />
+          {cfg.detailSections.map(([title, key, columns]) => <Section key={title} title={title} rows={(detail?.[key] as AnyRecord[] | undefined) || []} columns={columns} loading={loading} />)}
         </div>
-
-        <div className="mt-6 grid gap-4 lg:grid-cols-2">
-          {recommendations.slice(0, 4).map((item, index) => <AiInsightCard key={String(item.id || index)} insight={item} />)}
-        </div>
-
-        <Section title="Timeline" rows={timeline} columns={["eventType", "title", "severity", "eventTime"]} loading={loading} />
-        {cfg.detailSections.map(([title, key, columns]) => (
-          <Section key={title} title={title} rows={(detail?.[key] as AnyRecord[] | undefined) || []} columns={columns} loading={loading} />
-        ))}
       </aside>
     </div>
   );
@@ -1165,35 +1149,6 @@ function BusinessPlanningPanel({ title, rows, entityLabel }: { title: string; ro
   );
 }
 
-function DecisionBrief({ config: cfg, record }: { config: EntityConfig; record: AnyRecord }) {
-  const signals = cfg.decisionSignals.filter((key) => record[key] != null || record[toCamel(key)] != null).slice(0, 6);
-  return (
-    <section className="mt-6 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-teal-50 p-4">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <p className="section-title">Operational Decision Brief</p>
-          <h3 className="mt-2 text-lg font-bold text-slate-950">{String(record.recommendedAction || record.recommended_action || "Review readiness before next dispatch action")}</h3>
-          <p className="mt-2 text-sm text-slate-600">This brief is designed around the practical questions clients ask: can it move, is it compliant, is it assigned correctly, and what should we do next?</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {cfg.competitiveEdges.slice(0, 3).map((edge) => <span key={edge} className="badge">{edge}</span>)}
-        </div>
-      </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {signals.map((key) => {
-          const value = record[key] ?? record[toCamel(key)] ?? "--";
-          return (
-            <div key={key} className="rounded-xl border border-slate-200 bg-white p-3">
-              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">{labelize(key)}</p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">{String(value)}</p>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 function pickBestDriver(rows: AnyRecord[]) {
   const score = (r: AnyRecord) => Number(r.driverReadinessScore ?? r.readinessScore ?? r.safetyScore ?? 0);
   const eligible = rows.filter(r => !r.assignedVehicleId && !r.assigned_vehicle_id &&
@@ -1228,55 +1183,14 @@ function actionFor(kind: EntityKind, row: AnyRecord) {
   return "Review operational record.";
 }
 
-function buildSnapshot(kind: EntityKind, record: AnyRecord, detail?: AnyRecord) {
-  if (kind === "vehicles") {
-    return [
-      { label: "Vehicle status", value: String(record.status ?? "--") },
-      { label: "Assigned driver", value: String(record.assignedDriver || record.assignedDriverName || "Unassigned"), route: "/drivers", buttonLabel: "driver record" },
-      { label: "Current shipment", value: String(record.currentShipment || record.currentJob || "--"), route: "/shipments", buttonLabel: "shipment" },
-      { label: "Current location", value: String(record.currentLocation || record.location || record.city || "--") },
-      { label: "Maintenance status", value: String(record.maintenanceStatus ?? record.maintenance_status ?? "--"), route: "/maintenance", buttonLabel: "maintenance" },
-      { label: "Compliance status", value: String(record.complianceStatus ?? record.compliance_status ?? "--"), route: "/compliance", buttonLabel: "compliance" },
-      { label: "Active alerts", value: String(record.alertCount ?? record.alerts ?? detail?.alertCount ?? "--"), route: "/alerts", buttonLabel: "alerts" },
-    ];
-  }
-  if (kind === "drivers") {
-    return [
-      { label: "Driver status", value: String(record.status ?? "--") },
-      { label: "Assigned vehicle", value: String(record.assignedVehicle || record.assignedVehicleCode || "Unassigned"), route: "/vehicles", buttonLabel: "vehicle record" },
-      { label: "Current trip/job", value: String(record.currentTrip || record.currentJob || "--"), route: "/jobs", buttonLabel: "job" },
-      { label: "License / compliance", value: String(record.licenseStatus || record.licenseNumber || record.complianceScore || "--"), route: "/compliance", buttonLabel: "compliance" },
-      { label: "Safety score", value: String(record.safetyScore ?? "--"), route: "/safety", buttonLabel: "safety" },
-      { label: "Availability / HOS", value: String(record.availability || record.hosStatus || "--"), route: "/hos-eld", buttonLabel: "HOS" },
-      { label: "Incidents / coaching", value: String(record.incidents || record.coachingStatus || "--"), route: "/incidents", buttonLabel: "incidents" },
-    ];
-  }
-  if (kind === "jobs") {
-    return [
-      { label: "Customer", value: String(record.customerName || record.customer || "--"), route: "/customers", buttonLabel: "customer" },
-      { label: "Vehicle", value: String(record.vehicleCode || record.assignedVehicle || "--"), route: "/vehicles", buttonLabel: "vehicle" },
-      { label: "Driver", value: String(record.driverName || record.assignedDriver || "--"), route: "/drivers", buttonLabel: "driver" },
-      { label: "Pickup / drop-off", value: `${String(record.pickupAddress || "--")} → ${String(record.dropoffAddress || "--")}` },
-      { label: "Status timeline", value: String((detail?.timeline as AnyRecord[] | undefined)?.[0]?.title || record.status || "--"), route: "/audit-logs", buttonLabel: "timeline" },
-      { label: "Load / POD", value: `${String(record.cargoType || record.jobType || "--")} · ${String(record.proofStatus || detail?.proofStatus || "Pending")}`, route: "/proof-of-delivery", buttonLabel: "POD" },
-      { label: "Invoice / compliance", value: String(record.invoiceStatus || "Not invoiced"), route: "/reports", buttonLabel: "invoice" },
-    ];
-  }
-  return [
-    { label: "Current status", value: String(record.status ?? "--") },
-    { label: "Risk posture", value: String(record.riskHeatScore ?? record.riskScore ?? "--") },
-    { label: "Recommended action", value: String(record.recommendedAction || record.recommended_action || actionFor(kind, record)) },
-  ];
-}
-
 function toCamel(value: string) {
   return value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 }
 
 function Section({ title, rows, columns, loading }: { title: string; rows: AnyRecord[]; columns: string[]; loading?: boolean }) {
   return (
-    <section className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-      <h3 className="section-title">{title}</h3>
+    <details className="record-detail-section">
+      <summary>{title}<span>{loading ? "Loading…" : rows.length}</span></summary>
       {loading ? <p className="mt-3 text-sm text-slate-400">Loading evidence...</p> : null}
       {!loading && !rows.length ? <p className="mt-3 text-sm text-slate-500">No linked records yet.</p> : null}
       {rows.length ? (
@@ -1286,16 +1200,16 @@ function Section({ title, rows, columns, loading }: { title: string; rows: AnyRe
               <tr>{columns.map((column) => <th key={column} className="px-3 py-2 font-semibold">{labelize(column)}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-white/10">
-              {rows.slice(0, 8).map((row, index) => (
+              {rows.map((row, index) => (
                 <tr key={String(row.id || index)} className="text-slate-300">
-                  {columns.map((column) => <td key={column} className="px-3 py-2">{String(row[column] ?? "--")}</td>)}
+                  {columns.map((column) => <td key={column} className="px-3 py-2">{displayRecordValue(row[column] ?? row[column.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)])}</td>)}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       ) : null}
-    </section>
+    </details>
   );
 }
 

@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import { deviceDetailsRoute, displayRecordValue } from '../src/utils/recordDetailsPresentation.ts';
+assert.equal(deviceDetailsRoute(42), '/iot-devices?deviceId=42');
+assert.equal(deviceDetailsRoute('hardware/id?x=1'), '/iot-devices?deviceId=hardware%2Fid%3Fx%3D1');
+assert.equal(deviceDetailsRoute(null), '/iot-devices');
+assert.equal(displayRecordValue(null), '—');
+assert.equal(displayRecordValue('2026-09-30T00:00:00Z'), new Date('2026-09-30T00:00:00Z').toLocaleDateString(undefined, {year:'numeric',month:'short',day:'numeric',timeZone:'UTC'}));
+assert.equal(displayRecordValue('2026-99-30T00:00:00'), '2026-99-30T00:00:00');
+assert.equal(displayRecordValue('Installed'), 'Installed');
+console.log('Record detail identity and date presentation: 7 checks passed');

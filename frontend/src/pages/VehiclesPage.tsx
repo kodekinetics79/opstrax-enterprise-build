@@ -1,3 +1,4 @@
+import { deviceDetailsRoute } from "@/utils/recordDetailsPresentation";
 import { FormEvent, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -903,13 +904,13 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
               <div className="space-y-2">
                 {currentDevices.map((device, i) => (
                   <button key={String(g(device, "installationId", "installation_id") ?? i)} type="button"
-                    onClick={() => onNavigate("/iot-devices")} className="deck-alert flex w-full items-center gap-3 px-3 py-2.5 text-left">
+                    onClick={() => onNavigate(deviceDetailsRoute(g(device, "deviceId", "device_id")))} className="deck-alert flex w-full items-center gap-3 px-3 py-2.5 text-left">
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] font-bold text-slate-800">{String(g(device, "deviceSerial", "device_serial") ?? "Registered device")}</span>
                       <span className="text-[11px] font-semibold text-slate-400">{String(g(device, "deviceRole", "device_role") ?? "Device")} · {String(g(device, "status") ?? "Unknown")}</span>
                     </span>
                     <span className="text-[10px] font-bold text-slate-500">{g(device, "lastSeenAt", "last_seen_at") ? fmt(g(device, "lastSeenAt", "last_seen_at")) : "Never seen"}</span>
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                    <span className="text-xs font-semibold text-teal-700">Configure / restart</span>
                   </button>
                 ))}
               </div>

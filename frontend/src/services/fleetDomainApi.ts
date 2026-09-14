@@ -64,6 +64,8 @@ export function getVehicleById(id: string | number, lifecycle: "active" | "archi
   return apiRecord(`/api/vehicles/${id}?lifecycle=${lifecycle}`).then((detail) => ({
     ...detail,
     record: (detail.record as AnyRecord) ?? detail,
+    currentDevices: asRows(detail.currentDevices),
+    installationHistory: asRows(detail.installationHistory),
     activeJobs: asRows(detail.activeJobs),
     compliance: asRows(detail.compliance),
     documents: asRows(detail.documents),

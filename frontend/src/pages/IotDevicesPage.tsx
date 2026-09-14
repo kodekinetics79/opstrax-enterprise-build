@@ -26,7 +26,7 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { EmptyState, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EntityImportExport } from "@/components/EntityImportExport";
@@ -830,6 +830,9 @@ export function IotDevicesPage() {
   const [deviceSort, setDeviceSort] = useState<"serial" | "provider" | "model" | "status" | "lastCheckIn" | "vehicle">("serial");
   const [deviceDirection, setDeviceDirection] = useState<"asc" | "desc">("asc");
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
+  const [searchParams] = useSearchParams();
+  const requestedDeviceId = searchParams.get("deviceId");
+  useEffect(() => { setSelectedId(requestedDeviceId || null); }, [requestedDeviceId]);
   const deviceDrawerRef = useDialogFocus<HTMLElement>(selectedId != null, () => setSelectedId(null));
   // Step 1 of the connect flow — the minimal register-connection form.
   const [connectOpen, setConnectOpen] = useState(false);
@@ -1968,6 +1971,7 @@ export function IotDevicesPage() {
               <ErrorState message="Unable to load this device." />
 	            ) : (
 	              <DeviceDetailDrawer
+                  key={String(detailQ.data.device.id)}
 	                detail={detailQ.data}
 	                vehicleOptions={vehicleOptions}
 	                canManageConnectivity={canManageDeviceLifecycle}
@@ -2269,6 +2273,8 @@ function DeviceDetailDrawer({
   onDismissLifecycleError: () => void;
 }) {
   const { device } = detail;
+  const configurationRef = useRef<HTMLDivElement>(null);
+  const commandsRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const [workPackageOpen, setWorkPackageOpen] = useState(false);
   const [workPackageForm, setWorkPackageForm] = useState<InstallationWorkPackageFormState>(() =>
@@ -2703,6 +2709,10 @@ function DeviceDetailDrawer({
         </div>
       </div>
 
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" className="btn-primary" onClick={() => configurationRef.current?.scrollIntoView({ block: "start" })}>Device configuration</button>
+        <button type="button" className="btn-ghost" onClick={() => commandsRef.current?.scrollIntoView({ block: "start" })}>Restart / commands</button>
+      </div>
       <div className="mt-2 flex flex-wrap gap-2">
         {actionContracts.filter((contract) => contract.visible).map((contract) => (
           <ActionContractBadge key={`contract-${contract.key}`} contract={contract} />
@@ -2909,7 +2919,7 @@ function DeviceDetailDrawer({
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
-        <PanelSection title="SIM / eSIM inventory">
+        <div ref={configurationRef} tabIndex={-1} className="scroll-mt-4"><PanelSection title="SIM / eSIM inventory">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-sm font-semibold text-white">
@@ -3013,7 +3023,7 @@ function DeviceDetailDrawer({
               }))} emptyText="No connectivity profile history recorded." />
             </div>
           ) : null}
-        </PanelSection>
+        </PanelSection></div>
         <PanelSection title="Hardware compatibility truth">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -3112,7 +3122,7 @@ function DeviceDetailDrawer({
             ))}
           </div>
         </PanelSection>
-        <PanelSection title="Capability-governed remote commands">
+        <div ref={commandsRef} tabIndex={-1} className="scroll-mt-4"><PanelSection title="Capability-governed remote commands">
           <p className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-sm text-amber-100">
             A command can be recorded only when current provider or device evidence verifies that exact command for this exact hardware, firmware, provider, and serial. Recording does not prove provider dispatch, device acknowledgement, application, or any physical outcome.
           </p>
@@ -3147,7 +3157,7 @@ function DeviceDetailDrawer({
               </div>
             ))}
           </div>
-        </PanelSection>
+        </PanelSection></div>
         <PanelSection title="Device support tier">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
