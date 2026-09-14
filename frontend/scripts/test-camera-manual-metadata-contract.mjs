@@ -621,8 +621,8 @@ test("actual drawer then dedicated form order makes only topmost focus hook cons
   const renderForm = (pending) => call("form", () => formModule.CameraMetadataDialog({ editor, pending, error: "", onClose: () => closes++, onChange: () => changes++, onSubmit: () => submissions++ }));
   let form = renderForm(true);
   const node = () => {
-    const first = { hidden: false, isConnected: true, focus() { document.activeElement = this; } }, last = { hidden: false, isConnected: true, focus() { document.activeElement = this; } };
-    return { isConnected: true, hidden: false, first, last, querySelector: () => null, querySelectorAll: () => [first, last], contains: (element) => [first, last].includes(element) };
+    const first = { getClientRects: () => [{}], hidden: false, isConnected: true, focus() { document.activeElement = this; } }, last = { getClientRects: () => [{}], hidden: false, isConnected: true, focus() { document.activeElement = this; } };
+    return { isConnected: true, hidden: false, first, last, querySelector: () => null, querySelectorAll: () => [first, last, { hidden: false, getClientRects: () => [], focus() { throw new Error("Collapsed controls must not receive focus"); } }], contains: (element) => [first, last].includes(element) };
   };
   dialogs.push(node(), node()); outer.props.ref.current = dialogs[0]; form.props.ref.current = dialogs[1];
   const stops = effects.splice(0).map((effect) => effect());

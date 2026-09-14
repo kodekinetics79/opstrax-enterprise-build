@@ -35,12 +35,12 @@ export function ClayStat({ Icon, tone, iconCls, label, value, caption, alert, ac
   if (onClick) {
     return (
       <button type="button" onClick={onClick} aria-pressed={active}
-        className={`fc-clay ${tone} ${active ? "deck-clay-pressed" : ""} p-3 text-left`}>
+        className={`console-stat fc-clay ${tone} ${active ? "deck-clay-pressed" : ""} p-3 text-left`}>
         {body}
       </button>
     );
   }
-  return <div className={`fc-clay ${tone} p-3`}>{body}</div>;
+  return <div className={`console-stat fc-clay ${tone} p-3`}>{body}</div>;
 }
 
 export function ConsoleNav<K extends string>({ sections, active, onSelect }: {
@@ -49,7 +49,7 @@ export function ConsoleNav<K extends string>({ sections, active, onSelect }: {
   onSelect: (key: K) => void;
 }) {
   return (
-    <nav className="fc-neumo sticky top-2 z-20 p-1.5">
+    <nav className="console-nav fc-neumo sticky top-2 z-20 p-1.5">
       <div className={`grid gap-1 ${sections.length >= 5 ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
         {sections.map((item) => (
           <button
@@ -77,7 +77,7 @@ export function ConsoleRail({ eyebrow, icon, title, meta, actions }: {
   actions?: ReactNode;
 }) {
   return (
-    <header className="fc-rail relative px-4 py-3">
+    <header className="console-rail fc-rail relative px-4 py-3">
       <div className="relative flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <span className="section-title inline-flex items-center gap-2">{icon} {eyebrow}</span>

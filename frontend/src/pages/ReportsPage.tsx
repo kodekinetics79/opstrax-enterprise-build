@@ -1,3 +1,5 @@
+import { DataTable } from "@/components/ui";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { useState, useMemo } from "react";
 import {
   Download, Play, Plus, RefreshCw, Trash2, BookOpen,
@@ -519,88 +521,31 @@ function SavedReportsList({ datasets }: { datasets: ReportDatasetMeta[] }) {
   const deleteMut     = useDeleteSavedReport();
   const exportMut     = useExportSavedReportCsv();
   const [schedId, setSchedId] = useState<number | null>(null);
-  const [expanded, setExpanded] = useState<number | null>(null);
 
   const reports = (savedQ.data ?? []) as SavedReport[];
 
   if (savedQ.isLoading) return <LoadingState />;
+  if (savedQ.isError) return <p role="alert" className="text-sm text-red-700">{apiErrorMessage(savedQ.error, "Saved reports could not be loaded.")}</p>;
   if (reports.length === 0)
     return <EmptyState title="No saved reports" subtitle="Use the builder to create and save a report." />;
 
   return (
     <div className="space-y-2">
-      {reports.map((r) => {
-        const ds = datasets.find((d) => d.key === r.datasetKey);
-        const fields = JSON.parse(r.selectedFieldsJson ?? "[]") as string[];
-        const isOpen = expanded === r.id;
-        return (
-          <div key={r.id} className="panel p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                  <VisibilityIcon v={r.visibility} />
-                  <span className="font-semibold text-sm text-slate-800 truncate">{r.name}</span>
-                  <VisibilityLabel v={r.visibility} />
-                  {ds && <span className="text-[10px] text-slate-400 border border-slate-200 rounded px-1.5 py-0.5">{ds.label}</span>}
-                </div>
-                {r.description && <p className="text-xs text-slate-500 mb-1">{r.description}</p>}
-                <div className="flex items-center gap-3 text-[11px] text-slate-400">
-                  <span>{fields.length} field{fields.length !== 1 ? "s" : ""}</span>
-                  {r.lastRunAt && <span className="flex items-center gap-0.5"><Clock className="h-3 w-3" />{new Date(r.lastRunAt).toLocaleDateString()}</span>}
-                </div>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  className="btn-xs btn-ghost"
-                  title="Expand details"
-                  onClick={() => setExpanded(isOpen ? null : r.id)}
-                >
-                  {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                </button>
-                {canExport && (
-                  <button
-                    type="button"
-                    className="btn-xs btn-ghost"
-                    title="Export CSV"
-                    disabled={exportMut.isPending}
-                    onClick={() => exportMut.mutate(r.id)}
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn-xs btn-ghost"
-                  title="Schedule"
-                  onClick={() => setSchedId(r.id)}
-                >
-                  <Calendar className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  className="btn-xs btn-ghost text-red-400 hover:text-red-600"
-                  title="Delete"
-                  onClick={() => { if (confirm("Delete this saved report?")) deleteMut.mutate(r.id); }}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-            {isOpen && ds && (
-              <div className="mt-3 pt-3 border-t border-slate-100">
-                <p className="text-xs font-semibold text-slate-600 mb-1">Fields:</p>
-                <div className="flex flex-wrap gap-1">
-                  {fields.map((k) => {
-                    const fd = ds.fields.find((f) => f.key === k);
-                    return <span key={k} className="text-[10px] bg-slate-100 text-slate-600 rounded px-2 py-0.5">{fd?.label ?? k}</span>;
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
+      {(savedQ.isError || deleteMut.isError || exportMut.isError) && <p role="alert" className="text-sm text-red-700">{apiErrorMessage(savedQ.error ?? deleteMut.error ?? exportMut.error, "The report action could not be completed.")}</p>}
+      <DataTable rows={reports.map((report) => ({ ...report }))} columns={["name", "datasetKey", "visibility", "lastRunAt"]}
+        columnLabels={{ datasetKey: "Dataset", lastRunAt: "Last run" }}
+        actions={(record) => {
+          const r = record as unknown as SavedReport;
+          const ds = datasets.find((d) => d.key === r.datasetKey);
+          let fields: string[] = [];
+          try { fields = JSON.parse(r.selectedFieldsJson ?? "[]") as string[]; } catch { /* An invalid saved definition must not crash the list. */ }
+          return <>
+            <details className="max-w-sm whitespace-normal"><summary className="cursor-pointer text-xs font-semibold text-teal-700">Fields ({fields.length})</summary><p className="mt-2 text-xs">{fields.map((key) => ds?.fields.find((field) => field.key === key)?.label ?? key).join(", ")}</p>{r.description && <p className="mt-2 text-xs">{r.description}</p>}</details>
+            {canExport && <button type="button" className="btn-ghost btn-compact" disabled={exportMut.isPending} onClick={() => exportMut.mutate(r.id)}>Export CSV</button>}
+            <button type="button" className="btn-ghost btn-compact" onClick={() => setSchedId(r.id)}>Schedule</button>
+            <button type="button" className="btn-ghost btn-compact text-red-600" disabled={deleteMut.isPending} onClick={() => { if (confirm("Delete this saved report?")) deleteMut.mutate(r.id); }}>Delete</button>
+          </>;
+        }} />
       {schedId && <ScheduleModal savedReportId={schedId} onClose={() => setSchedId(null)} />}
     </div>
   );
@@ -609,7 +554,7 @@ function SavedReportsList({ datasets }: { datasets: ReportDatasetMeta[] }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export function ReportsPage() {
-  const [tab, setTab] = useState<Tab>("builder");
+  const [tab, setTab] = useState<Tab>("saved");
   const datasetsQ = useDatasets();
   const datasets  = datasetsQ.data ?? [];
 

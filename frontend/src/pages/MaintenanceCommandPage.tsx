@@ -26,7 +26,7 @@ export function MaintenanceCommandPage() {
     ? "Work Orders"
     : location.pathname === "/inspections"
       ? "Inspections"
-      : "Overview";
+      : "Work Orders";
   const initialTab = TABS.find((tab) => tab === requestedTab) ?? (requestedVehicleId ? "Work Orders" : routeTab);
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [createOpen, setCreateOpen] = useState(Boolean(requestedVehicleId));

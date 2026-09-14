@@ -10,6 +10,7 @@ import * as icons from "lucide-react";
 const require = createRequire(import.meta.url);
 const utilityUrl = new URL("../src/utils/telemetryMeasurements.ts", import.meta.url);
 const measurements = existsSync(utilityUrl) ? await import(utilityUrl.href) : {};
+const workspace = await import(new URL("../src/utils/vehicleWorkspace.ts", import.meta.url).href);
 
 // Execute the actual production functions, including JSX, without mounting the app,
 // contacting an API or claiming rendered-browser coverage. No copied implementation.
@@ -160,20 +161,22 @@ test("speed formatting and summaries retain unknown versus measured zero", () =>
 test("actual vehicle drawer renders absent instruments without zero or north", () => {
   const { VehicleDrawer } = loadDeclarations("../src/pages/VehiclesPage.tsx", [
     "g", "num", "riskTier", "vehicleDeviceStatus", "vehicleCameraStatus", "hasRecentHeartbeat", "freshness",
-    "StatusPill", "RiskChip", "VehicleDrawer", "Instrument", "headingLabel", "ReplayTrail", "DrawerSection", "DrawerTable", "EmptyLine", "fmt", "SlaChip",
-  ], { ...icons });
+    "StatusPill", "RiskChip", "VehicleDrawer", "Instrument", "headingLabel", "ReplayTrail", "DrawerSection", "DrawerTable", "EmptyLine", "fmt", "timestamp", "SlaChip",
+  ], { ...icons, ...workspace, useDialogFocus: () => ({ current: null }), useState: (initial) => [initial, () => {}], useHasPermission: () => () => false, PERMISSIONS: { TELEMETRY_DEVICES_READ: "telemetry.devices.read" } });
   const drawer = (speedMph, heading) => renderToStaticMarkup(VehicleDrawer({
     record: { id: 1, vehicleCode: "Synthetic partial GPS", lat: 34.05, lng: -118.24,
       lastSeenAt: new Date().toISOString(), speedMph, heading }, detail: {}, loading: false,
   }));
-  const instrument = (html, label) => html.match(new RegExp(`>${label}</div><div[^>]*>([\\s\\S]*?)</div>`))?.[1];
+  const field = (html, label) => html.match(new RegExp(`>${label}</dt><dd[^>]*>([\\s\\S]*?)</dd>`))?.[1];
   const unknown = drawer(null, null);
-  assert.equal(instrument(unknown, "Speed"), "—");
-  assert.equal(instrument(unknown, "Heading"), "—");
+  assert.equal(field(unknown, "Last reported speed"), "Unknown");
+  assert.equal(field(unknown, "Heading"), "—");
   assert.match(unknown, /34\.0500, -118\.2400/);
+  assert.match(unknown, /Current movement unknown/);
   const zero = drawer(0, 0);
-  assert.match(instrument(zero, "Speed"), /^0<span[^>]*>mph<\/span>$/);
-  assert.equal(instrument(zero, "Heading"), "N");
+  assert.equal(field(zero, "Last reported speed"), "0 mph");
+  assert.equal(field(zero, "Heading"), "N");
+  assert.match(zero, /Stationary/);
 });
 
 test("actual fleet tracking card preserves null and zero speed", () => {

@@ -769,7 +769,7 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     {!rows.length ? (
       <EmptyState title={`No ${config.eyebrow.toLowerCase()} records`} subtitle={kind === "dashcam" ? "No provider event has been projected into this view. Manual entries remain explicitly unverified." : "Try another filter or create the first record."} />
     ) : (
-      <DataTable rows={kind === "dashcam" ? rows.map(({ severity, ...metadata }) => ({ ...metadata, recordedLevel: severity ?? "Unavailable" })) : rows} columns={config.columns} onSelect={(row) => { if (kind !== "dashcam" || camera.canLeave()) selectRecord(row); }} />
+      <DataTable rows={kind === "dashcam" ? rows.map(({ severity, ...metadata }) => ({ ...metadata, recordedLevel: severity ?? "Unavailable" })) : rows} columns={config.columns} showToolbar={false} onSelect={(row) => { if (kind !== "dashcam" || camera.canLeave()) selectRecord(row); }} />
     )}
     <Drawer
       kind={kind}

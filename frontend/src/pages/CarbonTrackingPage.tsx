@@ -64,7 +64,7 @@ function EmptyPanel({ title, note }: { title: string; note: string }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function CarbonTrackingPage() {
-  const [activeView, setActiveView] = useState<"overview" | "vehicles" | "targets">("overview");
+  const [activeView, setActiveView] = useState<"overview" | "vehicles" | "targets">("vehicles");
 
   const q = useQuery({ queryKey: ["carbon-emissions"], queryFn: carbonApi });
   const trendQ = useQuery({ queryKey: ["carbon-trend"], queryFn: trendApi });

@@ -1,4 +1,6 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
+import { contextualMapEntity, includeContextualMapEntity, mapContextHasPosition, mapContextReady, mapVehicleId } from "@/utils/liveMapVehicleContext";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle,
@@ -181,6 +183,10 @@ function matchesSearch(entity: AnyRecord, q: string): boolean {
 }
 
 export function LiveMapPage() {
+  const [searchParams] = useSearchParams();
+  const requestedVehicle = searchParams.get("vehicleId");
+  const requestedVehicleId = mapVehicleId(requestedVehicle);
+  const consumedVehicleContext = useRef<string | null>(null);
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>("All");
@@ -242,6 +248,7 @@ export function LiveMapPage() {
     queryKey: ["live-map", "entity", selected?.vehicleId ?? selected?.id],
     queryFn: () => controlTowerApi.entity("vehicle", (selected?.vehicleId ?? selected?.id) as string | number),
     enabled: Boolean(selected?.vehicleId ?? selected?.id),
+    refetchInterval: selected != null ? 15_000 : false,
   });
 
   // Breadcrumb replay: fetch the chronological GPS trail for the replay vehicle over the
@@ -392,6 +399,31 @@ export function LiveMapPage() {
     });
   }, [baseEntities, telemetry.positions]);
 
+  const contextualVehicle = requestedVehicleId ? contextualMapEntity(liveEntities, requestedVehicleId) : null;
+  const mapSnapshotSettled = telemetry.lastUpdated != null || telemetry.error != null;
+  useEffect(() => {
+    if (requestedVehicle == null) {
+      consumedVehicleContext.current = null;
+      return;
+    }
+    if (!requestedVehicleId || isLoading || isError || !data || consumedVehicleContext.current === requestedVehicle) return;
+    if (!mapContextReady(contextualVehicle, mapSnapshotSettled)) return;
+    // Consume the request once after the authorized snapshot loads. Polling must
+    // not reopen a dismissed drawer or override the operator's next selection.
+    consumedVehicleContext.current = requestedVehicle;
+    if (!contextualVehicle) return;
+    setSelected(contextualVehicle);
+    setFocusId(mapContextHasPosition(contextualVehicle)
+      ? String(contextualVehicle.id ?? contextualVehicle.vehicleId ?? contextualVehicle.vehicle_id ?? "")
+      : null);
+  }, [requestedVehicle, requestedVehicleId, contextualVehicle, mapSnapshotSettled, isLoading, isError, data]);
+
+  // Derive refreshed measurements without changing selection state. A new GPS
+  // snapshot updates the open drawer but cannot reopen a dismissed drawer.
+  const selectedLiveEntity = selected
+    ? contextualMapEntity(liveEntities, String(selected.vehicleId ?? selected.vehicle_id ?? selected.id ?? "")) ?? selected
+    : null;
+
   const routeStops = (routeStopsQ.data as AnyRecord[]) ?? [];
   const routeTrail = useMemo<RouteTrail[]>(() => {
     const points = routeStops
@@ -494,7 +526,10 @@ export function LiveMapPage() {
 
   const kpis = (data.kpis as AnyRecord) ?? {};
   const geofences = layers.geofences ? ((data.geofences as AnyRecord[]) ?? []) : [];
-  const mapEntities = layers.vehicles ? visibleEntities : [];
+  const contextualFocusId = contextualVehicle ? String(contextualVehicle.id ?? contextualVehicle.vehicleId ?? contextualVehicle.vehicle_id ?? "") : null;
+  const mapEntities = layers.vehicles
+    ? includeContextualMapEntity(visibleEntities, focusId && focusId === contextualFocusId ? contextualVehicle : null)
+    : [];
   const recommendations = (data.recommendations as AnyRecord[]) ?? [];
   const openAlerts = alerts.data ?? [];
   const openAlertCount = alerts.isSuccess ? String(openAlerts.length) : "--";
@@ -522,6 +557,15 @@ export function LiveMapPage() {
           )
         }
       />
+
+      {requestedVehicle != null && (!requestedVehicleId || !contextualVehicle || !mapContextHasPosition(contextualVehicle)) ? (
+        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {!requestedVehicleId ? "This vehicle map link has an invalid vehicle ID." : !mapContextReady(contextualVehicle, mapSnapshotSettled)
+            ? "Checking the requested vehicle's latest position…" : !contextualVehicle
+            ? "The requested vehicle is not present in the authorized position snapshot. It may have no reported position or may be outside your permitted scope."
+            : `${String(contextualVehicle.label ?? contextualVehicle.vehicleCode ?? contextualVehicle.vehicle_code ?? "The requested vehicle")} has no valid GPS position in the authorized snapshot. Location will appear after a valid GPS fix is reported.`}
+        </div>
+      ) : null}
 
       {telemetry.error && (
         <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -772,7 +816,7 @@ export function LiveMapPage() {
         </div>
       )}
 
-      <VehicleDetailDrawer detail={detail.data} entity={selected} loading={detail.isLoading} onClose={() => { setSelected(null); setFocusId(null); }} />
+      <VehicleDetailDrawer detail={detail.data} entity={selectedLiveEntity} loading={detail.isLoading} onClose={() => { setSelected(null); setFocusId(null); }} />
     </div>
   );
 }

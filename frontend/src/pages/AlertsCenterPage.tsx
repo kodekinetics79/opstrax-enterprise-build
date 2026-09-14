@@ -478,7 +478,7 @@ export function AlertsCenterPage() {
         <div className="alerts-actions"><button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-secondary btn-compact">Export filtered</button><button type="button" onClick={() => void queryClient.invalidateQueries({ queryKey: ["alerts"] })} className="btn-primary btn-compact"><RefreshCw className="h-4 w-4" /> Refresh</button></div>
       </header>
 
-      <section className="panel p-3" aria-label="Alert queue summary and filters">
+      <section className="panel p-3 alerts-controls-panel" aria-label="Alert queue summary and filters">
         <p className="alerts-scope-label">Loaded queue · {alerts.length} records in your authorized scope</p>
         <div className="alerts-summary-bar">
           <dl className="alerts-summary" aria-label="Alert queue summary for loaded records">
@@ -603,7 +603,7 @@ function CompactMetric({
   }[tone];
 
   return (
-    <div className={`min-w-0 rounded-xl border px-3 py-2 ${toneClass}`}>
+    <div className={`alerts-metric min-w-0 rounded-xl border px-3 py-2 ${toneClass}`}>
       <dt className="text-[10px] font-bold uppercase tracking-[0.12em] opacity-75">{label}</dt>
       <dd className="mt-1 flex min-w-0 items-baseline gap-2 flex-wrap">
         <strong className="text-lg font-bold leading-none tabular-nums">{value}</strong>

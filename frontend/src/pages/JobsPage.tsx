@@ -336,7 +336,7 @@ export function JobsPage() {
       </div>
 
       {rows.length ? (
-        <DataTable rows={rows} columns={surfaceConfig.tableColumns} onSelect={setSelected} />
+        <DataTable rows={rows} columns={surfaceConfig.tableColumns} showToolbar={false} onSelect={setSelected} />
       ) : (
         <EmptyState title="No jobs match these filters" subtitle="Adjust the pipeline stage, priority, or search to widen results." />
       )}

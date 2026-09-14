@@ -5147,7 +5147,10 @@ public static partial class EndpointMappings
         var companyId = GetCompanyId(http);
         var (branchClause, branchId) = StrictBranchFilter(http, "va");
         var rows = await db.QueryAsync(
-            @"SELECT va.id, va.assigned_at assignment_date, va.released_at release_date,
+            @"SELECT va.id, va.vehicle_id, va.driver_id, va.assigned_at assignment_date, va.released_at release_date,
+                     (LOWER(COALESCE(va.status,'Active'))='active' AND va.released_at IS NULL
+                       AND v.deleted_at IS NULL AND d.deleted_at IS NULL
+                       AND v.assigned_driver_id=d.id AND d.assigned_vehicle_id=v.id) IS TRUE is_current,
                      COALESCE(va.assignment_type,'Dispatch') assignment_type,
                      COALESCE(va.status,'Active') status,
                      v.vehicle_code, d.full_name driver_name, d.driver_code,
@@ -5377,9 +5380,72 @@ public static partial class EndpointMappings
                     AND source_authority='Authoritative' AND media_status='Ready'
                   ORDER BY occurred_at DESC LIMIT 4",
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
+        // The roster permission does not grant access to job execution or location
+        // history. Reuse each feed's registered read gate and distinguish denied feeds
+        // from an authorized empty result for the operator workspace.
+        var canReadActiveJobs = RequireAnyDirectPermission(http, "shipments:view") is null;
+        var canReadReplayTrail = RequirePermission(http, "telemetry.live_state.read") is null;
+        var replayTo = DateTime.UtcNow;
+        var replayFrom = replayTo.AddHours(-24);
+        List<Dictionary<string, object?>> activeJobs = [];
+        if (canReadActiveJobs)
+            activeJobs = await db.QueryAsync(
+                @"SELECT j.id,COALESCE(j.job_number,j.job_code) job_number,j.status,j.sla_status,
+                         j.eta,j.priority,j.scheduled_start,j.scheduled_end
+                  FROM jobs j
+                  WHERE j.assigned_vehicle_id=@id AND j.company_id=@cid AND j.deleted_at IS NULL
+                    AND LOWER(BTRIM(j.status)) NOT IN ('completed','delivered','cancelled','canceled','unassigned')
+                    AND (@branchId::BIGINT IS NULL OR j.branch_id=@branchId)
+                  ORDER BY j.scheduled_start ASC NULLS LAST,j.id ASC LIMIT 12",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        Dictionary<string, object?>? latestObservation = null;
+        if (canReadReplayTrail)
+            latestObservation = await db.QuerySingleAsync(
+                @"SELECT le.id,le.lat,le.lng,le.speed_mph,le.heading,le.engine_status,
+                         le.odometer_miles,le.fuel_level,le.battery_voltage,le.event_type,
+                         le.event_time,le.received_at,le.source,le.device_id
+                  FROM location_events le
+                  JOIN vehicles scoped_vehicle ON scoped_vehicle.id=le.vehicle_id
+                    AND scoped_vehicle.company_id=le.company_id
+                  WHERE le.vehicle_id=@id AND le.company_id=@cid
+                    AND le.lat BETWEEN -90 AND 90 AND le.lng BETWEEN -180 AND 180
+                      AND NOT (le.lat=0 AND le.lng=0)
+                    AND le.event_time<=@to
+                    AND (@branchId::BIGINT IS NULL OR scoped_vehicle.branch_id=@branchId)
+                  ORDER BY le.event_time DESC,le.id DESC LIMIT 1",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@to", replayTo); }, ct);
+        List<Dictionary<string, object?>> replayTrail = [];
+        if (canReadReplayTrail)
+            replayTrail = await db.QueryAsync(
+                @"SELECT recent.id,recent.lat,recent.lng,recent.speed_mph,recent.heading,
+                         recent.engine_status,recent.event_type,recent.event_time,recent.device_id
+                  FROM (
+                    SELECT le.id,le.lat,le.lng,le.speed_mph,le.heading,le.engine_status,
+                           le.event_type,le.event_time,le.device_id
+                    FROM location_events le
+                    JOIN vehicles scoped_vehicle ON scoped_vehicle.id=le.vehicle_id
+                      AND scoped_vehicle.company_id=le.company_id
+                    WHERE le.vehicle_id=@id AND le.company_id=@cid
+                      AND le.lat BETWEEN -90 AND 90 AND le.lng BETWEEN -180 AND 180
+                      AND NOT (le.lat=0 AND le.lng=0)
+                      AND le.event_time BETWEEN @from AND @to
+                      AND (@branchId::BIGINT IS NULL OR scoped_vehicle.branch_id=@branchId)
+                    ORDER BY le.event_time DESC,le.id DESC LIMIT 100
+                  ) recent ORDER BY recent.event_time ASC,recent.id ASC",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@from", replayFrom); c.Parameters.AddWithValue("@to", replayTo); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
+            activeJobs,
+            replayTrail,
+            latestObservation,
+            activityAccess = new { activeJobs = canReadActiveJobs, replayTrail = canReadReplayTrail, latestObservation = canReadReplayTrail },
+            activityWindow = new { replayFrom, replayTo, replayLimit = 100, activeJobsLimit = 12 },
             timeline = await EntityTimeline(db, "Vehicle", id, GetCompanyId(http), ct),
             recommendations = GetBranchId(http) is null ?
                 await TenantModuleRecommendations(db, GetCompanyId(http), "vehicles", ct)
@@ -10876,18 +10942,37 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
 
             var oldTargetId = source["currentTargetId"] is { } oldTarget && oldTarget is not DBNull ? Convert.ToInt64(oldTarget) : (long?)null;
             var targetOldSourceId = target?.GetValueOrDefault("reciprocalId") is { } oldSource && oldSource is not DBNull ? Convert.ToInt64(oldSource) : (long?)null;
+
+            // Legacy pairs can have only one populated direction. Inspect the actual
+            // inverse links under row locks before clearing displaced responsibility;
+            // trusting just the two selected rows leaves a unique-index collision.
+            var sourceBacklinks = await db.QueryAsync(
+                $"SELECT id, branch_id FROM {targetTable} WHERE {reciprocalColumn}=@id AND company_id=@companyId AND deleted_at IS NULL FOR UPDATE",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+            var targetBacklinks = targetId is null ? [] : await db.QueryAsync(
+                $"SELECT id, branch_id FROM {table} WHERE {column}=@targetId AND company_id=@companyId AND deleted_at IS NULL FOR UPDATE",
+                c => { c.Parameters.AddWithValue("@targetId", targetId.Value); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+            var pairBranch = source["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(source["branchId"]);
+            if (sourceBacklinks.Concat(targetBacklinks).Any(row =>
+                (row["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(row["branchId"])) != pairBranch))
+                return Results.Conflict(ApiResponse<object>.Fail("An existing assignment points across branches. Ask a fleet administrator to resolve it before reassigning."));
+
             if (oldTargetId == targetId && (targetId is null || targetOldSourceId == id))
-                return Results.Ok(ApiResponse<object>.Ok(new { id }, "Assignment already current"));
+            {
+                // A null forward pointer does not mean unassigned if an inverse remains.
+                if (targetId is not null || sourceBacklinks.Count == 0)
+                    return Results.Ok(ApiResponse<object>.Ok(new { id }, "Assignment already current"));
+            }
 
             // Clear both sides of any prior pair before writing the new symmetric link. All
             // request DB calls share the request transaction, so a database failure rolls the
             // complete reassignment back instead of leaving a half-linked driver/vehicle.
-            if (oldTargetId is not null && oldTargetId != targetId)
-                await db.ExecuteAsync($"UPDATE {targetTable} SET {reciprocalColumn}=NULL WHERE id=@oldTargetId AND company_id=@companyId AND {reciprocalColumn}=@id",
-                    c => { c.Parameters.AddWithValue("@oldTargetId", oldTargetId.Value); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-            if (targetOldSourceId is not null && targetOldSourceId != id)
-                await db.ExecuteAsync($"UPDATE {table} SET {column}=NULL WHERE id=@oldSourceId AND company_id=@companyId AND {column}=@targetId",
-                    c => { c.Parameters.AddWithValue("@oldSourceId", targetOldSourceId.Value); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@targetId", targetId!.Value); }, ct);
+            foreach (var displaced in sourceBacklinks.Where(row => Convert.ToInt64(row["id"]) != targetId))
+                await db.ExecuteAsync($"UPDATE {targetTable} SET {reciprocalColumn}=NULL WHERE id=@displacedId AND company_id=@companyId AND {reciprocalColumn}=@id",
+                    c => { c.Parameters.AddWithValue("@displacedId", Convert.ToInt64(displaced["id"])); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+            foreach (var displaced in targetBacklinks.Where(row => Convert.ToInt64(row["id"]) != id))
+                await db.ExecuteAsync($"UPDATE {table} SET {column}=NULL WHERE id=@displacedId AND company_id=@companyId AND {column}=@targetId",
+                    c => { c.Parameters.AddWithValue("@displacedId", Convert.ToInt64(displaced["id"])); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@targetId", targetId!.Value); }, ct);
 
             var affected = await db.ExecuteAsync($"UPDATE {table} SET {column}=@targetId WHERE id=@id AND company_id=@companyId" + (branchId is null ? "" : " AND branch_id=@branchId"), c =>
             {

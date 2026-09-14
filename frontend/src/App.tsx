@@ -289,7 +289,7 @@ export default function App() {
         <Route path="/fleet/live-wall" element={<RequirePermission permission="telemetry.live_state.read"><FleetLiveWallPage /></RequirePermission>} />
         <Route path="/vehicles/:id/live" element={<RequirePermission permission="telemetry.live_state.read"><VehicleLiveMonitorPage /></RequirePermission>} />
         <Route path="/geofences" element={<RequirePermission permission="map:view"><GeofenceManagementPage /></RequirePermission>} />
-        <Route path="/fleet-utilization" element={<Navigate to="/fleet-utilization/overview" replace />} />
+        <Route path="/fleet-utilization" element={<Navigate to="/fleet-utilization/capacity" replace />} />
         <Route path="/fleet-utilization/*" element={<RequirePermission permission="fleet:view"><FleetUtilizationPage /></RequirePermission>} />
 
         {/* ── Intelligence ── */}
@@ -306,9 +306,9 @@ export default function App() {
         <Route path="/executive" element={<RequirePermission permission="dashboard:view"><ExecutivePage /></RequirePermission>} />
 
         {/* ── Fleet ── */}
-        <Route path="/vehicles" element={<Navigate to="/vehicles/overview" replace />} />
+        <Route path="/vehicles" element={<Navigate to="/vehicles/roster" replace />} />
         <Route path="/vehicles/*" element={<RequirePermission permission="vehicles:view"><VehiclesModulePage /></RequirePermission>} />
-        <Route path="/drivers" element={<Navigate to="/drivers/overview" replace />} />
+        <Route path="/drivers" element={<Navigate to="/drivers/roster" replace />} />
         <Route path="/drivers/*" element={<RequirePermission permission="drivers:view"><DriversModulePage /></RequirePermission>} />
         <Route path="/assets" element={<RequirePermission permission="vehicles:view"><EntityListPage kind="assets" /></RequirePermission>} />
         <Route path="/iot-devices" element={<RequirePermission permission="telemetry.devices.read"><IotDevicesPage /></RequirePermission>} />

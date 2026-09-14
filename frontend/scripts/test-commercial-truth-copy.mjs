@@ -75,11 +75,11 @@ assert.match(
 );
 assert.match(
   vehicles,
-  /label="Moving on page"[\s\S]*available on this page/,
+  /label="Page moving"[^>]*available on this page/,
   "Movement KPI must disclose page scope",
 );
-assert.match(vehicles, /label="Authorized scope at risk"/, "At-risk KPI must disclose authorized scope");
-assert.match(vehicles, /label="Authorized scope device \/ camera gaps"/, "Device-gap KPI must disclose authorized scope");
+assert.match(vehicles, /label="Scope at risk"[^\n]*caption="Tenant or permitted branch summary"/, "At-risk KPI must disclose authorized scope");
+assert.match(vehicles, /label="Scope device \/ camera gaps"[^\n]*caption="Tenant or permitted branch summary"/, "Device-gap KPI must disclose authorized scope");
 assert.match(vehicles, /\{moving\} moving on page/, "Vehicle footer movement count must disclose page scope");
 assert.doesNotMatch(vehicles, /need attention fleet-wide|Fleet-wide high risk|Fleet-wide telematics/, "Restricted users must not see tenant-wide scope claims");
 

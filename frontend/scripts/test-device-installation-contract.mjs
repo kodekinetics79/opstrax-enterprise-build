@@ -102,14 +102,14 @@ assert.match(vehiclesPage, /if \(deviceId == null\) return "Unknown"/, "Vehicles
 assert.match(vehiclesPage, /if \(lastSeen == null\) return "Disconnected"/, "Installed devices without live evidence must be Disconnected");
 assert.doesNotMatch(vehiclesPage, /telematicsService\.getDevices/, "Vehicle list health must not overwrite the backend-selected primary installation");
 assert.match(vehiclesPage, /scopeRowsForSession\("vehicles", pagedRows, session\)/, "Vehicle list health must consume the tenant-scoped authoritative vehicle response");
-assert.match(vehiclesPage, /const currentDevices = \(detail\?\.currentDevices/, "Vehicle detail must render authoritative current installations");
+assert.match(vehiclesPage, /const currentDevices = rows\("currentDevices"\)/, "Vehicle detail must render authoritative current installations");
 assert.match(vehiclesPage, /selectedRecord = selectedDetailRecord/, "Vehicle health must retain the API-selected primary installation on detail refresh");
 assert.match(vehiclesPage, /15 \* 60_000/, "Device health freshness must use the service heartbeat window");
 for (const field of ["vinExceptionType", "alternateIdentifier", "plateJurisdiction", "vehicleClass"]) {
   assert.match(vehiclesPage, new RegExp(`key: "${field}"`), `${field} must be available in create/edit`);
 }
 assert.match(vehiclesPage, /approved alternate identity kind/, "VIN-less vehicles must be client-validated against governed identity requirements");
-assert.match(vehiclesPage, /label: "Alternate identity"/, "Vehicle detail must render the governed alternate identity");
+assert.match(vehiclesPage, /\["Alternate identity"/, "Vehicle detail must render the governed alternate identity");
 
 assert.match(coldChainPage, /source: 'Manual'/, "Operator-entered cold-chain observations must be persisted with Manual provenance");
 assert.match(coldChainPage, /sourceChannel: 'Operator console'/, "Operator-entered observations must identify their source channel");

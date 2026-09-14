@@ -74,3 +74,74 @@
 .alerts-desktop-inspector { background:linear-gradient(145deg,#ffffff,#f5fafb); box-shadow:inset 0 1px 0 #fff,0 5px 14px rgba(30,64,85,.075); }
 .alerts-queue-heading { background:linear-gradient(120deg,#f9fcfd,#eff8f8); box-shadow:inset 0 1px 0 #fff; }
 @supports(backdrop-filter:blur(10px)) { .alerts-workspace > .panel { backdrop-filter:blur(10px); } }
+
+/* Compact console surfaces keep the metrics and selected alert in view. */
+.alerts-workspace.page-stack { min-width:0; gap:10px; padding-bottom:10px; }
+.alerts-page-header,
+.alerts-workspace > .panel,
+.alerts-split > .panel,
+.alerts-workspace > .workspace-guidance {
+ border:1px solid #e3edf4;
+ border-radius:12px;
+ background:linear-gradient(145deg,#ffffff,#edf3fa);
+ box-shadow:inset 1px 1px 0 #fff, inset -1px -1px 0 #dce5ee, 4px 4px 10px #b8c8dc55, -3px -3px 8px #ffffffcc;
+}
+.alerts-page-header { padding:10px 14px; gap:12px; }
+.alerts-page-header h1 { font-size:22px; }
+.alerts-page-header p { font-size:12px; margin-top:2px; }
+.alerts-workspace .alerts-controls-panel { padding:10px 12px; }
+.alerts-scope-label { margin-bottom:6px; }
+.alerts-metric {
+ padding:7px 10px;
+ border-radius:9px;
+ box-shadow:inset 1px 1px 0 #ffffffdd, 3px 3px 7px #b8c8dc55, -2px -2px 6px #ffffffbb;
+}
+.alerts-workspace .field {
+ background:linear-gradient(145deg,#f2f6fb,#fff);
+ box-shadow:inset 2px 2px 4px #b8c8dc44, inset -2px -2px 4px #fff;
+}
+.alerts-workspace :is(.btn-primary,.btn-secondary) { box-shadow:0 3px 6px #64748b33,inset 0 1px 0 #ffffff88; }
+.alerts-workspace :is(.btn-primary,.btn-secondary):active { box-shadow:inset 1px 2px 4px #33415533; }
+.alerts-workspace .workspace-guidance-bar { padding:7px 12px; }
+.alerts-split { gap:12px; }
+.alerts-list-scroll { margin:4px; border:1px solid #dce5ee; border-radius:8px; box-shadow:inset 2px 2px 5px #b8c8dc66; }
+.alerts-queue-heading { padding:8px 12px; }
+.alerts-inspector-content { padding:12px; }
+.alerts-inspector-content h2 { font-size:17px; margin-top:8px; }
+.alerts-message { font-size:13px; margin:12px 0; }
+.alerts-metadata { margin-top:12px; padding-top:8px; }
+.alerts-severity:before { box-shadow:0 1px 3px currentColor,inset 0 1px 0 #ffffff99; }
+@media(min-width:640px) and (pointer:fine) {
+ .alerts-workspace.page-stack { flex:1; min-height:0; gap:6px; padding-bottom:0; }
+ .alerts-workspace.page-stack > :not(.alerts-split) { flex-shrink:0; }
+ .alerts-page-header { padding:5px 10px; }
+ .alerts-page-header > div:first-child { display:flex; align-items:baseline; flex-wrap:wrap; gap:3px 12px; }
+ .alerts-page-header h1 { font-size:19px; line-height:1.2; }
+ .alerts-page-header p { margin-top:0; font-size:11px; }
+ .alerts-workspace .alerts-controls-panel { padding:7px 10px; }
+ .alerts-scope-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+ .alerts-metric { padding:5px 8px; }
+ .alerts-metric dt { font-size:9px; letter-spacing:.09em; }
+ .alerts-metric dd { margin-top:2px; gap:6px; }
+ .alerts-workspace .workspace-guidance-bar { padding:3px 10px; }
+ .alerts-workspace .workspace-guidance-bar > p { font-size:11px; }
+ .alerts-split { flex:1; min-height:240px; }
+ .alerts-queue { display:flex; flex-direction:column; height:100%; }
+ .alerts-queue-heading,.alerts-pagination { flex-shrink:0; }
+ .alerts-summary-bar { display:grid; grid-template-columns:minmax(0,1fr) minmax(220px,.45fr); gap:12px; }
+ .alerts-filter-controls { margin-top:8px; padding-top:8px; }
+ .alerts-workspace :is(.field,.btn-compact) { min-height:32px; }
+ .alerts-column-head,.alerts-row { padding:7px 12px; gap:10px; }
+ .alerts-row { min-height:48px; }
+ .alerts-pagination { padding:6px 10px; }
+ .alerts-list-scroll { flex:1; min-height:0; max-height:none; }
+ .alerts-desktop-inspector { position:static; height:100%; min-height:0; max-height:none; }
+}
+@media(min-width:640px) and (max-width:1000px) {
+ .alerts-summary-bar { grid-template-columns:minmax(0,1fr); }
+}
+@media(max-width:639px) {
+ .alerts-page-header { padding:10px 12px; }
+ .alerts-page-header h1 { font-size:20px; }
+ .alerts-summary-bar { gap:8px; }
+}

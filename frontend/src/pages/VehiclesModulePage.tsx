@@ -131,7 +131,7 @@ export function VehiclesModulePage() {
 
   const shellBanner = (
     <PageHeader
-      eyebrow="Fleet · Master Data"
+      eyebrow={section === "roster" ? undefined : "Fleet · Master Data"}
       title="Vehicles"
       description={`${total} units in the fleet registry · ${available} available · ${atRisk} need attention`}
       actions={(
@@ -157,10 +157,10 @@ export function VehiclesModulePage() {
   );
 
   return (
-    <PageStack className="fleet-console pb-6">
+    <PageStack className={`vehicle-module fleet-console ${section === "roster" ? "vehicle-roster-shell min-h-0 h-full" : "pb-6"}`}>
       {shellBanner}
 
-      <nav className="panel sticky top-4 z-20 overflow-x-auto p-1.5" aria-label="Vehicle workspace">
+      <nav className="panel sticky top-0 z-10 shrink-0 overflow-x-auto p-1" aria-label="Vehicle workspace">
         <div className="flex min-w-max gap-1">
           {SECTIONS.map((item) => (
             <button

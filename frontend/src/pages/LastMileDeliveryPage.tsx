@@ -1,3 +1,4 @@
+import { DataTable } from "@/components/ui";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
@@ -75,67 +76,6 @@ function StopRow({ stop, index, canModify, onAction }: { stop: AnyRecord; index:
 
 // ── Route card ────────────────────────────────────────────────────────────────
 
-function RouteCard({ route, selected, onSelect }: { route: AnyRecord; selected: boolean; onSelect: () => void }) {
-  const status = String(route.status ?? "");
-  const risk = String(route.slaRisk ?? route.sla_risk ?? "Low");
-  const planned = Number(route.plannedStops ?? route.planned_stops ?? 0);
-  const completed = Number(route.completedStops ?? route.completed_stops ?? 0);
-  const pct = Number(route.completionPercent ?? route.completion_percent ?? (planned > 0 ? Math.round((completed / planned) * 100) : 0));
-
-  const riskColor =
-    risk === "High" ? "text-red-600" :
-    risk === "Medium" ? "text-amber-600" :
-    "text-teal-600";
-
-  const statusColor =
-    status === "Active" ? "bg-teal-50 border-teal-300 text-teal-700" :
-    status === "Delayed" ? "bg-red-50 border-red-300 text-red-700" :
-    status === "Completed" ? "bg-slate-100 border-slate-300 text-slate-600" :
-    "bg-slate-50 border-slate-200 text-slate-600";
-
-  return (
-    <button
-      type="button"
-      className={`w-full text-left rounded-xl border p-4 transition-colors hover:bg-slate-50 ${
-        selected ? "border-teal-400 bg-teal-50" : "border-slate-200 bg-white"
-      }`}
-      onClick={onSelect}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="font-semibold text-slate-900 text-sm">{String(route.routeCode ?? route.routeName ?? `Route ${route.id}`)}</p>
-          <p className="text-xs text-slate-500 mt-0.5">{String(route.driverName ?? "--")} · {String(route.vehicleNumber ?? route.vehicleCode ?? "--")}</p>
-        </div>
-        <span className={`text-xs px-2 py-0.5 rounded-full border font-medium shrink-0 ${statusColor}`}>{status}</span>
-      </div>
-
-      {/* Progress bar */}
-      <div className="mt-3">
-        <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
-          <span>{completed}/{planned || completed} stops</span>
-          <span>{pct}%</span>
-        </div>
-        <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${
-              pct === 100 ? "bg-teal-500" : status === "Delayed" ? "bg-red-400" : "bg-teal-400"
-            }`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between mt-2.5 text-xs">
-        <span className="text-slate-400">
-          {route.plannedStartTime ? new Date(String(route.plannedStartTime)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : route.departureTimeUtc ? new Date(String(route.departureTimeUtc)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--"} → {route.plannedEndTime ? new Date(String(route.plannedEndTime)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : route.etaCompleteUtc ? new Date(String(route.etaCompleteUtc)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--"}
-        </span>
-        <span className={`font-semibold ${riskColor}`}>{risk} risk</span>
-      </div>
-    </button>
-  );
-}
-
-// ── Main page ─────────────────────────────────────────────────────────────────
 
 export function LastMileDeliveryPage() {
   const qc = useQueryClient();
@@ -278,20 +218,13 @@ export function LastMileDeliveryPage() {
       </div>
 
       {/* Split: route list + stop detail */}
-      <div className="grid gap-4 xl:grid-cols-[380px_1fr]">
+      <div className="flex min-w-0 flex-col gap-3">
         {/* Route list */}
         <div className="flex flex-col gap-2">
           {filtered.length === 0 ? (
             <EmptyState title="No routes match your filters" subtitle="There are no live routes for this company yet, or the current filter is too narrow." />
           ) : (
-            filtered.map((route) => (
-              <RouteCard
-                key={String(route.id)}
-                route={route}
-                selected={Number(route.id) === selectedId}
-                onSelect={() => setSelectedId(Number(route.id) === selectedId ? null : Number(route.id))}
-              />
-            ))
+            <DataTable rows={filtered} columns={["routeCode", "routeName", "driverName", "vehicleCode", "status", "plannedStart"]} onSelect={(route) => setSelectedId(Number(route.id) === selectedId ? null : Number(route.id))} />
           )}
         </div>
 

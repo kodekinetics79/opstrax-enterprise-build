@@ -102,7 +102,7 @@ const TABS = ["KPI Dashboard", "SLA Records", "SLA Breaches", "Operations Adviso
 type Tab = typeof TABS[number];
 
 export function SlaKpiPage() {
-  const [tab, setTab] = useState<Tab>("KPI Dashboard");
+  const [tab, setTab] = useState<Tab>("SLA Records");
   const [filterCat, setFilterCat]         = useState("");
   const [filterSlaType, setFilterSlaType] = useState("");
 

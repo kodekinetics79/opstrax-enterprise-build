@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import {
-  Bell, ChevronDown, ChevronLeft, ChevronRight, Filter, LogOut,
+  Bell, ChevronDown, ChevronLeft, ChevronRight, LogOut,
   Menu, Search, Settings, ShieldAlert, User, X,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
@@ -16,27 +16,24 @@ import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useRuntimeDiagnostics } from "@/services/runtimeDiagnostics";
 import { notificationsApi } from "@/services/notificationsApi";
 import type { AnyRecord, UserSession } from "@/types";
+import { consolidateNavigation, navigationRouteActive, splitNavigationItems } from "@/utils/navigationPresentation";
+import "./sidebar-navigation.css";
 
 const NAV_SECTIONS = [
   {
     label: "Operations",
     color: "text-teal-600",
-    items: ["command-center", "control-tower", "fleet-health", "live-dashboard", "map-view", "fleet-live-wall", "geofences", "alerts"],
+    items: ["command-center", "live-dashboard", "fleet-health", "alerts", "map-view", "control-tower", "fleet-live-wall", "geofences"],
   },
   {
     label: "Fleet",
     color: "text-blue-600",
-    items: ["vehicles", "drivers", "branches", "owners", "assignments", "documents", "fleet-utilization", "fleet-workspace", "fleet-cold-chain", "fleet-assets", "fleet-saudi-readiness", "fleet-compliance"],
+    items: ["vehicles", "drivers", "assignments", "documents", "fleet-assets", "fleet-utilization", "branches", "owners", "fleet-workspace", "fleet-cold-chain"],
   },
   {
-    label: "Dispatch",
+    label: "Dispatch & Shipments",
     color: "text-cyan-700",
-    items: ["load-bookings", "dispatch-board", "jobs", "trips", "route-plans", "last-mile-delivery", "operations-proof-center", "logistics-workspace", "workforce", "driver-messaging"],
-  },
-  {
-    label: "Shipments",
-    color: "text-teal-700",
-    items: ["active-shipments", "shipments", "proof-of-delivery"],
+    items: ["dispatch-board", "jobs", "load-bookings", "active-shipments", "shipments", "trips", "proof-of-delivery", "route-plans", "last-mile-delivery", "operations-proof-center", "logistics-workspace", "workforce", "driver-messaging"],
   },
   {
     label: "Safety",
@@ -44,7 +41,7 @@ const NAV_SECTIONS = [
     items: [
       "safety-center", "dashcam", "incidents", "coaching", "driver-scorecards",
       "evidence-packages", "traffic-violations", "digital-forms", "dvir-inspections",
-      "hos-eld", "compliance-center",
+      "hos-eld", "compliance-center", "fleet-compliance", "fleet-saudi-readiness",
     ],
   },
   {
@@ -58,14 +55,9 @@ const NAV_SECTIONS = [
     items: ["telematics-control-tower", "iot-devices", "gps-tracking", "obd-j1939", "sensor-health", "cold-chain"],
   },
   {
-    label: "CRM & Growth",
+    label: "Customers & Sales",
     color: "text-indigo-600",
-    items: ["leads", "sales-pipeline", "opportunities", "campaigns", "account-health", "follow-ups", "support-tickets", "renewals", "upsell-opportunities"],
-  },
-  {
-    label: "Commercial",
-    color: "text-indigo-600",
-    items: ["customers", "contracts", "rate-cards", "price-simulation", "quotations", "customer-eta", "customer-portal", "customer-visibility"],
+    items: ["customers", "leads", "opportunities", "sales-pipeline", "quotations", "contracts", "account-health", "rate-cards", "follow-ups", "support-tickets", "renewals", "campaigns", "upsell-opportunities", "price-simulation", "customer-eta", "customer-portal", "customer-visibility"],
   },
   {
     // moduleConfig has always declared a "Financials" group, but this nav never
@@ -81,12 +73,12 @@ const NAV_SECTIONS = [
   {
     label: "Reports",
     color: "text-purple-600",
-    items: ["reports-analytics", "predictive-analytics", "ai-copilot", "sla-kpi", "carbon-tracking"],
+    items: ["reports-analytics", "predictive-analytics", "ai-copilot", "carbon-tracking"],
   },
   {
     label: "Admin",
     color: "text-slate-500",
-    items: ["user-management", "audit-logs", "alert-rules", "feature-flags", "integrations", "settings", "about"],
+    items: ["user-management", "audit-logs", "alert-rules", "feature-flags", "integrations", "about"],
   },
 ] as const;
 
@@ -97,7 +89,7 @@ type BreadcrumbItem = {
   current?: boolean;
 };
 type SessionLike = Pick<UserSession, "role" | "user" | "company" | "permissions"> | null | undefined;
-type NavState = Partial<Record<Group, boolean>>;
+type NavState = { pathname: string; identity: string; group: Group | null };
 
 const NAV_STORAGE_PREFIX = "opstrax.nav.sidebar";
 
@@ -203,7 +195,7 @@ function buildBreadcrumbs(pathname: string, session: SessionLike): BreadcrumbIte
     segments.forEach((segment, index) => {
       const to = `${base}/${segments.slice(0, index + 1).join("/")}`;
       crumbs.push({
-        label: humanizeSegment(segment),
+        label: activeModule.key === "assignments" && (segment === "board" || segment === "list") ? "List" : humanizeSegment(segment),
         to,
         current: index === segments.length - 1,
       });
@@ -216,9 +208,9 @@ function buildBreadcrumbs(pathname: string, session: SessionLike): BreadcrumbIte
   return crumbs;
 }
 
-function matchesFilter(module: (typeof modules)[number], sectionLabel: string, query: string) {
+function matchesFilter(module: (typeof modules)[number] & { navigationSearch?: string }, sectionLabel: string, query: string) {
   if (!query) return true;
-  const haystack = [module.key, module.title, module.route, module.description, module.group, sectionLabel].join(" ").toLowerCase();
+  const haystack = [module.key, module.title, module.route, module.description, module.group, sectionLabel, module.navigationSearch].join(" ").toLowerCase();
   return haystack.includes(query);
 }
 
@@ -269,6 +261,7 @@ export function AppShell() {
 
   const navStateKey = useMemo(() => getSessionIdentityKey(session), [session?.company?.id, session?.company?.companyId, session?.role, session?.user?.email, session?.user?.id, session?.user?.name]);
   const [sectionOpen, setSectionOpen] = useState<NavState | null>(null);
+  const [moreToolsOpen, setMoreToolsOpen] = useState<Partial<Record<Group, boolean>>>({});
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -284,24 +277,6 @@ export function AppShell() {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(navStateKey);
-      setSectionOpen(raw ? JSON.parse(raw) as NavState : {});
-    } catch {
-      setSectionOpen({});
-    }
-  }, [navStateKey]);
-
-  useEffect(() => {
-    if (sectionOpen === null) return;
-    try {
-      localStorage.setItem(navStateKey, JSON.stringify(sectionOpen));
-    } catch {
-      // Ignore storage failures. Navigation should continue to work without persistence.
-    }
-  }, [navStateKey, sectionOpen]);
 
   const activeModule = useMemo(() => findActiveModule(location.pathname), [location.pathname]);
   const activeModuleEntitled = !activeModule || moduleAllowedByEntitlement(activeModule, session);
@@ -332,7 +307,7 @@ export function AppShell() {
 
       return {
         ...section,
-        items: accessibleItems,
+        items: consolidateNavigation(accessibleItems),
       };
     }).filter((section) => section.items.length > 0),
     [hasDirectPermission, hasPermission, session, tenantCountry, moduleAllowedByFlag],
@@ -344,7 +319,7 @@ export function AppShell() {
 
     return visibleSections
       .map((section) => {
-        const items = section.items.filter((module) => matchesFilter(module, section.label, normalizedSidebarQuery) || isRouteActive(module.route, location.pathname));
+        const items = section.items.filter((module) => matchesFilter(module, section.label, normalizedSidebarQuery));
         return { ...section, items };
       })
       .filter((section) => section.items.length > 0);
@@ -379,12 +354,10 @@ export function AppShell() {
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [profileOpen]);
 
-  const toggleGroup = (g: Group) =>
-    setSectionOpen((prev) => {
-      const next: NavState = { ...(prev ?? {}) };
-      next[g] = !(prev?.[g] ?? true);
-      return next;
-    });
+  const activeGroup = visibleSections.find(section => section.items.some(module => navigationRouteActive(module, location.pathname)))?.label ?? visibleSections[0]?.label;
+  const openGroup = sectionOpen?.pathname === location.pathname && sectionOpen.identity === navStateKey
+    ? sectionOpen.group : activeGroup;
+  const toggleGroup = (group: Group) => setSectionOpen({ pathname: location.pathname, identity: navStateKey, group: openGroup === group ? null : group });
 
   const displayName = getSessionDisplayName(session);
   const initials = displayName
@@ -397,7 +370,6 @@ export function AppShell() {
   const roleLabel = getSessionRoleLabel(session);
   const companyLabel = getSessionCompanyLabel(session);
   const planLabel = getSessionPlanLabel(session);
-  const accessibleModuleCount = visibleSections.reduce((total, section) => total + section.items.length, 0);
   const firstFilteredRoute = filteredSections.flatMap((section) => section.items).find((module) => matchesFilter(module, module.group, normalizedSidebarQuery));
   const candidateBackTarget = pageBreadcrumbs.length > 2 ? pageBreadcrumbs[pageBreadcrumbs.length - 2]?.to : undefined;
   // Wildcard module index routes such as /vehicles/overview use /vehicles as a
@@ -411,7 +383,7 @@ export function AppShell() {
      the group label, and the active item lighting up a segment of the group's
      guide-line. */
   const navContent = (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="sidebar-navigation flex h-full min-h-0 flex-col">
 
       {/* ── Brand ── */}
       <div className="mx-2 flex items-center gap-2.5 border-b border-slate-200/60 px-1 pb-2.5 pt-3 pr-10 xl:pr-1">
@@ -428,36 +400,42 @@ export function AppShell() {
         </div>
       </div>
 
+      <div className="sidebar-search">
+        <Search aria-hidden="true" className="h-3.5 w-3.5" />
+        <input aria-label="Find a page" placeholder="Find a page…" value={sidebarQuery} onChange={event => setSidebarQuery(event.target.value)} onKeyDown={event => {
+          if (event.key === "Escape") setSidebarQuery("");
+          if (event.key === "Enter" && firstFilteredRoute) { navigate(firstFilteredRoute.route); setSidebarQuery(""); }
+        }} />
+        {sidebarQuery && <button type="button" aria-label="Clear page search" onClick={() => setSidebarQuery("")}><X className="h-3.5 w-3.5" /></button>}
+      </div>
+
       {/* ── Navigation ── */}
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-1.5">
+      <nav aria-label="Workspace pages" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-1.5">
         {filteredSections.length === 0 ? (
           <div className="px-2 py-6 text-center">
             <p className="text-[13px] font-semibold text-slate-700">No modules match</p>
             <p className="mt-1 text-xs text-slate-400">Try a different term or clear the search.</p>
           </div>
         ) : filteredSections.map((section) => {
-          const isPinnedOpen = section.items.some((module) => isRouteActive(module.route, location.pathname));
-          const isOpen = normalizedSidebarQuery.length > 0 || isPinnedOpen || sectionOpen?.[section.label] !== false;
+          const isCurrentSection = section.items.some(module => navigationRouteActive(module, location.pathname));
+          const isOpen = normalizedSidebarQuery.length > 0 || openGroup === section.label;
+          const { primary, more } = splitNavigationItems(section.items, location.pathname);
+          const shownItems = normalizedSidebarQuery || moreToolsOpen[section.label] ? section.items : primary;
           return (
             <div key={section.label}>
               {/* Group header */}
               <button
                 type="button"
-                className="group/hdr flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-slate-100/70 xl:min-h-8"
+                className={`sidebar-group-button group/hdr ${isCurrentSection ? "is-current" : ""}`}
                 onClick={() => toggleGroup(section.label)}
                 aria-expanded={isOpen}
               >
-                <span aria-hidden className={`h-1 w-1 shrink-0 rounded-full bg-current ${section.color}`} />
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                <span aria-hidden className={`sidebar-group-dot bg-current ${section.color}`} />
+                <span className="sidebar-group-label">
                   {section.label}
                 </span>
-                {!isOpen && (
-                  <span className="rounded-full bg-slate-100 px-1.5 text-[10px] font-semibold leading-4 text-slate-400">
-                    {section.items.length}
-                  </span>
-                )}
                 <ChevronDown
-                  className="ml-auto h-3 w-3 text-slate-400 opacity-60 transition-all duration-200 group-hover/hdr:opacity-100 xl:opacity-0"
+                  className="ml-auto h-3.5 w-3.5 text-slate-400 transition-transform"
                   style={{ transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)" }}
                 />
               </button>
@@ -466,16 +444,17 @@ export function AppShell() {
                   its segment of the line in the section color. */}
               {isOpen && (
                 <div className="mb-0.5 ml-[13px] border-l border-slate-200/80 pl-2">
-                  {section.items.map((module) => {
+                  {shownItems.map((module) => {
                     const Icon = moduleIcons[module.key] ?? moduleIcons.assets;
-                    const active = isRouteActive(module.route, location.pathname);
+                    const active = navigationRouteActive(module, location.pathname);
                     return (
                       <Link
                         key={module.key}
                         to={module.route}
+                        onClick={() => setSidebarQuery("")}
                         title={module.description}
                         aria-current={active ? "page" : undefined}
-                        className={`relative flex h-11 items-center gap-2 rounded-md px-2 text-[13px] transition-colors duration-100 xl:h-8 ${
+                        className={`sidebar-page-link relative flex h-11 items-center gap-2 rounded-md px-2 text-[13px] transition-colors duration-100 xl:h-8 ${
                           active
                             ? "bg-slate-100 font-semibold text-slate-950"
                             : "font-medium text-slate-600 hover:bg-slate-100/70 hover:text-slate-950"
@@ -489,6 +468,9 @@ export function AppShell() {
                       </Link>
                     );
                   })}
+                  {!normalizedSidebarQuery && more.length > 0 && <button type="button" className="sidebar-more" aria-expanded={Boolean(moreToolsOpen[section.label])} onClick={() => setMoreToolsOpen(previous => ({ ...previous, [section.label]: !previous[section.label] }))}>
+                    {moreToolsOpen[section.label] ? "Fewer tools" : `More tools (${more.length})`}<ChevronDown className="h-3 w-3" style={{ transform: moreToolsOpen[section.label] ? "rotate(180deg)" : undefined }} />
+                  </button>}
                 </div>
               )}
             </div>
@@ -592,34 +574,7 @@ export function AppShell() {
                 </nav>
               </div>
 
-              {/* ── Global module search (top center) ── */}
-              <div className="hidden min-w-[12rem] flex-1 justify-center px-2 lg:flex xl:px-3">
-                <div className="relative w-full max-w-sm 2xl:max-w-md">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                  <input
-                    className="h-8 w-full rounded-lg border border-transparent bg-slate-100/80 pl-8 pr-8 text-[13px] text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-slate-200 focus:bg-white"
-                    placeholder={`Search ${accessibleModuleCount} modules…`}
-                    value={sidebarQuery}
-                    onChange={(event) => setSidebarQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter") return;
-                      event.preventDefault();
-                      if (firstFilteredRoute) {
-                        navigate(firstFilteredRoute.route);
-                        setSidebarQuery("");
-                        return;
-                      }
-                    }}
-                    aria-describedby={sidebarQuery.length > 0 && !firstFilteredRoute ? "module-search-status" : undefined}
-                  />
-                  {sidebarQuery.length > 0 && firstFilteredRoute && (
-                    <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-slate-200 bg-white px-1 text-[10px] font-semibold leading-4 text-slate-400">↵</kbd>
-                  )}
-                  {sidebarQuery.length > 0 && !firstFilteredRoute && (
-                    <span id="module-search-status" className="sr-only" role="status">No accessible modules match.</span>
-                  )}
-                </div>
-              </div>
+              <div className="flex-1" />
 
               {/* Live clock */}
               <div className="ml-auto hidden flex-col items-end leading-none 2xl:flex">

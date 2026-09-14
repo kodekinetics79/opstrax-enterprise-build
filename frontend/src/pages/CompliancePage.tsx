@@ -80,7 +80,7 @@ export function CompliancePage() {
   const hasPermission = useHasPermission();
   const canExport = hasPermission("compliance:export");
   const canUpdate = hasPermission("compliance:update");
-  const [tab, setTab] = useState<TabId>("overview");
+  const [tab, setTab] = useState<TabId>("violations");
   const [drawer, setDrawer] = useState<AnyRecord | null>(null);
 
   const summaryQ     = useComplianceSummary();

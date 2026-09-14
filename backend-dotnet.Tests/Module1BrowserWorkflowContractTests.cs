@@ -89,7 +89,12 @@ public sealed class Module1BrowserWorkflowContractTests
         Assert.Contains("limit: 2000", domain, StringComparison.Ordinal);
         Assert.Contains("/api/drivers/export", page, StringComparison.Ordinal);
         Assert.Contains("/api/vehicles/export", page, StringComparison.Ordinal);
-        Assert.Contains("const pageSize = 100", table, StringComparison.Ordinal);
+        Assert.Contains("const [pageSize, setPageSize] = useState(50)", table, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Records per page\"", table, StringComparison.Ordinal);
+        Assert.Contains("<option value={25}>25 rows</option>", table, StringComparison.Ordinal);
+        Assert.Contains("<option value={50}>50 rows</option>", table, StringComparison.Ordinal);
+        Assert.Contains("<option value={100}>100 rows</option>", table, StringComparison.Ordinal);
+        Assert.Contains("[sorted, page, pageSize]", table, StringComparison.Ordinal);
         Assert.Contains("sorted.slice(page * pageSize", table, StringComparison.Ordinal);
         Assert.Contains("Page {page + 1} of {pageCount}", table, StringComparison.Ordinal);
     }

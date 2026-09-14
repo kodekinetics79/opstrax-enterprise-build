@@ -7,6 +7,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider } from "@/hooks/useAuth";
 import { I18nProvider } from "@/i18n/I18nProvider";
 import "@/styles/index.css";
+import "@/styles/record-lists.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {

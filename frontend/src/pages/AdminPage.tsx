@@ -1,3 +1,4 @@
+import { DataTable } from "@/components/ui";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -288,7 +289,7 @@ export function AdminPage() {
   const [userPage, setUserPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkNotice, setBulkNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
-  const [rolesView, setRolesView] = useState<"cards" | "matrix">("cards");
+  const [rolesView, setRolesView] = useState<"list" | "matrix">("list");
 
   useEffect(() => {
     const next = TAB_OPTIONS.some((option) => option.key === requestedTab) ? requestedTab as AdminTab : routeDefaultTab;
@@ -955,7 +956,7 @@ export function AdminPage() {
             <p className="min-w-0 truncate text-sm text-slate-500">Roles list and permission bundles.</p>
             <div className="flex shrink-0 items-center gap-2">
               <div className="flex rounded-xl border border-slate-200 bg-white p-1" role="group" aria-label="Roles view">
-                {([["cards", "Cards"], ["matrix", "Matrix"]] as Array<["cards" | "matrix", string]>).map(([key, label]) => (
+                {([["list", "List"], ["matrix", "Matrix"]] as Array<["list" | "matrix", string]>).map(([key, label]) => (
                   <button
                     key={key}
                     type="button"
@@ -1011,31 +1012,11 @@ export function AdminPage() {
               </table>
             </div>
           ) : (
-            <div className="grid gap-4 xl:grid-cols-2">
-              {roles.map((role: AnyRecord) => (
-                <div key={String(role.id)} className="iam-card p-5 min-w-0">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="font-bold text-slate-900 truncate" title={String(role.name)}>{String(role.name)}</h3>
-                      <p className="mt-1 text-xs text-slate-500">{String(role.userCount ?? 0)} users assigned</p>
-                    </div>
-                    <button className="btn-ghost h-8 px-3 shrink-0" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles || Boolean(role.isSystem ?? role.is_system)} title={Boolean(role.isSystem ?? role.is_system) ? "Built-in templates are immutable; create a tenant role to customize access." : undefined}>
-                      {Boolean(role.isSystem ?? role.is_system) ? "Protected" : "Edit"}
-                    </button>
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).slice(0, 8).map((permission) => (
-                      <span key={permission} className="iam-chip"><span>{permission}</span></span>
-                    ))}
-                    {permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).length > 8 && (
-                      <span className="iam-chip !text-slate-400">
-                        <span>+{permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).length - 8} more</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <DataTable rows={roles} columns={["name", "userCount", "permissions"]}
+              columnLabels={{ userCount: "Users", permissions: "Permissions" }}
+              cellRenderers={{ permissions: (role) => `${permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).length} permissions` }}
+              actions={(role) => <button type="button" className="btn-ghost btn-compact" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles || Boolean(role.isSystem ?? role.is_system)} title={Boolean(role.isSystem ?? role.is_system) ? "Built-in templates are immutable; create a tenant role to customize access." : undefined}>{Boolean(role.isSystem ?? role.is_system) ? "Protected" : "Edit"}</button>}
+            />
           )}
         </div>
       )}
