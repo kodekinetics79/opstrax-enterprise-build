@@ -347,8 +347,11 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests(ITestOutputHelpe
             var system = new NpgsqlConnectionStringBuilder(TestDb.SystemConnectionString);
             foreach (var connection in new[] { owner, runtime, system })
             {
-                Assert.Equal("127.0.0.1", connection.Host); Assert.Equal(5433, connection.Port);
-                Assert.Equal("opstrax_local", connection.Database);
+                Assert.Equal("127.0.0.1", connection.Host);
+                Assert.True(connection.Database == "opstrax_local" && connection.Port == 5433 ||
+                    connection.Database?.StartsWith("opstrax_assignment_http_", StringComparison.Ordinal) == true,
+                    "Only the local fixture or an explicitly named disposable assignment database is allowed.");
+                Assert.Equal(owner.Port, connection.Port); Assert.Equal(owner.Database, connection.Database);
             }
             Assert.Equal("opstrax_app", runtime.Username); Assert.Equal("opstrax_system", system.Username);
             Assert.DoesNotContain(owner.Username, new[] { "opstrax_app", "opstrax_system" });

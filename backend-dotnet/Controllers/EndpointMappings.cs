@@ -5147,7 +5147,10 @@ public static partial class EndpointMappings
         var companyId = GetCompanyId(http);
         var (branchClause, branchId) = StrictBranchFilter(http, "va");
         var rows = await db.QueryAsync(
-            @"SELECT va.id, va.assigned_at assignment_date, va.released_at release_date,
+            @"SELECT va.id, va.vehicle_id, va.driver_id, va.assigned_at assignment_date, va.released_at release_date,
+                     (LOWER(COALESCE(va.status,'Active'))='active' AND va.released_at IS NULL
+                       AND v.deleted_at IS NULL AND d.deleted_at IS NULL
+                       AND v.assigned_driver_id=d.id AND d.assigned_vehicle_id=v.id) IS TRUE is_current,
                      COALESCE(va.assignment_type,'Dispatch') assignment_type,
                      COALESCE(va.status,'Active') status,
                      v.vehicle_code, d.full_name driver_name, d.driver_code,

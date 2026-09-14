@@ -195,7 +195,7 @@ function buildBreadcrumbs(pathname: string, session: SessionLike): BreadcrumbIte
     segments.forEach((segment, index) => {
       const to = `${base}/${segments.slice(0, index + 1).join("/")}`;
       crumbs.push({
-        label: humanizeSegment(segment),
+        label: activeModule.key === "assignments" && (segment === "board" || segment === "list") ? "List" : humanizeSegment(segment),
         to,
         current: index === segments.length - 1,
       });

@@ -46,10 +46,11 @@
     "test:control-tower-transition": "node scripts/test-control-tower-transition.mjs",
     "test:telematics-authorization": "node scripts/test-telematics-authorization-state.mjs",
     "test:integrations-poc-truth": "node scripts/test-integrations-poc-truth-contract.mjs",
-    "test:module-relationships": "node scripts/test-module-relationship-integrity.mjs",
+    "test:module-relationships": "node scripts/test-module-relationship-integrity.mjs && npm run test:assignment-presentation",
     "test:operations-ux": "node scripts/test-operations-ux-coherence-contract.mjs",
     "test:app-wide-ui": "node scripts/test-app-wide-ui-contract.mjs",
-    "verify:bundle-budget": "node scripts/verify-bundle-budget.mjs"
+    "verify:bundle-budget": "node scripts/verify-bundle-budget.mjs",
+    "test:assignment-presentation": "node --experimental-strip-types scripts/test-assignment-presentation.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",

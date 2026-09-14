@@ -244,6 +244,26 @@ public sealed class FleetMasterAssignmentHosPostgresTests
         }
     }
 
+    [Fact]
+    public async Task HistoryRead_IdentifiesCurrentReciprocalPair_WithoutHidingReleasedOrStaleHistory()
+    {
+        await using var f = await Fixture.Create();
+        var first = f.Pairs["A"]; var second = f.Pairs["A2"];
+        Assert.Equal(200, Status(await f.Pair(true, first.Driver, first.Vehicle)));
+        Assert.True(Assert.Single(await f.HistoryRead()).GetProperty("isCurrent").GetBoolean());
+        await f.Link("vehicles", first.Vehicle, null);
+        var stale = Assert.Single(await f.HistoryRead());
+        Assert.False(stale.GetProperty("isCurrent").GetBoolean());
+        Assert.Equal("Active", stale.GetProperty("status").GetString());
+        Assert.Equal(200, Status(await f.Pair(true, second.Driver, first.Vehicle)));
+        var rows = await f.HistoryRead();
+        Assert.Equal(2, rows.Length);
+        var current = Assert.Single(rows, row => row.GetProperty("isCurrent").GetBoolean());
+        Assert.Equal(second.Driver, current.GetProperty("driverId").GetInt64());
+        Assert.Equal(first.Vehicle, current.GetProperty("vehicleId").GetInt64());
+        Assert.Single(rows, row => row.GetProperty("status").GetString() == "Released");
+    }
+
     private static int Status(IResult result) => ((IStatusCodeHttpResult)result).StatusCode ?? 200;
 
     private sealed class Fixture(string owner, IConfiguration config, WebApplication app) : IAsyncDisposable
@@ -303,7 +323,7 @@ public sealed class FleetMasterAssignmentHosPostgresTests
                 if (!companyWide) http.Items[EndpointMappings.AuthBranchIdItemKey] = BranchA;
                 http.Items[EndpointMappings.AuthUserIdItemKey] = 0L;
                 http.Items[EndpointMappings.AuthRoleItemKey] = "Synthetic fleet operator";
-                http.Items[EndpointMappings.AuthPermissionsItemKey] = allowed ? new[] { "fleet:manage", "dispatch:assign" } : new[] { "fleet:view", "dispatch:assign" };
+                http.Items[EndpointMappings.AuthPermissionsItemKey] = allowed ? new[] { "fleet:manage", "dispatch:assign", "vehicles:view" } : new[] { "fleet:view", "dispatch:assign" };
                 var handler = Registered(path);
                 var args = handler.Method.GetParameters().Select(p => p.ParameterType == typeof(HttpContext) ? (object)http :
                     p.ParameterType == typeof(long) ? id : p.ParameterType == typeof(Dictionary<string, object?>) ? body :
@@ -325,7 +345,7 @@ public sealed class FleetMasterAssignmentHosPostgresTests
                 if (source.GetType().GetField("_routeEntries", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(source) is not IEnumerable entries) continue;
                 foreach (var entry in entries)
                     if (entry is not null && Member(entry, "RoutePattern") is RoutePattern pattern && pattern.RawText == path && Member(entry, "RouteHandler") is Delegate handler)
-                        if (Member(entry, "HttpMethods") is IEnumerable<string> methods && methods.Contains(HttpMethods.Post)) matches.Add(handler);
+                        if (Member(entry, "HttpMethods") is IEnumerable<string> methods && methods.Contains(path == "/api/vehicle-assignments" ? HttpMethods.Get : HttpMethods.Post)) matches.Add(handler);
             }
             return Assert.Single(matches);
         }
@@ -410,6 +430,13 @@ public sealed class FleetMasterAssignmentHosPostgresTests
         {
             using var json = JsonDocument.Parse(await Sql("SELECT COALESCE(jsonb_agg(to_jsonb(a) ORDER BY id),'[]')::text FROM vehicle_assignments a WHERE company_id=@c", ("c", CompanyA)));
             return json.RootElement.EnumerateArray().Select(row => row.Clone()).ToArray();
+        }
+        public async Task<JsonElement[]> HistoryRead()
+        {
+            var result = await Call("/api/vehicle-assignments", 0, new());
+            Assert.Equal(200, Status(result));
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(((IValueHttpResult)result).Value));
+            return json.RootElement.GetProperty("Data").EnumerateArray().Select(row => row.Clone()).ToArray();
         }
         public async Task<long> CountDispatch() => long.Parse(await Sql("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c", ("c", CompanyA)));
         public Task<string> StaleHos(long driver) => Sql(@"INSERT INTO hos_clocks(company_id,branch_id,driver_id,status,drive_time_remaining_minutes,shift_time_remaining_minutes,cycle_time_remaining_minutes,clock_source,source_authority,source_observed_at)
