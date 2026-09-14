@@ -1,5 +1,5 @@
 import { useDialogFocus } from "@/hooks/useDialogFocus";
-import { deviceDetailsRoute, displayRecordValue } from "@/utils/recordDetailsPresentation";
+import { deviceDetailsRoute, displayRecordValue, readLinkedVehicle, uniqueDetailScores } from "@/utils/recordDetailsPresentation";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { tokens, chart } from "@/styles/tokens";
@@ -833,7 +833,7 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
   const vehicleId = kind === "drivers" ? record?.assignedVehicleId ?? record?.assigned_vehicle_id : kind === "vehicles" ? record?.id : null;
   const linkedVehicle = useQuery({
     queryKey: ["vehicles", "linked-device-detail", vehicleId],
-    queryFn: () => vehiclesApi.detail(String(vehicleId)),
+    queryFn: () => readLinkedVehicle(String(vehicleId), vehiclesApi.detail),
     enabled: Boolean(record && vehicleId && canViewDevices && hasPermission(PERMISSIONS.VEHICLES_VIEW)),
   });
   if (!record) return null;
@@ -843,7 +843,7 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
   const entries = customerVisibleRecordEntries(record).filter(([key, value]) =>
     !/(?:^id$|Id$|_id$|score|status|assignedVehicle|assigned_vehicle|assignedDriver|assigned_driver|recommendedAction|recommended_action)/i.test(key)
     && value != null && typeof value !== "object");
-  const scores = customerVisibleRecordEntries(record).filter(([key, value]) => /score/i.test(key) && value != null && typeof value !== "object");
+  const scores = uniqueDetailScores(customerVisibleRecordEntries(record), record);
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-[2px]" onClick={onClose}>
       <aside ref={dialogRef} role="dialog" aria-modal="true" aria-label={`${heading} details`} className="record-detail-drawer" onClick={event => event.stopPropagation()}>
@@ -870,6 +870,7 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
           <dl className="record-detail-fields">{entries.map(([key, value]) => <div key={key}><dt>{labelize(key)}</dt><dd>{displayRecordValue(value)}</dd></div>)}</dl>
           {(kind === "drivers" || kind === "vehicles") ? <section className="record-detail-devices">
             <h3 className="text-sm font-bold text-slate-900">{kind === "drivers" ? `Vehicle & devices · ${String(record.assignedVehicle || record.assignedVehicleCode || "Unassigned")}` : "Installed devices"}</h3>
+            {linkedVehicle.data?.archived ? <p className="text-sm text-amber-700">This assigned vehicle is archived. Change vehicle to select an active unit.</p> : null}
             {!vehicleId ? <p className="text-sm text-slate-500">Assign a vehicle to see its installed devices.</p> : !canViewDevices ? <p className="text-sm text-slate-500">Device viewing permission is required.</p> : !hasPermission(PERMISSIONS.VEHICLES_VIEW) ? <p className="text-sm text-slate-500">Vehicle viewing permission is required.</p> : linkedVehicle.isPending ? <p role="status" className="text-sm text-slate-500">Loading installed devices…</p> : linkedVehicle.isError ? <div role="alert" className="text-sm text-rose-700">Could not load this vehicle’s devices. <button type="button" className="text-teal-700 underline" onClick={() => void linkedVehicle.refetch()}>Retry</button></div> : devices.length ? <ul className="divide-y divide-slate-200">{devices.map(device => <li key={String(device.deviceId ?? device.device_id)} className="flex items-center justify-between gap-2 py-2"><span className="text-sm"><strong>{String(device.deviceSerial ?? device.device_serial ?? "Installed device")}</strong><span className="block text-xs text-slate-500">{String(device.deviceRole ?? device.device_role ?? "Device")} · {String(device.status ?? "Unknown")}</span></span><button type="button" className="btn-ghost" onClick={() => onNavigate(deviceDetailsRoute(device.deviceId ?? device.device_id))}>Configure / restart</button></li>)}</ul> : <p className="text-sm text-slate-500">No installed device is recorded for this vehicle.</p>}
           </section> : null}
           <Section title="Timeline" rows={timeline} columns={["eventType", "title", "severity", "eventTime"]} loading={loading} />

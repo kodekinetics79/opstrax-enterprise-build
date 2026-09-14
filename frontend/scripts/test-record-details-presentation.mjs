@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { deviceDetailsRoute, displayRecordValue, linkedDeviceId } from '../src/utils/recordDetailsPresentation.ts';
+import { deviceDetailsRoute, displayRecordValue, linkedDeviceId, readLinkedVehicle, uniqueDetailScores } from '../src/utils/recordDetailsPresentation.ts';
 assert.equal(deviceDetailsRoute(42), '/iot-devices?deviceId=42');
 assert.equal(deviceDetailsRoute('hardware/id?x=1'), '/iot-devices?deviceId=hardware%2Fid%3Fx%3D1');
 assert.equal(deviceDetailsRoute(null), '/iot-devices');
@@ -11,4 +11,15 @@ assert.equal(linkedDeviceId('42'), '42');
 assert.equal(linkedDeviceId('hardware/id?x=1'), null);
 assert.equal(linkedDeviceId('0'), null);
 assert.equal(linkedDeviceId('9223372036854775808'), null);
-console.log('Record detail identity and date presentation: 11 checks passed');
+const scoreRecord = { readinessScore: 91, driverReadinessScore: 91, riskScore: 9, riskHeatScore: 'Low', safetyScore: 93 };
+assert.deepEqual(uniqueDetailScores(Object.entries(scoreRecord), scoreRecord).map(([key])=>key), ['readinessScore','riskScore','safetyScore']);
+const calls = [];
+const archived = await readLinkedVehicle('7', async (id, lifecycle) => {
+  calls.push([id,lifecycle]); if (!lifecycle) throw { response: { status: 404 } }; return { currentDevices: [] };
+});
+assert.equal(archived.archived, true);
+assert.deepEqual(calls, [['7',undefined],['7','archived']]);
+let deniedCalls = 0;
+await assert.rejects(readLinkedVehicle('7', async () => { deniedCalls++; throw Object.assign(new Error('Forbidden'), {response:{status:403}}); }), /Forbidden/);
+assert.equal(deniedCalls, 1);
+console.log('Record detail identity, unique scores and archived vehicle readback: 16 checks passed');
