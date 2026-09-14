@@ -326,6 +326,9 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
       await queryClient.invalidateQueries({ queryKey: [kind] });
     },
   });
+  const archiveDialogRef = useDialogFocus<HTMLDivElement>(Boolean(pendingArchive), () => {
+    if (!deleteMutation.isPending) { deleteMutation.reset(); setPendingArchive(null); }
+  });
   const reactivateMutation = useMutation({
     mutationFn: (id: string | number) => cfg.api.reactivate!(id),
     onSuccess: async () => {
@@ -553,7 +556,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         canReactivate={canUpdate && archivedView && Boolean(cfg.api.reactivate)}
       />
       {pendingArchive ? (
-        <div className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="archive-confirm-title">
+        <div ref={archiveDialogRef} className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="archive-confirm-title">
           <div className="panel w-full max-w-lg p-6">
             <h2 id="archive-confirm-title" className="text-xl font-semibold text-slate-900">Archive {kind.slice(0, -1)}?</h2>
             <p className="mt-3 text-sm text-slate-600">
@@ -764,6 +767,8 @@ function FleetMasterAssignmentModal({ kind, record, options, saving, serverError
   onClose: () => void;
   onSave: (targetId: string) => void;
 }) {
+  const close = () => { if (!saving) onClose(); };
+  const dialogRef = useDialogFocus<HTMLFormElement>(true, close);
   const currentTargetId = String(kind === "vehicles"
     ? (record.assignedDriverId ?? record.assigned_driver_id ?? "")
     : (record.assignedVehicleId ?? record.assigned_vehicle_id ?? ""));
@@ -779,14 +784,14 @@ function FleetMasterAssignmentModal({ kind, record, options, saving, serverError
 
   return (
     <div className="fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 backdrop-blur-sm">
-      <form role="dialog" aria-modal="true" aria-labelledby="fleet-master-assignment-title" className="panel w-full max-w-xl p-6 shadow-2xl" onSubmit={(event) => { event.preventDefault(); if (targetId) onSave(targetId); }}>
+      <form ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="fleet-master-assignment-title" className="panel w-full max-w-xl p-6 shadow-2xl" onSubmit={(event) => { event.preventDefault(); if (targetId) onSave(targetId); }}>
         <div className="flex items-start justify-between border-b border-slate-200 pb-4">
           <div>
             <p className="section-title text-teal-700">Fleet master assignment</p>
             <h2 id="fleet-master-assignment-title" className="mt-1 text-xl font-bold text-slate-900">{currentTargetId ? "Reassign" : "Assign"} {recordLabel}</h2>
             <p className="mt-1 text-sm text-slate-500">Select the intended {targetLabel} and confirm. Reassignment keeps the previous pairing in history. Dispatch readiness is checked separately before a job is assigned.</p>
           </div>
-          <button type="button" className="icon-btn" onClick={onClose} disabled={saving} aria-label="Close"><X className="h-5 w-5" /></button>
+          <button type="button" className="icon-btn" onClick={close} disabled={saving} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
         <label className="mt-5 block">
           <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{targetLabel}</span>
@@ -801,7 +806,7 @@ function FleetMasterAssignmentModal({ kind, record, options, saving, serverError
         </label>
         {serverError ? <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{serverError}</p> : null}
         <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
-          <button type="button" className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          <button type="button" className="btn-ghost" onClick={close} disabled={saving}>Cancel</button>
           <button type="submit" className="btn-primary" disabled={saving || !targetId || targetId === currentTargetId}>{saving ? "Saving assignment…" : "Confirm assignment"}</button>
         </div>
       </form>
@@ -1222,6 +1227,8 @@ function CreateEditModal({ title, fields, initial, saving, onClose, onSave }: {
   onClose: () => void;
   onSave: (payload: AnyRecord) => void;
 }) {
+  const close = () => { if (!saving) onClose(); };
+  const dialogRef = useDialogFocus<HTMLFormElement>(true, close);
   const [form, setForm] = useState<AnyRecord>(initial);
   const [errors, setErrors] = useState<string[]>([]);
   const submit = (event: FormEvent) => {
@@ -1263,13 +1270,13 @@ function CreateEditModal({ title, fields, initial, saving, onClose, onSave }: {
 
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4 backdrop-blur-sm">
-      <form onSubmit={submit} className="panel w-full max-w-2xl p-6">
+      <form ref={dialogRef} role="dialog" aria-modal="true" aria-label={title} onSubmit={submit} className="panel w-full max-w-2xl p-6">
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.25em] text-teal-300">OpsTrax Create / Edit</p>
             <h2 className="mt-2 text-2xl font-semibold text-white">{title}</h2>
           </div>
-          <button type="button" className="icon-btn" onClick={onClose}><X className="h-5 w-5" /></button>
+          <button type="button" aria-label="Close edit form" className="icon-btn" onClick={close} disabled={saving}><X className="h-5 w-5" /></button>
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           {fields.map((field) => (
@@ -1294,7 +1301,7 @@ function CreateEditModal({ title, fields, initial, saving, onClose, onSave }: {
           </div>
         )}
         <div className="mt-6 flex justify-end gap-3">
-          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-ghost" onClick={close} disabled={saving}>Cancel</button>
           <button type="submit" className="btn-primary" disabled={saving}><Save className="h-4 w-4" /> {saving ? "Saving..." : "Save"}</button>
         </div>
       </form>
