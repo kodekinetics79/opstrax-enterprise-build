@@ -425,16 +425,13 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
       {/* Compact operating summary keeps the roster in the first viewport. */}
       <dl className="vehicle-summary-strip panel grid shrink-0 grid-cols-2 gap-1 p-1 xl:grid-cols-4" aria-label="Vehicle operating summary">
         <ClayStat Icon={Gauge}      tone="fc-clay-teal"    iconCls="text-teal-700"    label="Page readiness"      value={readiness == null ? "Unknown" : `${readiness}%`} meter={readiness ?? undefined} caption={`${readinessRows.length} assessed on this page · ${rows.length - readinessRows.length} unknown`} />
-        <ClayStat Icon={Navigation} tone="fc-clay-emerald" iconCls="text-emerald-700" label="Moving on page"      value={moving}          meter={rows.length ? (moving / rows.length) * 100 : 0} caption={`${available} available on this page`} />
-        <ClayStat Icon={ShieldAlert} tone="fc-clay-red"    iconCls="text-rose-700"    label="Authorized scope at risk" value={atRisk == null ? "Unknown" : atRisk} alert={atRisk != null && atRisk > 0} caption="Tenant or permitted branch summary" />
-        <ClayStat Icon={Cpu}        tone="fc-clay-amber"   iconCls="text-amber-700"   label="Authorized scope device / camera gaps" value={deviceEx == null ? "Unknown" : deviceEx} alert={deviceEx != null && deviceEx > 0} caption="Tenant or permitted branch summary" />
+        <ClayStat Icon={Navigation} tone="fc-clay-emerald" iconCls="text-emerald-700" label="Page moving"      value={moving}          meter={rows.length ? (moving / rows.length) * 100 : 0} caption={`${available} available on this page`} />
+        <ClayStat Icon={ShieldAlert} tone="fc-clay-red"    iconCls="text-rose-700"    label="Scope at risk" value={atRisk == null ? "Unknown" : atRisk} alert={atRisk != null && atRisk > 0} caption="Tenant or permitted branch summary" />
+        <ClayStat Icon={Cpu}        tone="fc-clay-amber"   iconCls="text-amber-700"   label="Scope device / camera gaps" value={deviceEx == null ? "Unknown" : deviceEx} alert={deviceEx != null && deviceEx > 0} caption="Tenant or permitted branch summary" />
       </dl>
 
-      {/* ── Lifecycle band — replacement pressure + operational gaps ──────── */}
-
-
       {/* The roster is the primary task surface. */}
-      <section className="panel flex min-h-[460px] flex-col overflow-hidden xl:min-h-0 xl:flex-1">
+      <section className="vehicle-roster-list panel flex min-h-[280px] flex-1 flex-col overflow-hidden sm:min-h-0">
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2">
           <div className="relative w-full sm:max-w-xs">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -634,7 +631,7 @@ function ClayStat({ Icon, tone, iconCls, label, value, meter, caption, alert }:
         ? "border-emerald-100 bg-emerald-50/45"
         : "border-teal-100 bg-teal-50/45";
   return (
-    <div className={`min-w-0 rounded-lg border px-3 py-2 ${surfaceTone}`}>
+    <div className={`min-w-0 rounded-lg border px-3 py-2 ${surfaceTone}`} title={caption ? `${label}: ${value}. ${caption}` : label}>
       <dt className="flex min-w-0 items-center gap-2 text-[11px] font-bold leading-tight text-slate-600">
         <Icon className={`h-3.5 w-3.5 shrink-0 ${iconCls}`} />
         <span className="min-w-0 flex-1">{label}</span>

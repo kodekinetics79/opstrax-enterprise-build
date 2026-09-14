@@ -157,7 +157,7 @@ export function VehiclesModulePage() {
   );
 
   return (
-    <PageStack className={`vehicle-module fleet-console ${section === "roster" ? "min-h-0 h-full" : "pb-6"}`}>
+    <PageStack className={`vehicle-module fleet-console ${section === "roster" ? "vehicle-roster-shell min-h-0 h-full" : "pb-6"}`}>
       {shellBanner}
 
       <nav className="panel sticky top-0 z-10 shrink-0 overflow-x-auto p-1" aria-label="Vehicle workspace">
