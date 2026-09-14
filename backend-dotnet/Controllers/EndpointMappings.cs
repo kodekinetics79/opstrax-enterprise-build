@@ -5380,9 +5380,72 @@ public static partial class EndpointMappings
                     AND source_authority='Authoritative' AND media_status='Ready'
                   ORDER BY occurred_at DESC LIMIT 4",
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
+        // The roster permission does not grant access to job execution or location
+        // history. Reuse each feed's registered read gate and distinguish denied feeds
+        // from an authorized empty result for the operator workspace.
+        var canReadActiveJobs = RequireAnyDirectPermission(http, "shipments:view") is null;
+        var canReadReplayTrail = RequirePermission(http, "telemetry.live_state.read") is null;
+        var replayTo = DateTime.UtcNow;
+        var replayFrom = replayTo.AddHours(-24);
+        List<Dictionary<string, object?>> activeJobs = [];
+        if (canReadActiveJobs)
+            activeJobs = await db.QueryAsync(
+                @"SELECT j.id,COALESCE(j.job_number,j.job_code) job_number,j.status,j.sla_status,
+                         j.eta,j.priority,j.scheduled_start,j.scheduled_end
+                  FROM jobs j
+                  WHERE j.assigned_vehicle_id=@id AND j.company_id=@cid AND j.deleted_at IS NULL
+                    AND LOWER(BTRIM(j.status)) NOT IN ('completed','delivered','cancelled','canceled','unassigned')
+                    AND (@branchId::BIGINT IS NULL OR j.branch_id=@branchId)
+                  ORDER BY j.scheduled_start ASC NULLS LAST,j.id ASC LIMIT 12",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        Dictionary<string, object?>? latestObservation = null;
+        if (canReadReplayTrail)
+            latestObservation = await db.QuerySingleAsync(
+                @"SELECT le.id,le.lat,le.lng,le.speed_mph,le.heading,le.engine_status,
+                         le.odometer_miles,le.fuel_level,le.battery_voltage,le.event_type,
+                         le.event_time,le.received_at,le.source,le.device_id
+                  FROM location_events le
+                  JOIN vehicles scoped_vehicle ON scoped_vehicle.id=le.vehicle_id
+                    AND scoped_vehicle.company_id=le.company_id
+                  WHERE le.vehicle_id=@id AND le.company_id=@cid
+                    AND le.lat BETWEEN -90 AND 90 AND le.lng BETWEEN -180 AND 180
+                      AND NOT (le.lat=0 AND le.lng=0)
+                    AND le.event_time<=@to
+                    AND (@branchId::BIGINT IS NULL OR scoped_vehicle.branch_id=@branchId)
+                  ORDER BY le.event_time DESC,le.id DESC LIMIT 1",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@to", replayTo); }, ct);
+        List<Dictionary<string, object?>> replayTrail = [];
+        if (canReadReplayTrail)
+            replayTrail = await db.QueryAsync(
+                @"SELECT recent.id,recent.lat,recent.lng,recent.speed_mph,recent.heading,
+                         recent.engine_status,recent.event_type,recent.event_time,recent.device_id
+                  FROM (
+                    SELECT le.id,le.lat,le.lng,le.speed_mph,le.heading,le.engine_status,
+                           le.event_type,le.event_time,le.device_id
+                    FROM location_events le
+                    JOIN vehicles scoped_vehicle ON scoped_vehicle.id=le.vehicle_id
+                      AND scoped_vehicle.company_id=le.company_id
+                    WHERE le.vehicle_id=@id AND le.company_id=@cid
+                      AND le.lat BETWEEN -90 AND 90 AND le.lng BETWEEN -180 AND 180
+                      AND NOT (le.lat=0 AND le.lng=0)
+                      AND le.event_time BETWEEN @from AND @to
+                      AND (@branchId::BIGINT IS NULL OR scoped_vehicle.branch_id=@branchId)
+                    ORDER BY le.event_time DESC,le.id DESC LIMIT 100
+                  ) recent ORDER BY recent.event_time ASC,recent.id ASC",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@from", replayFrom); c.Parameters.AddWithValue("@to", replayTo); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
+            activeJobs,
+            replayTrail,
+            latestObservation,
+            activityAccess = new { activeJobs = canReadActiveJobs, replayTrail = canReadReplayTrail, latestObservation = canReadReplayTrail },
+            activityWindow = new { replayFrom, replayTo, replayLimit = 100, activeJobsLimit = 12 },
             timeline = await EntityTimeline(db, "Vehicle", id, GetCompanyId(http), ct),
             recommendations = GetBranchId(http) is null ?
                 await TenantModuleRecommendations(db, GetCompanyId(http), "vehicles", ct)

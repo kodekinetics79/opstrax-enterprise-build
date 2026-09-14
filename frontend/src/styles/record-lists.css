@@ -63,3 +63,14 @@
 .record-detail-section > summary { cursor:pointer; font-size:13px; font-weight:600; color:#1e293b; }.record-detail-section > summary span { float:right; color:#64748b; font-size:12px; }
 .record-detail-section table { font-size:12px; }.record-detail-section > div { max-height:320px; overflow:auto; }
 @media (pointer:coarse) { .record-detail-head .btn-primary,.record-detail-head .btn-ghost { min-height:44px; } }
+
+/* Selected vehicle: evidence remains readable without decorative field buttons. */
+.vehicle-property-list { display: grid; grid-template-columns: minmax(105px, .85fr) minmax(0, 1.5fr); gap: 0; font-size: 12px; }
+.vehicle-property-list dt, .vehicle-property-list dd { margin: 0; padding: 6px 0; border-bottom: 1px solid #eef2f6; overflow-wrap: anywhere; }
+.vehicle-property-list dt { color: #64748b; padding-right: 12px; }
+.vehicle-property-list dd { color: #0f172a; font-weight: 500; }
+.vehicle-summary-strip > div { border: 0; background: transparent; padding: 6px 10px; }
+.vehicle-summary-strip .deck-track { display: none; }
+@media (pointer: coarse) { .vehicle-workspace button, .vehicle-workspace summary { min-height: 44px; } }
+.vehicle-workspace .record-detail-section > summary span { float: none; }
+.vehicle-module > .page-stack { flex: 1; min-height: 0; }

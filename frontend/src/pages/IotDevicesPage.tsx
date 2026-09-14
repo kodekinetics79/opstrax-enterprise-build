@@ -2276,6 +2276,14 @@ function DeviceDetailDrawer({
   const { device } = detail;
   const configurationRef = useRef<HTMLDivElement>(null);
   const commandsRef = useRef<HTMLDivElement>(null);
+  const diagnosticsRef = useRef<HTMLDivElement>(null);
+  const [workspaceParams] = useSearchParams();
+  const requestedSection = workspaceParams.get("deviceSection");
+  useEffect(() => {
+    const target = requestedSection === "configuration" ? configurationRef.current : requestedSection === "commands" ? commandsRef.current : requestedSection === "diagnostics" ? diagnosticsRef.current : null;
+    target?.scrollIntoView({ block: "start" });
+    target?.focus({ preventScroll: true });
+  }, [requestedSection, device.id]);
   const queryClient = useQueryClient();
   const [workPackageOpen, setWorkPackageOpen] = useState(false);
   const [workPackageForm, setWorkPackageForm] = useState<InstallationWorkPackageFormState>(() =>
@@ -2855,7 +2863,7 @@ function DeviceDetailDrawer({
             <p className="text-sm text-slate-400">No sensor channels reporting for this device.</p>
           )}
         </PanelSection>
-        <PanelSection title="Diagnostics">
+        <div ref={diagnosticsRef} tabIndex={-1} className="scroll-mt-4"><PanelSection title="Diagnostics">
           {latestDiagnostic ? (
             <MiniGrid rows={[
               ["Latest result", cell(latestDiagnostic.result)],
@@ -2867,9 +2875,9 @@ function DeviceDetailDrawer({
               ["Safety action", cell(latestDiagnostic.safetyActionStatus)],
             ]} />
           ) : (
-            <p className="text-sm text-slate-400">No active fault codes for this device.</p>
+            <p className="text-sm text-slate-400">No received active fault evidence returned for this device.</p>
           )}
-        </PanelSection>
+        </PanelSection></div>
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">

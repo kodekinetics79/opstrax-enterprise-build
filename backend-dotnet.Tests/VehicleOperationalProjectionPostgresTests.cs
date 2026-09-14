@@ -102,6 +102,99 @@ public sealed class VehicleOperationalProjectionPostgresTests
         using (Payload(await Invoke("VehicleDetail", Principal(fixture.Company, lifecycle: "all"), id, fixture.Db, CancellationToken.None), 400)) { }
     }
 
+    [Fact]
+    public async Task ActualDetailActivityIsBoundedPermissionGatedAndScoped()
+    {
+        await using var own = await Fixture.Create();
+        await using var foreign = await Fixture.Create();
+        var vehicle = await own.Vehicle(own.BranchA, "ACTIVITY");
+        var otherVehicle = await own.Vehicle(own.BranchB, "OTHER-ACTIVITY");
+        var expectedJobs = new List<long>();
+        for (var i = 0; i < 15; i++) expectedJobs.Add(await own.Job(vehicle, own.BranchA, $"ACTIVE-{i:D2}"));
+        foreach (var status in new[] { "Completed", "Delivered", "Cancelled", "canceled", "Unassigned" })
+            await own.Job(vehicle, own.BranchA, $"TERMINAL-{status}", status);
+        await own.Job(vehicle, own.BranchA, "DELETED", deleted: true);
+        await own.Job(vehicle, own.BranchB, "WRONG-BRANCH");
+        await own.Job(vehicle, null, "NULL-BRANCH");
+        await own.Job(otherVehicle, own.BranchB, "OTHER-VEHICLE");
+        await foreign.Job(vehicle, foreign.BranchA, "FOREIGN-TENANT");
+        var expectedPoints = new List<long>();
+        for (var i = 0; i < 105; i++) expectedPoints.Add(await own.Point(vehicle, -110 + i));
+        await own.Point(vehicle, -60 * 25);
+        await own.Point(vehicle, 60);
+        await own.Point(vehicle, -1, invalidGps: true);
+        await own.Point(vehicle, -1, zeroPair: true);
+        await own.Point(otherVehicle, -1);
+        await foreign.Point(vehicle, -1);
+
+        using var deniedFeeds = Payload(await Invoke("VehicleDetail", Principal(own.Company, own.BranchA),
+            vehicle, own.Db, CancellationToken.None), 200);
+        var deniedData = deniedFeeds.RootElement.GetProperty("data");
+        Assert.False(deniedData.GetProperty("activityAccess").GetProperty("activeJobs").GetBoolean());
+        Assert.False(deniedData.GetProperty("activityAccess").GetProperty("replayTrail").GetBoolean());
+        Assert.Empty(deniedData.GetProperty("activeJobs").EnumerateArray());
+        Assert.Empty(deniedData.GetProperty("replayTrail").EnumerateArray());
+
+        var http = Principal(own.Company, own.BranchA);
+        http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "vehicles:view", "shipments:view", "telemetry.live_state.read" };
+        using var allowed = Payload(await Invoke("VehicleDetail", http, vehicle, own.Db, CancellationToken.None), 200);
+        var data = allowed.RootElement.GetProperty("data");
+        Assert.Equal(expectedPoints.Last(), data.GetProperty("latestObservation").GetProperty("id").GetInt64());
+        Assert.True(data.GetProperty("activityAccess").GetProperty("activeJobs").GetBoolean());
+        Assert.True(data.GetProperty("activityAccess").GetProperty("replayTrail").GetBoolean());
+        Assert.Equal(expectedJobs.Take(12), data.GetProperty("activeJobs").EnumerateArray().Select(row => row.GetProperty("id").GetInt64()));
+        var points = data.GetProperty("replayTrail").EnumerateArray().ToArray();
+        Assert.Equal(expectedPoints.Skip(5), points.Select(row => row.GetProperty("id").GetInt64()));
+        Assert.All(points, row => Assert.Equal(12.5m, row.GetProperty("speedMph").GetDecimal()));
+        var window = data.GetProperty("activityWindow");
+        var from = window.GetProperty("replayFrom").GetDateTime();
+        var to = window.GetProperty("replayTo").GetDateTime();
+        Assert.Equal(TimeSpan.FromHours(24), to - from);
+        Assert.All(points, row => Assert.InRange(row.GetProperty("eventTime").GetDateTime(), from, to));
+        Assert.Equal(100, window.GetProperty("replayLimit").GetInt32());
+        Assert.Equal(12, window.GetProperty("activeJobsLimit").GetInt32());
+        var jobsOnly = Principal(own.Company, own.BranchA);
+        jobsOnly.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "vehicles:view", "shipments:view" };
+        using var jobsResult = Payload(await Invoke("VehicleDetail", jobsOnly, vehicle, own.Db, CancellationToken.None), 200);
+        var jobsData = jobsResult.RootElement.GetProperty("data");
+        Assert.Equal(12, jobsData.GetProperty("activeJobs").GetArrayLength());
+        Assert.Empty(jobsData.GetProperty("replayTrail").EnumerateArray());
+        Assert.Equal(JsonValueKind.Null, jobsData.GetProperty("latestObservation").ValueKind);
+        var telemetryOnly = Principal(own.Company, own.BranchA);
+        telemetryOnly.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "vehicles:view", "telemetry.live_state.read" };
+        using var telemetryResult = Payload(await Invoke("VehicleDetail", telemetryOnly, vehicle, own.Db, CancellationToken.None), 200);
+        var telemetryData = telemetryResult.RootElement.GetProperty("data");
+        Assert.Empty(telemetryData.GetProperty("activeJobs").EnumerateArray());
+        Assert.Equal(100, telemetryData.GetProperty("replayTrail").GetArrayLength());
+        Assert.Equal(expectedPoints.Last(), telemetryData.GetProperty("latestObservation").GetProperty("id").GetInt64());
+    }
+
+    [Fact]
+    public async Task ActualLatestObservationRetainsOldFixTimeAndRejectsFutureOrInvalidGps()
+    {
+        await using var fixture = await Fixture.Create();
+        var vehicle = await fixture.Vehicle(fixture.BranchA, "LATEST-OBSERVATION");
+        var http = Principal(fixture.Company, fixture.BranchA);
+        http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "vehicles:view", "telemetry.live_state.read" };
+        using var missing = Payload(await Invoke("VehicleDetail", http, vehicle, fixture.Db, CancellationToken.None), 200);
+        Assert.Equal(JsonValueKind.Null, missing.RootElement.GetProperty("data").GetProperty("latestObservation").ValueKind);
+        var stale = await fixture.Point(vehicle, -60 * 25);
+        await fixture.Point(vehicle, 60);
+        await fixture.Point(vehicle, -1, invalidGps: true);
+        await fixture.Point(vehicle, -1, zeroPair: true);
+        using var result = Payload(await Invoke("VehicleDetail", http, vehicle, fixture.Db, CancellationToken.None), 200);
+        var data = result.RootElement.GetProperty("data");
+        var observation = data.GetProperty("latestObservation");
+        Assert.Equal(stale, observation.GetProperty("id").GetInt64());
+        Assert.True(observation.GetProperty("eventTime").GetDateTime() < DateTime.UtcNow.AddHours(-24));
+        Assert.Equal(12.5m, observation.GetProperty("speedMph").GetDecimal());
+        Assert.Empty(data.GetProperty("replayTrail").EnumerateArray());
+        using var denied = Payload(await Invoke("VehicleDetail", Principal(fixture.Company, fixture.BranchA),
+            vehicle, fixture.Db, CancellationToken.None), 200);
+        Assert.Equal(JsonValueKind.Null, denied.RootElement.GetProperty("data").GetProperty("latestObservation").ValueKind);
+        Assert.False(denied.RootElement.GetProperty("data").GetProperty("activityAccess").GetProperty("latestObservation").GetBoolean());
+    }
+
     private static DefaultHttpContext Principal(long company, long? branch = null, string lifecycle = "active", bool allowed = true)
     {
         var http = new DefaultHttpContext();
@@ -177,6 +270,20 @@ public sealed class VehicleOperationalProjectionPostgresTests
                 c.Parameters.AddWithValue("@status", status); c.Parameters.AddWithValue("@risk", risk);
                 c.Parameters.AddWithValue("@archived", archived); });
 
+        public Task<long> Job(long vehicle, long? branch, string code, string status = "Assigned", bool deleted = false) => Db.InsertAsync(
+            @"INSERT INTO jobs(company_id,branch_id,job_code,job_type,assigned_vehicle_id,status,scheduled_start,deleted_at)
+              VALUES (@c,@b,@code,'Delivery',@v,@status,NOW(),CASE WHEN @deleted THEN NOW() ELSE NULL END)",
+            c => { c.Parameters.AddWithValue("@c", Company); c.Parameters.AddWithValue("@b", (object?)branch ?? DBNull.Value);
+                c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@v", vehicle);
+                c.Parameters.AddWithValue("@status", status); c.Parameters.AddWithValue("@deleted", deleted); });
+
+        public Task<long> Point(long vehicle, int minutesAgo, bool invalidGps = false, bool zeroPair = false) => Db.InsertAsync(
+            @"INSERT INTO location_events(company_id,vehicle_id,lat,lng,speed_mph,event_time)
+              VALUES (@c,@v,CASE WHEN @zero THEN 0 WHEN @invalid THEN 95 ELSE 38 END,CASE WHEN @zero THEN 0 ELSE -77 END,12.5,NOW()+@minutes*INTERVAL '1 minute')",
+            c => { c.Parameters.AddWithValue("@c", Company); c.Parameters.AddWithValue("@v", vehicle);
+                c.Parameters.AddWithValue("@minutes", minutesAgo); c.Parameters.AddWithValue("@invalid", invalidGps);
+                c.Parameters.AddWithValue("@zero", zeroPair); });
+
         public async Task Install(long vehicle, string kind)
         {
             var serial = $"VOP-{Guid.NewGuid():N}";
@@ -201,7 +308,7 @@ public sealed class VehicleOperationalProjectionPostgresTests
         public async ValueTask DisposeAsync()
         {
             if (Company == 0) return;
-            foreach (var table in new[] { "audit_logs", "device_state_transitions", "device_installation_evidence", "device_installations", "eld_devices", "vehicles", "branches" })
+            foreach (var table in new[] { "location_events", "jobs", "audit_logs", "device_state_transitions", "device_installation_evidence", "device_installations", "eld_devices", "vehicles", "branches" })
                 await Db.ExecuteAsync($"DELETE FROM {table} WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", Company));
             await Db.ExecuteAsync("DELETE FROM companies WHERE id=@c", c => c.Parameters.AddWithValue("@c", Company));
         }
