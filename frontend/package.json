@@ -42,7 +42,7 @@
     "test:document-form-errors": "node scripts/test-document-form-error-contract.mjs",
     "test:document-lifecycle-provenance": "node scripts/test-document-lifecycle-provenance-contract.mjs",
     "test:vehicle-lifecycle-confirmation": "node scripts/test-vehicle-lifecycle-confirmation-contract.mjs",
-    "test:shell-menu-layering": "node scripts/test-shell-menu-layering-contract.mjs",
+    "test:shell-menu-layering": "node scripts/test-shell-menu-layering-contract.mjs && node scripts/test-navigation-presentation.mjs",
     "test:control-tower-transition": "node scripts/test-control-tower-transition.mjs",
     "test:telematics-authorization": "node scripts/test-telematics-authorization-state.mjs",
     "test:integrations-poc-truth": "node scripts/test-integrations-poc-truth-contract.mjs",
