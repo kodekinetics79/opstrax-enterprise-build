@@ -9223,6 +9223,8 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> UpdateMaintenance(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        var errors = ValidateMaintenanceDates(body, "dueDate");
+        if (errors.Count > 0) return Results.BadRequest(ApiResponse<object>.Fail("Maintenance validation failed", errors.ToArray()));
         await db.ExecuteAsync(
             @"UPDATE maintenance_items SET vehicle_id=COALESCE(@vehicleId,vehicle_id), asset_id=COALESCE(@assetId,asset_id), service_type=COALESCE(@serviceType,service_type),
                 title=COALESCE(@serviceType,title), category=COALESCE(@serviceType,category), description=COALESCE(@description,description), priority=COALESCE(@priority,priority),
@@ -9237,11 +9239,13 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> MaintenanceSchedule(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        var errors = ValidateMaintenanceDates(body, "scheduledDate");
+        if (errors.Count > 0) return Results.BadRequest(ApiResponse<object>.Fail("Maintenance validation failed", errors.ToArray()));
         await db.ExecuteAsync("UPDATE maintenance_items SET status='Scheduled', due_date=COALESCE(@date,due_date) WHERE id=@id AND company_id=@companyId", c =>
         {
             c.Parameters.AddWithValue("@id", id);
             c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
-            c.Parameters.AddWithValue("@date", Get(body, "scheduledDate"));
+            c.Parameters.Add("@date", NpgsqlDbType.Date).Value = (object?)TryDateN(body, "scheduledDate") ?? DBNull.Value;
         }, ct);
         await audit.LogAsync(http, "maintenance.scheduled", "Maintenance", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Maintenance scheduled"));
@@ -9249,11 +9253,13 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> MaintenanceDefer(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        var errors = ValidateMaintenanceDates(body, "dueDate");
+        if (errors.Count > 0) return Results.BadRequest(ApiResponse<object>.Fail("Maintenance validation failed", errors.ToArray()));
         await db.ExecuteAsync("UPDATE maintenance_items SET status='Deferred', due_date=COALESCE(@date,due_date,CURRENT_DATE) + 7 * INTERVAL '1 day' WHERE id=@id AND company_id=@companyId", c =>
         {
             c.Parameters.AddWithValue("@id", id);
             c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
-            c.Parameters.AddWithValue("@date", Get(body, "dueDate"));
+            c.Parameters.Add("@date", NpgsqlDbType.Date).Value = (object?)TryDateN(body, "dueDate") ?? DBNull.Value;
         }, ct);
         await audit.LogAsync(http, "maintenance.deferred", "Maintenance", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Maintenance deferred"));
@@ -14571,11 +14577,18 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
 
     private static List<string> ValidateMaintenance(Dictionary<string, object?> body)
     {
-        var errors = new List<string>();
+        var errors = ValidateMaintenanceDates(body, "dueDate");
         if (IsBlank(Get(body, "vehicleId")) && IsBlank(Get(body, "assetId"))) errors.Add("Vehicle or asset is required.");
         if (IsBlank(Get(body, "serviceType"))) errors.Add("Service type is required.");
         if (IsBlank(Get(body, "dueDate")) && IsBlank(Get(body, "dueOdometer")) && IsBlank(Get(body, "dueEngineHours"))) errors.Add("Due date, odometer, or engine-hour trigger is required.");
         return errors;
+    }
+
+    private static List<string> ValidateMaintenanceDates(Dictionary<string, object?> body, string key)
+    {
+        return !IsBlank(Get(body, key)) && TryDateN(body, key) is null
+            ? [$"{(key == "scheduledDate" ? "Scheduled date" : "Due date")} must be a valid date."]
+            : [];
     }
 
     private static void BindMaintenance(NpgsqlCommand c, Dictionary<string, object?> body)
@@ -14586,7 +14599,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         c.Parameters.AddWithValue("@description", Get(body, "description"));
         c.Parameters.AddWithValue("@priority", Get(body, "priority"));
         c.Parameters.AddWithValue("@status", Get(body, "status"));
-        c.Parameters.AddWithValue("@dueDate", Get(body, "dueDate"));
+        c.Parameters.Add("@dueDate", NpgsqlDbType.Date).Value = (object?)TryDateN(body, "dueDate") ?? DBNull.Value;
         c.Parameters.AddWithValue("@dueOdometer", Get(body, "dueOdometer"));
         c.Parameters.AddWithValue("@dueHours", Get(body, "dueEngineHours"));
         c.Parameters.AddWithValue("@cost", Get(body, "estimatedCost"));
