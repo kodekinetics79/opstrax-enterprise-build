@@ -25,6 +25,7 @@ import {
   isTerminalAssignment,
 } from "@/utils/assignmentPresentation";
 import "@/styles/assignments.css";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { dispatchApi } from "@/services/dispatchApi";
 import {
   EmptyState,
@@ -1014,7 +1015,14 @@ export function FleetAssignmentsPage() {
           title={`${editor.mode === "pairing" ? "Change pairing" : "Update status"} · ${String(g(editor.row, "jobNumber", "job_number") ?? editor.row.id)}`}
           confirmLabel="Save changes"
           busy={save.isPending}
-          error={save.error instanceof Error ? save.error.message : null}
+          error={
+            save.error
+              ? apiErrorMessage(
+                  save.error,
+                  "Could not save the assignment. Refresh and try again.",
+                )
+              : null
+          }
           returnFocusTo={editor.trigger}
           onCancel={() => {
             if (!save.isPending) setEditor(null);
