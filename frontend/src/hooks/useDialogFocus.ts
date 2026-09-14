@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 const FOCUSABLE = [
   "button:not([disabled])",
   "[href]",
+  "summary",
   "input:not([disabled])",
   "select:not([disabled])",
   "textarea:not([disabled])",

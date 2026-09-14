@@ -1,3 +1,4 @@
+import { linkedDeviceId } from "@/utils/recordDetailsPresentation";
 import { FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -831,7 +832,7 @@ export function IotDevicesPage() {
   const [deviceDirection, setDeviceDirection] = useState<"asc" | "desc">("asc");
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
   const [searchParams] = useSearchParams();
-  const requestedDeviceId = searchParams.get("deviceId");
+  const requestedDeviceId = linkedDeviceId(searchParams.get("deviceId"));
   useEffect(() => { setSelectedId(requestedDeviceId || null); }, [requestedDeviceId]);
   const deviceDrawerRef = useDialogFocus<HTMLElement>(selectedId != null, () => setSelectedId(null));
   // Step 1 of the connect flow — the minimal register-connection form.

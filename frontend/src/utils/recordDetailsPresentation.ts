@@ -11,3 +11,9 @@ export function displayRecordValue(value: unknown): string {
   }
   return text;
 }
+
+/** Device endpoints accept positive signed 64-bit inventory IDs only. */
+export function linkedDeviceId(value: string | null): string | null {
+  if (!value || !/^[1-9]\d{0,18}$/.test(value) || BigInt(value) > 9223372036854775807n) return null;
+  return value;
+}
