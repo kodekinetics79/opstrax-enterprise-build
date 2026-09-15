@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useNavigate } from "react-router";
+import { useHasDirectPermission } from "@/hooks/usePermission";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { requireCommercialModuleRecords } from "@/services/commercialModulePayload";
@@ -110,6 +112,9 @@ function CreateQuoteModal({ onClose, onSaved, defaultCurrency }: { onClose: () =
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function QuotationsPage() {
+  const navigate = useNavigate();
+  const hasPermission = useHasDirectPermission();
+  const canPrepareBooking = hasPermission("job:create") || hasPermission("shipments:create") || hasPermission("dispatch:create") || hasPermission("dispatch:manage");
   const tenantCurrency = useTenantCurrency() ?? "";
   const [statusFilter, setStatusFilter] = useState<"All" | "Draft" | "Sent" | "Accepted" | "Expired">("All");
   const [search, setSearch] = useState("");
@@ -173,7 +178,7 @@ export function QuotationsPage() {
         </div>
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Conversion boundary</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Automated quote-to-contract or booking conversion is not available in this build.</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Select a quote to prepare a booking with its route and cargo. Review and select the customer before saving; the quote status is unchanged.</p>
         </div>
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Margin discipline</p>
@@ -250,6 +255,7 @@ export function QuotationsPage() {
               <button type="button" className="text-slate-400 hover:text-white" aria-label="Close" onClick={() => setSelected(null)}>✕</button>
             </div>
             <div className="px-5 py-4 border-b border-white/6"><StatusBadge status={String(selected.status ?? "Draft")} /></div>
+            {canPrepareBooking && <div className="px-5 py-3"><button type="button" className="btn-primary" onClick={() => navigate("/jobs", { state: { quoteHandoff: selected } })}>Prepare booking</button><p className="mt-2 text-xs text-slate-400">Copies route and cargo into a draft form. Customer, schedule and requirements need review. No automatic acceptance or contract activation.</p></div>}
             <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-white/6">
               {[
                 ["Customer", String(selected.customer ?? selected.title ?? "—")],

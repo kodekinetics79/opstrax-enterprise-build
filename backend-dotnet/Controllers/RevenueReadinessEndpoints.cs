@@ -24,6 +24,7 @@ public static class RevenueReadinessEndpoints
         app.MapGet("/api/finance/payment-summary", PaymentSummary);
         app.MapGet("/api/finance/export", FinanceExport);
         app.MapPost("/api/cost-leakage/detect", DetectRevenueLeakage);
+        app.MapGet("/api/approval-requests", ListApprovalRequests);
         app.MapPost("/api/approval-requests/{id:long}/decide", DecideApprovalRequest);
         app.MapGet("/api/revenue/summary", RevenueSummary);
         app.MapGet("/api/customers/{customerId:long}/summary", CustomerSummary);
@@ -232,7 +233,8 @@ public static class RevenueReadinessEndpoints
             id,
             Str(body, "status"),
             Str(body, "metadataJson"),
-            ct);
+            ct,
+            requesterActorId: http.Items[EndpointMappings.AuthUserIdItemKey]?.ToString());
 
         if (outcome.ApprovalRequired)
         {
@@ -258,7 +260,8 @@ public static class RevenueReadinessEndpoints
             EndpointMappings.GetCompanyId(http),
             id,
             Str(body, "idempotencyKey") ?? (http.Request.Headers.TryGetValue("Idempotency-Key", out var headerValue) ? headerValue.FirstOrDefault() : null),
-            ct);
+            ct,
+            requesterActorId: http.Items[EndpointMappings.AuthUserIdItemKey]?.ToString());
 
         if (outcome.ApprovalRequired)
         {
@@ -343,16 +346,52 @@ public static class RevenueReadinessEndpoints
         return Results.Ok(ApiResponse<object>.Ok(summary));
     }
 
-    private static async Task<IResult> DecideApprovalRequest(HttpContext http, long id, Dictionary<string, object?> body, IApprovalWorkflowService approval, CancellationToken ct)
-    {
-        var denied = EndpointMappings.RequirePermission(http, "finance.invoice.issue");
-        if (denied is not null) return denied;
+    private const string InvoiceApprovalScopeSql = @"
+        FROM approval_requests ar
+        JOIN invoice_drafts d ON d.id::TEXT=ar.resource_id AND d.company_id=ar.tenant_id
+        JOIN jobs j ON j.id=d.job_id AND j.company_id=d.company_id AND j.deleted_at IS NULL
+        WHERE ar.tenant_id=@company AND ar.action_key='finance.invoice.issue' AND ar.resource_type='invoice_draft'
+          AND (@branch::BIGINT IS NULL OR j.branch_id=@branch)";
 
-        var decision = Str(body, "decision") ?? "approved";
-        var notes = Str(body, "notes");
-        var actorId = http.Items[EndpointMappings.AuthUserIdItemKey]?.ToString() ?? "unknown";
-        var result = approval.Decide(id, actorId, decision, notes);
-        return Results.Ok(ApiResponse<object>.Ok(result, "Approval decision recorded"));
+    private static async Task<IResult> ListApprovalRequests(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (EndpointMappings.RequirePermission(http, "finance.invoice.issue") is { } denied) return denied;
+        var status = http.Request.Query["status"].ToString().Trim().ToLowerInvariant();
+        if (status.Length == 0) status = "pending";
+        if (status is not ("pending" or "approved" or "rejected")) return Results.BadRequest(ApiResponse<object>.Fail("Approval status must be pending, approved or rejected"));
+        var rows = await db.QueryAsync(@"SELECT ar.id,ar.action_key request_type,ar.resource_type entity_type,ar.resource_id entity_id,
+            ar.requested_by_actor_id requested_by_user_id,ar.requested_at,ar.status,
+            d.invoice_draft_no,d.total,d.currency,'Review invoice totals before issuing' reason" + InvoiceApprovalScopeSql + " AND ar.status=@status ORDER BY ar.requested_at,ar.id LIMIT 200", c =>
+        {
+            c.Parameters.AddWithValue("company", EndpointMappings.GetCompanyId(http));
+            c.Parameters.AddWithValue("branch", (object?)EndpointMappings.GetBranchId(http) ?? DBNull.Value);
+            c.Parameters.AddWithValue("status", status);
+        }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows));
+    }
+
+    private static async Task<IResult> DecideApprovalRequest(HttpContext http, long id, Dictionary<string, object?> body, Database db, IApprovalWorkflowService approval, CancellationToken ct)
+    {
+        if (EndpointMappings.RequirePermission(http, "finance.invoice.issue") is { } denied) return denied;
+        var decision = Str(body, "decision")?.Trim().ToLowerInvariant();
+        if (decision is not ("approved" or "rejected")) return Results.BadRequest(ApiResponse<object>.Fail("Decision must be approved or rejected"));
+        var request = await db.QuerySingleAsync("SELECT ar.id,ar.requested_by_actor_id,ar.status" + InvoiceApprovalScopeSql + " AND ar.id=@id", c =>
+        {
+            c.Parameters.AddWithValue("company", EndpointMappings.GetCompanyId(http));
+            c.Parameters.AddWithValue("branch", (object?)EndpointMappings.GetBranchId(http) ?? DBNull.Value);
+            c.Parameters.AddWithValue("id", id);
+        }, ct);
+        if (request is null) return Results.NotFound(ApiResponse<object>.Fail("Invoice approval request not found"));
+        var actorId = http.Items[EndpointMappings.AuthUserIdItemKey]?.ToString();
+        if (string.IsNullOrWhiteSpace(actorId) || string.IsNullOrWhiteSpace(request["requestedByActorId"]?.ToString()) || actorId == request["requestedByActorId"]?.ToString())
+            return Results.Conflict(ApiResponse<object>.Fail("A different authorized reviewer must decide this invoice approval"));
+        if (request["status"]?.ToString() != "pending") return Results.Conflict(ApiResponse<object>.Fail("Approval request is no longer pending"));
+        try
+        {
+            var result = approval.Decide(id, actorId, decision, Str(body, "notes"));
+            return Results.Ok(ApiResponse<object>.Ok(result, "Approval decision recorded"));
+        }
+        catch (InvalidOperationException ex) { return Results.Conflict(ApiResponse<object>.Fail(ex.Message)); }
     }
 
     private static async Task<IResult> RevenueSummary(HttpContext http, RevenueReadinessService svc, CancellationToken ct)

@@ -105,6 +105,8 @@ export function JobsPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const focusedJobId = new URLSearchParams(location.search).get("jobId");
+  const handoff = location.state as { quoteHandoff?: AnyRecord } | null;
+  const handoffOpened = useRef<string | null>(null);
   // Server-side paginated + searched — never fetches all 4000+ jobs at once.
   const jobsPaged = useQuery({
     queryKey: ["jobs", "paged", query.trim(), status, priority, jobsOffset, focusedJobId],
@@ -136,6 +138,13 @@ export function JobsPage() {
   const canExport = directActionAccess.export;
   const canOpenCustomerMaster = hasPermission("customers:view")
     && (session?.entitlementPolicyMode !== "package_allowlist" || session.entitlements?.crm === true);
+  useEffect(() => {
+    const quote = handoff?.quoteHandoff;
+    if (!canCreate || !quote || handoffOpened.current === String(quote.id)) return;
+    handoffOpened.current = String(quote.id);
+    setEditing({ jobType: "Delivery", priority: "Normal", pickupAddress: quote.origin ?? "", dropoffAddress: quote.destination ?? "", notes: `Prepared manually from quote ${String(quote.quoteId)}. ${String(quote.cargo ?? "")} Amount: ${String(quote.quoteAmount)} ${String(quote.currency)}. Review customer, dates and service requirements before saving.` });
+    navigate(location.pathname + location.search, { replace: true, state: null });
+  }, [canCreate, handoff, navigate, location.pathname, location.search]);
   const scopedRows = useMemo(() => scopeRowsForSession("jobs", jobs.data || [], session), [jobs.data, session]);
   const visibleSummary = useMemo(() => buildJobSummary(scopedRows, summary.data as AnyRecord | undefined, session), [scopedRows, session, summary.data]);
 
@@ -512,6 +521,15 @@ function AssignmentModal({ initial, saving, onClose, onSave }: { initial: AnyRec
     override: false,
     overrideReason: "",
   });
+  const [driverSearch, setDriverSearch] = useState("");
+  const [vehicleSearch, setVehicleSearch] = useState("");
+  const driversQ = useQuery({ queryKey: ["jobs", "assignment-options", initial.id, "drivers", driverSearch], queryFn: () => jobsApi.assignmentOptions(String(initial.id), driverSearch) });
+  const vehiclesQ = useQuery({ queryKey: ["jobs", "assignment-options", initial.id, "vehicles", vehicleSearch], queryFn: () => jobsApi.assignmentOptions(String(initial.id), vehicleSearch) });
+  const optionsQ = { isPending: driversQ.isPending || vehiclesQ.isPending, isError: driversQ.isError || vehiclesQ.isError, refetch: () => Promise.all([driversQ.refetch(), vehiclesQ.refetch()]) };
+  const drivers = (driversQ.data?.drivers ?? []) as AnyRecord[];
+  const vehicles = (vehiclesQ.data?.vehicles ?? []) as AnyRecord[];
+  const selectedDriver = drivers.find((driver) => String(driver.id) === String(form.driverId));
+  const hosBlock = selectedDriver?.hosBlockReason;
   const submit = (event: FormEvent) => {
     event.preventDefault();
     onSave({
@@ -530,16 +548,28 @@ function AssignmentModal({ initial, saving, onClose, onSave }: { initial: AnyRec
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
-        <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Driver ID</span>
-            <input className="field" type="number" min="1" step="1" required value={String(form.driverId)} onChange={(e) => setForm((x) => ({ ...x, driverId: e.target.value }))} />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="text-sm font-medium text-slate-600">Find driver<input className="field mt-1" type="search" placeholder="Driver name or code" value={driverSearch} onChange={(e) => { setDriverSearch(e.target.value); setForm((x) => ({ ...x, driverId: "" })); }} /></label>
+          <label className="text-sm font-medium text-slate-600">Find vehicle<input className="field mt-1" type="search" placeholder="Vehicle fleet code" value={vehicleSearch} onChange={(e) => { setVehicleSearch(e.target.value); setForm((x) => ({ ...x, vehicleId: "" })); }} /></label>
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-500">Driver</span>
+            <select className="field" required disabled={optionsQ.isPending || optionsQ.isError} value={String(form.driverId)} onChange={(e) => setForm((x) => ({ ...x, driverId: e.target.value }))}>
+              <option value="">Select driver</option>
+              {drivers.map((driver) => <option key={String(driver.id)} value={String(driver.id)}>{String(driver.driverCode)} - {String(driver.fullName)} ({String(driver.status)}{driver.hosBlockReason ? "; HOS blocked" : ""})</option>)}
+            </select>
           </label>
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Vehicle ID</span>
-            <input className="field" type="number" min="1" step="1" required value={String(form.vehicleId)} onChange={(e) => setForm((x) => ({ ...x, vehicleId: e.target.value }))} />
+          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-500">Vehicle</span>
+            <select className="field" required disabled={optionsQ.isPending || optionsQ.isError} value={String(form.vehicleId)} onChange={(e) => setForm((x) => ({ ...x, vehicleId: e.target.value }))}>
+              <option value="">Select vehicle</option>
+              {vehicles.map((vehicle) => <option key={String(vehicle.id)} value={String(vehicle.id)}>{String(vehicle.vehicleCode)} - {String(vehicle.type)} ({String(vehicle.status)})</option>)}
+            </select>
           </label>
         </div>
+        {optionsQ.isError && <p role="alert" className="mt-3 text-sm text-red-600">Could not load resources. <button type="button" onClick={() => void optionsQ.refetch()}>Retry</button></p>}
+        {selectedDriver && !hosBlock && <p className="mt-3 text-sm text-teal-700">HOS source: {String(selectedDriver.clockSource)} · {String(selectedDriver.driveTimeRemainingMinutes)} driving minutes remaining. Eligibility is rechecked by the server on assignment.</p>}
+        {Boolean(hosBlock) && <p role="alert" className="mt-3 text-sm text-amber-700">{String(hosBlock)}. Connect a supported HOS provider and receive a fresh clock before dispatch. Profile scores and fleet pairing do not clear this requirement.</p>}
+        {!optionsQ.isPending && !optionsQ.isError && (!drivers.length || !vehicles.length) && <p className="mt-3 text-sm text-slate-600">No matching resources in this job's branch. Change your search or create resources in the same branch.</p>}
         <label className="mt-4 flex items-center gap-2 text-sm font-semibold text-slate-700">
           <input type="checkbox" checked={Boolean(form.override)} onChange={(e) => setForm((x) => ({ ...x, override: e.target.checked }))} />
           Request authorized soft-rule override
@@ -553,7 +583,7 @@ function AssignmentModal({ initial, saving, onClose, onSave }: { initial: AnyRec
         <p className="mt-4 text-xs text-slate-500">The server will verify tenant and branch ownership, driver HOS, vehicle availability, and active-assignment conflicts.</p>
         <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
           <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Assigning..." : "Assign Resources"}</button>
+          <button type="submit" className="btn-primary" disabled={saving || optionsQ.isPending || optionsQ.isError || !selectedDriver || !vehicles.some((vehicle) => String(vehicle.id) === String(form.vehicleId)) || Boolean(hosBlock)}>{saving ? "Assigning..." : "Assign Resources"}</button>
         </div>
       </form>
     </div>
@@ -703,7 +733,9 @@ function Panel({ title, record, keys, format }: { title: string; record: AnyReco
           const raw = record[key];
           const value = format === "currency" && raw != null && raw !== "" && !Number.isNaN(Number(raw)) && /estimate/i.test(key)
             ? `$${Number(raw).toLocaleString()}`
-            : raw ?? "--";
+            : /^(scheduledStart|scheduledEnd|slaWindowStart|slaWindowEnd)$/.test(key) && raw
+              ? formatJobTime(raw)
+              : raw ?? "--";
           return (
             <div key={key} className="flex items-start justify-between gap-3">
               <span className="text-xs font-medium text-slate-500">{labelize(key)}</span>
@@ -864,4 +896,10 @@ function buildJobSummary(rows: AnyRecord[], summary: AnyRecord | undefined, sess
     averageEtaAccuracy: withEta.length ? `${Math.round((onTime / withEta.length) * 100)}%` : "N/A",
     revenueMargin: revenueMargin ? `$${revenueMargin.toLocaleString()}` : "N/A",
   };
+}
+
+function formatJobTime(value: unknown): string {
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZoneName: "short" }).format(date);
 }

@@ -394,6 +394,12 @@ public sealed class RevenueReadinessService(
             return new InvoiceDraftActionOutcome(false, "Job has no charges to draft");
         }
 
+        var chargeCurrencies = charges.Select(charge => charge.Currency?.Trim().ToUpperInvariant() ?? string.Empty).Distinct(StringComparer.Ordinal).ToArray();
+        if (chargeCurrencies.Length != 1 || chargeCurrencies[0].Length != 3 || chargeCurrencies[0].Any(ch => ch is < 'A' or > 'Z'))
+            return new InvoiceDraftActionOutcome(false, "Invoice drafting requires all charges to use one valid currency; correct pricing before drafting");
+        if (charges.Any(charge => charge.Amount <= 0 || charge.Quantity <= 0 || charge.UnitRate < 0))
+            return new InvoiceDraftActionOutcome(false, "Invoice drafting requires positive charge amounts and quantities with nonnegative unit rates");
+
         var requestHash = FoundationPersistenceHelpers.ComputeHash($"{companyId}:{jobId}:{idempotencyKey ?? string.Empty}:{charges.Count}:{charges.Sum(c => c.Amount):0.00}");
         if (!string.IsNullOrWhiteSpace(idempotencyKey))
         {
@@ -455,7 +461,7 @@ public sealed class RevenueReadinessService(
 
         var draftId = Guid.NewGuid();
         var invoiceDraftNo = BuildInvoiceDraftNumber(companyId, jobId);
-        var currency = charges.Select(charge => charge.Currency).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "USD";
+        var currency = chargeCurrencies[0];
         var subtotal = charges.Sum(charge => charge.Amount);
         var now = DateTimeOffset.UtcNow;
         var metadataJson = JsonSerializer.Serialize(new
@@ -597,7 +603,7 @@ public sealed class RevenueReadinessService(
         return MapInvoiceDraft(draftRow, lines.Select(MapInvoiceDraftLine).ToList());
     }
 
-    public async Task<InvoiceDraftActionOutcome> UpdateInvoiceDraftAsync(long companyId, Guid draftId, string? status = null, string? metadataJson = null, CancellationToken ct = default)
+    public async Task<InvoiceDraftActionOutcome> UpdateInvoiceDraftAsync(long companyId, Guid draftId, string? status = null, string? metadataJson = null, CancellationToken ct = default, string? requesterActorId = null)
     {
         var current = await GetInvoiceDraftAsync(companyId, draftId, ct);
         if (current is null)
@@ -609,13 +615,16 @@ public sealed class RevenueReadinessService(
         {
             if (current.ApprovalRequestId is not null)
             {
-                return new InvoiceDraftActionOutcome(false, "Invoice draft approval already requested", true, current.ApprovalRequestId);
+                var replacement = await ReplaceUnattributedPendingApprovalAsync(companyId, current, requesterActorId, ct);
+                return replacement.HasValue
+                    ? new InvoiceDraftActionOutcome(false, "Unattributed approval was safely superseded; review the new attributed request", true, replacement)
+                    : new InvoiceDraftActionOutcome(false, "Invoice draft approval already requested", true, current.ApprovalRequestId);
             }
 
             var approvalRequest = approval.CreateRequest(
                 companyId.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.TenantUser,
-                correlation.ActorId,
+                requesterActorId ?? correlation.ActorId,
                 "finance.invoice.issue",
                 "invoice_draft",
                 draftId.ToString(),
@@ -658,7 +667,7 @@ public sealed class RevenueReadinessService(
         return new InvoiceDraftActionOutcome(true, "Invoice draft updated", Draft: updated ?? current);
     }
 
-    public async Task<InvoiceIssueOutcome> IssueInvoiceFromDraftAsync(long companyId, Guid draftId, string? idempotencyKey = null, CancellationToken ct = default)
+    public async Task<InvoiceIssueOutcome> IssueInvoiceFromDraftAsync(long companyId, Guid draftId, string? idempotencyKey = null, CancellationToken ct = default, string? requesterActorId = null)
     {
         var draft = await GetInvoiceDraftAsync(companyId, draftId, ct);
         if (draft is null)
@@ -688,7 +697,7 @@ public sealed class RevenueReadinessService(
             var approvalRequest = approval.CreateRequest(
                 companyId.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.TenantUser,
-                correlation.ActorId,
+                requesterActorId ?? correlation.ActorId,
                 "finance.invoice.issue",
                 "invoice_draft",
                 draftId.ToString(),
@@ -718,6 +727,9 @@ public sealed class RevenueReadinessService(
             return new InvoiceIssueOutcome(false, "Invoice issue requires approval", true, approvalRequest.Id);
         }
 
+        var replacementApprovalId = await ReplaceUnattributedPendingApprovalAsync(companyId, draft, requesterActorId, ct);
+        if (replacementApprovalId.HasValue)
+            return new InvoiceIssueOutcome(false, "Unattributed approval was safely superseded; review the new attributed request", true, replacementApprovalId);
         var approvalStatus = await GetApprovalRequestStatusAsync(companyId, draft.ApprovalRequestId.Value, ct);
         if (!string.Equals(approvalStatus, "approved", StringComparison.OrdinalIgnoreCase))
         {
@@ -1726,6 +1738,34 @@ public sealed class RevenueReadinessService(
         await reader.DisposeAsync();
         var lines = await LoadIssuedInvoiceLinesAsync(conn, tx, companyId, invoiceId, ct);
         return MapIssuedInvoice(row, lines);
+    }
+
+    private Task<long?> ReplaceUnattributedPendingApprovalAsync(long companyId, InvoiceDraftRecord draft, string? requesterActorId, CancellationToken ct)
+    {
+        if (draft.ApprovalRequestId is null || string.IsNullOrWhiteSpace(requesterActorId)) return Task.FromResult<long?>(null);
+        return db.WithTransactionAsync<long?>(async (conn, tx) =>
+        {
+            await using var lockCmd = new NpgsqlCommand("SELECT requested_by_actor_id,status FROM approval_requests WHERE tenant_id=@company AND id=@id FOR UPDATE", conn, tx);
+            lockCmd.Parameters.AddWithValue("company", companyId); lockCmd.Parameters.AddWithValue("id", draft.ApprovalRequestId.Value);
+            await using var reader = await lockCmd.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct)) return null;
+            var requester = reader.IsDBNull(0) ? null : reader.GetString(0); var status = reader.GetString(1); await reader.DisposeAsync();
+            if (!string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrWhiteSpace(requester)) return null;
+            await using var supersede = new NpgsqlCommand("UPDATE approval_requests SET status='superseded' WHERE tenant_id=@company AND id=@id AND status='pending' AND requested_by_actor_id IS NULL", conn, tx);
+            supersede.Parameters.AddWithValue("company", companyId); supersede.Parameters.AddWithValue("id", draft.ApprovalRequestId.Value);
+            if (await supersede.ExecuteNonQueryAsync(ct) != 1) return null;
+            await using var insert = new NpgsqlCommand(@"INSERT INTO approval_requests(tenant_id,requested_by_actor_type,requested_by_actor_id,action_key,resource_type,resource_id,payload_json,risk_level,status,requested_at,correlation_id)
+                VALUES(@company,@actorType,@actor,'finance.invoice.issue','invoice_draft',@resource,@payload::jsonb,'high','pending',NOW(),@correlation) RETURNING id", conn, tx);
+            insert.Parameters.AddWithValue("company", companyId); insert.Parameters.AddWithValue("actorType", ActorTypes.TenantUser);
+            insert.Parameters.AddWithValue("actor", requesterActorId); insert.Parameters.AddWithValue("resource", draft.Id.ToString());
+            insert.Parameters.AddWithValue("payload", JsonSerializer.Serialize(new { invoiceDraftId=draft.Id,invoiceDraftNo=draft.InvoiceDraftNo,total=draft.Total,currency=draft.Currency,supersedesApprovalRequestId=draft.ApprovalRequestId }));
+            insert.Parameters.AddWithValue("correlation", (object?)correlation.CorrelationId ?? DBNull.Value);
+            var replacement = Convert.ToInt64(await insert.ExecuteScalarAsync(ct));
+            await using var updateDraft = new NpgsqlCommand("UPDATE invoice_drafts SET approval_request_id=@replacement,updated_at=NOW() WHERE company_id=@company AND id=@draft AND approval_request_id=@old", conn, tx);
+            updateDraft.Parameters.AddWithValue("replacement", replacement); updateDraft.Parameters.AddWithValue("company", companyId); updateDraft.Parameters.AddWithValue("draft", draft.Id); updateDraft.Parameters.AddWithValue("old", draft.ApprovalRequestId.Value);
+            if (await updateDraft.ExecuteNonQueryAsync(ct) != 1) throw new InvalidOperationException("Invoice draft approval changed concurrently");
+            return replacement;
+        });
     }
 
     private async Task<string?> GetApprovalRequestStatusAsync(long companyId, long approvalRequestId, CancellationToken ct)

@@ -350,6 +350,65 @@ public sealed class TripLifecyclePostgresTests
         return http;
     }
 
+    [Fact]
+    public async Task RouteAssignmentCreatesLinkedTripAndStopsBeforeReturningAndIsIdempotent()
+    {
+        var db = Db(); await new TripSchemaService(db).EnsureAsync();
+        await new DispatchSchemaService(db, NullLogger<DispatchSchemaService>.Instance).EnsureAsync();
+        var seed = await Seed(db);
+        try
+        {
+            var route = await Route(db, seed.CompanyId, seed.VehicleId, seed.DriverId, "Planned");
+            await db.ExecuteAsync("UPDATE routes SET branch_id=@b WHERE id=@r", c => { c.Parameters.AddWithValue("b", seed.BranchId); c.Parameters.AddWithValue("r", route); });
+            var job = await db.InsertAsync("INSERT INTO jobs(company_id,branch_id,route_id,job_code,job_type,status) VALUES (@c,@b,@r,@code,'Delivery','Assigned')", c => { c.Parameters.AddWithValue("c", seed.CompanyId); c.Parameters.AddWithValue("b", seed.BranchId); c.Parameters.AddWithValue("r", route); c.Parameters.AddWithValue("code", $"SYNC-{Guid.NewGuid():N}"); });
+            foreach (var (sequence, type, address) in new[] { (1, "Pickup", "Dock A"), (2, "Delivery", "Dock B") })
+                await db.ExecuteAsync("INSERT INTO route_stops(company_id,route_id,job_id,stop_sequence,stop_type,address,status) VALUES (@c,@r,@j,@s,@t,@a,'Pending')", c => { c.Parameters.AddWithValue("c", seed.CompanyId); c.Parameters.AddWithValue("r", route); c.Parameters.AddWithValue("j", job); c.Parameters.AddWithValue("s", sequence); c.Parameters.AddWithValue("t", type); c.Parameters.AddWithValue("a", address); });
+            async Task<IResult> Activate()
+            {
+                var connection = Db();
+                return await Invoke("AssignRoute", Principal(seed.CompanyId, seed.BranchId, "dispatch:assign"), route,
+                    new Dictionary<string, object?> { ["driverId"] = seed.DriverId, ["vehicleId"] = seed.VehicleId }, connection, new AuditService(connection), CancellationToken.None);
+            }
+            var results = await Task.WhenAll(Activate(), Activate());
+            Assert.All(results, result => AssertStatus(result, 200));
+            var trips = await db.QueryAsync("SELECT * FROM trips WHERE company_id=@c AND route_id=@r", c => { c.Parameters.AddWithValue("c", seed.CompanyId); c.Parameters.AddWithValue("r", route); });
+            var trip = Assert.Single(trips);
+            Assert.Equal(job, Convert.ToInt64(trip["jobId"]));
+            Assert.Equal("planned", trip["status"]);
+            Assert.Equal("runtime_route_projection", trip["dataOrigin"]);
+            Assert.Equal("derived_from_recorded_route", trip["verificationStatus"]);
+            Assert.Equal("Dock A", trip["origin"]); Assert.Equal("Dock B", trip["destination"]);
+            var tripId = Convert.ToInt64(trip["id"]);
+            Assert.Equal(2, await db.ScalarLongAsync("SELECT COUNT(*) FROM trip_stops WHERE company_id=@c AND trip_id=@t AND status='pending'", c => { c.Parameters.AddWithValue("c", seed.CompanyId); c.Parameters.AddWithValue("t", tripId); }));
+            await db.ExecuteAsync("UPDATE trips SET status='completed' WHERE id=@t", c => c.Parameters.AddWithValue("t", tripId));
+            AssertStatus(await Activate(), 200);
+            Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND route_id=@r", c => { c.Parameters.AddWithValue("c", seed.CompanyId); c.Parameters.AddWithValue("r", route); }));
+        }
+        finally { await Cleanup(db, seed.CompanyId); }
+    }
+
+    [Fact]
+    public async Task TripStartRechecksAuthoritativeHosAndMaintenanceAfterAssignment()
+    {
+        var db = Db(); await new TripSchemaService(db).EnsureAsync(); var seed = await Seed(db);
+        try
+        {
+            var http = Principal(seed.CompanyId, seed.BranchId, "dispatch:update");
+            var trip = await Trip(db, seed.CompanyId, seed.VehicleId, seed.DriverId, null);
+            var audit = new AuditService(db);
+            await db.ExecuteAsync("UPDATE hos_clocks SET source_observed_at=NOW()-INTERVAL '25 hours' WHERE company_id=@c", c => c.Parameters.AddWithValue("c", seed.CompanyId));
+            AssertStatus(await Invoke("TripStart", trip, http, db, audit, CancellationToken.None), 409);
+            Assert.Equal("planned", (await db.QuerySingleAsync("SELECT status FROM trips WHERE id=@id", c => c.Parameters.AddWithValue("id", trip)))!["status"]);
+            await db.ExecuteAsync("UPDATE hos_clocks SET source_observed_at=NOW() WHERE company_id=@c", c => c.Parameters.AddWithValue("c", seed.CompanyId));
+            await db.ExecuteAsync("UPDATE vehicles SET out_of_service=true WHERE id=@id", c => c.Parameters.AddWithValue("id", seed.VehicleId));
+            AssertStatus(await Invoke("TripStart", trip, http, db, audit, CancellationToken.None), 409);
+            await db.ExecuteAsync("UPDATE vehicles SET out_of_service=false WHERE id=@id", c => c.Parameters.AddWithValue("id", seed.VehicleId));
+            await db.ExecuteAsync("DELETE FROM hos_clocks WHERE company_id=@c", c => c.Parameters.AddWithValue("c", seed.CompanyId));
+            AssertStatus(await Invoke("TripStart", trip, http, db, audit, CancellationToken.None), 409);
+        }
+        finally { await Cleanup(db, seed.CompanyId); }
+    }
+
     private static async Task<SeedData> Seed(Database db)
     {
         var suffix = Guid.NewGuid().ToString("N")[..10];
@@ -368,6 +427,8 @@ public sealed class TripLifecyclePostgresTests
         var vehicle = await db.InsertAsync(
             "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available')",
             c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@code", $"VEH-{suffix}"); });
+        await db.ExecuteAsync("INSERT INTO hos_clocks(company_id,branch_id,driver_id,drive_time_remaining_minutes,shift_time_remaining_minutes,cycle_time_remaining_minutes,status,clock_source,source_observed_at,source_authority,source_quality) VALUES (@c,@b,@d,480,480,3600,'OK','local-test-provider',NOW(),'Authoritative','Verified')",
+            c => { c.Parameters.AddWithValue("c", company); c.Parameters.AddWithValue("b", branch); c.Parameters.AddWithValue("d", driver); });
         return new(company, branch, otherBranch, driver, vehicle);
     }
 
@@ -400,7 +461,7 @@ public sealed class TripLifecyclePostgresTests
             "DELETE FROM dispatch_assignments WHERE company_id=@c", "DELETE FROM trips WHERE company_id=@c",
             "DELETE FROM route_stops WHERE route_id IN (SELECT id FROM routes WHERE company_id=@c)",
             "DELETE FROM routes WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c",
-            "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c",
+            "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c",
             "DELETE FROM branches WHERE company_id=@c", "DELETE FROM companies WHERE id=@c"
         }) await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));
     }

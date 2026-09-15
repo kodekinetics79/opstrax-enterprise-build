@@ -18,7 +18,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function fmtDate(d: unknown): string {
   if (!d) return "—";
-  try { return new Date(String(d)).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }); }
+  try { return new Date(String(d)).toLocaleDateString("en-GB", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" }); }
   catch { return String(d); }
 }
 
@@ -26,6 +26,8 @@ function fmtDate(d: unknown): string {
 
 function CreateContractModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState({ contractNumber: "", title: "", customerId: "", rateType: "FTL", effectiveDate: "", expiryDate: "" });
+  const [customerSearch, setCustomerSearch] = useState("");
+  const customerQ = useQuery({ queryKey: ["contracts", "customer-options", customerSearch], queryFn: () => contractsApi.customerOptions(customerSearch) });
   const qc = useQueryClient();
   const mut = useMutation({
     mutationFn: () => contractsApi.create(form as unknown as AnyRecord),
@@ -40,7 +42,6 @@ function CreateContractModal({ onClose, onSaved }: { onClose: () => void; onSave
           {[
             { label: "Contract Number*", key: "contractNumber", placeholder: "CON-2001" },
             { label: "Title*", key: "title", placeholder: "FTL Service Agreement" },
-            { label: "Customer ID*", key: "customerId", placeholder: "Customer record ID", type: "number" },
             { label: "Effective Date", key: "effectiveDate", placeholder: "2026-01-01", type: "date" },
             { label: "Expiry Date", key: "expiryDate", placeholder: "2027-01-01", type: "date" },
           ].map(({ label, key, placeholder, type }) => (
@@ -55,6 +56,17 @@ function CreateContractModal({ onClose, onSaved }: { onClose: () => void; onSave
               />
             </div>
           ))}
+          <div className="col-span-2">
+            <label htmlFor="contract-customer-search" className="block text-xs font-medium text-slate-600 mb-1">Find customer</label>
+            <input id="contract-customer-search" className="field mb-2" type="search" placeholder="Search customer name or code" value={customerSearch} onChange={(e) => { setCustomerSearch(e.target.value); setForm((f) => ({ ...f, customerId: "" })); }} />
+            <label htmlFor="contract-customer" className="block text-xs font-medium text-slate-600 mb-1">Customer*</label>
+            <select id="contract-customer" className="field" required value={form.customerId} disabled={customerQ.isPending || customerQ.isError} onChange={(e) => setForm((f) => ({ ...f, customerId: e.target.value }))}>
+              <option value="">{customerQ.isPending ? "Loading customers..." : "Select an active customer"}</option>
+              {(customerQ.data ?? []).map((customer) => <option key={String(customer.id)} value={String(customer.id)}>{String(customer.customerCode)} - {String(customer.name)}</option>)}
+            </select>
+            {customerQ.isError && <p role="alert" className="text-sm text-red-600">Could not load customers. <button type="button" onClick={() => void customerQ.refetch()}>Retry</button></p>}
+            {!customerQ.isPending && !customerQ.isError && !customerQ.data?.length && <p className="text-xs text-slate-500">No active customers match. Create an active customer or change your search.</p>}
+          </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Rate Type</label>
             <select
@@ -72,7 +84,7 @@ function CreateContractModal({ onClose, onSaved }: { onClose: () => void; onSave
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
           <button
             type="button"
-            disabled={!form.contractNumber || !form.title || !form.customerId || mut.isPending}
+            disabled={!form.contractNumber || !form.title || !form.customerId || customerQ.isPending || customerQ.isError || !(customerQ.data ?? []).some((customer) => String(customer.id) === form.customerId) || mut.isPending}
             className="btn-primary text-sm"
             onClick={() => mut.mutate()}
           >

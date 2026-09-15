@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router";
 import { LoadingState, ErrorState, EmptyState, PageHeader, StatusBadge, ProgressBar } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { shipmentsApi } from "@/services/shipmentsApi";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import type { AnyRecord } from "@/types";
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -16,6 +17,24 @@ const podApi = {
   verify: shipmentsApi.verifyProofOfDelivery,
   reject: shipmentsApi.rejectProofOfDelivery,
 };
+
+function proofReviewError(error: unknown): string {
+  const response = (error as { response?: { data?: unknown } } | null)?.response;
+  const payload = response?.data;
+  if (payload && typeof payload === "object") {
+    const envelope = payload as { message?: unknown; error?: unknown; errors?: unknown };
+    const nestedMessage = envelope.error && typeof envelope.error === "object"
+      ? (envelope.error as { message?: unknown }).message
+      : undefined;
+    if (typeof nestedMessage === "string" && nestedMessage.trim()) {
+      return apiErrorMessage(
+        { response: { data: { message: nestedMessage, errors: envelope.errors } } },
+        "The proof review failed."
+      );
+    }
+  }
+  return apiErrorMessage(error, "The proof review failed. Confirm that a different authorized user is reviewing the submission, then retry.");
+}
 
 // ── Signature Canvas ─────────────────────────────────────────────────────────
 
@@ -161,7 +180,7 @@ function CaptureModal({
     }
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => setCoordinates({ latitude: coords.latitude, longitude: coords.longitude }),
-      () => setLocationError("Location was not captured. You can still submit verified media evidence."),
+      () => setLocationError("Location was not captured. You can still submit media evidence for review."),
       { enableHighAccuracy: true, timeout: 10_000, maximumAge: 30_000 },
     );
   }
@@ -175,7 +194,7 @@ function CaptureModal({
       aria-labelledby="pod-capture-title"
     >
       <form
-        className="panel w-full max-w-lg mx-4 flex flex-col gap-4"
+        className="panel max-h-[90vh] w-full max-w-lg mx-4 overflow-y-auto flex flex-col gap-4"
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
       >
@@ -363,11 +382,23 @@ function EvidenceDetailModal({
   const proof = (data?.proof ?? {}) as AnyRecord;
   const proofPackage = (data?.proofPackage ?? {}) as AnyRecord;
   const artifacts = Array.isArray(data?.artifacts) ? data.artifacts as AnyRecord[] : [];
+  const [preview, setPreview] = useState<{ url: string; filename: string; revoke: boolean; artifactType: string } | null>(null);
+  const evidenceMutation = useMutation({
+    mutationFn: (artifact: AnyRecord) => shipmentsApi.openProofEvidence(
+      artifact.fileId as string | number,
+      String(artifact.title ?? `proof-evidence-${String(artifact.fileId)}`),
+      String(artifact.artifactType ?? "document")
+    ),
+    onSuccess: (result, artifact) => setPreview({ ...result, artifactType: String(artifact.artifactType ?? "document") }),
+  });
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
+  useEffect(() => () => {
+    if (preview?.revoke) URL.revokeObjectURL(preview.url);
+  }, [preview]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="pod-detail-title">
       <div className="panel max-h-[85vh] w-full max-w-2xl overflow-y-auto space-y-4">
@@ -394,12 +425,30 @@ function EvidenceDetailModal({
                 <ul className="mt-2 divide-y divide-slate-100 rounded-lg border border-slate-200">
                   {artifacts.map((artifact) => (
                     <li key={String(artifact.id)} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                      <span className="font-medium text-slate-800">{String(artifact.title ?? artifact.artifactType)}</span>
-                      <span className="text-xs text-slate-500">{String(artifact.artifactType)} · {String(artifact.status)}</span>
+                      <span><span className="block font-medium text-slate-800">{String(artifact.title ?? artifact.artifactType)}</span><span className="text-xs text-slate-500">{String(artifact.artifactType)} · {String(artifact.status)}</span></span>
+                      <button
+                        type="button"
+                        className="btn-secondary shrink-0 text-xs"
+                        disabled={!artifact.fileId || evidenceMutation.isPending}
+                        title={!artifact.fileId ? "No protected document is linked to this evidence row" : "Open the tenant-scoped evidence file"}
+                        onClick={() => { setPreview(null); evidenceMutation.reset(); evidenceMutation.mutate(artifact); }}
+                      >
+                        {evidenceMutation.isPending && String(evidenceMutation.variables?.id) === String(artifact.id) ? "Opening…" : "Open evidence"}
+                      </button>
                     </li>
                   ))}
                 </ul>
               )}
+              <p className="mt-2 text-xs text-slate-500">Evidence opens through the authenticated document service. Compliance document read access is required.</p>
+              {evidenceMutation.isError && <p role="alert" className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{apiErrorMessage(evidenceMutation.error, "The evidence file could not be opened. Confirm document read access and try again.")}</p>}
+              {preview && <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold text-slate-900">{preview.filename}</p><a className="btn-secondary text-xs" href={preview.url} target="_blank" rel="noreferrer" download={preview.filename}>Open full file</a></div>
+                {/signature|photo/i.test(preview.artifactType) || /\.png$|\.jpe?g$/i.test(preview.filename)
+                  ? <img className="mt-3 max-h-[45vh] w-full rounded-lg border border-slate-200 bg-white object-contain" src={preview.url} alt={`Proof evidence: ${preview.filename}`} />
+                  : /\.pdf$/i.test(preview.filename)
+                    ? <iframe className="mt-3 h-[45vh] w-full rounded-lg border border-slate-200 bg-white" src={preview.url} title={`Proof evidence: ${preview.filename}`} />
+                    : <p className="mt-2 text-xs text-slate-600">Use Open full file to inspect this evidence format.</p>}
+              </div>}
             </div>
             {proofPackage.validationSummary && <p className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600">{String(proofPackage.validationSummary)}</p>}
           </>
@@ -589,7 +638,7 @@ export function ProofOfDeliveryPage() {
       )}
       {reviewMutation.isError && (
         <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {(reviewMutation.error as Error)?.message ?? "The review action failed."}
+          {proofReviewError(reviewMutation.error)}
         </div>
       )}
 
@@ -707,6 +756,9 @@ export function ProofOfDeliveryPage() {
                       {row.capturedAt ? new Date(String(row.capturedAt)).toLocaleString() : "—"}
                     </td>
                     <td className="px-4 py-3 text-right">
+                      {canReview && String(row.status ?? "") === "Submitted" && (
+                        <p className="mb-1.5 text-[11px] leading-4 text-slate-500">A different authorized user must review this submission.</p>
+                      )}
                       <div className="flex justify-end gap-1.5">
                       {Boolean(row.proofId) && (
                         <button
@@ -771,6 +823,7 @@ export function ProofOfDeliveryPage() {
                   {canReview && String(row.status ?? "") === "Submitted" && <button type="button" className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={reviewMutation.isPending} onClick={() => reviewMutation.mutate({ proofId: (row.proofId ?? row.id) as string | number, decision: "verify" })}>Verify</button>}
                   {canReview && String(row.status ?? "") === "Submitted" && <button type="button" className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={reviewMutation.isPending} onClick={() => setRejectProof(row)}>Reject</button>}
                 </div>
+                {canReview && String(row.status ?? "") === "Submitted" && <p className="mt-2 text-xs leading-5 text-slate-500">A different authorized user must verify or reject proof submitted by its creator.</p>}
               </article>
             ))}
           </div>

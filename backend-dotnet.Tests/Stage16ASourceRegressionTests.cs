@@ -84,7 +84,8 @@ public class Stage16ASourceRegressionTests
 
         Assert.Contains("conversion is not automated", leads);
         Assert.Contains("conversion is not automated", opportunities);
-        Assert.Contains("Automated quote-to-contract or booking conversion is not available", quotations);
+        Assert.Contains("quoteHandoff: selected", quotations);
+        Assert.Contains("No automatic acceptance or contract activation", quotations);
         Assert.DoesNotContain("r.currency ?? \"SAR\"", opportunities);
         Assert.Contains("rateCardName: form.title", rateCards);
         Assert.Contains("billingBasis: form.pricingMethod", rateCards);

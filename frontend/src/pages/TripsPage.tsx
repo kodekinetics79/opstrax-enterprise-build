@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowRight, CheckCircle2, Clock, Clock3, Download, RefreshCw, Route, ShieldAlert, Truck } from "lucide-react";
 import { useNavigate } from "react-router";
-import { DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { ClayStat } from "@/components/console";
 import { usePermissions } from "@/hooks/usePermission";
 import { tripApi } from "@/services/tripApi";
@@ -140,6 +140,7 @@ export function TripsPage() {
           ...(raw && typeof raw === "object" ? raw as AnyRecord : { value: raw }),
         }))
       : [];
+  const hasRecordedComplianceEvidence = breadcrumbs.length > 0 || breakdownItems.length > 0;
   const tableRows: AnyRecord[] = trips.map((row) => ({
     ...row,
     trip_ref: String(value(row, "trip_ref", "tripRef", "trip_number", "tripNumber") ?? row.id),
@@ -175,7 +176,7 @@ export function TripsPage() {
       <PageHeader
         eyebrow="Transport Operations"
         title="Trips"
-        description="Trip register with live compliance, breadcrumbs, stops and dispatch actions."
+        description="Trip register with recorded rule scores, breadcrumbs, stops and dispatch actions."
         actions={<>
           <button type="button" className="btn-ghost" onClick={() => tripsQ.refetch()}>
             <RefreshCw className="h-4 w-4" /> Refresh
@@ -230,6 +231,7 @@ export function TripsPage() {
               <DataTable
                 rows={tableRows}
                 columns={["trip_ref", "status", "driver_name", "vehicle_code", "route_name", "compliance_score"]}
+                columnLabels={{ compliance_score: "Recorded rule score" }}
                 onSelect={(row) => setSelectedTrip(row)}
               />
             </div>
@@ -251,7 +253,7 @@ export function TripsPage() {
                 </div>
                 <div className="flex flex-col items-end gap-2">
                   <StatusBadge status={selectedStatus} />
-                  <RiskBadge risk={String(complianceScore == null ? "Unknown" : complianceScore >= 85 ? "Low" : complianceScore >= 70 ? "Medium" : "High")} />
+                  <span className="badge">Recorded rule score {complianceScore == null ? "unavailable" : `${Math.round(complianceScore)}%`}</span>
                 </div>
               </div>
 
@@ -270,7 +272,7 @@ export function TripsPage() {
                     <p className="text-sm font-bold text-slate-900">Actions</p>
                     <p className="text-xs text-slate-500">Actions require dispatch permission and update the live record.</p>
                   </div>
-                  <p className="text-xs font-semibold text-slate-500">Compliance {complianceScore == null ? "—" : `${Math.round(complianceScore)}%`}</p>
+                  <p className="text-xs font-semibold text-slate-500">Recorded rule score {complianceScore == null ? "—" : `${Math.round(complianceScore)}%`}</p>
                 </div>
                 {(canUpdate || canCancel) ? (
                   <div className="mt-3 space-y-3">
@@ -334,6 +336,16 @@ export function TripsPage() {
                 )}
               </div>
 
+              <div className={`rounded-2xl border p-4 ${hasRecordedComplianceEvidence ? "border-sky-200 bg-sky-50/70" : "border-amber-200 bg-amber-50/80"}`}>
+                <p className="text-sm font-bold text-slate-900">Recorded score context</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600">
+                  This is a persisted system rule score. It does not prove GPS coverage, route adherence, legal compliance or physical trip completion.
+                  {hasRecordedComplianceEvidence
+                    ? ` Current supporting records: ${breadcrumbs.length} breadcrumb point${breadcrumbs.length === 1 ? "" : "s"} and ${breakdownItems.length} rule factor${breakdownItems.length === 1 ? "" : "s"}.`
+                    : " No breadcrumbs or rule-factor breakdown are recorded for this trip yet, so the score must not be treated as verified route compliance."}
+                </p>
+              </div>
+
               <div className="grid gap-3 sm:grid-cols-3">
                 <button type="button" disabled={linkedJobId == null} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55" onClick={() => linkedJobId != null && navigate(`/jobs?jobId=${encodeURIComponent(String(linkedJobId))}`)}>
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Job context</p>
@@ -373,7 +385,7 @@ export function TripsPage() {
                 </section>
 
                 <section className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="text-sm font-bold text-slate-900">Compliance breakdown</h3>
+                  <h3 className="text-sm font-bold text-slate-900">Recorded rule breakdown</h3>
                   <div className="mt-3 space-y-2">
                     {breakdownItems.length > 0 ? (
                       breakdownItems.map((item: AnyRecord, index: number) => (
@@ -386,7 +398,7 @@ export function TripsPage() {
                         </div>
                       ))
                     ) : (
-                      <EmptyState title="No compliance breakdown" subtitle="The backend did not return a breakdown for this trip." />
+                      <EmptyState title="No recorded rule breakdown" subtitle="No factor-level support is recorded for this rule score." />
                     )}
                   </div>
                 </section>
