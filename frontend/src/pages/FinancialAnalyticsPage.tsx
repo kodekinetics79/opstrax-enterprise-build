@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { jobsApi } from "@/services/jobsApi";
@@ -713,6 +713,13 @@ const ROUTE_TAB: Record<string, Tab> = {
   "/ar-aging": "ar-aging",
 };
 
+const TAB_ROUTE: Record<Tab, string> = {
+  invoices: "/invoices",
+  "ar-aging": "/ar-aging",
+  payments: "/payments",
+  profitability: "/profitability",
+};
+
 type Tab = "invoices" | "ar-aging" | "payments" | "profitability";
 
 const TABS: { key: Tab; label: string }[] = [
@@ -740,8 +747,8 @@ const DESCRIPTIONS: Record<Tab, string> = {
 
 export function FinancialAnalyticsPage() {
   const { pathname } = useLocation();
-  const defaultTab = ROUTE_TAB[pathname] ?? "invoices";
-  const [tab, setTab] = useState<Tab>(defaultTab);
+  const navigate = useNavigate();
+  const tab = ROUTE_TAB[pathname] ?? "invoices";
 
   const exportFns: Record<Tab, () => void> = {
     invoices: async () => exportCsv("invoices", await loadInvoiceRows()),
@@ -769,7 +776,7 @@ export function FinancialAnalyticsPage() {
 
       <nav className="panel flex gap-1 overflow-x-auto p-1.5" aria-label="Financial analytics sections">
         {TABS.map((t) => (
-          <button key={t.key} type="button" onClick={() => setTab(t.key)}
+          <button key={t.key} type="button" onClick={() => navigate(TAB_ROUTE[t.key])}
             aria-current={tab === t.key ? "page" : undefined}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               tab === t.key ? "bg-teal-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"

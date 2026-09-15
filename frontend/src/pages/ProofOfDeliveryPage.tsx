@@ -6,6 +6,7 @@ import { LoadingState, ErrorState, EmptyState, PageHeader, StatusBadge, Progress
 import { useHasPermission } from "@/hooks/usePermission";
 import { shipmentsApi } from "@/services/shipmentsApi";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
+import { isPodCaptureActionVisible, isPodCaptureReady, podCaptureBlockedReason } from "@/utils/proofOfDeliveryLifecycle";
 import type { AnyRecord } from "@/types";
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -579,7 +580,7 @@ export function ProofOfDeliveryPage() {
     if (!focusedJobId || !rows.length || !canCapture) return;
     if (autoOpenedFor.current === focusedJobId) return;
     const match = rows.find((row) => String(row.jobId ?? row.id) === focusedJobId);
-    if (match && ["Pending", "Awaiting Capture"].includes(String(match.status ?? ""))) {
+    if (match && isPodCaptureReady(match)) {
       autoOpenedFor.current = focusedJobId;
       setCaptureJob(match);
     }
@@ -769,13 +770,15 @@ export function ProofOfDeliveryPage() {
                           View
                         </button>
                       )}
-                      {canCapture && ["Pending", "Awaiting Capture", "Rejected"].includes(String(row.status ?? "")) && (
+                      {canCapture && isPodCaptureActionVisible(row) && (
                         <button
                           type="button"
-                          className="text-xs px-3 py-1 rounded-md bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors"
-                          onClick={() => setCaptureJob(row)}
+                          className="text-xs px-3 py-1 rounded-md bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-500"
+                          disabled={!isPodCaptureReady(row)}
+                          title={podCaptureBlockedReason(row)}
+                          onClick={() => { if (isPodCaptureReady(row)) setCaptureJob(row); }}
                         >
-                          Capture POD
+                          {isPodCaptureReady(row) ? "Capture POD" : "Awaiting stop"}
                         </button>
                       )}
                       {canReview && String(row.status ?? "") === "Submitted" && (
@@ -819,7 +822,7 @@ export function ProofOfDeliveryPage() {
                 </dl>
                 <div className="mt-4 flex flex-wrap gap-2">
                   {Boolean(row.proofId) && <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedProofId((row.proofId ?? row.id) as string | number)}>View evidence</button>}
-                  {canCapture && ["Pending", "Awaiting Capture", "Rejected"].includes(String(row.status ?? "")) && <button type="button" className="btn-primary text-xs" onClick={() => setCaptureJob(row)}>Capture POD</button>}
+                  {canCapture && isPodCaptureActionVisible(row) && <button type="button" className="btn-primary text-xs disabled:cursor-not-allowed disabled:opacity-60" disabled={!isPodCaptureReady(row)} title={podCaptureBlockedReason(row)} onClick={() => { if (isPodCaptureReady(row)) setCaptureJob(row); }}>{isPodCaptureReady(row) ? "Capture POD" : "Awaiting stop"}</button>}
                   {canReview && String(row.status ?? "") === "Submitted" && <button type="button" className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={reviewMutation.isPending} onClick={() => reviewMutation.mutate({ proofId: (row.proofId ?? row.id) as string | number, decision: "verify" })}>Verify</button>}
                   {canReview && String(row.status ?? "") === "Submitted" && <button type="button" className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={reviewMutation.isPending} onClick={() => setRejectProof(row)}>Reject</button>}
                 </div>
@@ -864,13 +867,15 @@ export function ProofOfDeliveryPage() {
                       {String(r.customerName ?? "—")}
                     </div>
                   </div>
-                  {canCapture ? (
+                  {canCapture && isPodCaptureActionVisible(r) ? (
                     <button
                       type="button"
-                      className="shrink-0 rounded-md border border-teal-200 bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-teal-700 transition-colors hover:bg-teal-100"
-                      onClick={() => setCaptureJob(r)}
+                      className="shrink-0 rounded-md border border-teal-200 bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-teal-700 transition-colors hover:bg-teal-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-500"
+                      disabled={!isPodCaptureReady(r)}
+                      title={podCaptureBlockedReason(r)}
+                      onClick={() => { if (isPodCaptureReady(r)) setCaptureJob(r); }}
                     >
-                      Capture
+                      {isPodCaptureReady(r) ? "Capture" : "Awaiting stop"}
                     </button>
                   ) : (
                     <StatusBadge status={r.status} />
@@ -934,7 +939,7 @@ export function ProofOfDeliveryPage() {
       </div>
       </div>
 
-      {captureJob && (
+      {captureJob && isPodCaptureReady(captureJob) && (
         <CaptureModal
           job={captureJob}
           onClose={() => setCaptureJob(null)}
