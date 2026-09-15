@@ -43,7 +43,8 @@ for (const field of ["contactPerson", "estimatedMonthlyLoads", "probability", "e
 }
 assert.match(leads, /conversion is not automated/, "Lead UI must disclose its workflow boundary");
 assert.match(opportunities, /conversion is not automated/, "Opportunity UI must disclose its workflow boundary");
-assert.match(quotations, /Automated quote-to-contract or booking conversion is not available/, "Quotation UI must disclose its workflow boundary");
+assert.match(quotations, /navigate\("\/jobs",\s*\{\s*state:\s*\{\s*quoteHandoff:\s*selected/, "Quotation UI must hand the selected quote to the booking form");
+assert.match(quotations, /No automatic acceptance or contract activation/, "Quotation UI must disclose the remaining workflow boundary");
 assert.doesNotMatch(opportunities, /currency:\s*r\.currency\s*\?\?\s*"SAR"/, "Opportunity currency must not be invented");
 assert.doesNotMatch(quotations, /currency:\s*r\.currency\s*\?\?\s*"SAR"/, "Quotation currency must not be invented");
 assert.match(campaigns, /Campaign-to-lead creation and revenue attribution are not automated/, "Campaign UI must disclose its attribution boundary");
