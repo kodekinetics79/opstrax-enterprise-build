@@ -905,6 +905,103 @@ public class RevenueReadinessPostgresTests
         }
     }
 
+    [Fact]
+    public async Task IssueEndpointAttributesMakerAndSafelyReplacesLegacyUnattributedPendingRequest()
+    {
+        var db=CreateDatabase();await EnsureSchemasAsync(db);var company=await SeedCompanyAsync(db);
+        try
+        {
+            var customer=await SeedCustomerAsync(db,company,"attributed-maker");
+            var contract=await SeedContractAsync(db,company,customer,"attributed-maker-contract");
+            var spine=new BusinessSpineService(db);
+            var rate=await spine.CreateRateCardAsync(company,"ATTR-RC","Attributed maker",customer,contract,"Per Trip",null,null,null,null,"USD",100,100,null,null,DateOnly.FromDateTime(DateTime.UtcNow),null,"Active");
+            var job=await SeedJobAsync(db,company,customer,contract,rate.Id,"Completed","ATTR-MAKER-JOB");
+            await spine.CreateJobChargeAsync(company,job,null,rate.Id,"BASE","Base",null,null,1,100,100,"USD","approved");
+            var svc=CreateRevenueService(db);var draft=(await svc.CreateInvoiceDraftFromJobAsync(company,job,"attributed-maker-draft")).Draft!;
+            var http=new DefaultHttpContext();http.Items[EndpointMappings.AuthCompanyIdItemKey]=company;http.Items[EndpointMappings.AuthUserIdItemKey]=14L;http.Items[EndpointMappings.AuthRoleItemKey]="Company Admin";http.Items[EndpointMappings.AuthPermissionsItemKey]=new[]{"finance.invoice.issue"};
+            async Task<IResult> Issue() => await (Task<IResult>)typeof(RevenueReadinessEndpoints).GetMethod("IssueInvoiceDraft",BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,new object[]{http,draft.Id,new Dictionary<string,object?>(),svc,CancellationToken.None})!;
+            Assert.Equal(202,Assert.IsAssignableFrom<IStatusCodeHttpResult>(await Issue()).StatusCode);
+            var first=(await db.QuerySingleAsync("SELECT approval_request_id FROM invoice_drafts WHERE company_id=@c AND id=@id",c=>{c.Parameters.AddWithValue("c",company);c.Parameters.AddWithValue("id",draft.Id);}))!;
+            var oldId=Convert.ToInt64(first["approvalRequestId"]);
+            Assert.Equal("14",(await db.QuerySingleAsync("SELECT requested_by_actor_id FROM approval_requests WHERE id=@id",c=>c.Parameters.AddWithValue("id",oldId)))!["requestedByActorId"]);
+            // Emulate a legacy pending request created before actor propagation was fixed.
+            await db.ExecuteAsync("UPDATE approval_requests SET requested_by_actor_id=NULL WHERE id=@id",c=>c.Parameters.AddWithValue("id",oldId));
+            Assert.Equal(202,Assert.IsAssignableFrom<IStatusCodeHttpResult>(await Issue()).StatusCode);
+            var updated=(await db.QuerySingleAsync("SELECT approval_request_id FROM invoice_drafts WHERE company_id=@c AND id=@id",c=>{c.Parameters.AddWithValue("c",company);c.Parameters.AddWithValue("id",draft.Id);}))!;
+            var replacementId=Convert.ToInt64(updated["approvalRequestId"]);Assert.NotEqual(oldId,replacementId);
+            var requests=await db.QueryAsync("SELECT id,status,requested_by_actor_id FROM approval_requests WHERE tenant_id=@c AND resource_id=@resource ORDER BY id",c=>{c.Parameters.AddWithValue("c",company);c.Parameters.AddWithValue("resource",draft.Id.ToString());});
+            Assert.Equal("superseded",requests.Single(r=>Convert.ToInt64(r["id"])==oldId)["status"]);
+            var replacement=requests.Single(r=>Convert.ToInt64(r["id"])==replacementId);Assert.Equal("pending",replacement["status"]);Assert.Equal("14",replacement["requestedByActorId"]);
+        }
+        finally {await CleanupTenantAsync(db,company);}
+    }
+
+    [Theory]
+    [InlineData(0, 1, 1, "USD")]
+    [InlineData(1, -1, 1, "USD")]
+    [InlineData(1, 1, 0, "USD")]
+    [InlineData(1, 1, -1, "USD")]
+    [InlineData(1, 1, 1, "US")]
+    [InlineData(1, 1, 1, "U$D")]
+    [InlineData(1, 1, 1, "")]
+    [InlineData(1, 1, 0.001, "USD")]
+    [InlineData(1, 1, 10000000000, "USD")]
+    public void JobChargesRejectInvalidFinancialValues(decimal quantity, decimal unitRate, decimal amount, string currency)
+        => Assert.Throws<JobChargeValidationException>(() => BusinessSpineService.ValidateChargeValues(quantity, unitRate, amount, currency));
+
+    [Fact]
+    public async Task JobChargesRejectForeignResourcesAndWrongBranchesOnCreateAndUpdate()
+    {
+        var db = CreateDatabase(); await EnsureSchemasAsync(db);
+        var a = await SeedCompanyAsync(db); var b = await SeedCompanyAsync(db);
+        try
+        {
+            var ca = await SeedCustomerAsync(db,a,"charge-customer-a"); var cb = await SeedCustomerAsync(db,b,"charge-customer-b");
+            var ja = await SeedJobAsync(db,a,ca,null,null,"Completed","CHARGE-A"); var jb = await SeedJobAsync(db,b,cb,null,null,"Completed","CHARGE-B");
+            await db.ExecuteAsync("UPDATE jobs SET branch_id=9821 WHERE id IN (@a,@b)",c=>{c.Parameters.AddWithValue("a",ja);c.Parameters.AddWithValue("b",jb);});
+            var spine = new BusinessSpineService(db);
+            var ra = await spine.CreateRateCardAsync(a,"CHARGE-RCA","A",ca,null,"Per Trip",null,null,null,null,"USD",1,1,null,null,DateOnly.FromDateTime(DateTime.UtcNow),null,"Active");
+            var rb = await spine.CreateRateCardAsync(b,"CHARGE-RCB","B",cb,null,"Per Trip",null,null,null,null,"USD",1,1,null,null,DateOnly.FromDateTime(DateTime.UtcNow),null,"Active");
+            var tb = await db.InsertAsync("INSERT INTO trips(company_id,job_id,trip_ref,status) VALUES (@c,@j,'CHARGE-TB','planned')",c=>{c.Parameters.AddWithValue("c",b);c.Parameters.AddWithValue("j",jb);});
+            foreach (var (own,ownJob,ownRate,foreignJob,foreignRate) in new[]{(a,ja,ra.Id,jb,rb.Id),(b,jb,rb.Id,ja,ra.Id)})
+            {
+                var charge = await spine.CreateJobChargeAsync(own,ownJob,null,ownRate,"VALID","Valid","base",null,1,25,25," usd ","approved",branchId:9821);
+                Assert.Equal("USD",charge.Currency);
+                Assert.Contains(await spine.ListJobChargesAsync(own, ownJob, branchId:9821), item => item.Id == charge.Id);
+                Assert.Empty(await spine.ListJobChargesAsync(own, ownJob, branchId:9822));
+                await Assert.ThrowsAsync<JobChargeResourceNotFoundException>(()=>spine.UpdateJobChargeAsync(own,charge.Id,amount:26,branchId:9822));
+                await Assert.ThrowsAsync<JobChargeResourceNotFoundException>(()=>spine.CreateJobChargeAsync(own,foreignJob,null,null,"FOREIGN","Foreign",null,null,1,25,25,"USD","approved",branchId:9821));
+                await Assert.ThrowsAsync<JobChargeResourceNotFoundException>(()=>spine.CreateJobChargeAsync(own,ownJob,null,foreignRate,"RATE","Foreign",null,null,1,25,25,"USD","approved",branchId:9821));
+                await Assert.ThrowsAsync<JobChargeResourceNotFoundException>(()=>spine.CreateJobChargeAsync(own,ownJob,null,ownRate,"BRANCH","Wrong",null,null,1,25,25,"USD","approved",branchId:9822));
+                await Assert.ThrowsAsync<JobChargeResourceNotFoundException>(()=>spine.UpdateJobChargeAsync(own,charge.Id,jobId:foreignJob,branchId:9821));
+                await Assert.ThrowsAsync<JobChargeResourceNotFoundException>(()=>spine.UpdateJobChargeAsync(own,charge.Id,rateCardId:foreignRate,branchId:9821));
+                await Assert.ThrowsAsync<JobChargeValidationException>(()=>spine.UpdateJobChargeAsync(own,charge.Id,amount:-1,branchId:9821));
+                Assert.Equal(25,(await spine.GetJobChargeByIdAsync(own,charge.Id))!.Amount);
+            }
+            await Assert.ThrowsAsync<JobChargeResourceNotFoundException>(()=>spine.CreateJobChargeAsync(a,ja,tb,ra.Id,"TRIP","Wrong",null,null,1,25,25,"USD","approved",branchId:9821));
+        }
+        finally { await db.ExecuteAsync("DELETE FROM trips WHERE company_id IN (@a,@b)",c=>{c.Parameters.AddWithValue("a",a);c.Parameters.AddWithValue("b",b);}); await CleanupTenantAsync(db,a);await CleanupTenantAsync(db,b); }
+    }
+
+    [Fact]
+    public async Task InvoiceDraftRejectsMixedCurrencyBeforeSavingOrReservingIdempotency()
+    {
+        var db=CreateDatabase();await EnsureSchemasAsync(db);var company=await SeedCompanyAsync(db);
+        try
+        {
+            var customer=await SeedCustomerAsync(db,company,"mixed-currency");
+            var job=await SeedJobAsync(db,company,customer,null,null,"Completed","MIXED-CURRENCY");
+            var spine=new BusinessSpineService(db);
+            await spine.CreateJobChargeAsync(company,job,null,null,"USD","Dollar",null,null,1,25,25,"USD","approved");
+            await spine.CreateJobChargeAsync(company,job,null,null,"EUR","Euro",null,null,1,20,20,"EUR","approved");
+            var outcome=await CreateRevenueService(db).CreateInvoiceDraftFromJobAsync(company,job,"mixed-currency");
+            Assert.False(outcome.Success);Assert.Contains("one valid currency",outcome.Message);
+            Assert.Equal(0,await db.ScalarLongAsync("SELECT COUNT(*) FROM invoice_drafts WHERE company_id=@c",c=>c.Parameters.AddWithValue("c",company)));
+            Assert.Equal(0,await db.ScalarLongAsync("SELECT COUNT(*) FROM idempotency_keys WHERE tenant_id=@c",c=>c.Parameters.AddWithValue("c",company)));
+        }
+        finally {await CleanupTenantAsync(db,company);}
+    }
+
     private static RevenueReadinessService CreateRevenueService(Database db)
     {
         var correlation = new InMemoryCorrelationContext("corr-stage7", "cause-stage7", "req-stage7", null, ActorTypes.TenantUser, "42");

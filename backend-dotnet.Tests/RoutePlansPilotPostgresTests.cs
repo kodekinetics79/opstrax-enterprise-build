@@ -53,9 +53,7 @@ public sealed class RoutePlansPilotPostgresTests
             var vehicle = await db.InsertAsync(
                 "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available','available',false,95,5)",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchA); c.Parameters.AddWithValue("@code", $"RVEH-{companyId}"); });
-            await db.ExecuteAsync(
-                "INSERT INTO hos_records(company_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,hos_status) VALUES (@c,@d,CURRENT_DATE,8,8,'On Duty')",
-                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@d", driver); });
+            await AuthoritativeHos(db, companyId, branchA, driver, 480);
             var customer = await db.InsertAsync(
                 "INSERT INTO customers(company_id,customer_code,name,status) VALUES (@c,@code,'Route Customer','Active')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"RCUS-{companyId}"); });
@@ -128,9 +126,7 @@ public sealed class RoutePlansPilotPostgresTests
             var spareVehicle = await db.InsertAsync(
                 "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available','available',false,95,5)",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchA); c.Parameters.AddWithValue("@code", $"RVEH-X-{companyId}"); });
-            await db.ExecuteAsync(
-                "INSERT INTO hos_records(company_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,hos_status) VALUES (@c,@d,CURRENT_DATE,0.5,8,'On Duty')",
-                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@d", exhaustedDriver); });
+            await AuthoritativeHos(db, companyId, branchA, exhaustedDriver, 30);
             var hosDenied = await Invoke("AssignRoute", httpA, routeB,
                 new Dictionary<string, object?> { ["driverId"] = exhaustedDriver, ["vehicleId"] = spareVehicle }, db, audit, CancellationToken.None);
             Assert.Equal(StatusCodes.Status400BadRequest, Status(hosDenied));
@@ -142,6 +138,16 @@ public sealed class RoutePlansPilotPostgresTests
                 new Dictionary<string, object?> { ["driverId"] = driver, ["vehicleId"] = spareVehicle }, db, audit, CancellationToken.None);
             Assert.Equal(StatusCodes.Status400BadRequest, Status(maintenanceDenied));
             Assert.Contains("out-of-service", Json(maintenanceDenied), StringComparison.OrdinalIgnoreCase);
+
+            var tenantAdmin = Principal(companyId, branchA);
+            tenantAdmin.Items.Remove(EndpointMappings.AuthBranchIdItemKey);
+            var nullRoute = await db.InsertAsync("INSERT INTO routes(company_id,route_code,name,status) VALUES (@c,@code,'Unbranched assignment guard','Planned')",
+                c => { c.Parameters.AddWithValue("c", companyId); c.Parameters.AddWithValue("code", $"NULL-{companyId}"); });
+            var nullBranchDenied = await Invoke("AssignRoute", tenantAdmin, nullRoute,
+                new Dictionary<string, object?> { ["driverId"] = driver, ["vehicleId"] = vehicle }, db, audit, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status400BadRequest, Status(nullBranchDenied));
+            Assert.Contains("Driver and vehicle must belong to the route", Json(nullBranchDenied));
+            Assert.Null((await db.QuerySingleAsync("SELECT branch_id FROM routes WHERE id=@id", c => c.Parameters.AddWithValue("id", nullRoute)))!["branchId"]);
 
             async Task<IResult> AssignFresh(long routeId)
             {
@@ -265,6 +271,10 @@ public sealed class RoutePlansPilotPostgresTests
         Assert.Equal("\"Pilot, Route\"", EndpointMappings.CsvCell("Pilot, Route"));
     }
 
+    private static Task AuthoritativeHos(Database db, long company, long branch, long driver, int minutes) => db.ExecuteAsync(
+        "INSERT INTO hos_clocks(company_id,branch_id,driver_id,drive_time_remaining_minutes,shift_time_remaining_minutes,cycle_time_remaining_minutes,status,clock_source,source_observed_at,source_authority,source_quality) VALUES (@c,@b,@d,@minutes,480,3600,'OK','local-test-provider',NOW(),'Authoritative','Verified')",
+        c => { c.Parameters.AddWithValue("c", company); c.Parameters.AddWithValue("b", branch); c.Parameters.AddWithValue("d", driver); c.Parameters.AddWithValue("minutes", minutes); });
+
     private static async Task<long> CreateRoute(Database db, AuditService audit, long company, long branch, string code)
     {
         var result = await Invoke("CreateRoute", Principal(company, branch), new Dictionary<string, object?>
@@ -308,6 +318,7 @@ public sealed class RoutePlansPilotPostgresTests
         await new MaintenanceSchemaService(db).EnsureAsync();
         await new DispatchSchemaService(db, NullLogger<DispatchSchemaService>.Instance).EnsureAsync();
         await new FoundationSchemaService(db).EnsureAsync();
+        await new TripSchemaService(db).EnsureAsync();
     }
     private static Task SeedCompany(Database db, long id) => db.ExecuteAsync(
         "INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@id,@code,'Route Pilot Test','Transportation')",
@@ -318,8 +329,8 @@ public sealed class RoutePlansPilotPostgresTests
         {
             "DELETE FROM route_recommendations WHERE company_id=@c", "DELETE FROM route_paths WHERE company_id=@c",
             "DELETE FROM entity_timeline_events WHERE company_id=@c", "DELETE FROM audit_logs WHERE company_id=@c",
-            "DELETE FROM route_stops WHERE company_id=@c", "UPDATE jobs SET route_id=NULL WHERE company_id=@c",
-            "DELETE FROM routes WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c",
+            "DELETE FROM trip_stops WHERE company_id=@c", "DELETE FROM trips WHERE company_id=@c", "DELETE FROM route_stops WHERE company_id=@c", "UPDATE jobs SET route_id=NULL WHERE company_id=@c",
+            "DELETE FROM routes WHERE company_id=@c", "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c",
             "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c", "DELETE FROM customers WHERE company_id=@c",
             "DELETE FROM companies WHERE id=@c",
         }) await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));

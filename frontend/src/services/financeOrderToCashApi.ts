@@ -15,6 +15,24 @@ export type IssueInvoiceResult = AnyRecord & {
 };
 
 export const financeOrderToCashApi = {
+  jobCharges: (jobId: string) =>
+    unwrap<AnyRecord[]>(apiClient.get("/api/job-charges", { params: { jobId } })),
+
+  createJobCharge: (input: { jobId: number; chargeCode: string; chargeName: string; description: string; quantity: number; unitRate: number; amount: number; currency: string }) =>
+    unwrap<AnyRecord>(apiClient.post("/api/job-charges", { ...input, chargeType: "base", status: "pending" })),
+
+  markReadyToBill: (jobId: string) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/jobs/${encodeURIComponent(jobId)}/mark-ready-to-bill`, {})),
+
+  createInvoiceDraft: (jobId: string, idempotencyKey: string) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/jobs/${encodeURIComponent(jobId)}/invoice-draft`, {}, { headers: { "Idempotency-Key": idempotencyKey } })),
+
+  pendingApprovals: () =>
+    unwrap<AnyRecord[]>(apiClient.get("/api/approval-requests", { params: { status: "pending" } })),
+
+  decideApproval: (requestId: number, decision: "approved" | "rejected", notes: string) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/approval-requests/${requestId}/decide`, { decision, notes })),
+
   invoiceDrafts: () =>
     unwrap<{ items: AnyRecord[] }>(apiClient.get("/api/invoice-drafts"))
       .then((result) => result.items ?? []),

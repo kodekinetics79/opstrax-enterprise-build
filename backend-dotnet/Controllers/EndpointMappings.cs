@@ -422,6 +422,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/jobs/summary", JobsSummary);
         app.MapGet("/api/jobs", Jobs);
         app.MapGet("/api/jobs/customer-options", JobCustomerOptions);
+        app.MapGet("/api/jobs/{id:long}/assignment-options", JobAssignmentOptions);
         app.MapGet("/api/jobs/{id:long}", JobDetail);
         app.MapPost("/api/jobs", CreateJob);
         app.MapPut("/api/jobs/{id:long}", UpdateJob);
@@ -509,11 +510,8 @@ public static partial class EndpointMappings
             return denied is not null ? Task.FromResult(denied) : DeleteRouteStop(http, id, stopId, db, audit, ct);
         });
         app.MapPost("/api/routes/{id:long}/optimize-preview", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => RouteOptimizePreview(http, id, db, audit, ct));
-        app.MapPost("/api/routes/{id:long}/assign", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
-        {
-            var denied = RequirePermission(http, "dispatch:manage");
-            return denied is not null ? Task.FromResult(denied) : AssignRoute(http, id, body, db, audit, ct);
-        });
+        app.MapGet("/api/routes/{id:long}/assignment-options", RouteAssignmentOptions);
+        app.MapPost("/api/routes/{id:long}/assign", AssignRoute);
         app.MapGet("/api/routes/{id:long}/timeline", RouteTimeline);
         app.MapGet("/api/routes/{id:long}/recommendations", (HttpContext http, long id, Database db, CancellationToken ct) => RouteRecommendations(http, id, db, ct));
 
@@ -1657,6 +1655,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/expenses/import-preview", ExpenseImportPreview);
 
         // ===== BATCH 5: CONTRACTS / RATES ======================================
+        app.MapGet("/api/contracts/customer-options", ContractCustomerOptions);
         app.MapGet("/api/contracts/summary", ContractsSummary);
         app.MapGet("/api/contracts", Contracts);
         app.MapGet("/api/contracts/{id:long}", ContractDetail);
@@ -5669,9 +5668,12 @@ public static partial class EndpointMappings
         var focusedJobClause = filters.JobId is null ? "" : " AND j.id=@jobId";
         return PagedRows(http, db, @"SELECT j.*, v.vehicle_code, d.full_name driver_name, c.name customer_name
                              , COALESCE(j.job_number, j.job_code) job_number
-                             , CONCAT(TO_CHAR(j.scheduled_start, 'Mon DD HH24:MI'), ' - ', TO_CHAR(j.scheduled_end, 'HH24:MI')) time_window
+                             , CASE WHEN j.scheduled_start IS NULL OR j.scheduled_end IS NULL THEN 'Not scheduled' ELSE CONCAT(TO_CHAR(j.scheduled_start AT TIME ZONE 'UTC', 'Mon DD HH24:MI'), ' - ', TO_CHAR(j.scheduled_end AT TIME ZONE 'UTC', 'Mon DD HH24:MI'), ' UTC') END time_window
                              , CASE WHEN j.risk_score >= 70 OR j.sla_status='At Risk' THEN 'High' WHEN j.risk_score >= 40 THEN 'Medium' ELSE 'Low' END risk_heat_score
-                             , CASE WHEN j.status IN ('Completed','Delivered') AND j.proof_status='Captured' THEN 'Ready'
+                             , CASE WHEN EXISTS (SELECT 1 FROM issued_invoices ii WHERE ii.company_id=j.company_id AND ii.job_id=j.id) THEN 'Invoiced'
+                                    WHEN LOWER(j.status)='ready_to_bill' AND j.proof_status='Captured' THEN 'Ready to bill'
+                                    WHEN LOWER(j.status)='billed' THEN 'Blocked: Invoice Missing'
+                                    WHEN j.status IN ('Completed','Delivered') AND j.proof_status='Captured' THEN 'Ready'
                                     WHEN j.status IN ('Completed','Delivered') THEN 'Blocked: Proof Required'
                                     ELSE 'Not Ready' END billing_readiness
                              , CASE WHEN j.assigned_driver_id IS NULL OR j.assigned_vehicle_id IS NULL THEN 'Assign driver and vehicle'
@@ -5712,7 +5714,10 @@ public static partial class EndpointMappings
             @"SELECT COALESCE(j.job_number,j.job_code) job_number, c.name customer_name, j.status, j.priority,
                      j.pickup_address, j.dropoff_address, j.scheduled_start, j.scheduled_end, j.eta, j.sla_status,
                      d.full_name driver_name, v.vehicle_code, j.tracking_code, j.proof_status,
-                     CASE WHEN j.status IN ('Completed','Delivered') AND j.proof_status='Captured' THEN 'Ready'
+                     CASE WHEN EXISTS (SELECT 1 FROM issued_invoices ii WHERE ii.company_id=j.company_id AND ii.job_id=j.id) THEN 'Invoiced'
+                          WHEN LOWER(j.status)='ready_to_bill' AND j.proof_status='Captured' THEN 'Ready to bill'
+                          WHEN LOWER(j.status)='billed' THEN 'Blocked: Invoice Missing'
+                          WHEN j.status IN ('Completed','Delivered') AND j.proof_status='Captured' THEN 'Ready'
                           WHEN j.status IN ('Completed','Delivered') THEN 'Blocked: Proof Required'
                           ELSE 'Not Ready' END billing_readiness
               FROM jobs j
@@ -5774,7 +5779,10 @@ public static partial class EndpointMappings
         var record = await db.QuerySingleAsync(
             @"SELECT j.*, COALESCE(j.job_number,j.job_code) job_number, c.name customer_name, c.sla_tier, v.vehicle_code, d.full_name driver_name, r.route_code,
                      CASE WHEN j.risk_score >= 70 OR j.sla_status='At Risk' THEN 'High' WHEN j.risk_score >= 40 THEN 'Medium' ELSE 'Low' END risk_heat_score,
-                     CASE WHEN j.status IN ('Completed','Delivered') AND j.proof_status='Captured' THEN 'Ready'
+                     CASE WHEN EXISTS (SELECT 1 FROM issued_invoices ii WHERE ii.company_id=j.company_id AND ii.job_id=j.id) THEN 'Invoiced'
+                          WHEN LOWER(j.status)='ready_to_bill' AND j.proof_status='Captured' THEN 'Ready to bill'
+                          WHEN LOWER(j.status)='billed' THEN 'Blocked: Invoice Missing'
+                          WHEN j.status IN ('Completed','Delivered') AND j.proof_status='Captured' THEN 'Ready'
                           WHEN j.status IN ('Completed','Delivered') THEN 'Blocked: Proof Required'
                           ELSE 'Not Ready' END billing_readiness
               FROM jobs j
@@ -7049,6 +7057,68 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Asset assigned"));
     }
 
+    private static Task<IResult> ContractCustomerOptions(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "contract.create") is { } denied) return Task.FromResult(denied);
+        return ActiveCustomerOptions(http, db, ct);
+    }
+
+    private static async Task<IResult> JobAssignmentOptions(HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "dispatch:assign") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var job = await db.QuerySingleAsync("SELECT branch_id FROM jobs WHERE id=@id AND company_id=@cid AND deleted_at IS NULL AND (@branch::BIGINT IS NULL OR branch_id=@branch)",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branch", GetBranchId(http) ?? (object)DBNull.Value); }, ct);
+        if (job is null) return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
+        var branchId = job["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(job["branchId"]);
+        return await BranchAssignmentOptions(http, branchId, db, ct);
+    }
+
+    private static async Task<IResult> RouteAssignmentOptions(HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        if (RequireAnyDirectPermission(http, "dispatch:assign", "dispatch:manage") is { } denied) return denied;
+        if (!await RouteInAuthorizedScope(http, id, db, ct)) return Results.NotFound(ApiResponse<object>.Fail("Route not found"));
+        var route = await db.QuerySingleAsync("SELECT branch_id FROM routes WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("id", id); c.Parameters.AddWithValue("cid", GetCompanyId(http)); }, ct);
+        if (route is null) return Results.NotFound(ApiResponse<object>.Fail("Route not found"));
+        var branchId = route["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(route["branchId"]);
+        return await BranchAssignmentOptions(http, branchId, db, ct);
+    }
+
+    private static async Task<IResult> BranchAssignmentOptions(HttpContext http, long? branchId, Database db, CancellationToken ct)
+    {
+        var search = http.Request.Query["search"].ToString().Trim();
+        void Bind(NpgsqlCommand c)
+        {
+            c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+            c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+            c.Parameters.AddWithValue("@search", search);
+        }
+        // Pick from the persisted owner branch, not a user-supplied branch or raw IDs.
+        var drivers = await db.QueryAsync(@"SELECT d.id,d.driver_code,d.full_name,d.status,
+            hc.drive_time_remaining_minutes,hc.status hos_status,hc.clock_source,
+            CASE WHEN hc.id IS NULL THEN 'Authoritative HOS unavailable or stale'
+                 WHEN hc.drive_time_remaining_minutes IS NULL THEN 'Authoritative HOS remaining time unavailable'
+                 WHEN hc.drive_time_remaining_minutes < 60 THEN 'Less than one hour remaining'
+                 WHEN hc.status IS NULL OR LOWER(BTRIM(hc.status)) NOT IN ('compliant','ok','eligible','available','on duty','on duty (not driving)','driving','warning') THEN 'HOS status is not dispatch eligible'
+                 ELSE NULL END hos_block_reason
+            FROM drivers d LEFT JOIN LATERAL (
+              SELECT id,drive_time_remaining_minutes,status,clock_source FROM hos_clocks
+              WHERE company_id=d.company_id AND driver_id=d.id AND source_authority='Authoritative'
+                AND NULLIF(BTRIM(clock_source),'') IS NOT NULL
+                AND source_observed_at BETWEEN NOW()-INTERVAL '24 hours' AND NOW()
+              ORDER BY source_observed_at DESC,id DESC LIMIT 1
+            ) hc ON TRUE
+            WHERE d.company_id=@cid AND d.deleted_at IS NULL AND d.branch_id IS NOT DISTINCT FROM @branch::BIGINT
+              AND (@search='' OR d.full_name ILIKE '%'||@search||'%' OR d.driver_code ILIKE '%'||@search||'%')
+            ORDER BY d.full_name,d.id LIMIT 200", Bind, ct);
+        var vehicles = await db.QueryAsync(@"SELECT id,vehicle_code,type,status FROM vehicles
+            WHERE company_id=@cid AND deleted_at IS NULL AND branch_id IS NOT DISTINCT FROM @branch::BIGINT
+              AND (@search='' OR vehicle_code ILIKE '%'||@search||'%')
+            ORDER BY vehicle_code,id LIMIT 200", Bind, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { branchId, drivers, vehicles }));
+    }
+
     private static Task<IResult> JobCustomerOptions(HttpContext http, Database db, CancellationToken ct)
     {
         // Creating or editing a shipment requires selecting a valid tenant customer. This
@@ -7060,6 +7130,11 @@ public static partial class EndpointMappings
             "job:update", "shipments:update", "dispatch:update");
         if (denied is not null) return Task.FromResult(denied);
 
+        return ActiveCustomerOptions(http, db, ct);
+    }
+
+    private static Task<IResult> ActiveCustomerOptions(HttpContext http, Database db, CancellationToken ct)
+    {
         var search = http.Request.Query.TryGetValue("search", out var requestedSearch)
             ? requestedSearch.ToString().Trim()
             : "";
@@ -7914,7 +7989,7 @@ public static partial class EndpointMappings
                     AND hc.source_authority='Authoritative'
                     AND NULLIF(BTRIM(hc.clock_source),'') IS NOT NULL
                     AND hc.source_observed_at IS NOT NULL
-                    AND hc.source_observed_at >= NOW() - INTERVAL '24 hours'
+                    AND hc.source_observed_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW()
                   ORDER BY hc.source_observed_at DESC, hc.id DESC
                   LIMIT 1
               ) hos ON TRUE
@@ -7922,7 +7997,7 @@ public static partial class EndpointMappings
                 AND d.status IN ('Available','Idle')
                 AND COALESCE(d.safety_score,0) >= 65
                 AND hos.drive_time_remaining_minutes >= 60
-                AND LOWER(hos.status) IN ('ok','eligible','available','on duty','on duty (not driving)','driving')
+                AND LOWER(BTRIM(hos.status)) IN ('compliant','ok','eligible','available','on duty','on duty (not driving)','driving','warning')
                 AND NOT EXISTS (SELECT 1 FROM dispatch_assignments da2
                                 WHERE da2.driver_id=d.id AND da2.company_id=@cid
                                   AND da2.assignment_status NOT IN ('delivered','cancelled'))" + branchClause + @"
@@ -8223,9 +8298,12 @@ public static partial class EndpointMappings
               WHERE d.id=@driverId AND d.company_id=@cid AND d.deleted_at IS NULL
                 AND v.id=@vehicleId AND v.company_id=@cid AND v.deleted_at IS NULL",
             c => { c.Parameters.AddWithValue("@driverId", driverId); c.Parameters.AddWithValue("@vehicleId", vehicleId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-        if (resource is not null && resource["driverBranchId"] is not null && resource["vehicleBranchId"] is not null &&
-            Convert.ToInt64(resource["driverBranchId"]) != Convert.ToInt64(resource["vehicleBranchId"]))
-            errors.Add("Driver and vehicle must belong to the same branch.");
+        if (resource is not null)
+        {
+            var driverBranch = resource["driverBranchId"] is null or DBNull ? (long?)null : Convert.ToInt64(resource["driverBranchId"]);
+            var vehicleBranch = resource["vehicleBranchId"] is null or DBNull ? (long?)null : Convert.ToInt64(resource["vehicleBranchId"]);
+            if (driverBranch != vehicleBranch) errors.Add("Driver and vehicle must belong to the same branch.");
+        }
 
         var conflicts = await db.QuerySingleAsync(
             @"SELECT COUNT(*) FILTER (WHERE assigned_driver_id=@driverId) driver_conflicts,
@@ -8762,12 +8840,12 @@ public static partial class EndpointMappings
                 if (errors.Count > 0) return Results.BadRequest(ApiResponse<object>.Fail("Route assignment validation failed", errors.ToArray()));
                 var resourceBranch = await ResolveRouteResourceBranch(companyId, driver.id.Value, vehicle.id.Value, db, ct);
                 var existingBranch = route["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(route["branchId"]);
-                if (existingBranch.HasValue && resourceBranch.HasValue && existingBranch.Value != resourceBranch.Value)
+                if (existingBranch != resourceBranch)
                     return Results.BadRequest(ApiResponse<object>.Fail("Driver and vehicle must belong to the route's branch"));
 
                 var affected = await db.ExecuteAsync(
                     @"UPDATE routes SET assigned_driver_id=@driverId, assigned_vehicle_id=@vehicleId,
-                             branch_id=COALESCE(branch_id,@branchId), status='Active', updated_at=NOW()
+                             status='Active', updated_at=NOW()
                        WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL",
                     c =>
                     {
@@ -8775,9 +8853,9 @@ public static partial class EndpointMappings
                         c.Parameters.AddWithValue("@companyId", companyId);
                         c.Parameters.AddWithValue("@driverId", driver.id.Value);
                         c.Parameters.AddWithValue("@vehicleId", vehicle.id.Value);
-                        c.Parameters.AddWithValue("@branchId", resourceBranch ?? (object)DBNull.Value);
                     }, ct);
                 if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Route not found"));
+                await TripBackgroundService.ProjectAssignedRouteAsync(db, companyId, id, ct);
                 await audit.LogAsync(http, "route.assigned", "Route", id, ct: ct);
                 await AddTimeline(db, companyId, "Route", id, "route.assigned", "Driver and vehicle assigned; route activated", ct);
                 return Results.Ok(ApiResponse<object>.Ok(new { id, status = "Active", driverId = driver.id.Value, vehicleId = vehicle.id.Value }, "Route assigned"));
@@ -11883,12 +11961,9 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             if (driver is null) errors.Add("Assigned driver must exist in the authorized branch.");
             else
             {
-                var hos = await db.QuerySingleAsync(@"SELECT remaining_drive_hours,hos_status FROM hos_records
-                    WHERE driver_id=@id AND (company_id=@companyId OR company_id IS NULL)
-                    ORDER BY shift_date DESC,id DESC LIMIT 1", c => { c.Parameters.AddWithValue("@id", assignedDriver.id!.Value); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
-                if (driver["status"]?.ToString() is not ("Available" or "Idle") || hos is null ||
-                    !IsOperableHosStatus(hos["hosStatus"]?.ToString()) || hos["remainingDriveHours"] is null or DBNull || Convert.ToDecimal(hos["remainingDriveHours"]) < 1m)
-                    errors.Add("Assigned driver is not operationally eligible in the authorized branch.");
+                var hos = await FreshAuthoritativeHosClock(db, companyId, assignedDriver.id!.Value, ct);
+                if (driver["status"]?.ToString() is not ("Available" or "Idle") || AuthoritativeHosBlock(hos) is not null)
+                    errors.Add("Assigned driver is not operationally eligible in the authorized branch: " + (AuthoritativeHosBlock(hos) ?? "Driver unavailable"));
             }
         }
         if (!IsBlank(Get(body, "assignedVehicleId")))
@@ -12030,17 +12105,8 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             errors.Add($"Assigned vehicle must be of required type '{requiredVehicleType.Trim()}'.");
         if (driver is not null)
         {
-            var hos = await db.QuerySingleAsync(
-                @"SELECT remaining_drive_hours, hos_status FROM hos_records
-                  WHERE driver_id=@driverId AND (company_id=@companyId OR company_id IS NULL)
-                  ORDER BY shift_date DESC, id DESC LIMIT 1",
-                c => { c.Parameters.AddWithValue("@driverId", driverId ?? DBNull.Value); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
-            if (hos is null)
-                errors.Add("Cannot assign driver because current HOS eligibility is unavailable.");
-            else if (!IsOperableHosStatus(hos["hosStatus"]?.ToString()))
-                errors.Add($"Cannot assign driver while HOS status is '{hos["hosStatus"] ?? "Unknown"}'.");
-            else if (hos["remainingDriveHours"] is null or DBNull || Convert.ToDecimal(hos["remainingDriveHours"]) < 1m)
-                errors.Add("Cannot assign driver with less than one hour of remaining drive time.");
+            var hos = await FreshAuthoritativeHosClock(db, companyId, Convert.ToInt64(driverId), ct);
+            if (AuthoritativeHosBlock(hos) is { } hosError) errors.Add(hosError);
             if (!string.IsNullOrWhiteSpace(requiredDriverCertification) && await db.ScalarLongAsync(
                     @"SELECT COUNT(*) FROM driver_certifications
                       WHERE company_id=@companyId AND driver_id=@driverId
@@ -12056,6 +12122,27 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                 errors.Add($"Assigned driver requires a current '{requiredDriverCertification.Trim()}' certification.");
         }
         return errors;
+    }
+
+    private static Task<Dictionary<string, object?>?> FreshAuthoritativeHosClock(Database db, long companyId, long driverId, CancellationToken ct)
+        => db.QuerySingleAsync(@"SELECT drive_time_remaining_minutes,status,clock_source,source_observed_at
+            FROM hos_clocks WHERE driver_id=@did AND company_id=@cid
+              AND source_authority='Authoritative' AND NULLIF(BTRIM(clock_source),'') IS NOT NULL
+              AND source_observed_at BETWEEN NOW()-INTERVAL '24 hours' AND NOW()
+            ORDER BY source_observed_at DESC,id DESC LIMIT 1",
+            c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+
+    internal static string? AuthoritativeHosBlock(Dictionary<string, object?>? clock)
+    {
+        if (clock is null) return "Authoritative HOS clock unavailable or stale - cannot dispatch";
+        if (clock.GetValueOrDefault("driveTimeRemainingMinutes") is null or DBNull)
+            return "Authoritative HOS remaining drive time is unavailable - cannot dispatch";
+        var status = clock.GetValueOrDefault("status")?.ToString();
+        if (!IsOperableHosStatus(status) && !string.Equals(status, "Warning", StringComparison.OrdinalIgnoreCase))
+            return $"Authoritative HOS status '{status ?? "Unknown"}' is not eligible - cannot dispatch";
+        if (Convert.ToDecimal(clock["driveTimeRemainingMinutes"]) < 60m)
+            return "Cannot assign driver with less than one hour of authoritative remaining drive time.";
+        return null;
     }
 
     private static bool IsOperableHosStatus(string? status)
@@ -26152,6 +26239,17 @@ LIMIT 100000",
                 trip.GetValueOrDefault("scopedDriverId") is null or DBNull)
                 return Results.Conflict(ApiResponse<object>.Fail("Assigned driver or vehicle is not owned by the trip tenant"));
 
+            if (AuthoritativeHosBlock(await FreshAuthoritativeHosClock(db, companyId, driverId.Value, ct)) is { } hosBlock)
+                return Results.Conflict(ApiResponse<object>.Fail(hosBlock));
+            var currentVehicle = await db.QuerySingleAsync("SELECT status,out_of_service,availability_status FROM vehicles WHERE id=@id AND company_id=@cid AND deleted_at IS NULL", c =>
+            {
+                c.Parameters.AddWithValue("id", vehicleId.Value); c.Parameters.AddWithValue("cid", companyId);
+            }, ct);
+            if (currentVehicle is null || currentVehicle["outOfService"] is true ||
+                currentVehicle["availabilityStatus"]?.ToString()?.Trim().ToLowerInvariant() == "out_of_service" ||
+                currentVehicle["status"]?.ToString()?.Trim().ToLowerInvariant() is "maintenance" or "out of service" or "out_of_service")
+                return Results.Conflict(ApiResponse<object>.Fail("Vehicle is in maintenance or out of service; resolve the safety hold before starting the trip"));
+
             var routeId = trip.GetValueOrDefault("routeId") is null or DBNull
                 ? (long?)null : Convert.ToInt64(trip["routeId"]);
             if (routeId.HasValue)
@@ -28707,7 +28805,7 @@ LIMIT 100000",
                         AND source_authority='Authoritative'
                         AND NULLIF(BTRIM(clock_source),'') IS NOT NULL
                         AND source_observed_at IS NOT NULL
-                        AND source_observed_at >= NOW() - INTERVAL '24 hours'
+                        AND source_observed_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW()
                       ORDER BY source_observed_at DESC, id DESC
                       LIMIT 1",
                     c =>
@@ -28728,6 +28826,18 @@ LIMIT 100000",
             if (hosClock["driveTimeRemainingMinutes"] is not null and not DBNull)
                 availableHosHours = Convert.ToDecimal(hosClock["driveTimeRemainingMinutes"]) / 60m;
 
+            if (hosClock["driveTimeRemainingMinutes"] is null or DBNull)
+            {
+                blocking.Add("Authoritative HOS remaining drive time is unavailable - cannot dispatch");
+                hosWarning = true;
+            }
+            else if (!IsOperableHosStatus(hosClock["status"]?.ToString()) &&
+                !string.Equals(hosClock["status"]?.ToString(), "Warning", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(hosClock["status"]?.ToString(), "Violation", StringComparison.OrdinalIgnoreCase))
+            {
+                blocking.Add("Authoritative HOS status is not eligible - cannot dispatch");
+                hosWarning = true;
+            }
             var clockStatus = hosClock["status"]?.ToString() ?? "Unavailable";
             if (clockStatus.Equals("Violation", StringComparison.OrdinalIgnoreCase))
             {

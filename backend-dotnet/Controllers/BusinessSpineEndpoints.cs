@@ -171,7 +171,7 @@ public static class BusinessSpineEndpoints
             jobId = parsedJobId;
         }
 
-        var rows = await svc.ListJobChargesAsync(companyId, jobId, ct);
+        var rows = await svc.ListJobChargesAsync(companyId, jobId, ct, branchId: EndpointMappings.GetBranchId(http));
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
@@ -185,25 +185,31 @@ public static class BusinessSpineEndpoints
             return Results.BadRequest(ApiResponse<object>.Fail("jobId is required"));
         }
 
-        var charge = await svc.CreateJobChargeAsync(
-            EndpointMappings.GetCompanyId(http),
-            Long(body, "jobId")!.Value,
-            Long(body, "tripId"),
-            Long(body, "rateCardId"),
-            Str(body, "chargeCode") ?? $"CHG-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
-            Str(body, "chargeName") ?? "Charge",
-            Str(body, "chargeType") ?? "base",
-            Str(body, "description"),
-            Dec(body, "quantity", 1m),
-            Dec(body, "unitRate", 0m),
-            Dec(body, "amount", 0m),
-            Str(body, "currency"),
-            Str(body, "status"),
-            Str(body, "correlationId"),
-            Str(body, "causationId"),
-            Long(body, "approvedByUserId"),
-            TryDto(body, "approvedAt"),
-            ct);
+        JobChargeRecord charge;
+        try
+        {
+            charge = await svc.CreateJobChargeAsync(
+                EndpointMappings.GetCompanyId(http),
+                Long(body, "jobId")!.Value,
+                Long(body, "tripId"),
+                Long(body, "rateCardId"),
+                Str(body, "chargeCode") ?? $"CHG-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
+                Str(body, "chargeName") ?? "Charge",
+                Str(body, "chargeType") ?? "base",
+                Str(body, "description"),
+                Dec(body, "quantity", 1m),
+                Dec(body, "unitRate", 0m),
+                Dec(body, "amount", 0m),
+                Str(body, "currency"),
+                Str(body, "status"),
+                Str(body, "correlationId"),
+                Str(body, "causationId"),
+                Long(body, "approvedByUserId"),
+                TryDto(body, "approvedAt"),
+                ct, branchId: EndpointMappings.GetBranchId(http));
+        }
+        catch (JobChargeResourceNotFoundException ex) { return Results.NotFound(ApiResponse<object>.Fail(ex.Message)); }
+        catch (JobChargeValidationException ex) { return Results.BadRequest(ApiResponse<object>.Fail(ex.Message)); }
 
         _ = events.Publish(
             EndpointMappings.GetCompanyId(http).ToString(CultureInfo.InvariantCulture),
@@ -326,27 +332,36 @@ public static class BusinessSpineEndpoints
         var guard = EndpointMappings.RequirePermission(http, "charge.update");
         if (guard is not null) return guard;
 
+        foreach (var key in new[] { "quantity", "unitRate", "amount" })
+            if (body.ContainsKey(key) && DecN(body, key) is null)
+                return Results.BadRequest(ApiResponse<object>.Fail($"{key} must be a valid number"));
         var companyId = EndpointMappings.GetCompanyId(http);
-        var charge = await svc.UpdateJobChargeAsync(
-            companyId,
-            id,
-            Long(body, "jobId"),
-            Long(body, "tripId"),
-            Long(body, "rateCardId"),
-            Str(body, "chargeCode"),
-            Str(body, "chargeName"),
-            Str(body, "chargeType"),
-            Str(body, "description"),
-            body.ContainsKey("quantity") ? DecN(body, "quantity") : null,
-            body.ContainsKey("unitRate") ? DecN(body, "unitRate") : null,
-            body.ContainsKey("amount") ? DecN(body, "amount") : null,
-            Str(body, "currency"),
-            Str(body, "status"),
-            Str(body, "correlationId"),
-            Str(body, "causationId"),
-            Long(body, "approvedByUserId"),
-            TryDto(body, "approvedAt"),
-            ct);
+        JobChargeRecord? charge;
+        try
+        {
+            charge = await svc.UpdateJobChargeAsync(
+                companyId,
+                id,
+                Long(body, "jobId"),
+                Long(body, "tripId"),
+                Long(body, "rateCardId"),
+                Str(body, "chargeCode"),
+                Str(body, "chargeName"),
+                Str(body, "chargeType"),
+                Str(body, "description"),
+                body.ContainsKey("quantity") ? DecN(body, "quantity") : null,
+                body.ContainsKey("unitRate") ? DecN(body, "unitRate") : null,
+                body.ContainsKey("amount") ? DecN(body, "amount") : null,
+                Str(body, "currency"),
+                Str(body, "status"),
+                Str(body, "correlationId"),
+                Str(body, "causationId"),
+                Long(body, "approvedByUserId"),
+                TryDto(body, "approvedAt"),
+                ct, branchId: EndpointMappings.GetBranchId(http));
+        }
+        catch (JobChargeResourceNotFoundException ex) { return Results.NotFound(ApiResponse<object>.Fail(ex.Message)); }
+        catch (JobChargeValidationException ex) { return Results.BadRequest(ApiResponse<object>.Fail(ex.Message)); }
 
         if (charge is null)
         {

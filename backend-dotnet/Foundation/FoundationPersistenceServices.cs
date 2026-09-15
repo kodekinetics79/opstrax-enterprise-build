@@ -152,10 +152,13 @@ public sealed class PostgresApprovalWorkflowService(Database db, ICorrelationCon
 
     public ApprovalDecisionRecord Decide(long approvalRequestId, string approverUserId, string decision, string? notes = null)
     {
+        decision = decision.Trim().ToLowerInvariant();
+        if (decision is not ("approved" or "rejected")) throw new InvalidOperationException("Approval decision must be approved or rejected");
+        if (string.IsNullOrWhiteSpace(approverUserId)) throw new InvalidOperationException("Authorized reviewer is required");
         return db.WithTransactionAsync(async (conn, tx) =>
         {
             await using var requestCmd = new NpgsqlCommand(
-                @"SELECT tenant_id, requested_by_actor_type, correlation_id
+                @"SELECT tenant_id, requested_by_actor_type, correlation_id, requested_by_actor_id, status
                   FROM approval_requests
                   WHERE id=@id
                   FOR UPDATE", conn, tx);
@@ -168,7 +171,11 @@ public sealed class PostgresApprovalWorkflowService(Database db, ICorrelationCon
             var companyId = reader.GetInt64(0);
             var requestedByActorType = reader.IsDBNull(1) ? null : reader.GetString(1);
             var correlationId = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var requesterId = reader.IsDBNull(3) ? null : reader.GetString(3);
+            var requestStatus = reader.GetString(4);
             await reader.DisposeAsync();
+            if (requestStatus != "pending") throw new InvalidOperationException("Approval request is no longer pending");
+            if (requesterId == approverUserId) throw new InvalidOperationException("A different authorized reviewer must decide this approval");
 
             await using (var updateCmd = new NpgsqlCommand(
                 "UPDATE approval_requests SET status=@status WHERE id=@id", conn, tx))

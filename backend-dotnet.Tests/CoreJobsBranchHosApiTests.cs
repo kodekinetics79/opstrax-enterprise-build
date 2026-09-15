@@ -89,7 +89,7 @@ public sealed class CoreJobsBranchHosApiTests
             var vehicle = await db.InsertAsync(
                 "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available','available',false,95,5)",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"VEH-{companyId}"); });
-            await Hos(db, companyId, driver, "On Duty", 8m);
+            await AuthoritativeHos(db, companyId, branchId, driver, "OK", 8m);
             var http = Principal(companyId, branchId);
             var audit = new AuditService(db);
             var code = $"JOB-{companyId}";
