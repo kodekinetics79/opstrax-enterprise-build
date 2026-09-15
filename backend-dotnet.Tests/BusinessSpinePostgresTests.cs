@@ -53,6 +53,20 @@ public class BusinessSpinePostgresTests
         {
             await schema.EnsureAsync();
             await svc.GetOrCreateProfileAsync(companyId);
+            await db.ExecuteAsync(
+                "INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@companyId,@code,'Business Spine Test','Transportation')",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@code", $"BSP-{companyId}");
+                });
+            var jobId = await db.InsertAsync(
+                "INSERT INTO jobs(company_id,job_code,job_type,status) VALUES (@companyId,@code,'Delivery','Unassigned')",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@code", $"BSP-JOB-{companyId}");
+                });
 
             var rateCard = await svc.CreateRateCardAsync(
                 companyId,
@@ -79,8 +93,8 @@ public class BusinessSpinePostgresTests
 
             var charge = await svc.CreateJobChargeAsync(
                 companyId,
-                jobId: 501,
-                tripId: 601,
+                jobId: jobId,
+                tripId: null,
                 rateCardId: rateCard.Id,
                 chargeCode: "BASE",
                 chargeName: "Base service charge",
@@ -278,5 +292,7 @@ public class BusinessSpinePostgresTests
         await db.ExecuteAsync("DELETE FROM job_charges WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM rate_cards WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM business_surface_profiles WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM jobs WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM companies WHERE id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
     }
 }

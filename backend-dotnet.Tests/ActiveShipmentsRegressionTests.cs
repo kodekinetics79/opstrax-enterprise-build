@@ -308,8 +308,15 @@ public sealed class ActiveShipmentsPostgresRegressionTests
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@code", $"CUS-{company}"); });
             var driver = await Driver(db, company, branch, $"DRV-{company}", "Lifecycle Driver");
             var vehicle = await Vehicle(db, company, branch, $"VEH-{company}");
-            await db.ExecuteAsync("INSERT INTO hos_records(company_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,hos_status) VALUES (@c,@d,CURRENT_DATE,8,8,'On Duty')",
-                c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@d", driver); });
+            await db.ExecuteAsync(
+                @"INSERT INTO hos_clocks(company_id,branch_id,driver_id,drive_time_remaining_minutes,shift_time_remaining_minutes,
+                    cycle_time_remaining_minutes,status,clock_source,source_event_id,source_observed_at,source_authority,source_quality,updated_at)
+                  VALUES (@c,@b,@d,480,660,3600,'OK','active-shipments-fixture',@event,NOW(),'Authoritative','Verified',NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch);
+                    c.Parameters.AddWithValue("@d", driver); c.Parameters.AddWithValue("@event", $"active-shipments-{company}");
+                });
             var http = Principal(company, branch);
             var code = $"FLOW-{company}";
             var created = await Invoke("CreateJob", http, new Dictionary<string, object?>
@@ -535,7 +542,7 @@ public sealed class ActiveShipmentsPostgresRegressionTests
             "DELETE FROM dispatch_assignments WHERE company_id=@c", "DELETE FROM job_status_events WHERE company_id=@c",
             "DELETE FROM entity_timeline_events WHERE company_id=@c", "DELETE FROM audit_logs WHERE company_id=@c",
             "DELETE FROM documents WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c",
-            "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM location_events WHERE company_id=@c",
+            "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM location_events WHERE company_id=@c",
             "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c",
             "DELETE FROM customers WHERE company_id=@c", "DELETE FROM branches WHERE company_id=@c", "DELETE FROM companies WHERE id=@c"
         })

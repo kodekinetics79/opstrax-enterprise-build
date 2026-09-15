@@ -44,8 +44,14 @@ public sealed class CrossModuleFleetPilotPostgresTests
                 "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available','available',false,95,5)",
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@code", $"VEH-{suffix}"); });
             await db.ExecuteAsync(
-                "INSERT INTO hos_records(company_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,hos_status) VALUES (@c,@d,CURRENT_DATE,8,8,'On Duty')",
-                c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@d", driver); });
+                @"INSERT INTO hos_clocks(company_id,branch_id,driver_id,drive_time_remaining_minutes,shift_time_remaining_minutes,
+                    cycle_time_remaining_minutes,status,clock_source,source_event_id,source_observed_at,source_authority,source_quality,updated_at)
+                  VALUES (@c,@b,@d,480,660,3600,'OK','cross-module-fixture',@event,NOW(),'Authoritative','Verified',NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch);
+                    c.Parameters.AddWithValue("@d", driver); c.Parameters.AddWithValue("@event", $"cross-module-{suffix}");
+                });
             var customer = await db.InsertAsync(
                 "INSERT INTO customers(company_id,customer_code,name,status) VALUES (@c,@code,'Original Pilot Customer','Active')",
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@code", $"CUS-{suffix}"); });
@@ -234,7 +240,7 @@ public sealed class CrossModuleFleetPilotPostgresTests
             "DELETE FROM route_stops WHERE company_id=@c", "UPDATE jobs SET route_id=NULL WHERE company_id=@c",
             "DELETE FROM routes WHERE company_id=@c", "DELETE FROM fleet_tms_last_mile_stops WHERE company_id=@c",
             "DELETE FROM fleet_tms_delivery_routes WHERE company_id=@c", "DELETE FROM fleet_tms_dispatch_orders WHERE company_id=@c",
-            "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c",
+            "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c",
             "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c",
             "DELETE FROM users WHERE company_id=@c", "DELETE FROM customers WHERE company_id=@c",
             "DELETE FROM branches WHERE company_id=@c", "DELETE FROM companies WHERE id=@c",

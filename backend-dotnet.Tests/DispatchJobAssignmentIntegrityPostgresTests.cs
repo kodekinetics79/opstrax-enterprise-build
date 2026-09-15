@@ -535,7 +535,10 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests(ITestOutputHelpe
                 var company = key == "FOREIGN" ? CompanyB : CompanyA; var branch = Branch(key);
                 var driver = await Insert("INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status,safety_score,readiness_score,compliance_score) VALUES (@c,@b,@code,'Synthetic S1 driver','Available',95,95,95)", ("c", company), ("b", branch), ("code", key));
                 var vehicle = await Insert("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@alt,'Available','available',false,95,5)", ("c", company), ("b", branch), ("code", key), ("alt", prefix + key));
-                await Insert("INSERT INTO hos_records(company_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,hos_status) VALUES (@c,@d,CURRENT_DATE,8,8,'On Duty')", ("c", company), ("d", driver));
+                await Insert(@"INSERT INTO hos_clocks(company_id,branch_id,driver_id,drive_time_remaining_minutes,shift_time_remaining_minutes,
+                    cycle_time_remaining_minutes,status,clock_source,source_event_id,source_observed_at,source_authority,source_quality,updated_at)
+                    VALUES (@c,@b,@d,480,660,3600,'OK','assignment-integrity-fixture',@event,NOW(),'Authoritative','Verified',NOW())",
+                    ("c", company), ("b", branch), ("d", driver), ("event", $"{prefix}-{key}"));
                 var job = await Insert("INSERT INTO jobs(company_id,branch_id,job_code,job_type,status,required_vehicle_type) VALUES (@c,@b,@code,'Delivery','Unassigned','Truck')", ("c", company), ("b", branch), ("code", prefix + key));
                 Pairs[key] = (driver, vehicle); Jobs[key] = job;
             }
@@ -546,7 +549,7 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests(ITestOutputHelpe
         {
             await app.DisposeAsync(); if (companies.Count == 0) return;
             await using var connection = new NpgsqlConnection(owner); await connection.OpenAsync(); await using var transaction = await connection.BeginTransactionAsync();
-            foreach (var table in new[] { "job_status_events", "entity_timeline_events", "audit_logs", "dispatch_assignments", "jobs", "hos_records", "drivers", "vehicles", "branches" })
+            foreach (var table in new[] { "job_status_events", "entity_timeline_events", "audit_logs", "dispatch_assignments", "jobs", "hos_clocks", "hos_records", "drivers", "vehicles", "branches" })
             {
                 await using var command = new NpgsqlCommand($"DELETE FROM {table} WHERE company_id=ANY(@ids) AND company_id IN (SELECT id FROM companies WHERE company_code LIKE @prefix)", connection, transaction);
                 command.Parameters.AddWithValue("ids", companies.ToArray()); command.Parameters.AddWithValue("prefix", prefix + "%"); await command.ExecuteNonQueryAsync();
