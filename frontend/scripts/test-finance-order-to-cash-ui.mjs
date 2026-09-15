@@ -31,5 +31,8 @@ assert.match(page, /apiErrorMessage\(error, "The invoice could not be issued/);
 assert.match(page, /invalidateQueries\(\{ queryKey: \["invoice-drafts"\] \}\)/);
 assert.match(page, /invalidateQueries\(\{ queryKey: \["issued-invoices"\] \}\)/);
 assert.match(page, /invalidateQueries\(\{ queryKey: \["payments"\] \}\)/);
+assert.match(page, /const TAB_ROUTE: Record<Tab, string>/);
+assert.match(page, /onClick=\{\(\) => navigate\(TAB_ROUTE\[t\.key\]\)\}/);
+assert.doesNotMatch(page, /const \[tab, setTab\] = useState<Tab>/);
 
 console.log("Finance order-to-cash UI contract passed.");
