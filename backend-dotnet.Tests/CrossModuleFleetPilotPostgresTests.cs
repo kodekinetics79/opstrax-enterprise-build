@@ -95,9 +95,13 @@ public sealed class CrossModuleFleetPilotPostgresTests
                 new Dictionary<string, object?> { ["driverId"] = driver, ["vehicleId"] = vehicle },
                 db, audit, CancellationToken.None), StatusCodes.Status200OK);
 
-            var trip = await db.InsertAsync(
-                "INSERT INTO trips(company_id,vehicle_id,driver_id,route_id,status,trip_ref,planned_start_time) VALUES (@c,@v,@d,@r,'planned',@ref,NOW()-INTERVAL '20 minutes')",
-                c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@v", vehicle); c.Parameters.AddWithValue("@d", driver); c.Parameters.AddWithValue("@r", route); c.Parameters.AddWithValue("@ref", $"TRP-{suffix}"); });
+            // Route assignment projects the authoritative current trip in the same
+            // transaction. Continue that trip instead of manufacturing a duplicate
+            // current trip for the route.
+            var trip = await db.ScalarLongAsync(
+                "SELECT id FROM trips WHERE company_id=@c AND route_id=@r AND status='planned'",
+                c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@r", route); });
+            Assert.True(trip > 0);
             await db.ExecuteAsync("UPDATE dispatch_assignments SET trip_id=@t,route_id=@r WHERE company_id=@c AND job_id=@j",
                 c => { c.Parameters.AddWithValue("@t", trip); c.Parameters.AddWithValue("@r", route); c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@j", job); });
 
