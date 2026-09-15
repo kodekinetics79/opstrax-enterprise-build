@@ -1,12 +1,12 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowRight, CheckCircle2, Download, Edit3, FileCheck2, Info, MapPin, Package, Plus,
-  Search, Send, Sparkles, Trash2, TriangleAlert, Truck, Upload, UserCheck, X,
+  ArrowRight, CheckCircle2, Download, Edit3, FileCheck2, Info, MoreHorizontal, Plus,
+  Search, Send, Trash2, TriangleAlert, Upload, UserCheck, X,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 import {
-  AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader,
+  AiInsightCard, DataTable, EmptyState, ErrorState, LoadingState, PageHeader,
   RiskBadge, StatusBadge, exportCsv, labelize,
 } from "@/components/ui";
 import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
@@ -105,6 +105,8 @@ export function JobsPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const focusedJobId = new URLSearchParams(location.search).get("jobId");
+  const handoff = location.state as { quoteHandoff?: AnyRecord } | null;
+  const handoffOpened = useRef<string | null>(null);
   // Server-side paginated + searched — never fetches all 4000+ jobs at once.
   const jobsPaged = useQuery({
     queryKey: ["jobs", "paged", query.trim(), status, priority, jobsOffset, focusedJobId],
@@ -134,9 +136,15 @@ export function JobsPage() {
   const canDispatch = canManageDispatch || hasDirectPermission("dispatch:update");
   const canAssign = canManageDispatch || hasDirectPermission("dispatch:assign");
   const canExport = directActionAccess.export;
-  const canQueueProof = directActionAccess.queueProof;
   const canOpenCustomerMaster = hasPermission("customers:view")
     && (session?.entitlementPolicyMode !== "package_allowlist" || session.entitlements?.crm === true);
+  useEffect(() => {
+    const quote = handoff?.quoteHandoff;
+    if (!canCreate || !quote || handoffOpened.current === String(quote.id)) return;
+    handoffOpened.current = String(quote.id);
+    setEditing({ jobType: "Delivery", priority: "Normal", pickupAddress: quote.origin ?? "", dropoffAddress: quote.destination ?? "", notes: `Prepared manually from quote ${String(quote.quoteId)}. ${String(quote.cargo ?? "")} Amount: ${String(quote.quoteAmount)} ${String(quote.currency)}. Review customer, dates and service requirements before saving.` });
+    navigate(location.pathname + location.search, { replace: true, state: null });
+  }, [canCreate, handoff, navigate, location.pathname, location.search]);
   const scopedRows = useMemo(() => scopeRowsForSession("jobs", jobs.data || [], session), [jobs.data, session]);
   const visibleSummary = useMemo(() => buildJobSummary(scopedRows, summary.data as AnyRecord | undefined, session), [scopedRows, session, summary.data]);
 
@@ -150,20 +158,13 @@ export function JobsPage() {
     onSuccess: async () => { setSelected(null); await qc.invalidateQueries({ queryKey: ["jobs"] }); notify("success", "Job archived"); },
     onError: (error) => notify("error", requestError(error, "Could not archive the job.")),
   });
-  const action = useMutation({
-    mutationFn: ({ type, id }: { type: string; id: string | number }) => type === "eta" ? jobsApi.sendEta(id) : jobsApi.proofPlaceholder(id),
-    onSuccess: async (result, vars) => {
+  const etaAction = useMutation({
+    mutationFn: (id: string | number) => jobsApi.sendEta(id),
+    onSuccess: async (result) => {
       await qc.invalidateQueries({ queryKey: ["jobs"] });
       await qc.invalidateQueries({ queryKey: ["jobs", "summary"] });
       await qc.invalidateQueries({ queryKey: ["jobs", "detail", selected?.id] });
-      await qc.invalidateQueries({ queryKey: ["pod"] });
-      await qc.invalidateQueries({ queryKey: ["pod", "summary"] });
-      notify("success", vars.type === "eta"
-        ? String(result.deliveryStatus) === "Sent" ? "Customer ETA recorded in-app" : "Customer ETA queued for provider delivery"
-        : "POD workflow queued");
-      if (vars.type === "proof") {
-        navigate(`/proof-of-delivery?jobId=${vars.id}`);
-      }
+      notify("success", String(result.deliveryStatus) === "Sent" ? "Customer ETA recorded in-app" : "Customer ETA queued for provider delivery");
     },
     onError: (error) => notify("error", requestError(error, "The action could not be completed.")),
   });
@@ -271,15 +272,6 @@ export function JobsPage() {
   if (jobs.isLoading) return <LoadingState />;
   if (jobs.isError) return <ErrorState message={jobs.error instanceof Error ? jobs.error.message : "Unable to load jobs."} onRetry={() => void jobsPaged.refetch()} />;
 
-  const headline = [
-    { label: surface === "active-shipments" ? "Active Now" : surface === "shipments" ? "Shipment Rows" : "Jobs Today", value: surface === "active-shipments" ? rows.length : visibleSummary.totalJobsToday, icon: <Package className="h-4 w-4" /> },
-    { label: "SLA At Risk", value: visibleSummary.slaAtRisk, status: "Review", icon: <TriangleAlert className="h-4 w-4" /> },
-    { label: "Proof Pending", value: visibleSummary.proofPending, status: "Review", icon: <FileCheck2 className="h-4 w-4" /> },
-    { label: "On-Time ETA", value: visibleSummary.averageEtaAccuracy, icon: <MapPin className="h-4 w-4" /> },
-    { label: "Updates Sent", value: visibleSummary.customerUpdatesSent, icon: <Send className="h-4 w-4" /> },
-    { label: "Revenue Margin", value: visibleSummary.revenueMargin, icon: <Truck className="h-4 w-4" /> },
-  ];
-
   const slaRisk = Number(visibleSummary.slaAtRisk ?? 0);
   const proofPending = Number(visibleSummary.proofPending ?? 0);
   const unassigned = Number(visibleSummary.unassignedJobs ?? 0);
@@ -294,53 +286,30 @@ export function JobsPage() {
         description={surfaceConfig.description}
         actions={<>
           {canCreate ? <button type="button" className="btn-primary" onClick={() => setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button> : null}
-          {canImport ? <>
-            <input ref={importInput} className="sr-only" type="file" accept=".csv,text/csv" onChange={chooseImport} tabIndex={-1} aria-hidden="true" />
-            <button type="button" className="btn-ghost" disabled={previewImport.isPending} onClick={() => importInput.current?.click()}><Upload className="h-4 w-4" /> {previewImport.isPending ? "Validating..." : "Import CSV"}</button>
-          </> : null}
-          {canExport ? <button type="button" className="btn-ghost" onClick={exportRoster}><Download className="h-4 w-4" /> Export Roster</button> : null}
+          {canImport || canExport ? <details className="group relative">
+            <summary className="btn-ghost cursor-pointer list-none [&::-webkit-details-marker]:hidden"><MoreHorizontal className="h-4 w-4" /> More</summary>
+            <div className="panel absolute right-0 z-40 mt-2 flex min-w-48 flex-col gap-2 p-2 shadow-xl">
+              {canImport ? <>
+                <input ref={importInput} className="sr-only" type="file" accept=".csv,text/csv" onChange={chooseImport} tabIndex={-1} aria-hidden="true" />
+                <button type="button" className="btn-ghost justify-start" disabled={previewImport.isPending} onClick={() => importInput.current?.click()}><Upload className="h-4 w-4" /> {previewImport.isPending ? "Validating..." : "Import CSV"}</button>
+              </> : null}
+              {canExport ? <button type="button" className="btn-ghost justify-start" onClick={exportRoster}><Download className="h-4 w-4" /> Export Roster</button> : null}
+            </div>
+          </details> : null}
         </>}
       />
 
-      {/* Ops intelligence bar — derived from live data, one-click triage.
-          Light card (teal-tinted icon badge, dark text), matching the rest of the app's
-          "fc-console" panels (Vehicles, Cold Chain, Fleet Compliance) instead of a solid
-          dark fill -- a dark bar here was the odd one out, not the app's actual theme. */}
-      <div className="anim-fade-up flex flex-col gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-50"><Sparkles className="h-5 w-5 text-teal-600" /></span>
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-700">Live operations signal</p>
-            <p className="mt-0.5 text-sm font-medium text-slate-600">
-              {slaRisk + proofPending + unassigned === 0
-                ? surface === "active-shipments"
-                  ? "Active shipment execution is stable — no immediate SLA, proof, or assignment exceptions."
-                  : surface === "shipments"
-                    ? "Shipment lifecycle is stable end to end — no immediate SLA, proof, or assignment exceptions."
-                    : "All jobs on track — no SLA, proof, or assignment exceptions right now."
-                : [
-                    slaRisk > 0 ? `${slaRisk} at SLA risk` : null,
-                    unassigned > 0 ? `${unassigned} unassigned` : null,
-                    proofPending > 0 ? `${proofPending} awaiting proof` : null,
-                  ].filter(Boolean).join(" · ")}
-            </p>
-          </div>
-        </div>
-        {slaRisk > 0 && (
-          <button type="button" onClick={() => setStatus("SLA At Risk")} className="inline-flex items-center gap-1.5 self-start rounded-lg bg-teal-500 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-teal-400 sm:self-auto">
-            Triage at-risk jobs <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
+      <section className="panel flex flex-wrap items-center gap-x-5 gap-y-2 px-3 py-2" aria-label="Current shipment exceptions">
+        <p className="text-xs font-semibold text-slate-600"><strong className="text-sm text-slate-950">{rows.length}</strong> shown · {jobsTotal.toLocaleString()} total</p>
+        <button type="button" onClick={() => setStatus("SLA At Risk")} className={`text-xs font-bold ${slaRisk > 0 ? "text-amber-700" : "text-slate-500"}`}>{slaRisk} SLA risk</button>
+        <span className={`text-xs font-bold ${unassigned > 0 ? "text-amber-700" : "text-slate-500"}`}>{unassigned} unassigned</span>
+        <span className={`text-xs font-bold ${proofPending > 0 ? "text-amber-700" : "text-slate-500"}`}>{proofPending} proof pending</span>
+        <span className="ml-auto text-[11px] text-slate-500">On-time ETA {String(visibleSummary.averageEtaAccuracy ?? "—")}</span>
+      </section>
 
-      {/* Headline KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        {headline.map((k) => <KpiCard key={k.label} label={k.label} value={String(k.value ?? "0")} status={k.status} />)}
-      </div>
-
-      {/* Lifecycle pipeline — clickable status filter with live counts */}
-      <div className="panel p-2">
-        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 lg:grid-cols-8">
+      {/* Lifecycle and filters share one register toolbar so records start above the fold. */}
+      <div className="panel p-3">
+        <div className="flex gap-1.5 overflow-x-auto pb-2" aria-label="Shipment lifecycle filter">
           <PipelineChip label="All" count={String(visibleSummary.total ?? scopedRows.length)} active={status === "All"} onClick={() => setStatus("All")} />
           {PIPELINE.map((stage) => (
             <PipelineChip
@@ -353,35 +322,30 @@ export function JobsPage() {
             />
           ))}
         </div>
-      </div>
-
-      {/* Toolbar */}
-      <div className="panel flex flex-col gap-3 p-3.5 lg:flex-row lg:items-center">
-        <div className="relative flex-1 lg:max-w-md">
+        <div className="flex flex-col gap-2 border-t border-slate-100 pt-2 lg:flex-row lg:items-center">
+          <div className="relative flex-1 lg:max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          {/* pl-9! (forced): `.field`'s own padding shorthand otherwise wins over the plain
-              pl-9 utility, collapsing the left inset so the icon sits on top of the text. */}
-          <input className="field h-10 pl-9!" aria-label="Search shipments" value={query} onChange={(e) => { setQuery(e.target.value); setJobsOffset(0); }} placeholder="Search jobs, customers, drivers, addresses..." />
-        </div>
-        <select className="field h-10 lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
+            <input className="field pl-9" aria-label="Search shipments" value={query} onChange={(e) => { setQuery(e.target.value); setJobsOffset(0); }} placeholder="Search jobs, customers, drivers, addresses..." />
+          </div>
+          <select className="field lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
           <option value="All">All priorities</option><option>Low</option><option>Normal</option><option>High</option><option>Critical</option>
-        </select>
-        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500">{rows.length} shown · {jobsTotal.toLocaleString()} total</span>
-        {jobsTotal > JOBS_PAGE_SIZE && (
-          <span className="ml-auto flex items-center gap-2 text-xs text-slate-500">
-            <button type="button" disabled={jobsOffset === 0 || jobsPaged.isFetching}
-              onClick={() => setJobsOffset(Math.max(0, jobsOffset - JOBS_PAGE_SIZE))}
-              className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">← Prev</button>
-            <span>Page {Math.floor(jobsOffset / JOBS_PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(jobsTotal / JOBS_PAGE_SIZE))}</span>
-            <button type="button" disabled={jobsOffset + JOBS_PAGE_SIZE >= jobsTotal || jobsPaged.isFetching}
-              onClick={() => setJobsOffset(jobsOffset + JOBS_PAGE_SIZE)}
-              className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">Next →</button>
-          </span>
-        )}
+          </select>
+          {jobsTotal > JOBS_PAGE_SIZE && (
+            <span className="ml-auto flex items-center gap-2 text-xs text-slate-500">
+              <button type="button" disabled={jobsOffset === 0 || jobsPaged.isFetching}
+                onClick={() => setJobsOffset(Math.max(0, jobsOffset - JOBS_PAGE_SIZE))}
+                className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">← Prev</button>
+              <span>Page {Math.floor(jobsOffset / JOBS_PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(jobsTotal / JOBS_PAGE_SIZE))}</span>
+              <button type="button" disabled={jobsOffset + JOBS_PAGE_SIZE >= jobsTotal || jobsPaged.isFetching}
+                onClick={() => setJobsOffset(jobsOffset + JOBS_PAGE_SIZE)}
+                className="rounded-lg border border-slate-200 px-2.5 py-1 font-medium transition enabled:hover:bg-slate-50 disabled:opacity-40">Next →</button>
+            </span>
+          )}
+        </div>
       </div>
 
       {rows.length ? (
-        <DataTable rows={rows} columns={surfaceConfig.tableColumns} onSelect={setSelected} />
+        <DataTable rows={rows} columns={surfaceConfig.tableColumns} showToolbar={false} onSelect={setSelected} />
       ) : (
         <EmptyState title="No jobs match these filters" subtitle="Adjust the pipeline stage, priority, or search to widen results." />
       )}
@@ -397,12 +361,12 @@ export function JobsPage() {
         onEdit={(record) => canEdit && setEditing(record)}
         onAssign={(record) => canAssign && setAssigning(record)}
         onDelete={(id) => canDelete && window.confirm("Archive this job? It will be removed from the active shipment register.") && remove.mutate(id)}
-        onEta={(id) => canDispatch && action.mutate({ type: "eta", id })}
-        onProof={(id) => canQueueProof && action.mutate({ type: "proof", id })}
+        onEta={(id) => canDispatch && etaAction.mutate(id)}
+        onOpenProofCenter={(id) => navigate(`/operations/proof-center?jobId=${encodeURIComponent(String(id))}`)}
         onStatus={(id, next) => (next === "Cancelled" ? canCancel : canDispatch) && changeStatus.mutate({ id, status: next })}
         statusPending={changeStatus.isPending}
         onExport={() => exportJobRecordCsv(selectedRecord(detail.data, selected), detail.data)}
-        canEdit={canEdit} canDelete={canDelete} canDispatch={canDispatch} canQueueProof={canQueueProof} canCancel={canCancel} canAssign={canAssign} canExport={canExport}
+        canEdit={canEdit} canDelete={canDelete} canDispatch={canDispatch} canCancel={canCancel} canAssign={canAssign} canExport={canExport}
       />
       {editing ? <JobModal
         initial={editing}
@@ -444,15 +408,15 @@ function PipelineChip({ label, count, active, tone = "default", onClick }: { lab
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${active ? "border-teal-300 bg-teal-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}
+      className={`flex shrink-0 items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition ${active ? "border-teal-300 bg-teal-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}
     >
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
-      <span className={`mt-0.5 text-xl font-bold tabular-nums ${active ? "text-teal-700" : accent}`}>{count}</span>
+      <span className="text-[11px] font-semibold text-slate-500">{label}</span>
+      <span className={`text-xs font-bold tabular-nums ${active ? "text-teal-700" : accent}`}>{count}</span>
     </button>
   );
 }
 
-function JobDrawer({ detail, loading, error, onClose, onEdit, onAssign, onEta, onProof, onStatus, statusPending, onDelete, onExport, canEdit, canDelete, canDispatch, canQueueProof, canCancel, canAssign, canExport }: { detail?: AnyRecord; loading: boolean; error?: unknown; onClose: () => void; onEdit: (record: AnyRecord) => void; onAssign: (record: AnyRecord) => void; onEta: (id: string | number) => void; onProof: (id: string | number) => void; onStatus: (id: string | number, status: string) => void; statusPending: boolean; onDelete: (id: string | number) => void; onExport: () => void; canEdit: boolean; canDelete: boolean; canDispatch: boolean; canQueueProof: boolean; canCancel: boolean; canAssign: boolean; canExport: boolean }) {
+function JobDrawer({ detail, loading, error, onClose, onEdit, onAssign, onEta, onOpenProofCenter, onStatus, statusPending, onDelete, onExport, canEdit, canDelete, canDispatch, canCancel, canAssign, canExport }: { detail?: AnyRecord; loading: boolean; error?: unknown; onClose: () => void; onEdit: (record: AnyRecord) => void; onAssign: (record: AnyRecord) => void; onEta: (id: string | number) => void; onOpenProofCenter: (id: string | number) => void; onStatus: (id: string | number, status: string) => void; statusPending: boolean; onDelete: (id: string | number) => void; onExport: () => void; canEdit: boolean; canDelete: boolean; canDispatch: boolean; canCancel: boolean; canAssign: boolean; canExport: boolean }) {
   const record = detail?.record as AnyRecord | undefined;
   if (!record && !loading && !error) return null;
   if (!record) return (
@@ -487,7 +451,7 @@ function JobDrawer({ detail, loading, error, onClose, onEdit, onAssign, onEta, o
             <button type="button" className="btn-primary h-9 py-0" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
             <button type="button" className="btn-ghost h-9 py-0" disabled={!canAssign || terminal} title={!canAssign ? "You do not have permission to assign jobs." : terminal ? "Terminal jobs cannot be reassigned." : undefined} onClick={() => canAssign && !terminal && onAssign(record)}><UserCheck className="h-4 w-4" /> {record.assignedDriverId ? "Reassign" : "Assign"}</button>
             <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch || terminal} title={!canDispatch ? "You do not have permission to perform this action." : terminal ? "ETA updates are closed for terminal jobs." : undefined} onClick={() => canDispatch && !terminal && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canQueueProof || terminal} title={!canQueueProof ? "You do not have permission to queue proof." : terminal ? "POD is closed for terminal jobs." : undefined} onClick={() => canQueueProof && !terminal && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
+            <button type="button" className="btn-ghost h-9 py-0" onClick={() => onOpenProofCenter(String(record.id))}><FileCheck2 className="h-4 w-4" /> Capture Proof</button>
             {canExport ? <button type="button" className="btn-ghost h-9 py-0" onClick={onExport}><Download className="h-4 w-4" /> Export</button> : null}
             <button type="button" className="btn-ghost h-9 py-0 text-red-600" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : "Archive this job"} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Archive</button>
           </div>
@@ -557,6 +521,15 @@ function AssignmentModal({ initial, saving, onClose, onSave }: { initial: AnyRec
     override: false,
     overrideReason: "",
   });
+  const [driverSearch, setDriverSearch] = useState("");
+  const [vehicleSearch, setVehicleSearch] = useState("");
+  const driversQ = useQuery({ queryKey: ["jobs", "assignment-options", initial.id, "drivers", driverSearch], queryFn: () => jobsApi.assignmentOptions(String(initial.id), driverSearch) });
+  const vehiclesQ = useQuery({ queryKey: ["jobs", "assignment-options", initial.id, "vehicles", vehicleSearch], queryFn: () => jobsApi.assignmentOptions(String(initial.id), vehicleSearch) });
+  const optionsQ = { isPending: driversQ.isPending || vehiclesQ.isPending, isError: driversQ.isError || vehiclesQ.isError, refetch: () => Promise.all([driversQ.refetch(), vehiclesQ.refetch()]) };
+  const drivers = (driversQ.data?.drivers ?? []) as AnyRecord[];
+  const vehicles = (vehiclesQ.data?.vehicles ?? []) as AnyRecord[];
+  const selectedDriver = drivers.find((driver) => String(driver.id) === String(form.driverId));
+  const hosBlock = selectedDriver?.hosBlockReason;
   const submit = (event: FormEvent) => {
     event.preventDefault();
     onSave({
@@ -575,16 +548,28 @@ function AssignmentModal({ initial, saving, onClose, onSave }: { initial: AnyRec
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
-        <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Driver ID</span>
-            <input className="field" type="number" min="1" step="1" required value={String(form.driverId)} onChange={(e) => setForm((x) => ({ ...x, driverId: e.target.value }))} />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="text-sm font-medium text-slate-600">Find driver<input className="field mt-1" type="search" placeholder="Driver name or code" value={driverSearch} onChange={(e) => { setDriverSearch(e.target.value); setForm((x) => ({ ...x, driverId: "" })); }} /></label>
+          <label className="text-sm font-medium text-slate-600">Find vehicle<input className="field mt-1" type="search" placeholder="Vehicle fleet code" value={vehicleSearch} onChange={(e) => { setVehicleSearch(e.target.value); setForm((x) => ({ ...x, vehicleId: "" })); }} /></label>
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-500">Driver</span>
+            <select className="field" required disabled={optionsQ.isPending || optionsQ.isError} value={String(form.driverId)} onChange={(e) => setForm((x) => ({ ...x, driverId: e.target.value }))}>
+              <option value="">Select driver</option>
+              {drivers.map((driver) => <option key={String(driver.id)} value={String(driver.id)}>{String(driver.driverCode)} - {String(driver.fullName)} ({String(driver.status)}{driver.hosBlockReason ? "; HOS blocked" : ""})</option>)}
+            </select>
           </label>
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Vehicle ID</span>
-            <input className="field" type="number" min="1" step="1" required value={String(form.vehicleId)} onChange={(e) => setForm((x) => ({ ...x, vehicleId: e.target.value }))} />
+          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-500">Vehicle</span>
+            <select className="field" required disabled={optionsQ.isPending || optionsQ.isError} value={String(form.vehicleId)} onChange={(e) => setForm((x) => ({ ...x, vehicleId: e.target.value }))}>
+              <option value="">Select vehicle</option>
+              {vehicles.map((vehicle) => <option key={String(vehicle.id)} value={String(vehicle.id)}>{String(vehicle.vehicleCode)} - {String(vehicle.type)} ({String(vehicle.status)})</option>)}
+            </select>
           </label>
         </div>
+        {optionsQ.isError && <p role="alert" className="mt-3 text-sm text-red-600">Could not load resources. <button type="button" onClick={() => void optionsQ.refetch()}>Retry</button></p>}
+        {selectedDriver && !hosBlock && <p className="mt-3 text-sm text-teal-700">HOS source: {String(selectedDriver.clockSource)} · {String(selectedDriver.driveTimeRemainingMinutes)} driving minutes remaining. Eligibility is rechecked by the server on assignment.</p>}
+        {Boolean(hosBlock) && <p role="alert" className="mt-3 text-sm text-amber-700">{String(hosBlock)}. Connect a supported HOS provider and receive a fresh clock before dispatch. Profile scores and fleet pairing do not clear this requirement.</p>}
+        {!optionsQ.isPending && !optionsQ.isError && (!drivers.length || !vehicles.length) && <p className="mt-3 text-sm text-slate-600">No matching resources in this job's branch. Change your search or create resources in the same branch.</p>}
         <label className="mt-4 flex items-center gap-2 text-sm font-semibold text-slate-700">
           <input type="checkbox" checked={Boolean(form.override)} onChange={(e) => setForm((x) => ({ ...x, override: e.target.checked }))} />
           Request authorized soft-rule override
@@ -598,7 +583,7 @@ function AssignmentModal({ initial, saving, onClose, onSave }: { initial: AnyRec
         <p className="mt-4 text-xs text-slate-500">The server will verify tenant and branch ownership, driver HOS, vehicle availability, and active-assignment conflicts.</p>
         <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
           <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Assigning..." : "Assign Resources"}</button>
+          <button type="submit" className="btn-primary" disabled={saving || optionsQ.isPending || optionsQ.isError || !selectedDriver || !vehicles.some((vehicle) => String(vehicle.id) === String(form.vehicleId)) || Boolean(hosBlock)}>{saving ? "Assigning..." : "Assign Resources"}</button>
         </div>
       </form>
     </div>
@@ -748,7 +733,9 @@ function Panel({ title, record, keys, format }: { title: string; record: AnyReco
           const raw = record[key];
           const value = format === "currency" && raw != null && raw !== "" && !Number.isNaN(Number(raw)) && /estimate/i.test(key)
             ? `$${Number(raw).toLocaleString()}`
-            : raw ?? "--";
+            : /^(scheduledStart|scheduledEnd|slaWindowStart|slaWindowEnd)$/.test(key) && raw
+              ? formatJobTime(raw)
+              : raw ?? "--";
           return (
             <div key={key} className="flex items-start justify-between gap-3">
               <span className="text-xs font-medium text-slate-500">{labelize(key)}</span>
@@ -909,4 +896,10 @@ function buildJobSummary(rows: AnyRecord[], summary: AnyRecord | undefined, sess
     averageEtaAccuracy: withEta.length ? `${Math.round((onTime / withEta.length) * 100)}%` : "N/A",
     revenueMargin: revenueMargin ? `$${revenueMargin.toLocaleString()}` : "N/A",
   };
+}
+
+function formatJobTime(value: unknown): string {
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZoneName: "short" }).format(date);
 }

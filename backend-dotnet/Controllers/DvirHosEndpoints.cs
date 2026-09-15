@@ -389,9 +389,9 @@ public static partial class EndpointMappings
                     @"INSERT INTO dvir_reports
                         (company_id,branch_id,report_number,idempotency_key,idempotency_request_hash,driver_id,vehicle_id,country_code,
                          inspection_type,inspection_status,defects_found,safe_to_operate,driver_signature_status,
-                         mechanic_review_status,repair_certification_status,submitted_at,risk_score,recommended_action,notes)
+                         mechanic_review_status,repair_certification_status,submitted_at,risk_score,recommended_action,notes,data_origin,verification_status)
                       VALUES(@cid,@branchId,@number,@key,@requestHash,@did,@vid,@country,@type,'Submitted',0,TRUE,'Pending',
-                             'Pending','Pending',NOW(),@risk,@action,@notes) RETURNING id",
+                             'Pending','Pending',NOW(),@risk,@action,@notes,'user_workflow','recorded_by_authenticated_actor') RETURNING id",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);
@@ -923,8 +923,8 @@ public static partial class EndpointMappings
             return Results.Ok(ApiResponse<object>.Ok(Array.Empty<object>(),
                 "No branch-scoped HOS/ELD recommendations are available"));
         return await OkRows(db,
-            @"SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='hos-eld'
-              ORDER BY score DESC,id DESC LIMIT 10",
+            @"SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='hos-eld'" +
+              EndpointMappings.GroundedRecommendationSql + " ORDER BY score DESC,id DESC LIMIT 10",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
 

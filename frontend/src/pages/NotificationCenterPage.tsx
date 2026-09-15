@@ -77,7 +77,7 @@ export function NotificationCenterPage() {
   });
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack min-w-0">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -85,7 +85,7 @@ export function NotificationCenterPage() {
             <Bell className="h-5 w-5 text-indigo-500" />
             Notification Center
           </h1>
-          <p className="mt-0.5 text-sm text-slate-500">Real-time notifications, escalations and acknowledgements</p>
+          <p className="mt-0.5 text-sm text-slate-500">Persisted notifications, escalations and acknowledgements</p>
         </div>
         <div className="flex items-center gap-2">
           <button

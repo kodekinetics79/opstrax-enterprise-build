@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { exportCsv, LoadingState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, EmptyState, DataTable } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // ── Live data ─────────────────────────────────────────────────────────────────
@@ -234,14 +234,14 @@ export function DigitalFormsPage() {
   if (templatesQ.isLoading) return <LoadingState />;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="page-stack min-w-0">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Digital Forms</h1>
           <p className="text-sm text-slate-500 mt-0.5">Pre-trip, DVIR, incident, delivery and compliance digital checklists — fill, submit and track compliance</p>
         </div>
         <button type="button" className="btn-secondary text-sm"
-          onClick={() => exportCsv("form-submissions", submissions)}>Export Submissions</button>
+          disabled={submissions.length === 0} onClick={() => exportCsv("form-submissions", submissions)}>Export Submissions</button>
       </div>
 
       {/* KPI strip */}
@@ -249,10 +249,10 @@ export function DigitalFormsPage() {
         {[
           { label: "Active Forms",      val: activeTemplates.length },
           { label: "Submissions (30d)", val: submissions.length,    accent: "text-teal-600" },
-          { label: "Compliance Rate",   val: `${complianceRate}%`,  accent: complianceRate >= 90 ? "text-teal-600" : "text-amber-600" },
+          { label: "Compliance Rate",   val: submissions.length ? `${complianceRate}%` : "—",  accent: complianceRate >= 90 ? "text-teal-600" : "text-amber-600" },
           { label: "Defects Found",     val: defects,               accent: defects > 0 ? "text-red-600" : "text-teal-600" },
         ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-28">
+          <div key={label} className="panel flex flex-col gap-1 min-w-28 px-3 py-2">
             <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{val}</span>
             <span className="text-xs text-slate-500 font-medium">{label}</span>
           </div>
@@ -280,43 +280,12 @@ export function DigitalFormsPage() {
                 }`}>{c}</button>
             ))}
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredTemplates.map((tmpl) => (
-              <div key={String(tmpl.formKey)} className={`panel flex flex-col gap-3 ${!tmpl.active ? "opacity-60" : ""}`}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-900 text-sm">{String(tmpl.title)}</p>
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      <CategoryBadge cat={String(tmpl.category ?? "")} />
-                      {!tmpl.active && <span className="text-xs px-2 py-0.5 rounded-full border border-slate-200 text-slate-400 bg-slate-50">Inactive</span>}
-                    </div>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <p className="text-slate-400">Fields</p>
-                    <p className="font-semibold text-slate-700">{String(tmpl.fields)}</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-400">Frequency</p>
-                    <p className="font-semibold text-slate-700">{String(tmpl.frequency ?? "—")}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className="text-slate-400">Compliance</p>
-                    <p className="font-medium text-slate-600 truncate">{String(tmpl.compliance ?? "—")}</p>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between pt-1 border-t border-slate-100">
-                  <span className="text-xs text-slate-400">Role: {String(tmpl.requiredRole ?? "Any")}</span>
-                  <button type="button" disabled={!tmpl.active}
-                    onClick={() => setFilling(tmpl)}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-teal-50 border border-teal-300 text-teal-700 hover:bg-teal-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium">
-                    Fill Form →
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+          {filteredTemplates.length === 0 && <EmptyState title="No forms available" subtitle="No active templates match this category. Choose another category or ask your administrator to configure a template." />}
+          {filteredTemplates.length > 0 && <DataTable rows={filteredTemplates} columns={["title", "category", "fields", "frequency", "requiredRole", "active"]}
+            columnLabels={{ active: "State", requiredRole: "Role" }}
+            cellRenderers={{ category: (tmpl) => <CategoryBadge cat={String(tmpl.category ?? "")} />, active: (tmpl) => tmpl.active ? "Active" : "Inactive" }}
+            actions={(tmpl) => <button type="button" className="btn-primary btn-compact" disabled={!tmpl.active} onClick={() => setFilling(tmpl)}>Fill form</button>}
+          />}
         </div>
       )}
 

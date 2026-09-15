@@ -57,9 +57,9 @@ const GRAIN =
 const CSS = `
 :root {
   /* Clay material — warm-neutral molded surface over the cool brand */
-  --cx-r-card: 20px;
-  --cx-r-btn: 12px;
-  --cx-r-field: 12px;
+  --cx-r-card: 12px;
+  --cx-r-btn: 8px;
+  --cx-r-field: 8px;
 
   --cx-bg:        linear-gradient(150deg, #ffffff 0%, #f5f8fc 54%, #eaf1f8 100%);
   --cx-bg-sunken: linear-gradient(180deg, #e9eff7 0%, #f1f5fa 100%);
@@ -73,16 +73,16 @@ const CSS = `
      (the double shadow), plus an inset top highlight so it reads as raised. */
   --cx-out:
     inset 0 2px 0 rgba(255,255,255,.95),
-    inset 0 -9px 18px rgba(148,163,184,.13),
+    inset 0 -4px 10px rgba(148,163,184,.10),
     0 2px 4px rgba(15,23,42,.06),
-    0 16px 32px -12px rgba(15,23,42,.16),
-    0 32px 64px -30px rgba(13,148,136,.24);
+    0 8px 20px -12px rgba(15,23,42,.14),
+    0 14px 32px -24px rgba(13,148,136,.18);
   --cx-out-hover:
     inset 0 2px 0 rgba(255,255,255,.95),
-    inset 0 -9px 18px rgba(148,163,184,.11),
+    inset 0 -4px 10px rgba(148,163,184,.09),
     0 3px 6px rgba(15,23,42,.07),
-    0 22px 42px -14px rgba(15,23,42,.20),
-    0 46px 92px -34px rgba(13,148,136,.32);
+    0 10px 24px -14px rgba(15,23,42,.16),
+    0 18px 40px -30px rgba(13,148,136,.22);
 
   /* Extruded control (button / knob) — soft neumorphic lift */
   --cx-raise:
@@ -509,7 +509,7 @@ export const ClayCard = forwardRef<HTMLDivElement, ClayCardProps>(function ClayC
   },
   ref,
 ) {
-  const pad = dense ? "px-3.5 py-3" : "px-5 py-4";
+  const pad = dense ? "px-3 py-2.5" : "px-4 py-3";
   const hasHeader = Boolean(title || subtitle || actions || Icon);
 
   return (
@@ -567,7 +567,7 @@ export const ClayCard = forwardRef<HTMLDivElement, ClayCardProps>(function ClayC
         <footer
           className={cx(
             "shrink-0 border-t border-slate-200/70 bg-white/40",
-            dense ? "px-3.5 py-2.5" : "px-5 py-3",
+            dense ? "px-3 py-2" : "px-4 py-2.5",
           )}
         >
           {footer}
@@ -594,9 +594,9 @@ export interface ClayButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
 }
 
 const BTN_SIZE: Record<ClayButtonSize, string> = {
-  sm: "px-3 py-1.5 text-[0.78rem]",
-  md: "px-4 py-2.5 text-[0.83rem]",
-  lg: "px-5 py-3 text-[0.9rem]",
+  sm: "min-h-7 px-2.5 py-1 text-[0.75rem]",
+  md: "min-h-8 px-3 py-1.5 text-[0.8rem]",
+  lg: "min-h-9 px-4 py-2 text-[0.85rem]",
 };
 
 const BTN_ICON: Record<ClayButtonSize, number> = { sm: 14, md: 15, lg: 17 };

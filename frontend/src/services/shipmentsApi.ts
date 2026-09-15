@@ -37,6 +37,23 @@ export const shipmentsApi = {
   proofOfDeliverySummary: () => unwrap<AnyRecord>(apiClient.get("/api/proof-of-delivery/summary")),
   proofOfDeliveryDetail: (proofId: string | number) =>
     unwrap<AnyRecord>(apiClient.get(`/api/proof-of-delivery/${proofId}`)),
+  openProofEvidence: async (documentId: string | number, filename: string, artifactType: string) => {
+    const response = await apiClient.get(`/api/documents/${documentId}/download`, { responseType: "blob" });
+    const blob = response.data as Blob;
+    const contentType = String(response.headers?.["content-type"] ?? "").toLowerCase();
+    if (contentType.includes("application/json")) {
+      const envelope = JSON.parse(await blob.text()) as { success?: boolean; data?: { url?: string }; message?: string };
+      if (!envelope.success || !envelope.data?.url) throw new Error(envelope.message || "Evidence file is unavailable");
+      return { url: envelope.data.url, filename, revoke: false };
+    }
+    const lowerName = filename.toLowerCase();
+    const mimeType = /\.jpe?g$/.test(lowerName) ? "image/jpeg"
+      : /\.png$/.test(lowerName) || /signature|photo/i.test(artifactType) ? "image/png"
+      : /\.pdf$/.test(lowerName) ? "application/pdf"
+      : blob.type || "application/octet-stream";
+    const resolved = blob.type === mimeType ? blob : new Blob([blob], { type: mimeType });
+    return { url: URL.createObjectURL(resolved), filename, revoke: true };
+  },
   uploadProofEvidence: (jobId: string | number, file: Blob, kind: "photo" | "signature" | "document", filename: string) => {
     const form = new FormData();
     form.append("file", file, filename);

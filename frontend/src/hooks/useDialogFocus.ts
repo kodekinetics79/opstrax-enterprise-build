@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 const FOCUSABLE = [
   "button:not([disabled])",
   "[href]",
+  "summary",
   "input:not([disabled])",
   "select:not([disabled])",
   "textarea:not([disabled])",
@@ -24,7 +25,7 @@ export function useDialogFocus<T extends HTMLElement>(open: boolean, onClose: ()
     const discovered = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"],[role="alertdialog"]')).at(-1) ?? null;
     const node = dialogRef.current ?? discovered;
     const focusables = () => node
-      ? Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((item) => !item.hidden)
+      ? Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((item) => !item.hidden && item.getClientRects().length > 0)
       : [];
     const preferred = node?.querySelector<HTMLElement>("[autofocus]") ?? focusables()[0];
     if (preferred && !node?.contains(document.activeElement)) preferred.focus();

@@ -10,8 +10,8 @@ public sealed class DispatchSchemaService(Database db, ILogger<DispatchSchemaSer
 {
     public async Task EnsureAsync()
     {
-        await AddColumns();
         await CreateTables();
+        await AddColumns();
         await CreateIndexes();
     }
 
@@ -42,6 +42,10 @@ public sealed class DispatchSchemaService(Database db, ILogger<DispatchSchemaSer
             ("dispatch_assignments", "assignment_status",   "VARCHAR(60) NULL"),
             ("dispatch_assignments", "cancelled_at",        "TIMESTAMPTZ NULL"),
             ("dispatch_assignments", "created_at",          "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
+            ("dispatch_assignments", "data_origin",         "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+            ("dispatch_assignments", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
+            ("dispatch_exceptions", "data_origin",          "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+            ("dispatch_exceptions", "verification_status",  "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
         };
 
         foreach (var (table, col, def) in cols)
@@ -77,7 +81,9 @@ CREATE TABLE IF NOT EXISTS dispatch_exceptions (
     acknowledged_at     TIMESTAMPTZ NULL,
     resolved_at         TIMESTAMPTZ NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NULL
+    updated_at          TIMESTAMPTZ NULL,
+    data_origin         VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+    verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 )");
 
         // Proof of pickup / delivery per assignment

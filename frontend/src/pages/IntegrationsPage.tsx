@@ -31,28 +31,32 @@ import {
   exportCsv,
   EmptyState,
   ErrorState,
-  KpiCard,
   LoadingState,
   PageHeader,
   StatusBadge,
 } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
+import { WorkspaceGuidance } from "@/components/WorkspaceGuidance";
 import { connectorAttemptHealth } from "@/lib/connectorFreshness";
 import {
   integrationsApi,
   type IntegrationCategory,
   type IntegrationRecord,
+  type IntegrationStatus,
   type IntegrationsPayload,
   type IntegrationTestResult,
   type IntegrationWriteInput,
 } from "@/services/integrationsApi";
+import "./integrations-workspace.css";
 
 type ConfigField = {
   key: string;
   label: string;
-  type: "text" | "url" | "number";
+  type: "text" | "url" | "number" | "select";
   placeholder?: string;
   note?: string;
+  defaultValue?: string;
+  options?: Array<{ value: string; label: string }>;
 };
 
 type IntegrationOperationResult = {
@@ -62,6 +66,8 @@ type IntegrationOperationResult = {
   message: string;
   details?: Record<string, unknown> | null;
 };
+
+type ConnectorView = "available" | "evaluation";
 
 // Sensitive config values come back from the API redacted (never the real secret).
 // An empty submit for a field that is already set must NOT overwrite the stored value.
@@ -74,6 +80,42 @@ function isSecretField(key: string): boolean {
 
 function isRedactedValue(value: string | number | boolean | null | undefined): boolean {
   return typeof value === "string" && value.trim() === REDACTED_MARKER;
+}
+
+function messagingRoutingStatus(record: IntegrationRecord): { tone: string; message: string } {
+  const status = effectiveIntegrationStatus(record);
+  const verifiedConnection = status === "Connected"
+    && record.lastTestOk === true
+    && Boolean(record.lastTestedAt);
+
+  if (verifiedConnection) {
+    return {
+      tone: "text-emerald-700",
+      message: "Provider connection is verified by a successful recorded handshake. Live routing is available; end-to-end delivery is not claimed until a delivery record succeeds.",
+    };
+  }
+  if (status === "Pending") {
+    return {
+      tone: "text-amber-800",
+      message: "Configuration is pending. No live notification routing or delivery is claimed.",
+    };
+  }
+  if (status === "Error" || record.lastTestOk === false) {
+    return {
+      tone: "text-rose-700",
+      message: "The last connection check failed. No live notification routing or delivery is claimed.",
+    };
+  }
+  if (status === "Connected") {
+    return {
+      tone: "text-amber-800",
+      message: "Connected status is stored, but no successful current handshake is recorded. Live notification routing and delivery are not claimed.",
+    };
+  }
+  return {
+    tone: "text-slate-600",
+    message: "This connector is disconnected. No live notification routing or delivery is claimed.",
+  };
 }
 
 const CATEGORY_ORDER: IntegrationCategory[] = [
@@ -98,7 +140,30 @@ const CATEGORY_META: Record<IntegrationCategory, { icon: ReactNode; accent: stri
   Compliance: { icon: <ShieldCheck className="h-3.5 w-3.5" />, accent: "bg-emerald-50 border-emerald-200 text-emerald-700", dot: "bg-emerald-500" },
 };
 
-function categoryFields(category: IntegrationCategory): ConfigField[] {
+const FALLBACK_CATEGORY_META = {
+  icon: <Plug className="h-3.5 w-3.5" />,
+  accent: "bg-slate-50 border-slate-200 text-slate-700",
+  dot: "bg-slate-500",
+};
+
+function categoryMeta(category: string) {
+  return CATEGORY_META[category as IntegrationCategory] ?? FALLBACK_CATEGORY_META;
+}
+
+function effectiveIntegrationStatus(record: IntegrationRecord): IntegrationStatus {
+  if (record.adapterAvailable !== true) return "Disconnected";
+  if (record.status !== "Connected") return record.status;
+
+  // A persisted status label is not sufficient connection evidence. Older/demo
+  // rows can contain Connected without ever recording a provider handshake; keep
+  // those rows pending until the current adapter records an actual success.
+  if (record.lastTestOk === false) return "Error";
+  return record.lastTestOk === true && Boolean(record.lastTestedAt)
+    ? "Connected"
+    : "Pending";
+}
+
+function categoryFields(category: string): ConfigField[] {
   switch (category) {
     case "ERP & Accounting":
       return [
@@ -148,6 +213,12 @@ function categoryFields(category: IntegrationCategory): ConfigField[] {
         { key: "exportWindow", label: "Export window", type: "text", placeholder: "daily" },
         { key: "syncIntervalMinutes", label: "Sync interval (minutes)", type: "number", placeholder: "1440" },
       ];
+    default:
+      return [
+        { key: "baseUrl", label: "Service endpoint", type: "url", placeholder: "https://provider.example.com" },
+        { key: "apiKey", label: "API key", type: "text", placeholder: "Paste a tenant-authorized key" },
+        { key: "syncIntervalMinutes", label: "Sync interval (minutes)", type: "number", placeholder: "15" },
+      ];
   }
 }
 
@@ -156,11 +227,34 @@ function integrationFields(record: IntegrationRecord): ConfigField[] {
   if (record.key === "samsara") {
     return [
       {
+        key: "apiRegion",
+        label: "Samsara cloud region",
+        type: "select",
+        defaultValue: "us",
+        options: [
+          { value: "us", label: "United States / legacy Canada" },
+          { value: "eu", label: "Europe / United Kingdom" },
+          { value: "ca", label: "Canada cloud" },
+        ],
+        note: "Match the region shown in the Samsara dashboard URL. Changing it requires a new connection test and starts a new provider mapping review.",
+      },
+      {
         key: "apiToken",
         label: "Samsara API token",
         type: "text",
         placeholder: "Paste a tenant-authorized token",
-        note: "Requires Read Vehicles and Read Vehicle Statistics. OpsTrax stores the token encrypted and never displays it again.",
+        note: "Account-safe GPS discovery requires Read Org Information, Read Vehicles, and Read Vehicle Statistics. Camera intake separately requires Read Safety Events & Scores; the connection test does not claim that camera scope. OpsTrax stores the token encrypted and never displays it again.",
+      },
+      {
+        key: "cameraSafetyAutoSync",
+        label: "Automatic camera safety intake",
+        type: "select",
+        defaultValue: "disabled",
+        options: [
+          { value: "disabled", label: "Manual only" },
+          { value: "enabled", label: "Every scheduled connector cycle" },
+        ],
+        note: "Runs only after a successful GPS cycle and records provider event metadata. A missing camera permission does not mark GPS disconnected. Camera media, privacy acceptance, provider verification, and certification remain on External hold.",
       },
     ];
   }
@@ -182,7 +276,7 @@ function formatRelativeTime(iso?: string | null): string {
   return `${Math.round(diffSec / 86400)}d ago`;
 }
 
-function categoryText(category: IntegrationCategory) {
+function categoryText(category: string) {
   switch (category) {
     case "ERP & Accounting":
       return "Finance and ERP systems";
@@ -200,11 +294,13 @@ function categoryText(category: IntegrationCategory) {
       return "Device and sensor telemetry";
     case "Compliance":
       return "Authority and reporting workflows";
+    default:
+      return "Custom and legacy connector category";
   }
 }
 
-function CategoryBadge({ category }: { category: IntegrationCategory }) {
-  const meta = CATEGORY_META[category];
+function CategoryBadge({ category }: { category: string }) {
+  const meta = categoryMeta(category);
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[10px] font-bold uppercase tracking-[0.14em] ${meta.accent}`}>
       {meta.icon}
@@ -234,7 +330,7 @@ function buildFormState(record: IntegrationRecord) {
       if (isSecretField(field.key) && isRedactedValue(record.config[field.key])) {
         return [field.key, ""];
       }
-      return [field.key, formatConfigValue(record.config[field.key])];
+      return [field.key, formatConfigValue(record.config[field.key]) || field.defaultValue || ""];
     }),
   ) as Record<string, string>;
 }
@@ -290,6 +386,7 @@ function ConfigDrawer({
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; details?: Record<string, unknown> | null } | null>(null);
   const [discoveryResult, setDiscoveryResult] = useState<IntegrationTestResult | null>(null);
   const [validationResult, setValidationResult] = useState<IntegrationTestResult | null>(null);
+  const [cameraSafetyResult, setCameraSafetyResult] = useState<IntegrationTestResult | null>(null);
 
   useEffect(() => {
     setForm(buildFormState(integration));
@@ -297,6 +394,7 @@ function ConfigDrawer({
     setTestResult(null);
     setDiscoveryResult(null);
     setValidationResult(null);
+    setCameraSafetyResult(null);
   }, [integration]);
 
   useEffect(() => {
@@ -423,10 +521,30 @@ function ConfigDrawer({
     },
   });
 
+  const cameraSafetyMut = useMutation({
+    mutationFn: () => integrationsApi.syncCameraSafety(integration.id),
+    onSuccess: async (result: IntegrationTestResult) => {
+      setCameraSafetyResult(result);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["integrations"] }),
+        qc.invalidateQueries({ queryKey: ["dashcam", "provider-status"] }),
+        qc.invalidateQueries({ queryKey: ["dashcam", "provider-events"] }),
+      ]);
+    },
+    onError: (error) => {
+      setCameraSafetyResult({
+        success: false,
+        message: error instanceof Error ? error.message : "Camera safety intake failed. Please try again.",
+      });
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+  });
+
   const fields = integrationFields(integration);
-  const meta = CATEGORY_META[integration.category];
+  const meta = categoryMeta(integration.category);
   const adapterAvailable = integration.adapterAvailable === true;
   const canConfigure = canManage && adapterAvailable;
+  const messagingStatus = messagingRoutingStatus(integration);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm anim-fade-in">
@@ -528,19 +646,36 @@ function ConfigDrawer({
               </div>
             ) : fields.map((field) => {
               const secretSet = isSecretField(field.key) && isRedactedValue(integration.config[field.key]);
+              const secret = isSecretField(field.key);
               const inputId = `integration-${integration.id}-${field.key}`;
               return (
                 <div key={field.key}>
                   <label htmlFor={inputId} className="field-label text-[12px] font-bold text-slate-700">{field.label}</label>
-                  <input
-                    id={inputId}
-                    type={field.type}
-                    className="field mt-1 w-full"
-                    value={form[field.key] ?? ""}
-                    onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
-                    placeholder={secretSet ? `${REDACTED_MARKER} (set — leave blank to keep)` : field.placeholder}
-                    disabled={!canConfigure}
-                  />
+                  {field.type === "select" ? (
+                    <select
+                      id={inputId}
+                      className="field mt-1 w-full"
+                      value={form[field.key] ?? field.defaultValue ?? ""}
+                      onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+                      disabled={!canConfigure}
+                    >
+                      {(field.options ?? []).map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      id={inputId}
+                      type={secret ? "password" : field.type}
+                      autoComplete={secret ? "off" : undefined}
+                      spellCheck={secret ? false : undefined}
+                      className="field mt-1 w-full"
+                      value={form[field.key] ?? ""}
+                      onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+                      placeholder={secretSet ? `${REDACTED_MARKER} (set — leave blank to keep)` : field.placeholder}
+                      disabled={!canConfigure}
+                    />
+                  )}
                   {secretSet ? (
                     <p className="mt-1 text-xs text-slate-400">Stored secret is set. Leave blank to keep it, or type a new value to replace it.</p>
                   ) : (
@@ -567,9 +702,9 @@ function ConfigDrawer({
           {adapterAvailable && integration.category === "Messaging & Notifications" && (
             <div className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
               <p className="text-xs font-bold uppercase tracking-[0.18em] text-violet-600">Notification routing</p>
-              <div className="mt-3 flex items-center gap-2 text-sm text-slate-600">
+              <div className={`mt-3 flex items-center gap-2 text-sm ${messagingStatus.tone}`}>
                 <ArrowRightLeft className="h-4 w-4 text-violet-500" />
-                Operational alerts and customer notifications are routed through this connector live.
+                {messagingStatus.message}
               </div>
             </div>
           )}
@@ -638,6 +773,39 @@ function ConfigDrawer({
                       {validationResult.details ? (
                         <p className="mt-1 tabular-nums">
                           Written {Number(validationResult.details.positionsWritten ?? 0)} · Unmatched {Number(validationResult.details.unmatched ?? 0)} · Historical {Number(validationResult.details.historicalOnly ?? 0)} · Rejected {Number(validationResult.details.rejected ?? 0)}
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
+                </li>
+                <li className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-bold text-slate-800">4. Intake camera safety events</p>
+                    <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700">
+                      External hold
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">
+                    Pull the real Samsara safety-event stream into the protected intake ledger. This records provider payload evidence only. When automatic intake is enabled, it runs after successful scheduled GPS cycles and backs off after a camera failure without marking GPS disconnected. Camera media, provider verification, privacy acceptance, and certification stay on External hold.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-ghost mt-2 text-xs"
+                    disabled={!canManage || cameraSafetyMut.isPending || !(testResult?.success || integration.lastTestOk)}
+                    onClick={() => {
+                      setCameraSafetyResult(null);
+                      cameraSafetyMut.mutate();
+                    }}
+                  >
+                    {cameraSafetyMut.isPending ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
+                    {cameraSafetyMut.isPending ? "Recording provider events..." : "Sync camera safety intake"}
+                  </button>
+                  {cameraSafetyResult && (
+                    <div role="status" aria-live="polite" className={`mt-2 rounded-lg border px-3 py-2 text-xs ${cameraSafetyResult.success ? "border-amber-200 bg-white text-amber-900" : "border-red-200 bg-red-50 text-red-700"}`}>
+                      <p className="font-semibold">{cameraSafetyResult.message}</p>
+                      {cameraSafetyResult.details ? (
+                        <p className="mt-1 tabular-nums">
+                          Observed {Number(cameraSafetyResult.details.eventsObserved ?? 0)} · Accepted {Number(cameraSafetyResult.details.eventsAccepted ?? 0)} · Replayed {Number(cameraSafetyResult.details.eventsReplayed ?? 0)} · Quarantined {Number(cameraSafetyResult.details.eventsQuarantined ?? 0)}
                         </p>
                       ) : null}
                     </div>
@@ -1023,6 +1191,9 @@ function CustomConnectorDialog({
                     />
                     <input
                       className="field flex-1 text-sm"
+                      type={isSecretField(row.key) ? "password" : "text"}
+                      autoComplete={isSecretField(row.key) ? "off" : undefined}
+                      spellCheck={isSecretField(row.key) ? false : undefined}
                       value={row.value}
                       onChange={(event) =>
                         setConfigRows((rows) => rows.map((r) => (r.id === row.id ? { ...r, value: event.target.value } : r)))
@@ -1070,9 +1241,9 @@ function CustomConnectorDialog({
 }
 
 /* ============================================================
-   CONNECTOR CARD — claymorphic marketplace tile
+   CONNECTOR ROW — operational status, evidence and next action
    ============================================================ */
-function ConnectorCard({
+function ConnectorRow({
   integration,
   canManage,
   busy,
@@ -1097,202 +1268,77 @@ function ConnectorCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const isConnected = integration.status === "Connected";
-  const isError = integration.status === "Error";
+  const status = effectiveIntegrationStatus(integration);
+  const isConnected = status === "Connected";
+  const isError = status === "Error";
   const adapterAvailable = integration.adapterAvailable === true;
-  const meta = CATEGORY_META[integration.category];
   const primaryLabel =
-    integration.status === "Pending" ? "Authorize" : isError ? "Reconnect" : "Connect";
+    status === "Pending" ? "Authorize" : isError ? "Reconnect" : "Connect";
   const attemptHealth = connectorAttemptHealth(integration);
-  const healthAccent = attemptHealth?.state === "error"
-    ? "bg-red-400/70"
-    : attemptHealth?.state === "stale" || attemptHealth?.state === "awaiting"
-      ? "bg-amber-400/70"
-      : attemptHealth?.state === "in-progress"
-        ? "bg-sky-400/70"
-        : null;
 
   return (
-    <div className="clay-card card-hover flex flex-col gap-3 p-4">
-      <span
-        className={`pointer-events-none absolute inset-x-0 top-0 h-1 rounded-t-(--r-clay) ${
-          isError ? "bg-red-400/70" : healthAccent ?? (isConnected ? "bg-emerald-400/70" : integration.status === "Pending" ? "bg-amber-400/70" : "bg-slate-300/70")
-        }`}
-      />
-      <div className="flex items-start gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-[inset_0_1px_2px_rgba(255,255,255,.9),0_1px_3px_rgba(15,23,42,.08)]">
-          <span className="text-[11px] font-black tracking-tight text-slate-700">{integration.logo.slice(0, 3).toUpperCase()}</span>
+    <article className="integration-row" aria-label={`${integration.name} connector`}>
+      <div className="integration-provider">
+        <div className="integration-logo" aria-hidden="true">
+          {integration.logo.slice(0, 3).toUpperCase()}
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <p className="truncate text-sm font-bold leading-tight text-slate-900">{integration.name}</p>
-            {integration.isCustom && (
-              <span className="shrink-0 rounded-full border border-teal-200 bg-teal-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.12em] text-teal-600">
-                Custom
-              </span>
-            )}
-            {!adapterAvailable && (
-              <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.12em] text-amber-700">
-                Evaluation only
-              </span>
-            )}
+        <div className="min-w-0">
+          <div className="integration-provider-heading">
+            <button type="button" onClick={onConfigure} className="integration-name">{integration.name}</button>
+            {integration.isCustom && <span className="integration-custom">Custom</span>}
           </div>
-          <div className="mt-1.5">
-            <CategoryBadge category={integration.category} />
-          </div>
+          <p className="integration-description">{integration.description}</p>
+          {integration.connectedTo.length > 0 && <div className="integration-linked-systems">{integration.connectedTo.slice(0, 4).map(item => <ConnectorPill key={item} value={item} />)}</div>}
+          <span className="integration-mobile-category">{integration.category}</span>
+          {!adapterAvailable && <p className="integration-evaluation-note">Adapter unavailable. No credentials can be stored and no connection is claimed.</p>}
         </div>
-        <StatusBadge status={integration.status} />
       </div>
-
-      <p className="line-clamp-2 flex-1 text-xs leading-relaxed text-slate-500">{integration.description}</p>
-
-      {!adapterAvailable && (
-        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-800">
-          Adapter unavailable in this build. No credentials can be stored and no connection is claimed.
-        </div>
-      )}
-
-      {integration.connectedTo.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {integration.connectedTo.slice(0, 4).map((item) => (
-            <ConnectorPill key={item} value={item} />
-          ))}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200/70 bg-slate-50 px-3 py-2 shadow-[inset_0_1px_3px_rgba(148,163,184,.18)]">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Last successful sync</span>
-        <span className="text-[11px] font-semibold text-slate-600">
-          {integration.lastSyncAt ? formatRelativeTime(integration.lastSyncAt) : "Never"}
-        </span>
+      <div className="integration-category"><span className="sr-only">Category: </span>{integration.category}</div>
+      <div className="integration-state">
+        <span className="sr-only">Connection check: </span>
+        <StatusBadge status={status} />
+        {!adapterAvailable && <span className="integration-evaluation-label">Evaluation only</span>}
+        {integration.lastTestedAt ? <span className={`integration-handshake ${integration.lastTestOk ? "text-emerald-700" : "text-red-700"}`} title={integration.lastTestMessage ?? undefined}>
+          {integration.lastTestOk ? "Verified" : "Failed"} {formatRelativeTime(integration.lastTestedAt)}
+        </span> : null}
       </div>
-
-      {attemptHealth ? (
-        <div className={`rounded-xl border px-3 py-2 ${attemptHealth.tone}`} title={attemptHealth.detail}>
-          <span className="block text-[11px] font-semibold">{attemptHealth.label}</span>
+      <div className="integration-sync">
+        <span className="sr-only">Last successful sync: </span>
+        <span className="integration-mobile-label" aria-hidden="true">Last successful sync</span>
+        <strong title={integration.lastSyncAt ? new Date(integration.lastSyncAt).toLocaleString() : undefined}>{integration.lastSyncAt ? formatRelativeTime(integration.lastSyncAt) || "Unavailable" : "Never"}</strong>
+        {attemptHealth ? <div className={`integration-attempt ${attemptHealth.tone}`} title={attemptHealth.detail}>
+          <span>{attemptHealth.label}</span>
           <span className="sr-only">{attemptHealth.detail}</span>
           <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
             {attemptHealth.announcement}
           </span>
-        </div>
-      ) : null}
-
-      {/* Connector health from the last real handshake (credentials verified vs failed). */}
-      {integration.lastTestedAt ? (
-        <div
-          className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 ${
-            integration.lastTestOk
-              ? "border-emerald-200/70 bg-emerald-50 text-emerald-700"
-              : "border-red-200/70 bg-red-50 text-red-700"
-          }`}
-          title={integration.lastTestMessage ?? undefined}
-        >
-          {integration.lastTestOk ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> : <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
-          <span className="truncate text-[11px] font-semibold">
-            {integration.lastTestOk ? "Verified" : "Failed"} {formatRelativeTime(integration.lastTestedAt)}
-          </span>
-        </div>
-      ) : null}
-
-      {!adapterAvailable ? (
-        <button
-          type="button"
-          onClick={onConfigure}
-          className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100"
-        >
-          <Settings2 className="h-3.5 w-3.5" />
-          View evaluation status
-        </button>
-      ) : canManage ? (
-        <div className="flex gap-1.5">
-          {isConnected ? (
-            <>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={onSync}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100 disabled:opacity-50"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                Sync now
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={onDisconnect}
-                className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-50"
-              >
-                Disconnect
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onConnect}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100 disabled:opacity-50"
-            >
-              <Plug className="h-3.5 w-3.5" />
-              {primaryLabel}
+        </div> : null}
+      </div>
+      <div className="integration-actions" aria-label={`${integration.name} actions`}>
+        {!adapterAvailable ? <button type="button" onClick={onConfigure} className="btn-ghost btn-compact">View evaluation status</button> : canManage ? <>
+          <div className="integration-primary-actions">
+            <button type="button" disabled={busy} onClick={isConnected ? onSync : onConnect} className="btn-secondary btn-compact">
+              {isConnected ? <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> : <Plug className="h-3.5 w-3.5" aria-hidden="true" />}
+              {isConnected ? "Sync now" : primaryLabel}
             </button>
-          )}
-
-          <button
-            type="button"
-            title="Test connection"
-            aria-label={`Test connection for ${integration.name}`}
-            disabled={testing}
-            onClick={onTest}
-            className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
-          >
-            {testing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-          </button>
-
-          <button
-            type="button"
-            title="Configure"
-            aria-label={`Configure ${integration.name}`}
-            onClick={onConfigure}
-            className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-slate-500 transition hover:bg-slate-100"
-          >
-            <Settings2 className="h-3.5 w-3.5" />
-          </button>
-
-          {integration.isCustom && (
-            <>
-              <button
-                type="button"
-                title="Edit connector"
-                aria-label={`Edit ${integration.name}`}
-                onClick={onEdit}
-                className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-slate-500 transition hover:bg-slate-100"
-              >
-                <Pencil className="h-3.5 w-3.5" />
+            <button type="button" onClick={onConfigure} className="btn-ghost btn-compact" aria-label={`Configure ${integration.name}`}>Configure</button>
+          </div>
+          <details className="integration-more-actions">
+            <summary>More actions</summary>
+            <div>
+              <button type="button" disabled={testing} onClick={onTest} className="btn-ghost btn-compact" aria-label={`Test connection for ${integration.name}`}>
+                {testing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Zap className="h-3.5 w-3.5" aria-hidden="true" />} Test connection
               </button>
-              <button
-                type="button"
-                title="Delete connector"
-                aria-label={`Delete ${integration.name}`}
-                disabled={busy}
-                onClick={onDelete}
-                className="rounded-lg border border-red-200 bg-red-50 p-1.5 text-red-600 transition hover:bg-red-100 disabled:opacity-50"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </>
-          )}
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={onConfigure}
-          className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100"
-        >
-          <Settings2 className="h-3.5 w-3.5" />
-          View details
-        </button>
-      )}
-    </div>
+              {isConnected && <button type="button" disabled={busy} onClick={onDisconnect} className="btn-ghost btn-compact text-red-700">Disconnect</button>}
+              {integration.isCustom && <>
+                <button type="button" onClick={onEdit} className="btn-ghost btn-compact" aria-label={`Edit ${integration.name}`}><Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit connector</button>
+                <button type="button" disabled={busy} onClick={onDelete} className="btn-ghost btn-compact text-red-700" aria-label={`Delete ${integration.name}`}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete connector</button>
+              </>}
+            </div>
+          </details>
+        </> : <button type="button" onClick={onConfigure} className="btn-ghost btn-compact">View details</button>}
+      </div>
+    </article>
   );
 }
 
@@ -1307,13 +1353,13 @@ function activityTone(status: string) {
 
 function ActivityFeed({ activity, onRefresh }: { activity: IntegrationsPayload["activity"]; onRefresh: () => void }) {
   return (
-    <div className="clay-card flex h-full flex-col overflow-hidden p-4">
+    <div className="integrations-activity-feed">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-teal-500" />
           <div>
             <p className="text-sm font-bold text-slate-800">Activity feed</p>
-            <p className="text-[11px] text-slate-500">Live connect · configure · sync · disconnect</p>
+            <p className="text-[11px] text-slate-500">Recorded connection, configuration and sync events</p>
           </div>
         </div>
         <button
@@ -1327,13 +1373,12 @@ function ActivityFeed({ activity, onRefresh }: { activity: IntegrationsPayload["
       </div>
 
       {activity.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-10 text-center">
-          <Zap className="mb-2 h-5 w-5 text-slate-300" />
+        <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 p-3">
           <p className="text-sm font-semibold text-slate-600">No activity yet</p>
-          <p className="mt-1 max-w-56 text-xs text-slate-400">Connect or sync a connector to populate the live event feed.</p>
+          <p className="mt-1 text-xs text-slate-600">Connection, configuration and sync operations appear here after they are recorded.</p>
         </div>
       ) : (
-        <div className="-mr-1 flex-1 space-y-0 overflow-y-auto pr-1">
+        <div className="integrations-activity-scroll">
           {activity.map((row, index) => {
             const tone = activityTone(row.status);
             const isLast = index === activity.length - 1;
@@ -1374,10 +1419,14 @@ export function IntegrationsPage() {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const motiveOAuthOutcome = searchParams.get("motiveOAuth");
+  const requestedProvider = searchParams.get("provider")?.trim() ?? "";
+  const requestedIntent = searchParams.get("intent")?.trim() ?? "";
+  const handledProviderSelection = useRef("");
 
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [statusFilter, setStatusFilter] = useState<string>("All");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(requestedProvider);
+  const [connectorView, setConnectorView] = useState<ConnectorView>("available");
   const [configTarget, setConfigTarget] = useState<IntegrationRecord | null>(null);
   // Provider operations surface their exact backend verdict and counts; success is
   // never inferred from a button click or from catalog presence.
@@ -1398,7 +1447,16 @@ export function IntegrationsPage() {
   });
 
   const payload = q.data;
-  const integrations = payload?.records ?? [];
+  // The API normalizes catalog-only rows as Disconnected. Keep the customer-facing
+  // page fail-closed as well so an older or malformed response can never pair
+  // "adapter unavailable" with a live connection claim.
+  const integrations = useMemo(
+    () => (payload?.records ?? []).map((record) =>
+      record.adapterAvailable === true
+        ? record
+        : { ...record, status: effectiveIntegrationStatus(record) }),
+    [payload?.records],
+  );
   const motiveRecord = integrations.find((record) => record.key === "motive");
   // A URL result is a navigation hint, not proof. Success also requires the
   // server-persisted current connection verdict and OAuth verification status.
@@ -1418,32 +1476,70 @@ export function IntegrationsPage() {
       } as Record<string, string>)[motiveOAuthOutcome ?? ""]
       ?? "Motive returned to OpsTrax, but no successful current verification is recorded. Review the connector before continuing.";
   const activity = payload?.activity ?? [];
-  const summary = payload?.summary ?? {
-    total: integrations.length,
-    connected: integrations.filter((item) => item.status === "Connected").length,
-    pending: integrations.filter((item) => item.status === "Pending").length,
-    errors: integrations.filter((item) => item.status === "Error").length,
-    categories: new Set(integrations.map((item) => item.category)).size,
-    lastUpdated: new Date().toISOString(),
+  const availableIntegrations = useMemo(
+    () => integrations.filter((item) => item.adapterAvailable === true),
+    [integrations],
+  );
+  const evaluationIntegrations = useMemo(
+    () => integrations.filter((item) => item.adapterAvailable !== true),
+    [integrations],
+  );
+
+  useEffect(() => {
+    if (!requestedProvider) return;
+    const selectionKey = requestedProvider.toLowerCase();
+    const normalized = requestedProvider.toLowerCase();
+    const target = integrations.find((record) =>
+      record.key.toLowerCase() === normalized
+      || record.name.toLowerCase() === normalized
+      || record.name.toLowerCase().includes(normalized),
+    );
+    if (!requestedIntent && handledProviderSelection.current === selectionKey) return;
+    setSearch(target?.name ?? requestedProvider);
+    if (!target) return;
+    setConnectorView(target.adapterAvailable === true ? "available" : "evaluation");
+    setCategoryFilter("All");
+    setStatusFilter("All");
+    if (canManage && target.adapterAvailable === true && requestedIntent) {
+      setConfigTarget(target);
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete("intent");
+        return next;
+      }, { replace: true });
+      return;
+    }
+    if (!requestedIntent) handledProviderSelection.current = selectionKey;
+  }, [canManage, integrations, requestedIntent, requestedProvider, setSearchParams]);
+
+  const scopedIntegrations = connectorView === "available" ? availableIntegrations : evaluationIntegrations;
+  const summary = {
+    total: availableIntegrations.length,
+    connected: availableIntegrations.filter((item) => effectiveIntegrationStatus(item) === "Connected").length,
+    pending: availableIntegrations.filter((item) => effectiveIntegrationStatus(item) === "Pending").length,
+    errors: availableIntegrations.filter((item) => effectiveIntegrationStatus(item) === "Error").length,
+    categories: new Set(availableIntegrations.map((item) => item.category)).size,
+    evaluation: evaluationIntegrations.length,
+    lastUpdated: payload?.summary.lastUpdated ?? new Date().toISOString(),
   };
 
   // Category chips ordered canonically, then any unexpected categories.
   const categories = useMemo(() => {
-    const present = new Set(integrations.map((item) => item.category));
+    const present = new Set(scopedIntegrations.map((item) => item.category));
     const ordered = CATEGORY_ORDER.filter((cat) => present.has(cat));
     const extra = Array.from(present).filter((cat) => !CATEGORY_ORDER.includes(cat as IntegrationCategory));
     return ["All", ...ordered, ...extra];
-  }, [integrations]);
+  }, [scopedIntegrations]);
 
   const categoryCounts = useMemo(() => {
     const map = new Map<string, number>();
-    for (const item of integrations) map.set(item.category, (map.get(item.category) ?? 0) + 1);
+    for (const item of scopedIntegrations) map.set(item.category, (map.get(item.category) ?? 0) + 1);
     return map;
-  }, [integrations]);
+  }, [scopedIntegrations]);
 
   const filtered = useMemo(
     () =>
-      integrations.filter((integration) => {
+      scopedIntegrations.filter((integration) => {
         if (categoryFilter !== "All" && integration.category !== categoryFilter) return false;
         if (statusFilter !== "All" && integration.status !== statusFilter) return false;
         if (search) {
@@ -1461,12 +1557,12 @@ export function IntegrationsPage() {
         }
         return true;
       }),
-    [integrations, categoryFilter, statusFilter, search],
+    [scopedIntegrations, categoryFilter, statusFilter, search],
   );
 
   // Group the filtered set by category in canonical order for section headers.
   const grouped = useMemo(() => {
-    const map = new Map<IntegrationCategory, IntegrationRecord[]>();
+    const map = new Map<string, IntegrationRecord[]>();
     for (const item of filtered) {
       const list = map.get(item.category) ?? [];
       list.push(item);
@@ -1474,7 +1570,7 @@ export function IntegrationsPage() {
     }
     const order = [
       ...CATEGORY_ORDER.filter((cat) => map.has(cat)),
-      ...Array.from(map.keys()).filter((cat) => !CATEGORY_ORDER.includes(cat)),
+      ...Array.from(map.keys()).filter((cat) => !CATEGORY_ORDER.includes(cat as IntegrationCategory)),
     ];
     return order.map((cat) => [cat, map.get(cat)!] as const);
   }, [filtered]);
@@ -1586,26 +1682,25 @@ export function IntegrationsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto py-6">
+    <div className="integrations-workspace page-stack">
       <PageHeader
-        eyebrow="Connector marketplace"
         title="Integrations"
-        description="Tenant-scoped connector registry. A connector is shown as Connected only after the backend records a successful handshake; catalog presence alone does not mean the provider feature is supported."
+        description="Configure tenant connectors, check connection evidence, and review sync attempts."
         actions={
           <>
-            <button type="button" className="btn-ghost text-sm" onClick={() => exportCsv("integrations", integrations)}>
+            <button type="button" className="btn-ghost btn-compact" onClick={() => exportCsv("integrations", filtered)}>
               Export CSV
             </button>
             <button
               type="button"
-              className="btn-ghost text-sm"
+              className="btn-ghost btn-compact"
               onClick={() => void qc.invalidateQueries({ queryKey: ["integrations"] })}
             >
               <RefreshCw className="h-3.5 w-3.5" />
               Refresh
             </button>
             {canManage && (
-              <button type="button" className="btn-primary text-sm" onClick={() => setConnectorDialog({ mode: "create" })}>
+              <button type="button" className="btn-primary btn-compact" onClick={() => setConnectorDialog({ mode: "create" })}>
                 <Plus className="h-3.5 w-3.5" />
                 Add Custom Connector
               </button>
@@ -1624,13 +1719,20 @@ export function IntegrationsPage() {
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <KpiCard label="Connectors" value={summary.total} icon={<Layers className="h-5 w-5" />} delta={`${summary.categories} categories`} />
-        <KpiCard label="Connected" value={summary.connected} status="Live" icon={<Link2 className="h-5 w-5" />} />
-        <KpiCard label="Pending" value={summary.pending} status={summary.pending > 0 ? "Pending" : undefined} icon={<PlugZap className="h-5 w-5" />} />
-        <KpiCard label="Errors" value={summary.errors} status={summary.errors > 0 ? "Critical" : undefined} icon={<AlertTriangle className="h-5 w-5" />} />
-        <KpiCard label="Categories" value={summary.categories} icon={<Warehouse className="h-5 w-5" />} />
-      </div>
+      <section className="panel flex flex-wrap items-center gap-x-6 gap-y-2 px-3 py-2" aria-label="Connector status summary">
+        {[
+          { label: "Available", value: summary.total, note: `${summary.categories} categories`, tone: "text-slate-900", icon: Layers },
+          { label: "Connected", value: summary.connected, note: "verified", tone: "text-emerald-700", icon: Link2 },
+          { label: "Pending", value: summary.pending, note: "setup", tone: summary.pending ? "text-amber-700" : "text-slate-700", icon: PlugZap },
+          { label: "Errors", value: summary.errors, note: "attention", tone: summary.errors ? "text-red-700" : "text-emerald-700", icon: AlertTriangle },
+          { label: "Evaluation", value: summary.evaluation, note: "catalog only", tone: "text-slate-700", icon: Warehouse },
+        ].map(({ label, value, note, tone, icon: Icon }) => (
+          <div key={label} className="flex min-w-[110px] items-center gap-2">
+            <Icon className="h-3.5 w-3.5 text-slate-400" aria-hidden />
+            <div><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">{label}</p><p className={`text-sm font-black tabular-nums ${tone}`}>{value} <span className="text-[10px] font-medium text-slate-400">{note}</span></p></div>
+          </div>
+        ))}
+      </section>
 
       {summary.errors > 0 && (
         <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
@@ -1684,7 +1786,40 @@ export function IntegrationsPage() {
         </div>
       )}
 
-      <div className="panel flex flex-col gap-3 p-4">
+      <div className="panel flex flex-col gap-3 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Connector inventory view">
+            <button
+              type="button"
+              aria-pressed={connectorView === "available"}
+              className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${connectorView === "available" ? "bg-white text-teal-800 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+              onClick={() => {
+                setConnectorView("available");
+                setCategoryFilter("All");
+                setStatusFilter("All");
+              }}
+            >
+              Available adapters <span className="ml-1 tabular-nums">{availableIntegrations.length}</span>
+            </button>
+            <button
+              type="button"
+              aria-pressed={connectorView === "evaluation"}
+              className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${connectorView === "evaluation" ? "bg-white text-amber-800 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+              onClick={() => {
+                setConnectorView("evaluation");
+                setCategoryFilter("All");
+                setStatusFilter("All");
+              }}
+            >
+              Evaluation catalog <span className="ml-1 tabular-nums">{evaluationIntegrations.length}</span>
+            </button>
+          </div>
+          <p className="text-xs text-slate-500">
+            {connectorView === "available"
+              ? "These adapters can be configured. Connected still requires a successful provider handshake."
+              : "Reference entries only. No credentials can be stored and no connection is claimed."}
+          </p>
+        </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -1710,15 +1845,15 @@ export function IntegrationsPage() {
             <option value="Disconnected">Disconnected</option>
           </select>
           <span className="ml-auto rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-bold text-slate-500">
-            {filtered.length === integrations.length ? `${integrations.length} connectors` : `${filtered.length} of ${integrations.length}`}
+            {filtered.length === scopedIntegrations.length ? `${scopedIntegrations.length} connectors` : `${filtered.length} of ${scopedIntegrations.length}`}
           </span>
         </div>
 
         <div className="flex flex-wrap gap-1.5 border-t border-slate-100 pt-3">
           {categories.map((item) => {
             const active = categoryFilter === item;
-            const count = item === "All" ? integrations.length : categoryCounts.get(item) ?? 0;
-            const meta = item === "All" ? null : CATEGORY_META[item as IntegrationCategory];
+            const count = item === "All" ? scopedIntegrations.length : categoryCounts.get(item) ?? 0;
+            const meta = item === "All" ? null : categoryMeta(item);
             return (
               <button
                 key={item}
@@ -1736,12 +1871,29 @@ export function IntegrationsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="flex min-w-0 flex-col gap-6">
+      <WorkspaceGuidance
+        nextStep={connectorView === "available"
+          ? "Choose a connector and open Configure. Test its connection before running a sync."
+          : "These are reference entries. Open evaluation status for details; credentials cannot be saved."}
+        steps={connectorView === "available" ? [
+          "Open Configure and save only credentials authorized for this tenant. A stored configuration does not establish a working connection.",
+          "Run Test connection and review the recorded provider response. A successful handshake verifies the connection check, not live telemetry or recipient delivery.",
+          "Run a bounded sync when available, review its actual result, and map discovered devices in Device Health where required.",
+        ] : [
+          "Evaluation catalog entries describe potential integrations whose adapters are unavailable in this build.",
+          "Open evaluation status to review the entry. Credentials cannot be stored and connection or sync actions are unavailable.",
+          "Switch to Available adapters to find connectors that can be configured and tested.",
+        ]}
+      />
+
+      <div className="integrations-inventory">
+        <div className="flex min-w-0 flex-col gap-3">
           {filtered.length === 0 ? (
             <EmptyState
               title="No connectors match your filters"
-              subtitle="Clear the category, status, or search filter to see the live connector inventory."
+              subtitle={connectorView === "available"
+                ? "Clear the category, status, or search filter to see configurable adapters."
+                : "Clear the category, status, or search filter to see evaluation-only catalog entries."}
               action={
                 <button
                   type="button"
@@ -1758,22 +1910,22 @@ export function IntegrationsPage() {
             />
           ) : (
             grouped.map(([category, records]) => {
-              const meta = CATEGORY_META[category];
+              const meta = categoryMeta(category);
               return (
-                <section key={category} className="flex flex-col gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <span className={`flex h-8 w-8 items-center justify-center rounded-xl border ${meta.accent}`}>{meta.icon}</span>
+                <section key={category} className="integrations-list" aria-label={`${category} connectors`}>
+                  <div className="integration-group-heading">
+                    <span className={meta.accent} aria-hidden="true">{meta.icon}</span>
                     <div className="min-w-0">
-                      <h2 className="text-sm font-black tracking-tight text-slate-900">{category}</h2>
-                      <p className="text-[11px] text-slate-500">{categoryText(category)}</p>
+                      <h2 className="text-sm font-semibold text-slate-900">{category}</h2>
                     </div>
                     <span className="ml-auto rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-bold text-slate-500">
                       {records.length}
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+                  <div className="integration-column-heading" aria-hidden="true"><span>Provider</span><span>Category</span><span>Connection check</span><span>Last successful sync / attempt</span><span>Actions</span></div>
+                  <div>
                     {records.map((integration) => (
-                      <ConnectorCard
+                      <ConnectorRow
                         key={integration.id}
                         integration={integration}
                         canManage={canManage}
@@ -1795,12 +1947,12 @@ export function IntegrationsPage() {
           )}
         </div>
 
-        <aside className="xl:sticky xl:top-6 xl:self-start">
-          <div className="xl:max-h-[calc(100vh-6rem)] xl:overflow-hidden">
-            <ActivityFeed activity={activity} onRefresh={() => void qc.invalidateQueries({ queryKey: ["integrations"] })} />
-          </div>
-        </aside>
       </div>
+
+      <details className="panel integrations-activity">
+        <summary><Activity className="h-4 w-4" aria-hidden="true" /><span>Recent connector activity</span><span className="tabular-nums">{activity.length} recorded events</span></summary>
+        <ActivityFeed activity={activity} onRefresh={() => void qc.invalidateQueries({ queryKey: ["integrations"] })} />
+      </details>
 
       {configTarget && (
         <ConfigDrawer integration={configTarget} canManage={canManage} onClose={() => setConfigTarget(null)} />

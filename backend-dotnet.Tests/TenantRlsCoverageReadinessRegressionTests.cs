@@ -99,7 +99,8 @@ public sealed class TenantRlsCoverageReadinessRegressionTests
                     < script.IndexOf("2026_07_30_stage57_workforce_schedule_tenant_integrity", StringComparison.Ordinal));
         Assert.Contains("Stage-53 tenant RLS reconciliation ledger", script);
         Assert.Contains("COUNT(*) FROM pg_policies", script);
-        Assert.Contains("ledgered reconciliation — reapplying to repair drift", script);
+        Assert.Contains("already applied (ledger) — verifying without replay", script);
+        Assert.DoesNotContain("ledgered reconciliation — reapplying to repair drift", script);
         Assert.Contains("Tenant sequence privileges do not match insert capability", script);
         Assert.Contains("Tenant RLS coverage:", script);
         Assert.Contains("WHEN cls.relname='companies' THEN 'id'", script);

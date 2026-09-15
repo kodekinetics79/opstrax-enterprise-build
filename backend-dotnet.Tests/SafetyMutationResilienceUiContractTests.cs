@@ -43,7 +43,7 @@ public sealed class SafetyMutationResilienceUiContractTests
         Assert.Contains("Retry certifications", driverDvir, StringComparison.Ordinal);
 
         var driverHos = Read("frontend", "src", "pages", "driver", "DriverHosPage.tsx");
-        Assert.Contains("No certification state has been inferred", driverHos, StringComparison.Ordinal);
+        Assert.Contains("No driver-attestation state has been inferred", driverHos, StringComparison.Ordinal);
         Assert.Contains("Retry daily records", driverHos, StringComparison.Ordinal);
 
         var scorecards = Read("frontend", "src", "pages", "DriverScorecardsPage.tsx");

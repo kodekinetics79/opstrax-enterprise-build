@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Opstrax.Api.Data;
+using Opstrax.Api.Services;
 
 namespace Opstrax.Api.Services.Connectors;
 
@@ -12,8 +13,8 @@ namespace Opstrax.Api.Services.Connectors;
 // (latest_vehicle_positions + location_events), so Samsara vehicles appear live.
 //
 // Auth:   Bearer <apiToken>  (config key "apiToken" / "apiKey", SENSITIVE)
-// Verify: GET /fleet/vehicles plus a bounded GET of the vehicle stats feed.
-//         Both required read scopes must succeed before the connector is Connected.
+// Verify: GET /me, GET /fleet/vehicles and a bounded GET of the vehicle stats feed.
+//         All required read scopes must succeed before the connector is Connected.
 // Sync:   GET /fleet/vehicles/stats/feed?types=gps,engineStates,obdOdometerMeters
 //         (cursor-paginated; endCursor persisted per-connector so each sync is
 //          incremental). Each vehicle is resolved through a globally unique
@@ -34,12 +35,12 @@ public sealed class SamsaraConnector(
     public IReadOnlyCollection<string> Keys { get; } = new[] { "samsara" };
     public string DisplayName => "Samsara";
 
-    private const string BaseUrl = "https://api.samsara.com";
-
-    private HttpClient Client(string token)
+    private HttpClient Client(string token, Uri apiBaseUri)
     {
         var c = httpFactory.CreateClient("samsara");
-        c.BaseAddress ??= new Uri(BaseUrl);
+        // A named client can carry a default base address. The tenant-selected,
+        // strictly allowlisted Samsara cloud must win for every new operation.
+        c.BaseAddress = apiBaseUri;
         c.Timeout = TimeSpan.FromSeconds(20);
         c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return c;
@@ -48,17 +49,66 @@ public sealed class SamsaraConnector(
     private static string? Token(IReadOnlyDictionary<string, string?> config)
         => config.GetValueOrDefault("apiToken") ?? config.GetValueOrDefault("apiKey") ?? config.GetValueOrDefault("token");
 
+    internal static bool TryResolveApiRegion(
+        IReadOnlyDictionary<string, string?> config,
+        out string region,
+        out Uri apiBaseUri)
+    {
+        region = string.IsNullOrWhiteSpace(config.GetValueOrDefault("apiRegion"))
+            ? "us"
+            : config.GetValueOrDefault("apiRegion")!.Trim().ToLowerInvariant();
+        var baseUrl = region switch
+        {
+            "us" => "https://api.samsara.com",
+            "eu" => "https://api.eu.samsara.com",
+            "ca" => "https://api.ca.samsara.com",
+            _ => null,
+        };
+        if (baseUrl is null)
+        {
+            apiBaseUri = null!;
+            return false;
+        }
+        apiBaseUri = new Uri(baseUrl, UriKind.Absolute);
+        return true;
+    }
+
     // ── Real auth handshake ────────────────────────────────────────────────────────
     public async Task<ConnectorResult> TestConnectionAsync(IReadOnlyDictionary<string, string?> config, CancellationToken ct)
     {
         var token = Token(config);
         if (string.IsNullOrWhiteSpace(token))
-            return ConnectorResult.Fail("Add a Samsara API token (apiToken) in Configure, then test again. Create one in Samsara → Settings → API Tokens with 'Read Vehicles' + 'Read Vehicle Statistics'.");
+            return ConnectorResult.Fail("Add a Samsara API token (apiToken) in Configure, then test again. Create one in Samsara → Settings → API Tokens with 'Read Org Information' + 'Read Vehicles' + 'Read Vehicle Statistics'.");
+        if (!TryResolveApiRegion(config, out var apiRegion, out var apiBaseUri))
+            return ConnectorResult.Fail("Select the Samsara cloud region that matches the provider dashboard: United States, Europe / United Kingdom, or Canada.");
         try
         {
-            using var client = Client(token!);
+            using var client = Client(token!, apiBaseUri);
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             handshakeCts.CancelAfter(TimeSpan.FromSeconds(25));
+            string organizationReference;
+            using (var organizationCts = CancellationTokenSource.CreateLinkedTokenSource(handshakeCts.Token))
+            {
+                organizationCts.CancelAfter(SamsaraResponseReader.RequestTimeout);
+                using var organizationResponse = await client.GetAsync("/me", HttpCompletionOption.ResponseHeadersRead, organizationCts.Token);
+                if ((int)organizationResponse.StatusCode is 401 or 403)
+                    return ConnectorResult.Fail("Samsara rejected the token or its 'Read Org Information' scope; connection was not accepted.");
+                if (!organizationResponse.IsSuccessStatusCode)
+                    return ConnectorResult.Fail($"Samsara organization access returned HTTP {(int)organizationResponse.StatusCode}.");
+                try
+                {
+                    using var organizationDocument = await SamsaraResponseReader.ReadJsonAsync(organizationResponse.Content, organizationCts.Token);
+                    organizationReference = ReadOrganizationReference(organizationDocument.RootElement);
+                }
+                catch (JsonException)
+                {
+                    return ConnectorResult.Fail("Samsara organization access returned malformed JSON; connection was not accepted.");
+                }
+                catch (InvalidDataException ex)
+                {
+                    return ConnectorResult.Fail($"Samsara organization access returned an invalid response envelope: {ex.Message}");
+                }
+            }
             int sampleVehicleCount;
             string? sampleVehicleId;
             using (var vehiclesCts = CancellationTokenSource.CreateLinkedTokenSource(handshakeCts.Token))
@@ -122,13 +172,16 @@ public sealed class SamsaraConnector(
             }
 
             return ConnectorResult.Ok(
-                "Connected to Samsara — token and both required read scopes were verified.",
+                $"Connected to Samsara {apiRegion.ToUpperInvariant()} cloud — token, provider organization and all three required read scopes were verified.",
                 new Dictionary<string, object?>
                 {
                     ["sampleVehicleCount"] = sampleVehicleCount,
+                    ["apiRegion"] = apiRegion,
+                    ["readOrgInformationVerified"] = true,
                     ["readVehiclesVerified"] = true,
                     ["readVehicleStatisticsVerified"] = true,
-                });
+                },
+                providerAccountReference: organizationReference);
         }
         catch (SamsaraResponseReader.ResponseTooLargeException) { return ConnectorResult.Fail("Samsara response exceeded the allowed size; connection was not accepted."); }
         catch (OperationCanceledException) { return ConnectorResult.Fail("Samsara did not respond in time (timeout)."); }
@@ -138,13 +191,18 @@ public sealed class SamsaraConnector(
     // ── Live actions: sync ─────────────────────────────────────────────────────────
     public async Task<ConnectorResult> RunActionAsync(string action, IReadOnlyDictionary<string, string?> config, JsonElement? body, CancellationToken ct)
     {
-        if (!string.Equals(action, "sync", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(action, "sync-telemetry", StringComparison.OrdinalIgnoreCase))
-            return ConnectorResult.Fail($"Action '{action}' is not supported by Samsara. Use 'sync'.");
+        var telemetrySync = string.Equals(action, "sync", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(action, "sync-telemetry", StringComparison.OrdinalIgnoreCase);
+        var cameraSafetySync = string.Equals(action, "sync-camera-safety", StringComparison.OrdinalIgnoreCase);
+        if (!telemetrySync && !cameraSafetySync)
+            return ConnectorResult.Fail(
+                $"Action '{action}' is not supported by Samsara. Use 'sync' or 'sync-camera-safety'.");
 
         var token = Token(config);
         if (string.IsNullOrWhiteSpace(token))
             return ConnectorResult.Fail("Missing Samsara API token.");
+        if (!TryResolveApiRegion(config, out _, out var apiBaseUri))
+            return ConnectorResult.Fail("Sync requires a supported Samsara cloud region (us, eu, or ca).");
 
         // The connector doesn't know its own company/cursor — the endpoint passes them
         // in the action body so the sync is tenant-scoped and incremental.
@@ -153,11 +211,21 @@ public sealed class SamsaraConnector(
         long integrationId = body is { } bi && bi.TryGetProperty("integrationId", out var iid) && iid.TryGetInt64(out var i) ? i : 0;
         long operationGeneration = body is { } bg && bg.TryGetProperty("operationGeneration", out var gen) && gen.TryGetInt64(out var g) ? g : -1;
         var operationLeaseTokenRaw = body is { } bl && bl.TryGetProperty("operationLeaseToken", out var lease) ? lease.GetString() : null;
+        var providerAccountReference = body is { } ba && ba.TryGetProperty("providerAccountReference", out var account)
+            ? account.GetString()
+            : null;
         if (integrationId <= 0 || operationGeneration < 0 || !Guid.TryParse(operationLeaseTokenRaw, out var operationLeaseToken))
             return ConnectorResult.Fail("Sync requires a valid generation-bound connector operation lease.");
+        if (!IsOrganizationReference(providerAccountReference))
+            return ConnectorResult.Fail(
+                "Sync requires a verified Samsara organization identity. Test the provider connection again with the 'Read Org Information' scope.");
         var operation = new ConnectorOperationContext(
             companyId, integrationId, operationGeneration, operationLeaseToken, "samsara", null, "Connected",
-            IsSyncOperation: true);
+            IsSyncOperation: telemetrySync,
+            ProviderAccountReference: providerAccountReference);
+        if (cameraSafetySync)
+            return await RunCameraSafetyActionAsync(token!, apiBaseUri, operation, body, ct);
+
         var afterCursor = body is { } b2 && b2.TryGetProperty("cursor", out var cur) ? cur.GetString() : null;
         var cursor = afterCursor;
         var positionsWritten = 0;
@@ -192,7 +260,7 @@ public sealed class SamsaraConnector(
 
         try
         {
-            using var client = Client(token!);
+            using var client = Client(token!, apiBaseUri);
             var sync = new SamsaraSync(client, scopeFactory, logger,
                 configuration.GetValue<bool>("Samsara:AllowPartialGpsMeasurements"));
             var seenCursors = new HashSet<string>(StringComparer.Ordinal);
@@ -282,6 +350,190 @@ public sealed class SamsaraConnector(
                 (paginationIntegrityFailure
                     ? "the pre-run durable cursor was preserved because pagination integrity failed."
                     : "their latest cursor will resume on a later run; no partial page is claimed."),
+                persistCursor: !paginationIntegrityFailure);
+        }
+    }
+
+    internal static string ReadOrganizationReference(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("data", out var data)
+            || data.ValueKind != JsonValueKind.Object
+            || !data.TryGetProperty("id", out var id)
+            || id.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("the required data.id is missing.");
+        var value = id.GetString()?.Trim();
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 140
+            || value.Any(character => char.IsControl(character) || char.IsWhiteSpace(character)))
+            throw new InvalidDataException("the organization identifier is invalid.");
+        return $"samsara-org:{value}";
+    }
+
+    internal static bool IsOrganizationReference(string? value)
+    {
+        if (value is not { Length: > 12 and <= 160 }
+            || !value.StartsWith("samsara-org:", StringComparison.Ordinal))
+            return false;
+        return value["samsara-org:".Length..]
+            .All(character => !char.IsControl(character) && !char.IsWhiteSpace(character));
+    }
+
+    private async Task<ConnectorResult> RunCameraSafetyActionAsync(
+        string token,
+        Uri apiBaseUri,
+        ConnectorOperationContext operation,
+        JsonElement? body,
+        CancellationToken ct)
+    {
+        var startTimeRaw = body is { } bs && bs.TryGetProperty("startTime", out var start)
+            ? start.GetString()
+            : null;
+        if (!DateTimeOffset.TryParseExact(
+                startTimeRaw,
+                ["yyyy-MM-dd'T'HH:mm:ssK", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK"],
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None,
+                out var startTime)
+            || startTime.Offset != TimeSpan.Zero)
+            return ConnectorResult.Fail(
+                "Samsara camera safety sync requires a stable RFC 3339 UTC startTime.");
+
+        var cursor = body is { } b2 && b2.TryGetProperty("cursor", out var cur) ? cur.GetString() : null;
+        var eventsObserved = 0;
+        var eventsAccepted = 0;
+        var eventsReplayed = 0;
+        var eventsQuarantined = 0;
+        var pagesCommitted = 0;
+        var hasNextPage = false;
+        var paginationIntegrityFailure = false;
+        var requestedDurationSeconds = body is { } bmd
+            && bmd.TryGetProperty("maxDurationSeconds", out var mds)
+            && mds.TryGetInt32(out var requestedSeconds)
+                ? requestedSeconds
+                : configuration.GetValue("Samsara:CameraSafetyMaxDurationSeconds", 60);
+        var maxDurationSeconds = Math.Clamp(requestedDurationSeconds, 10, 90);
+        using var boundedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        boundedCts.CancelAfter(TimeSpan.FromSeconds(maxDurationSeconds));
+
+        ConnectorResult Failure(string message, bool persistCursor = true) => ConnectorResult.Fail(
+            message,
+            new Dictionary<string, object?>
+            {
+                ["lane"] = "camera-safety",
+                ["eventsObserved"] = eventsObserved,
+                ["eventsAccepted"] = eventsAccepted,
+                ["eventsReplayed"] = eventsReplayed,
+                ["eventsQuarantined"] = eventsQuarantined,
+                ["nextCursor"] = persistCursor && pagesCommitted > 0 ? cursor : null,
+                ["hasNextPage"] = hasNextPage,
+                ["boundedPartial"] = pagesCommitted > 0,
+                ["pagesCommitted"] = pagesCommitted,
+                ["providerVerificationStatus"] = CameraProviderIngestService.ExternalHold,
+                ["certificationStatus"] = CameraProviderIngestService.ExternalHold,
+                ["mediaAvailable"] = false,
+            });
+
+        try
+        {
+            using var client = Client(token, apiBaseUri);
+            var sync = new SamsaraCameraSafetySync(client, scopeFactory, logger);
+            var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+            if (!string.IsNullOrWhiteSpace(cursor)) seenCursors.Add(cursor);
+            var completed = false;
+            var configuredMaxPages = Math.Clamp(
+                configuration.GetValue("Samsara:CameraSafetyMaxPagesPerSync", 20), 1, 100);
+            var requestedMaxPages = body is { } bmp
+                && bmp.TryGetProperty("maxPages", out var mp)
+                && mp.TryGetInt32(out var requestedPages)
+                    ? requestedPages
+                    : configuredMaxPages;
+            var maxPages = Math.Clamp(requestedMaxPages, 1, configuredMaxPages);
+            var interPageDelayMs = Math.Clamp(
+                configuration.GetValue("Samsara:CameraSafetyInterPageDelayMs", 250), 200, 2_000);
+            var runCt = boundedCts.Token;
+
+            for (var page = 0; page < maxPages; page++)
+            {
+                var pageSummary = await sync.RunAsync(
+                    operation, startTime, cursor, DateTimeOffset.UtcNow, runCt);
+                eventsObserved += pageSummary.EventsObserved;
+                eventsAccepted += pageSummary.EventsAccepted;
+                eventsReplayed += pageSummary.EventsReplayed;
+                eventsQuarantined += pageSummary.EventsQuarantined;
+                hasNextPage = pageSummary.HasNextPage;
+
+                if (pageSummary.EventsQuarantined > 0)
+                    throw new InvalidDataException(
+                        "Samsara camera evidence entered quarantine; the durable cursor was not advanced past that page.");
+
+                pagesCommitted++;
+                if (!hasNextPage)
+                {
+                    if (!string.IsNullOrWhiteSpace(pageSummary.NextCursor)) cursor = pageSummary.NextCursor;
+                    completed = true;
+                    break;
+                }
+
+                var candidateCursor = pageSummary.NextCursor;
+                if (string.IsNullOrWhiteSpace(candidateCursor) || !seenCursors.Add(candidateCursor))
+                {
+                    paginationIntegrityFailure = true;
+                    throw new InvalidOperationException(
+                        "Samsara camera safety pagination did not advance its cursor.");
+                }
+                cursor = candidateCursor;
+                await Task.Delay(TimeSpan.FromMilliseconds(interPageDelayMs), runCt);
+            }
+
+            var boundedPartial = !completed && hasNextPage;
+            return ConnectorResult.Ok(
+                $"Recorded {eventsObserved} Samsara safety event(s) in the provider intake ledger; "
+                + "provider verification, camera media and certification remain on External hold."
+                + (boundedPartial
+                    ? $" Reached the bounded {maxPages}-page run limit; the returned cursor will resume the backlog."
+                    : string.Empty),
+                new Dictionary<string, object?>
+                {
+                    ["lane"] = "camera-safety",
+                    ["eventsObserved"] = eventsObserved,
+                    ["eventsAccepted"] = eventsAccepted,
+                    ["eventsReplayed"] = eventsReplayed,
+                    ["eventsQuarantined"] = eventsQuarantined,
+                    ["nextCursor"] = cursor,
+                    ["hasNextPage"] = hasNextPage,
+                    ["boundedPartial"] = boundedPartial,
+                    ["providerVerificationStatus"] = CameraProviderIngestService.ExternalHold,
+                    ["certificationStatus"] = CameraProviderIngestService.ExternalHold,
+                    ["mediaAvailable"] = false,
+                });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Failure(ex.Message);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && boundedCts.IsCancellationRequested)
+        {
+            return Failure(
+                "Samsara camera safety sync reached its bounded duration. Complete pages were retained; the latest committed cursor will resume the backlog.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (SamsaraResponseReader.ResponseTooLargeException)
+        {
+            return Failure(
+                "Samsara camera safety response exceeded the allowed size. Complete pages were retained; the oversized page was not consumed.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "Samsara camera safety sync failed for company {Company}", operation.CompanyId);
+            return Failure(
+                $"Samsara camera safety sync failed: {ex.Message} Complete pages were retained; "
+                + (paginationIntegrityFailure
+                    ? "the pre-run durable cursor was preserved because pagination integrity failed."
+                    : "the latest committed cursor will resume the backlog."),
                 persistCursor: !paginationIntegrityFailure);
         }
     }

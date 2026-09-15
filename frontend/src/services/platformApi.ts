@@ -220,6 +220,15 @@ export const platformApi = {
   updatePackage: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.put(`/api/platform/packages/${id}`, body)),
   deletePackage: (id: number) => unwrap<AnyRecord>(platformClient.delete(`/api/platform/packages/${id}`)),
 
+  // Hardware readiness — exact tuple intake and immutable engineering declaration.
+  // The backend keeps every row on ExternalHold and never accepts evidence or a
+  // certification claim from this operator surface.
+  deviceCompatibilityCandidates: () => unwrap<AnyRecord>(platformClient.get("/api/platform/device-compatibility-candidates")),
+  createDeviceCompatibilityCandidate: (body: AnyRecord) =>
+    unwrap<AnyRecord>(platformClient.post("/api/platform/device-compatibility-candidates", body)),
+  declareDeviceCompatibilityCandidate: (id: number, body: AnyRecord) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/device-compatibility-candidates/${id}/declare`, body)),
+
   // Billing
   invoices: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/invoices")),
   createInvoice: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/invoices", body)),

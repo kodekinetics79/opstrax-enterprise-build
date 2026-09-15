@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { authApi, isMfaChallenge, type MfaChallenge, type SsoConnection } from "@/services/authApi";
 import { API_BASE_URL } from "@/services/apiClient";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
+import "./login-access.css";
 
 /** Minimal structural email check — mirrors the backend's non-revealing validation. */
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -650,8 +651,7 @@ export function LoginPage() {
           : "We couldn't complete single sign-on. Please try again or sign in with your password."
     : "";
   return (
-    <div className="flex min-h-screen">
-
+    <main className="login-access">
       {/* ── LEFT — 3D command-center brand panel ───────────── */}
       <div
         ref={panelRef}
@@ -703,11 +703,11 @@ export function LoginPage() {
           {/* Hero */}
           <div className="flex flex-1 flex-col justify-center">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-teal-400">Fleet Management Platform</p>
-            <h1 className="login-hero-title mt-4 text-5xl font-bold leading-[1.08] tracking-tight text-white xl:text-6xl">
+            <h2 className="login-hero-title mt-4 text-5xl font-bold leading-[1.08] tracking-tight text-white xl:text-6xl">
               Fleet intelligence,
               <br />
               <span className="text-teal-400">live.</span>
-            </h1>
+            </h2>
             <p className="mt-5 max-w-sm text-base leading-7 text-slate-400">
               One command center for the entire operation — from job assignment to proof of delivery.
             </p>
@@ -757,31 +757,18 @@ export function LoginPage() {
         </div>
       </div>
 
-      {/* ── RIGHT — sign-in form ───────────────────────────── */}
-      <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-white via-slate-50 to-teal-50/40 px-8 py-12 lg:px-12">
-
-        {/* Perspective floor grid + soft glow (decorative) */}
-        <div className="login-floor" aria-hidden="true" />
-        <div className="pointer-events-none absolute -top-28 right-[-10%] h-72 w-72 rounded-full bg-teal-200/35 blur-[110px]" aria-hidden="true" />
-
-        {/* Mobile logo */}
-        <div className="relative z-10 mb-10 flex items-center gap-2.5 lg:hidden">
-          <OpsTraxLogo size={32} />
-          <span className="text-lg font-bold text-slate-900">OpsTrax</span>
-        </div>
-
-        <div className="login2 login-form-enter relative z-10 flex w-full max-w-[400px] flex-col gap-6">
-
-          {/* 3D stage — ghost plates float behind the clay card */}
-          <div className="login-card-stage relative">
-            <div className="login-card-plate login-card-plate-2" aria-hidden="true" />
-            <div className="login-card-plate login-card-plate-1" aria-hidden="true" />
-
-            <div className="login2-card relative">
-              <div className="mb-6">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-teal-600">Secure access</p>
-                <h2 className="mt-2 text-2xl font-bold text-slate-950">Sign in</h2>
-                <p className="mt-1.5 text-sm leading-6 text-slate-500">
+      <section className="login-access-form-panel" aria-labelledby="login-title">
+        <div className="login-access-mobile-logo"><OpsTraxLogo size={32} /><span>OpsTrax</span></div>
+        <div className="login2 login-access-form-wrap">
+          <div className="login2-card login-access-card">
+              <ol className="login-access-steps" aria-label="Sign-in progress">
+                <li aria-current={step === "identify" ? "step" : undefined}><span>1</span> Workspace</li>
+                <li aria-current={step === "authenticate" ? "step" : undefined}><span>2</span> Sign in</li>
+                {step === "mfa" && <li aria-current="step"><span>3</span> Verify</li>}
+              </ol>
+              <div className="login-access-heading">
+                <h1 id="login-title">{step === "mfa" ? "Verify your sign-in" : step === "identify" ? "Sign in to OpsTrax" : "Sign in to your workspace"}</h1>
+                <p>
                   {step === "identify"
                     ? "Enter your organization code and work email to continue."
                     : step === "mfa"
@@ -864,12 +851,12 @@ export function LoginPage() {
                     <span className="flex min-w-0 items-center gap-2">
                       <Building2 className="h-4 w-4 shrink-0 text-teal-600" aria-hidden="true" />
                       <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-slate-700">{email.trim()}</span>
-                        <span className="block truncate text-[11px] text-slate-500">Organization {companyCode.trim()}</span>
+                        <span className="login-access-identity text-sm font-medium text-slate-700">{email.trim()}</span>
+                        <span className="login-access-identity text-xs text-slate-600">Organization {companyCode.trim()}</span>
                       </span>
                     </span>
                     <button type="button" onClick={editEmail}
-                      className="shrink-0 text-xs font-semibold text-teal-700 transition hover:text-teal-600 focus-visible:outline-2 focus-visible:outline-teal-600">
+                      className="login-access-change">
                       Change
                     </button>
                   </div>
@@ -953,44 +940,19 @@ export function LoginPage() {
                 )}
               </form>
 
-              {/* Trust row — truthful capability statements, no fabricated seals */}
-              <div className="mt-6 flex flex-wrap justify-center gap-2">
-                {TRUST_SIGNALS.map(({ icon: Icon, label }) => (
-                  <span key={label} className="login2-chip">
-                    <Icon className="h-3.5 w-3.5 text-teal-600" aria-hidden="true" />
-                    {label}
-                  </span>
-                ))}
-              </div>
-            </div>
           </div>
-
-          {/* Role guidance — clay tiles */}
-          <div className="rounded-[20px] border border-slate-200/80 bg-white/60 p-4 shadow-[0_12px_28px_rgba(15,23,42,.06)] backdrop-blur-md">
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Workspace roles</p>
-            <p className="mt-1 text-sm font-semibold text-slate-800">Sign in with the credentials issued by your organization</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {ACCESS_GUIDANCE.map((account) => (
-                <div key={account.title} className="login2-role flex flex-col items-start gap-1.5 text-left">
-                  <span className="text-sm font-bold text-slate-900">{account.title}</span>
-                  <span className="text-[11px] leading-5 text-slate-500">{account.note}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Footer */}
-          <div className="mt-8 text-center">
-            <p className="text-[11px] text-slate-300">
-              Built by{" "}
-              <a href="https://www.kodekinetics.com" target="_blank" rel="noopener noreferrer"
-                className="font-medium text-slate-500 transition hover:text-teal-500">Kode Kinetics</a>
-              {" · "}
-              <a href="mailto:info@kodekinetics.com" className="text-slate-500 transition hover:text-teal-500">info@kodekinetics.com</a>
-            </p>
-          </div>
+          <details className="login-access-help">
+            <summary>Need help accessing your workspace?</summary>
+            <p>Use the organization code and credentials issued by your administrator. Your account determines the workspace and actions you can access.</p>
+            <dl>{ACCESS_GUIDANCE.map(account => <div key={account.title}><dt>{account.title}</dt><dd>{account.note}</dd></div>)}</dl>
+            <p>Missing your code or need access? Contact your organization’s OpsTrax administrator.</p>
+          </details>
+          <footer className="login-access-footer">
+            <a href="https://www.kodekinetics.com" target="_blank" rel="noopener noreferrer">Kode Kinetics</a>
+            <a href="mailto:info@kodekinetics.com">Contact support</a>
+          </footer>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

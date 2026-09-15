@@ -22,16 +22,6 @@ public sealed class SafetyBackgroundService(
     private const string SvcName = "SafetyBackgroundService";
     internal const int ProgressHeartbeatBatchSize = 50;
 
-    // Severity → default score impact (deducted from 100)
-    private static readonly Dictionary<string, decimal> SeverityWeights = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["Critical"] = 25m,
-        ["High"]     = 15m,
-        ["Medium"]   = 8m,
-        ["Warning"]  = 5m,
-        ["Low"]      = 3m,
-    };
-
     // Map the raw telemetry alert_type to the safety-dashboard event_type vocabulary (SafetySummary sums
     // Title-Case tokens like 'Harsh Braking'/'Speeding'). Without this the harsh tiles stayed empty and
     // even speeding didn't match. Unknown types pass through unchanged.
@@ -127,6 +117,13 @@ public sealed class SafetyBackgroundService(
               WHERE se.id IS NULL
                 AND ta.alert_type IN ('speeding','geofence_breach','stale_device',
                                       'harsh_braking','harsh_acceleration','harsh_turn','harsh_cornering','crash','sos')
+                AND (
+                  ta.source_channel IN ('trusted-gateway','samsara-api','approved-policy-detector')
+                  OR (le.id IS NOT NULL AND (
+                    le.source_channel IN ('native-hmac','trusted-gateway','samsara-api')
+                    OR le.source IN ('device','samsara-api')
+                  ))
+                )
               ORDER BY ta.created_at
               LIMIT 200",
             ct: ct);
@@ -145,9 +142,13 @@ public sealed class SafetyBackgroundService(
             // Fetch tenant score weight for this event type
             var weightRuleType = $"safety_weight_{alertType.Replace("-", "_")}";
             var scoreImpact = await db.ScalarDecimalAsync(
-                "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type=@rt AND enabled=TRUE LIMIT 1",
+                @"SELECT threshold_value FROM telemetry_rules
+                  WHERE company_id=@cid AND rule_type=@rt AND enabled=TRUE
+                    AND policy_origin='user_workflow' AND approval_status='approved'
+                    AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+                  LIMIT 1",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@rt", weightRuleType); }, ct)
-                ?? SeverityWeights.GetValueOrDefault(severity, 10m);
+                ?? 0m;
 
             // Build evidence hash from source event location + speed
             var lat    = alert["lat"] is { } la && la is not DBNull ? Convert.ToString(la) : "0";
@@ -165,12 +166,12 @@ public sealed class SafetyBackgroundService(
                         (company_id, driver_id, vehicle_id, device_id,
                          source_telemetry_alert_id, source_location_event_id,
                          event_type, severity, score_impact, status,
-                         event_time, evidence_hash, meta_json)
+                         event_time, evidence_hash, meta_json, data_origin, verification_status)
                       VALUES
                         (@cid, @did, @vid, @devId,
                          @alertId, @srcId,
                          @evType, @sev, @impact, 'open',
-                         @evTime, @hash, @meta::jsonb)",
+                         @evTime, @hash, @meta::jsonb, 'runtime_detection', 'derived_from_qualified_source')",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid",    companyId);
@@ -220,16 +221,20 @@ public sealed class SafetyBackgroundService(
         var repeats = await db.QueryAsync(
             @"SELECT se.company_id, se.driver_id,
                      COUNT(*) event_count,
-                     COALESCE(tr.threshold_value, 3) repeat_threshold
+                     tr.threshold_value repeat_threshold
               FROM safety_events se
-              LEFT JOIN telemetry_rules tr
+              JOIN telemetry_rules tr
                 ON tr.company_id=se.company_id AND tr.rule_type='safety_repeated_speeding_threshold' AND tr.enabled=TRUE
+               AND tr.policy_origin='user_workflow' AND tr.approval_status='approved'
+               AND tr.approved_by IS NOT NULL AND tr.approved_by>0 AND tr.approved_at IS NOT NULL
               WHERE LOWER(BTRIM(se.event_type))='speeding'
                 AND LOWER(BTRIM(se.status)) != 'dismissed'
+                AND se.data_origin='runtime_detection'
+                AND se.verification_status='derived_from_qualified_source'
                 AND se.driver_id IS NOT NULL
                 AND se.event_time > NOW() - 24 * INTERVAL '1 hour'
               GROUP BY se.company_id, se.driver_id, repeat_threshold
-              HAVING COUNT(*) >= COALESCE(tr.threshold_value, 3)",
+              HAVING COUNT(*) >= tr.threshold_value",
             ct: ct);
 
         foreach (var row in repeats)
@@ -246,15 +251,21 @@ public sealed class SafetyBackgroundService(
             if (existing > 0) continue;
 
             var weight = await db.ScalarDecimalAsync(
-                "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='safety_weight_repeated_speeding' AND enabled=TRUE LIMIT 1",
-                c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 25m;
+                @"SELECT threshold_value FROM telemetry_rules
+                  WHERE company_id=@cid AND rule_type='safety_weight_repeated_speeding' AND enabled=TRUE
+                    AND policy_origin='user_workflow' AND approval_status='approved'
+                    AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+                  LIMIT 1",
+                c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 0m;
 
             await db.ExecuteAsync(
                 @"INSERT INTO safety_events
-                    (company_id, driver_id, event_type, severity, score_impact, status, meta_json)
+                    (company_id, driver_id, event_type, severity, score_impact, status, meta_json,
+                     data_origin, verification_status)
                   VALUES
                     (@cid, @did, 'repeated_speeding', 'Critical', @impact, 'open',
-                     jsonb_build_object('count', @count, 'window_hours', 24))",
+                     jsonb_build_object('count', @count, 'window_hours', 24),
+                     'runtime_detection', 'derived_from_qualified_source')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",    companyId);
@@ -290,17 +301,33 @@ public sealed class SafetyBackgroundService(
             var (score30d, events30d, breakdown30d) = await ComputeScoreAsync(db, companyId, driverId, 30, ct);
             var (score90d, events90d, _)            = await ComputeScoreAsync(db, companyId, driverId, 90, ct);
 
+            // No approved scoring evidence means no score. Remove a stale cached
+            // perfect/legacy score instead of presenting 100 as measured safety.
+            if (events90d == 0)
+            {
+                await db.ExecuteAsync(
+                    "DELETE FROM driver_safety_scores WHERE company_id=@cid AND driver_id=@did",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); }, ct);
+                processed++;
+                if (processed % ProgressHeartbeatBatchSize == 0)
+                    await ReportProgressAsync(runId, ct);
+                continue;
+            }
+
             // Upsert driver_safety_scores
             await db.ExecuteAsync(
                 @"INSERT INTO driver_safety_scores
                     (company_id, driver_id, score_7d, score_30d, score_90d,
-                     events_7d, events_30d, events_90d, breakdown_json, computed_at)
+                     events_7d, events_30d, events_90d, breakdown_json, computed_at,
+                     data_origin, verification_status)
                   VALUES
-                    (@cid, @did, @s7, @s30, @s90, @e7, @e30, @e90, @bd, NOW())
+                    (@cid, @did, @s7, @s30, @s90, @e7, @e30, @e90, @bd, NOW(),
+                     'runtime_computed', 'calculated_from_qualified_sources')
                   ON CONFLICT (company_id, driver_id) DO UPDATE SET
                     score_7d=EXCLUDED.score_7d, score_30d=EXCLUDED.score_30d, score_90d=EXCLUDED.score_90d,
                     events_7d=EXCLUDED.events_7d, events_30d=EXCLUDED.events_30d, events_90d=EXCLUDED.events_90d,
-                    breakdown_json=EXCLUDED.breakdown_json, computed_at=NOW()",
+                    breakdown_json=EXCLUDED.breakdown_json, computed_at=NOW(),
+                    data_origin=EXCLUDED.data_origin, verification_status=EXCLUDED.verification_status",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",  companyId);
@@ -356,7 +383,8 @@ public sealed class SafetyBackgroundService(
             sourceEventId,
             ActorTypes.System,
             "SafetyBackgroundService",
-            status: "active");
+            status: "active",
+            moduleKey: "safety");
     }
 
     private async Task CreateRepeatedSpeedingRecommendationAsync(long companyId, long? driverId, long count, decimal weight, CancellationToken ct)
@@ -390,7 +418,8 @@ public sealed class SafetyBackgroundService(
             sourceEventId,
             ActorTypes.System,
             "SafetyBackgroundService",
-            status: "active");
+            status: "active",
+            moduleKey: "safety");
     }
 
     // Returns (score, event_count, breakdown_json) for a driver in a given day window.
@@ -403,6 +432,9 @@ public sealed class SafetyBackgroundService(
               FROM safety_events
               WHERE company_id=@cid AND driver_id=@did
                 AND deleted_at IS NULL AND LOWER(status)<>'dismissed'
+                AND data_origin='runtime_detection'
+                AND verification_status='derived_from_qualified_source'
+                AND score_impact IS NOT NULL AND score_impact>0
                 AND event_time > NOW() - @days * INTERVAL '1 day'",
             c =>
             {
@@ -416,7 +448,7 @@ public sealed class SafetyBackgroundService(
 
         foreach (var ev in events)
         {
-            var impact   = ev["scoreImpact"] is { } si && si is not DBNull ? Convert.ToDecimal(si) : 10m;
+            var impact   = Convert.ToDecimal(ev["scoreImpact"]);
             var evType   = ev["eventType"]?.ToString() ?? "unknown";
             deductions  += impact;
 

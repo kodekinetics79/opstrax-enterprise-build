@@ -14,6 +14,7 @@ using Opstrax.Telematics.Gateway.Eventing;
 using Opstrax.Telematics.Gateway.Forwarding;
 using Opstrax.Telematics.Gateway.Identity;
 using Opstrax.Telematics.Gateway.Infrastructure;
+using Opstrax.Telematics.Gateway.J1939;
 using Opstrax.Telematics.Gateway.Observability;
 using Opstrax.Telematics.Gateway.Projection;
 using Opstrax.Telematics.Gateway.Quality;
@@ -69,6 +70,16 @@ EdgeOptions edge =
 
 builder.Services.AddSingleton(edge);
 builder.Services.AddSingleton<GatewayMetrics>();
+
+J1939CanHostOptions j1939Can =
+    builder.Configuration.GetSection(J1939CanHostOptions.SectionName).Get<J1939CanHostOptions>()
+    ?? new J1939CanHostOptions();
+if (J1939CanHostOptions.Validate(j1939Can) is { } j1939Problem)
+    throw new InvalidOperationException(j1939Problem);
+if (j1939Can.Enabled && edge.Egress == EgressMode.Https)
+    throw new InvalidOperationException(
+        "Gateway:J1939Can cannot run in the public HTTPS edge topology. " +
+        "The CAN host requires the registry and canonical event backbone in the trusted Postgres topology.");
 
 // OpenTelemetry tracer + meter providers (no-op exporter unless an OTLP endpoint is configured).
 builder.Services.AddTelematicsObservability(builder.Configuration);
@@ -156,6 +167,16 @@ else
     builder.Services.AddSingleton<IPositionProjectionStore, InMemoryPositionProjectionStore>();
     builder.Services.AddSingleton<IEventBackbone>(_ => new InMemoryEventBackbone());
     builder.Services.AddSingleton<IStoreAndForwardBuffer>(_ => new InMemoryStoreAndForwardBuffer());
+}
+
+if (j1939Can.Enabled)
+{
+    builder.Services.AddSingleton(j1939Can);
+    builder.Services.AddSingleton<CanonicalTelemetryPublisher>();
+    builder.Services.AddSingleton<J1939SignalPublisher>();
+    builder.Services.AddSingleton<J1939DiagnosticPublisher>();
+    builder.Services.AddSingleton<IJ1939CanFrameSource, CandumpJ1939CanFrameSource>();
+    builder.Services.AddHostedService<J1939CanIngestService>();
 }
 
 // Closes the durability loop: drains the store-and-forward buffer and republishes parked events

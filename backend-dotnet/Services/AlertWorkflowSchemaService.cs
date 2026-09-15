@@ -51,6 +51,7 @@ public sealed class AlertWorkflowSchemaService(Database db)
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL,
             alert_id BIGINT NOT NULL,
+            source_type VARCHAR(40) NOT NULL DEFAULT 'LegacyInsight',
             title VARCHAR(220) NOT NULL,
             description TEXT NULL,
             priority VARCHAR(40) NOT NULL DEFAULT 'High',
@@ -101,7 +102,8 @@ public sealed class AlertWorkflowSchemaService(Database db)
         "ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS triggered_today INT NOT NULL DEFAULT 0",
         "ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS last_triggered_at TIMESTAMPTZ",
         "ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
-        "ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"
+        "ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
+        "ALTER TABLE alert_follow_up_tasks ADD COLUMN IF NOT EXISTS source_type VARCHAR(40) NOT NULL DEFAULT 'LegacyInsight'"
     ];
 
     private static readonly string[] DataFixes =
@@ -157,7 +159,7 @@ public sealed class AlertWorkflowSchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_alert_rules_company_category ON alert_rules(company_id, category)",
         "CREATE INDEX IF NOT EXISTS idx_alert_rules_rule_key ON alert_rules(company_id, rule_key)",
         "CREATE INDEX IF NOT EXISTS idx_alert_tasks_company_status ON alert_follow_up_tasks(company_id, status, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_alert_tasks_alert ON alert_follow_up_tasks(alert_id, company_id)",
+        "CREATE INDEX IF NOT EXISTS idx_alert_tasks_source_alert ON alert_follow_up_tasks(source_type, alert_id, company_id)",
         "CREATE INDEX IF NOT EXISTS idx_alert_tasks_assignee ON alert_follow_up_tasks(company_id, assigned_to_user_id)"
     ];
 }

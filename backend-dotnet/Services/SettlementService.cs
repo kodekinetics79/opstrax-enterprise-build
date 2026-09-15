@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Npgsql;
+using NpgsqlTypes;
 using Opstrax.Api.Data;
 using Opstrax.Api.Foundation;
 
@@ -320,10 +321,13 @@ public sealed class SettlementService(Database db, IDomainEventPublisher? events
                 AND (@status IS NULL OR status=@status)
               ORDER BY created_at DESC, id DESC
               LIMIT 500",
-            c => { c.Parameters.AddWithValue("@cid", companyId);
-                   c.Parameters.AddWithValue("@ptype", (object?)payeeType ?? DBNull.Value);
-                   c.Parameters.AddWithValue("@pid", (object?)payeeId ?? DBNull.Value);
-                   c.Parameters.AddWithValue("@status", (object?)status ?? DBNull.Value); }, ct);
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.Add("@ptype", NpgsqlDbType.Text).Value = (object?)payeeType ?? DBNull.Value;
+                c.Parameters.Add("@pid", NpgsqlDbType.Bigint).Value = (object?)payeeId ?? DBNull.Value;
+                c.Parameters.Add("@status", NpgsqlDbType.Text).Value = (object?)status ?? DBNull.Value;
+            }, ct);
 
     public async Task<List<Dictionary<string, object?>>> GetLinesAsync(long companyId, long statementId, CancellationToken ct = default)
         => await db.QueryAsync(

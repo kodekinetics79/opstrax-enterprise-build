@@ -122,10 +122,10 @@ export function TelematicsControlTowerPage() {
   const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const rangeEnd = Math.min(page * pageSize, total);
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       <PageHeader title="Telematics Control Tower" description="Exception-first DeviceOps for connectivity and lifecycle evidence, with permission-scoped GPS and diagnostics workspaces." eyebrow="Telematics & IoT" />
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard label="Managed devices" value={denominator} icon={<RadioTower className="h-4 w-4" />} />
         <KpiCard label="Online" value={summary?.online ?? 0} icon={<CheckCircle2 className="h-4 w-4" />} />
         <KpiCard label="Needs action" value={summary?.attention ?? 0} icon={<AlertTriangle className="h-4 w-4" />} />
@@ -133,28 +133,7 @@ export function TelematicsControlTowerPage() {
         <KpiCard label="Faulted assets" value={summary?.faulted ?? "Unknown"} icon={<Gauge className="h-4 w-4" />} />
       </div>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div>
-          <h2 className="font-semibold text-slate-900">Pilot evidence scorecard</h2>
-          <p className="mt-1 text-sm text-slate-500">Coverage counts from current API fields. “Unknown” is shown when there are no managed devices; these are evidence ratios, not a synthetic readiness score.</p>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {[
-            { label: "Check-in evidence", count: denominator - (summary?.neverConnected ?? 0), definition: "Device has reported at least one check-in." },
-            { label: "Current position", count: null, definition: canViewGps ? "Open GPS for permission-scoped position freshness." : "Position evidence is not available to this role." },
-            { label: "Known provenance", count: null, definition: canViewGps ? "Open GPS for provider and source evidence." : "Position provenance is not available to this role." },
-            { label: "Health evidence", count: denominator - (summary?.neverConnected ?? 0), definition: "A device check-in provides the baseline health evidence." },
-          ].map((item) => (
-            <div key={item.label} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.label}</p>
-              <p className="mt-2 text-2xl font-bold text-slate-900">{denominator && item.count != null ? `${item.count}/${denominator}` : "Unknown"}</p>
-              <p className="mt-2 text-xs text-slate-500">{item.definition}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-busy={queueTransitionPending}>
+      <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm" aria-busy={queueTransitionPending}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="font-semibold text-slate-900">Priority action queue</h2>
@@ -168,7 +147,7 @@ export function TelematicsControlTowerPage() {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px_220px]">
+        <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_200px_200px]">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" aria-hidden />
             <span className="sr-only">Search priority queue</span>
@@ -183,14 +162,14 @@ export function TelematicsControlTowerPage() {
         </div>
 
         {queueTransitionPending ? (
-          <div className="mt-4" role="status" aria-live="polite" aria-busy="true">
+          <div className="mt-3" role="status" aria-live="polite" aria-busy="true">
             <p className="mb-3 text-sm font-medium text-slate-600">Updating priority queue…</p>
             <LoadingState />
           </div>
         ) : exceptions.length === 0 ? (
-          <div className="mt-4"><EmptyState title="No matching devices" subtitle="No connectivity or lifecycle rows match this queue view. GPS and Diagnostics retain their own permission-scoped evidence." /></div>
+          <div className="mt-3"><EmptyState title="No matching devices" subtitle="No connectivity or lifecycle rows match this queue view. GPS and Diagnostics retain their own permission-scoped evidence." /></div>
         ) : (
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-3 overflow-x-auto">
             <table className="min-w-[1100px] text-left text-sm">
               <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><tr>
                 {['Device identity','Vehicle','Provider','State','Why it is here','Evidence','Next action'].map((header, index) => <th key={header} className={`px-3 py-2 font-semibold ${index === 0 ? "sticky left-0 z-10 bg-white" : index === 6 ? "sticky right-0 z-10 bg-white" : ""}`}>{header}</th>)}
@@ -203,16 +182,39 @@ export function TelematicsControlTowerPage() {
             </table>
           </div>
         )}
-        {!queueTransitionPending ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600" aria-live="polite">
+        {!queueTransitionPending ? <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 text-sm text-slate-600" aria-live="polite">
           <span>{rangeStart}–{rangeEnd} of {total} · Page {page} of {pageCount}</span>
           <div className="flex gap-2"><button className="btn-ghost" disabled={page <= 1 || query.isFetching} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</button><button className="btn-ghost" disabled={page >= pageCount || query.isFetching} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Next</button></div>
         </div> : null}
       </section>
 
-      <section className="grid gap-3 md:grid-cols-3">
-        {canViewDevices ? <button className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-teal-400" onClick={() => navigate('/iot-devices')}><ShieldCheck className="h-5 w-5 text-teal-700" /><h3 className="mt-3 font-semibold">Trust & lifecycle</h3><p className="mt-1 text-sm text-slate-500">Provision, assign, rotate credentials, and inspect evidence-backed health.</p></button> : null}
-        {canViewGps ? <button className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-teal-400" onClick={() => navigate('/gps-tracking')}><MapPinned className="h-5 w-5 text-teal-700" /><h3 className="mt-3 font-semibold">Location truth</h3><p className="mt-1 text-sm text-slate-500">Separate device fix time, ingress time, freshness, and operational position.</p></button> : null}
-        {canViewDiagnostics ? <button className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-teal-400" onClick={() => navigate('/obd-j1939')}><Gauge className="h-5 w-5 text-teal-700" /><h3 className="mt-3 font-semibold">Vehicle intelligence</h3><p className="mt-1 text-sm text-slate-500">Review immutable OBD/J1939 evidence before maintenance or safety action.</p></button> : null}
+      <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="flex flex-col gap-1 lg:flex-row lg:items-baseline lg:justify-between">
+          <h2 className="font-semibold text-slate-900">Pilot evidence coverage</h2>
+          <p className="text-xs text-slate-500">Current API ratios; “Unknown” means no managed-device evidence, not zero readiness.</p>
+        </div>
+        <dl className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            { label: "Check-in evidence", count: denominator - (summary?.neverConnected ?? 0), definition: "At least one device check-in." },
+            { label: "Current position", count: null, definition: canViewGps ? "Open GPS to verify freshness." : "Restricted for this role." },
+            { label: "Known provenance", count: null, definition: canViewGps ? "Open GPS to verify source." : "Restricted for this role." },
+            { label: "Health evidence", count: denominator - (summary?.neverConnected ?? 0), definition: "Check-in supplies baseline health evidence." },
+          ].map((item) => (
+            <div key={item.label} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <dt className="min-w-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                {item.label}
+                <span className="mt-0.5 block truncate text-xs font-normal normal-case tracking-normal" title={item.definition}>{item.definition}</span>
+              </dt>
+              <dd className="shrink-0 text-lg font-bold tabular-nums text-slate-900">{denominator && item.count != null ? `${item.count}/${denominator}` : "Unknown"}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      <section className="grid gap-2 md:grid-cols-3">
+        {canViewDevices ? <button className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-teal-400" onClick={() => navigate('/iot-devices')}><ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-teal-700" /><span><span className="block font-semibold">Trust & lifecycle</span><span className="mt-0.5 block text-xs text-slate-500">Provision, assign, rotate credentials, and inspect evidence-backed health.</span></span></button> : null}
+        {canViewGps ? <button className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-teal-400" onClick={() => navigate('/gps-tracking')}><MapPinned className="mt-0.5 h-5 w-5 shrink-0 text-teal-700" /><span><span className="block font-semibold">Location truth</span><span className="mt-0.5 block text-xs text-slate-500">Separate device fix time, ingress time, freshness, and operational position.</span></span></button> : null}
+        {canViewDiagnostics ? <button className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-teal-400" onClick={() => navigate('/obd-j1939')}><Gauge className="mt-0.5 h-5 w-5 shrink-0 text-teal-700" /><span><span className="block font-semibold">Vehicle intelligence</span><span className="mt-0.5 block text-xs text-slate-500">Review immutable OBD/J1939 evidence before maintenance or safety action.</span></span></button> : null}
       </section>
     </div>
   );

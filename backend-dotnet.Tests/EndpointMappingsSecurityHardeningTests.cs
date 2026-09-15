@@ -114,12 +114,58 @@ public sealed class EndpointMappingsSecurityHardeningTests
     }
 
     [Fact]
-    public void AiFallback_DoesNotExposeExceptionMessages()
+    public void AiUnavailable_DoesNotFabricateAnAssistantAnswer()
     {
         var aiAsk = MethodSource("AiAsk(", "private static Func<HttpContext");
 
         Assert.DoesNotContain("ex.Message", aiAsk, StringComparison.Ordinal);
-        Assert.Contains("AI service temporarily unavailable.", aiAsk, StringComparison.Ordinal);
+        Assert.DoesNotContain("OpsTrax AI reviewed", aiAsk, StringComparison.Ordinal);
+        Assert.DoesNotContain("Send proactive ETA updates", aiAsk, StringComparison.Ordinal);
+        Assert.DoesNotContain("command_center_actions", aiAsk, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ai_insights", aiAsk, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("if (!brain.Enabled)", aiAsk, StringComparison.Ordinal);
+        Assert.Contains("StatusCodes.Status503ServiceUnavailable", aiAsk, StringComparison.Ordinal);
+        Assert.Contains("no answer was generated", aiAsk, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("FROM telemetry_alerts ta", aiAsk, StringComparison.Ordinal);
+        Assert.Contains("GetBranchId(http)", aiAsk, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AiEvidenceAndDispatchProposals_RequireRecordedSourcesAndBranchScope()
+    {
+        var source = Source();
+        var insights = SourceBlock(
+            source,
+            "private static async Task<IResult> AiInsights(",
+            "private static async Task<IResult> AiAsk(");
+        var list = SourceBlock(
+            source,
+            "private static async Task<IResult> AgenticRecommendationsList(",
+            "private static async Task<IResult> AgenticRecommendationDismiss(");
+        var dismiss = SourceBlock(
+            source,
+            "private static async Task<IResult> AgenticRecommendationDismiss(",
+            "private static async Task<IResult> AgenticRecommendationApprove(");
+        var approve = SourceBlock(
+            source,
+            "private static async Task<IResult> AgenticRecommendationApprove(",
+            "// ===== ENTITY CSV IMPORT");
+
+        Assert.Contains("AlertsSql", insights, StringComparison.Ordinal);
+        Assert.Contains("AlertsScopeSql", insights, StringComparison.Ordinal);
+        Assert.DoesNotContain("ai_insights", insights, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var handler in new[] { list, dismiss, approve })
+        {
+            Assert.Contains("dispatch_exceptions", handler, StringComparison.Ordinal);
+            Assert.Contains("dispatch-copilot", handler, StringComparison.Ordinal);
+            Assert.Contains("@branchId", handler, StringComparison.Ordinal);
+        }
+        Assert.Contains("source_assignment_id", approve, StringComparison.Ordinal);
+        Assert.Contains("assignmentId.Value != sourceAssignmentId", approve, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE OF ar, dex, da", approve, StringComparison.Ordinal);
+        Assert.Contains("status='approved'", approve, StringComparison.Ordinal);
+        Assert.DoesNotContain("status='executed'", approve, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -133,7 +179,7 @@ public sealed class EndpointMappingsSecurityHardeningTests
         Assert.Contains("WHERE de.id=@id AND de.company_id=@cid", source, StringComparison.Ordinal);
         Assert.Contains("WHERE se.id=@id AND se.company_id=@cid", source, StringComparison.Ordinal);
         Assert.Contains("WHERE ep.id=@id AND ep.company_id=@cid", source, StringComparison.Ordinal);
-        Assert.Contains("WHERE tenant_id=@cid ORDER BY snapshot_date", source, StringComparison.Ordinal);
+        Assert.Contains("WHERE tenant_id=@cid AND {QualifiedExecutiveSnapshotSql}", source, StringComparison.Ordinal);
         Assert.Contains("WHERE company_id=@cid AND entity_name=@entity", source, StringComparison.Ordinal);
     }
 
@@ -314,6 +360,8 @@ public sealed class EndpointMappingsSecurityHardeningTests
             "DetentionReviewService.GetEvidenceByTokenAsync validates token, expiry and revocation"),
         new("GET /api/customer-eta/track/{trackingCode}", PublicReason.CapabilityToken,
             "customer_eta_links.secure_token AND public_status='Active' AND expires_at > NOW()"),
+        new("POST /api/customer-eta/track/{trackingCode}/feedback", PublicReason.CapabilityToken,
+            "the same active, unexpired customer_eta_links.secure_token resolves company, customer and job server-side; rating and comment are bounded"),
         // exposed at R1 by fixing the ' char-literal bug:
         new("GET /api/customer-visibility/tracking/{token}", PublicReason.CapabilityToken,
             "customer_visibility.public_tracking_token AND share_enabled AND expires_at > NOW() "

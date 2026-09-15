@@ -14,6 +14,7 @@ export const dispatchApi = {
     status?: string;
     driverId?: number;
     vehicleId?: number;
+    jobId?: number;
     limit?: number;
   }) => unwrap<AnyRecord[]>(apiClient.get("/api/dispatch/assignments", { params })),
 

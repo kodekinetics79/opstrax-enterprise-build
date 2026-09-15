@@ -174,7 +174,6 @@ public class TelemetryAliasMirrorTests
     // wildcard role could revoke a compromised device, while the SPA rendered the button.
     [InlineData("fleet:manage", "telemetry.devices.manage")]
     [InlineData("fleet.manage", "telemetry.devices.manage")]
-    [InlineData("telematics:providers:manage", "telemetry.devices.manage")]
     [InlineData("alerts:view", "telemetry.alerts.read")]
     [InlineData("safety:view", "telemetry.alerts.read")]
     [InlineData("maintenance:view", "telemetry.alerts.read")]
@@ -217,6 +216,8 @@ public class TelemetryAliasMirrorTests
     [InlineData("telemetry.rules.read", "telemetry.rules.manage")]
     [InlineData("telemetry.alerts.read", "telemetry.alerts.manage")]
     [InlineData("telemetry.devices.read", "telemetry.devices.manage")]
+    [InlineData("telematics:providers:manage", "telemetry.devices.manage")]
+    [InlineData("telemetry.devices.manage", "telematics:providers:manage")]
     public void CoarseToken_DoesNotSatisfyTheEndpointGuard(string held, string required)
     {
         var denied = EndpointMappings.RequirePermission(Principal(held), required);

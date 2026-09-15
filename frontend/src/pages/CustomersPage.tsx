@@ -15,9 +15,7 @@ import {
   Trash2,
   RotateCcw,
   Users,
-  ShieldCheck,
   AlertTriangle,
-  Gauge,
   Crown,
   Truck,
   FileText,
@@ -44,18 +42,16 @@ import { useRowSelection, BulkCheckbox, BulkBar, ConfirmDialog } from "@/compone
 import {
   ClayCard,
   ClayButton,
-  ClayStat,
   ClayBadge,
   ClayGauge,
   ClayInput,
   ClaySelect,
   ClayWell,
   ClaySkeleton,
-  ClayStatSkeleton,
   type ClayTone,
 } from "@/components/clay";
 import { useHasPermission, PERMISSIONS } from "@/hooks/usePermission";
-import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState, KpiCard } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 // ── Domain vocabulary ─────────────────────────────────────────────────────────
@@ -867,17 +863,17 @@ export function CustomersPage() {
   if (listQ.isLoading) return <LoadingState />;
   if (listQ.isError) return <ErrorState message={(listQ.error as Error)?.message} onRetry={() => listQ.refetch()} />;
 
-  const kpis: Array<{ label: string; value: ReactNode; unit?: string; icon: typeof Users; tone: ClayTone; hint?: string }> = [
-    { label: "Total accounts", value: fmtInt(summary?.total), icon: Users, tone: "neutral" },
-    { label: "Active", value: fmtInt(summary?.active), icon: ShieldCheck, tone: "good" },
-    { label: "At risk", value: fmtInt(summary?.atRisk), icon: AlertTriangle, tone: "bad" },
-    { label: "Avg SLA health", value: fmtInt(summary?.slaHealthScore), unit: summary?.slaHealthScore != null ? "%" : undefined, icon: Gauge, tone: "info" },
-    { label: "Avg delivery exp.", value: fmtInt(summary?.deliveryExperienceScore), unit: summary?.deliveryExperienceScore != null ? "%" : undefined, icon: Activity, tone: "good" },
-    { label: "Platinum accounts", value: fmtInt(summary?.platinumAccounts), icon: Crown, tone: "warn" },
+  const kpis: Array<{ label: string; value: ReactNode; unit?: string }> = [
+    { label: "Total accounts", value: fmtInt(summary?.total) },
+    { label: "Active", value: fmtInt(summary?.active) },
+    { label: "At risk", value: fmtInt(summary?.atRisk) },
+    { label: "Avg SLA health", value: fmtInt(summary?.slaHealthScore), unit: summary?.slaHealthScore != null ? "%" : undefined },
+    { label: "Avg delivery exp.", value: fmtInt(summary?.deliveryExperienceScore), unit: summary?.deliveryExperienceScore != null ? "%" : undefined },
+    { label: "Platinum accounts", value: fmtInt(summary?.platinumAccounts) },
   ];
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 p-4 md:p-6">
+    <div className="page-stack min-w-0">
       {/* Header */}
       <header className="flex shrink-0 flex-wrap items-start justify-between gap-3">
         <div>
@@ -899,12 +895,16 @@ export function CustomersPage() {
       </header>
 
       {/* KPI rail */}
-      <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        {sumQ.isLoading
-          ? Array.from({ length: 6 }, (_, i) => <ClayStatSkeleton key={i} />)
-          : kpis.map((k) => (
-              <ClayStat key={k.label} label={k.label} value={k.value} unit={k.unit} icon={k.icon} tone={k.tone} />
-            ))}
+      <div className="panel flex flex-wrap divide-x divide-slate-200 overflow-hidden" aria-label="Customer account summary" aria-busy={sumQ.isLoading}>
+        {kpis.map((k) => (
+          <KpiCard
+            compact
+            key={k.label}
+            label={k.label}
+            value={sumQ.isLoading ? "—" : <>{k.value}{k.unit}</>}
+            status={sumQ.isLoading ? "Loading" : undefined}
+          />
+        ))}
       </div>
 
       {bulkResult && (
@@ -916,8 +916,8 @@ export function CustomersPage() {
         {/* Left: filters + table + bulk bar */}
         <div className="flex min-h-0 flex-1 flex-col gap-3">
           {/* Filter bar */}
-          <ClayCard dense className="shrink-0" bodyClassName="flex flex-wrap items-center gap-3">
-            <div className="flex flex-wrap gap-1.5">
+          <ClayCard dense className="shrink-0" bodyClassName="flex flex-wrap items-center gap-2">
+            <div className="flex shrink-0 flex-wrap gap-1">
               {(["All", ...STATUSES] as StatusFilter[]).map((f) => {
                 const active = statusFilter === f;
                 return (
@@ -935,7 +935,7 @@ export function CustomersPage() {
             </div>
             <ClaySelect
               aria-label="Filter by SLA tier"
-              wrapperClassName="w-auto"
+              wrapperClassName="w-full shrink-0 sm:w-36"
               value={tierFilter}
               onChange={(e) => setTierFilter(e.target.value as TierFilter)}
             >
@@ -949,7 +949,7 @@ export function CustomersPage() {
               type="search"
               aria-label="Search customers"
               placeholder="Search name, code, contact…"
-              wrapperClassName="ml-auto w-full sm:w-64"
+              wrapperClassName="min-w-0 flex-1 sm:ml-auto sm:w-auto sm:max-w-72"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -962,7 +962,7 @@ export function CustomersPage() {
                 <EmptyState title="No customers match your filters" />
               </div>
             ) : (
-              <table className="w-full border-collapse text-sm">
+              <table className="w-full min-w-[760px] border-collapse text-sm">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-[var(--cx-bg-sunken)] shadow-[0_1px_0_rgba(148,163,184,.35)]">
                     <th className="w-10 px-3 py-2.5 text-left">

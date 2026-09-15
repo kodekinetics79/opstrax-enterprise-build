@@ -8,7 +8,7 @@ set -euo pipefail
 : "${OPSTRAX_TEST_DB_APP_PASSWORD:?Set OPSTRAX_TEST_DB_APP_PASSWORD for the disposable app identity}"
 : "${OPSTRAX_TEST_DB_SYSTEM_PASSWORD:?Set OPSTRAX_TEST_DB_SYSTEM_PASSWORD for the disposable system identity}"
 
-for command_name in createdb dropdb psql openssl curl jq dotnet; do
+for command_name in createdb dropdb psql openssl curl jq dotnet python3; do
   command -v "$command_name" >/dev/null || {
     echo "ERROR: required command is unavailable: $command_name" >&2
     exit 1
@@ -191,6 +191,18 @@ jq -e '.status=="healthy" and .environment=="Production"
   and .checks.critical_worker_contract.expected_count==8
   and ([.checks.services[] | select(.name=="RetentionEnforcementService" and .status=="healthy")] | length)==1' \
   "$rehearsal_tmp/deep.json" >/dev/null
+
+rehearsal_stage="real maintenance HTTP tenant-isolation verification"
+OPSTRAX_MAINT_HTTP_OWNER_URI="$owner_uri" \
+OPSTRAX_MAINT_HTTP_APP_URI="postgresql://opstrax_app:${OPSTRAX_TEST_DB_APP_PASSWORD}@${OPSTRAX_TEST_DB_HOST}:${OPSTRAX_TEST_DB_PORT}/${rehearsal_db}?sslmode=disable" \
+OPSTRAX_MAINT_HTTP_API_URL="http://127.0.0.1:${rehearsal_port}" \
+OPSTRAX_MAINT_HTTP_REPORT="$rehearsal_tmp/maintenance-http-evidence.json" \
+python3 tools/verify-maintenance-tenant-http.py \
+  >"$rehearsal_tmp/maintenance-http.log" 2>&1 || {
+    cat "$rehearsal_tmp/maintenance-http.log" >&2
+    exit 1
+  }
+cat "$rehearsal_tmp/maintenance-http.log"
 
 rehearsal_stage="restricted identity and tenant-isolation suite"
 if ! OPSTRAX_TEST_DB="$owner_connection" \

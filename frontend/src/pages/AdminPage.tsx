@@ -1,8 +1,11 @@
-import { useMemo, useState } from "react";
+import { DataTable } from "@/components/ui";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronUp, ClipboardCheck, Copy, Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Trash2, UserCog, Users, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission, PermissionDenied } from "@/hooks/usePermission";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import {
   useAdminOverview,
   useAdminPermissions,
@@ -25,7 +28,7 @@ import { adminApi } from "@/services/adminApi";
 import { customersApi } from "@/services/customersApi";
 import { branchesApi } from "@/services/branchesApi";
 import { PERMISSIONS } from "@/auth/rbacConfig";
-import { EmptyState, ErrorState, LoadingState, PageHeader, PasswordInput, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, PasswordInput, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type AdminTab = "dashboard" | "users" | "roles" | "permissions" | "access" | "settings" | "audit";
@@ -226,9 +229,12 @@ function ActivationLinkPanel({
 }
 
 export function AdminPage() {
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const hasPermission = useHasPermission();
   const canViewUsers = hasPermission(PERMISSIONS.USERS_VIEW);
+  const canManageUsers = hasPermission(PERMISSIONS.USERS_MANAGE);
   const canCreateUsers = hasPermission(PERMISSIONS.USERS_CREATE);
   const canUpdateUsers = hasPermission(PERMISSIONS.USERS_UPDATE);
   const canDeleteUsers = hasPermission(PERMISSIONS.USERS_DELETE);
@@ -242,7 +248,10 @@ export function AdminPage() {
   const canViewAccessReviews = hasPermission("access_review:view");
   const canManageAccessReviews = hasPermission("access_review:manage");
 
-  const [tab, setTab] = useState<AdminTab>("dashboard");
+  const routeDefaultTab: AdminTab = location.pathname === "/user-management" ? "users" : "dashboard";
+  const requestedTab = searchParams.get("tab") as AdminTab | null;
+  const initialTab = TAB_OPTIONS.some((option) => option.key === requestedTab) ? requestedTab as AdminTab : routeDefaultTab;
+  const [tab, setTab] = useState<AdminTab>(initialTab);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -271,12 +280,29 @@ export function AdminPage() {
   const [inviteResult, setInviteResult] = useState<ActivationLink | null>(null);
   const [drawerLink, setDrawerLink] = useState<ActivationLink | null>(null);
   const [drawerAccessError, setDrawerAccessError] = useState<string | null>(null);
+  const [drawerAccessNotice, setDrawerAccessNotice] = useState<string | null>(null);
+  const [passwordResetTarget, setPasswordResetTarget] = useState<AnyRecord | null>(null);
+  const [passwordResetForm, setPasswordResetForm] = useState({ password: "", confirm: "" });
+  const [passwordResetError, setPasswordResetError] = useState<string | null>(null);
   const [copiedLinkKey, setCopiedLinkKey] = useState<"invite" | "drawer" | null>(null);
   const [userSort, setUserSort] = useState<{ key: UserSortKey; dir: "asc" | "desc" }>({ key: "fullName", dir: "asc" });
   const [userPage, setUserPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkNotice, setBulkNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
-  const [rolesView, setRolesView] = useState<"cards" | "matrix">("cards");
+  const [rolesView, setRolesView] = useState<"list" | "matrix">("list");
+
+  useEffect(() => {
+    const next = TAB_OPTIONS.some((option) => option.key === requestedTab) ? requestedTab as AdminTab : routeDefaultTab;
+    setTab(next);
+  }, [requestedTab, routeDefaultTab]);
+
+  const selectTab = (nextTab: AdminTab) => {
+    setTab(nextTab);
+    const next = new URLSearchParams(searchParams);
+    if (nextTab === routeDefaultTab) next.delete("tab");
+    else next.set("tab", nextTab);
+    setSearchParams(next, { replace: true });
+  };
 
   const queryClient = useQueryClient();
 
@@ -397,6 +423,12 @@ export function AdminPage() {
     enabled: selectedUserId != null && Number.isFinite(selectedUserId),
   });
   const generateLink = useMutation({ mutationFn: (id: number) => adminApi.activationLink(id) });
+  const resetPassword = useMutation({
+    mutationFn: ({ id, newPassword }: { id: number; newPassword: string }) => adminApi.resetUserPassword(id, newPassword),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["admin-user-sessions"] });
+    },
+  });
   const revokeSessions = useMutation({
     mutationFn: (id: number) => adminApi.revokeUserSessions(id),
     onSuccess: async () => {
@@ -510,12 +542,14 @@ export function AdminPage() {
   const openUserDrawer = (user: AnyRecord) => {
     setDrawerLink(null);
     setDrawerAccessError(null);
+    setDrawerAccessNotice(null);
     setSelectedUser(user);
   };
 
   const closeUserDrawer = () => {
     setDrawerLink(null);
     setDrawerAccessError(null);
+    setDrawerAccessNotice(null);
     setSelectedUser(null);
   };
 
@@ -536,6 +570,33 @@ export function AdminPage() {
       await revokeSessions.mutateAsync(id);
     } catch (err) {
       setDrawerAccessError(extractApiError(err, "Could not revoke this user's sessions."));
+    }
+  };
+
+  const openPasswordReset = (user: AnyRecord) => {
+    setPasswordResetForm({ password: "", confirm: "" });
+    setPasswordResetError(null);
+    setPasswordResetTarget(user);
+  };
+
+  const submitPasswordReset = async () => {
+    if (!passwordResetTarget) return;
+    if (passwordResetForm.password !== passwordResetForm.confirm) {
+      setPasswordResetError("The two passwords do not match.");
+      return;
+    }
+    try {
+      setPasswordResetError(null);
+      const result = await resetPassword.mutateAsync({
+        id: Number(passwordResetTarget.id),
+        newPassword: passwordResetForm.password,
+      });
+      const name = String(passwordResetTarget.fullName ?? passwordResetTarget.full_name ?? passwordResetTarget.email ?? "User");
+      setPasswordResetTarget(null);
+      setPasswordResetForm({ password: "", confirm: "" });
+      setDrawerAccessNotice(`${name}'s password was reset and ${result.sessionsRevoked} active session${result.sessionsRevoked === 1 ? " was" : "s were"} revoked. No email was sent.`);
+    } catch (err) {
+      setPasswordResetError(extractApiError(err, "Could not reset this user's password."));
     }
   };
 
@@ -594,23 +655,28 @@ export function AdminPage() {
     setRoleForm({ name: "", permissions: [] });
   };
 
+  const userDrawerRef = useDialogFocus<HTMLElement>(selectedUser != null, closeUserDrawer);
+  const passwordResetDialogRef = useDialogFocus<HTMLDivElement>(passwordResetTarget != null, () => setPasswordResetTarget(null));
+  const userDialogRef = useDialogFocus<HTMLDivElement>(userModal != null, () => setUserModal(null));
+  const roleDialogRef = useDialogFocus<HTMLDivElement>(roleModal != null, () => setRoleModal(null));
+
   return (
-    <div className="iam flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="iam page-stack min-w-0">
       <PageHeader
         eyebrow="Governance"
         title="Users & Roles"
         description="Manage the people, roles, permissions and audit posture of this workspace."
         actions={
           <>
-            <button className="btn-ghost" onClick={() => setTab("audit")} disabled={!canViewAudit} title={!canViewAudit ? "You do not have permission to perform this action." : undefined}>
+            <button className="btn-ghost" onClick={() => selectTab("audit")} disabled={!canViewAudit} title={!canViewAudit ? "You do not have permission to perform this action." : undefined}>
               <KeyRound className="h-4 w-4" />
               Audit Logs
             </button>
-            <button className="btn-ghost" onClick={() => setTab("settings")} disabled={!canViewSettings} title={!canViewSettings ? "You do not have permission to perform this action." : undefined}>
+            <button className="btn-ghost" onClick={() => selectTab("settings")} disabled={!canViewSettings} title={!canViewSettings ? "You do not have permission to perform this action." : undefined}>
               <ShieldCheck className="h-4 w-4" />
               Settings
             </button>
-            <button className="btn-primary" onClick={() => setTab("users")} disabled={!canViewUsers} title={!canViewUsers ? "You do not have permission to perform this action." : undefined}>
+            <button className="btn-primary" onClick={() => selectTab("users")} disabled={!canViewUsers} title={!canViewUsers ? "You do not have permission to perform this action." : undefined}>
               <LayoutDashboard className="h-4 w-4" />
               Open Users
             </button>
@@ -621,7 +687,7 @@ export function AdminPage() {
       {permissionsExportNotice && <div className="rounded-xl border border-emerald-400/30 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{permissionsExportNotice}</div>}
 
       {overviewQ.isLoading ? <LoadingState /> : overviewQ.isError ? <ErrorState message="Could not load admin overview." /> : (
-        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+        <div className="flex min-w-0 flex-wrap divide-x divide-slate-100 rounded-xl border border-slate-200 bg-white">
           {[
             { label: "Total Users", value: overviewQ.data?.totalUsers ?? 0, icon: <Users className="h-4 w-4" /> },
             { label: "Active Users", value: overviewQ.data?.activeUsers ?? 0, icon: <Users className="h-4 w-4" /> },
@@ -630,22 +696,18 @@ export function AdminPage() {
             { label: "Audit Events Today", value: overviewQ.data?.recentAuditEvents ?? 0, icon: <ShieldCheck className="h-4 w-4" /> },
             { label: "Permissions", value: overviewQ.data?.permissionCoverage ?? permissions.length, icon: <ShieldCheck className="h-4 w-4" /> },
           ].map((card) => (
-            <div key={card.label} className="iam-stat min-w-0">
-              <div className="flex items-start justify-between gap-2">
-                <p className="min-w-0 truncate text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500" title={card.label}>{card.label}</p>
-                <div className="shrink-0 rounded-xl border border-white/70 bg-white p-2 text-teal-600 shadow-[-2px_-2px_5px_rgba(255,255,255,.9),3px_4px_8px_rgba(141,157,184,.24)]">{card.icon}</div>
-              </div>
-              <div className="mt-2 text-3xl font-bold tracking-tight text-slate-900">{card.value}</div>
-            </div>
+            <KpiCard compact key={card.label} label={card.label} value={String(card.value)} />
           ))}
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-px">
-        {TAB_OPTIONS.map((option) => (
-          <button
+      <div className="overflow-x-auto border-b border-slate-200 pb-px">
+        <div className="flex min-w-max gap-1" role="group" aria-label="Administration sections">
+          {TAB_OPTIONS.map((option) => (
+            <button
             key={option.key}
-            onClick={() => setTab(option.key)}
+            aria-pressed={tab === option.key}
+            onClick={() => selectTab(option.key)}
             disabled={
               (option.key === "users" && !canViewUsers) ||
               (option.key === "roles" && !canViewRoles) ||
@@ -664,13 +726,14 @@ export function AdminPage() {
                 ? "You do not have permission to perform this action."
                 : undefined
             }
-            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition ${
+            className={`rounded-t-lg px-3 py-2 text-sm font-semibold transition ${
               tab === option.key ? "border border-b-0 border-teal-300 bg-teal-50 text-teal-700" : "text-slate-500 hover:text-slate-700"
             } disabled:cursor-not-allowed disabled:opacity-40`}
           >
             {option.label}
-          </button>
-        ))}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === "dashboard" && (
@@ -678,7 +741,7 @@ export function AdminPage() {
             <div className="iam-card space-y-3 p-5">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-bold text-slate-900">Admin Activity</h2>
-                <button className="btn-ghost h-9 px-3 shrink-0" onClick={() => setTab("audit")} disabled={!canViewAudit}>Open audit trail</button>
+                <button className="btn-ghost h-9 px-3 shrink-0" onClick={() => selectTab("audit")} disabled={!canViewAudit}>Open audit trail</button>
               </div>
             {((Array.isArray(auditLogsQ.data) ? auditLogsQ.data : []) as AnyRecord[]).slice(0, 6).map((entry: AnyRecord) => (
               <div key={String(entry.id)} className="iam-kv">
@@ -697,10 +760,10 @@ export function AdminPage() {
             <div className="iam-card p-5">
               <h3 className="font-bold text-slate-900">Quick Actions</h3>
               <div className="mt-4 grid gap-2">
-                <button className="btn-primary" onClick={() => setTab("users")} disabled={!canViewUsers}>Manage Users</button>
-                <button className="btn-ghost" onClick={() => setTab("roles")} disabled={!canViewRoles}>Review Roles</button>
-                <button className="btn-ghost" onClick={() => setTab("permissions")} disabled={!(canViewUsers || canViewRoles)}>View Permissions</button>
-                <button className="btn-ghost" onClick={() => setTab("settings")} disabled={!canViewSettings}>Open Settings</button>
+                <button className="btn-primary" onClick={() => selectTab("users")} disabled={!canViewUsers}>Manage Users</button>
+                <button className="btn-ghost" onClick={() => selectTab("roles")} disabled={!canViewRoles}>Review Roles</button>
+                <button className="btn-ghost" onClick={() => selectTab("permissions")} disabled={!(canViewUsers || canViewRoles)}>View Permissions</button>
+                <button className="btn-ghost" onClick={() => selectTab("settings")} disabled={!canViewSettings}>Open Settings</button>
               </div>
             </div>
             <div className="iam-card p-5">
@@ -717,13 +780,13 @@ export function AdminPage() {
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[220px]">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-              <input className="field w-full pl-9!" placeholder="Search users..." value={search} onChange={(e) => { setSearch(e.target.value); setUserPage(1); }} />
+              <input aria-label="Search users" className="field w-full pl-9" placeholder="Search users..." value={search} onChange={(e) => { setSearch(e.target.value); setUserPage(1); }} />
             </div>
-            <select className="field" value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setUserPage(1); }}>
+            <select aria-label="Filter users by role" className="field w-full sm:w-44" value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setUserPage(1); }}>
               <option value="">All roles</option>
               {roleOptions.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}
             </select>
-            <select className="field" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setUserPage(1); }}>
+            <select aria-label="Filter users by status" className="field w-full sm:w-36" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setUserPage(1); }}>
               <option value="">All statuses</option>
               {["Active", "Inactive", "Pending"].map((status) => <option key={status} value={status}>{status}</option>)}
             </select>
@@ -893,7 +956,7 @@ export function AdminPage() {
             <p className="min-w-0 truncate text-sm text-slate-500">Roles list and permission bundles.</p>
             <div className="flex shrink-0 items-center gap-2">
               <div className="flex rounded-xl border border-slate-200 bg-white p-1" role="group" aria-label="Roles view">
-                {([["cards", "Cards"], ["matrix", "Matrix"]] as Array<["cards" | "matrix", string]>).map(([key, label]) => (
+                {([["list", "List"], ["matrix", "Matrix"]] as Array<["list" | "matrix", string]>).map(([key, label]) => (
                   <button
                     key={key}
                     type="button"
@@ -949,31 +1012,11 @@ export function AdminPage() {
               </table>
             </div>
           ) : (
-            <div className="grid gap-4 xl:grid-cols-2">
-              {roles.map((role: AnyRecord) => (
-                <div key={String(role.id)} className="iam-card p-5 min-w-0">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="font-bold text-slate-900 truncate" title={String(role.name)}>{String(role.name)}</h3>
-                      <p className="mt-1 text-xs text-slate-500">{String(role.userCount ?? 0)} users assigned</p>
-                    </div>
-                    <button className="btn-ghost h-8 px-3 shrink-0" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles || Boolean(role.isSystem ?? role.is_system)} title={Boolean(role.isSystem ?? role.is_system) ? "Built-in templates are immutable; create a tenant role to customize access." : undefined}>
-                      {Boolean(role.isSystem ?? role.is_system) ? "Protected" : "Edit"}
-                    </button>
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).slice(0, 8).map((permission) => (
-                      <span key={permission} className="iam-chip"><span>{permission}</span></span>
-                    ))}
-                    {permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).length > 8 && (
-                      <span className="iam-chip !text-slate-400">
-                        <span>+{permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).length - 8} more</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <DataTable rows={roles} columns={["name", "userCount", "permissions"]}
+              columnLabels={{ userCount: "Users", permissions: "Permissions" }}
+              cellRenderers={{ permissions: (role) => `${permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).length} permissions` }}
+              actions={(role) => <button type="button" className="btn-ghost btn-compact" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles || Boolean(role.isSystem ?? role.is_system)} title={Boolean(role.isSystem ?? role.is_system) ? "Built-in templates are immutable; create a tenant role to customize access." : undefined}>{Boolean(role.isSystem ?? role.is_system) ? "Protected" : "Edit"}</button>}
+            />
           )}
         </div>
       )}
@@ -1154,13 +1197,13 @@ export function AdminPage() {
 
       {selectedUser && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-sm" onClick={closeUserDrawer}>
-          <aside className="iam iam-drawer max-w-lg p-6" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="User detail">
+          <aside ref={userDrawerRef} className="iam iam-drawer max-w-lg p-4 sm:p-5" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="admin-user-detail-title">
             <button className="float-right icon-btn" onClick={closeUserDrawer} aria-label="Close user detail"><X className="h-4 w-4" /></button>
             <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-teal-700">User Detail</p>
             <div className="mt-4 flex items-center gap-3 min-w-0">
               <Avatar name={String(selectedUser.fullName ?? selectedUser.full_name ?? "User")} />
               <div className="min-w-0">
-                <h2 className="text-xl font-bold text-slate-900 truncate">{String(selectedUser.fullName ?? selectedUser.full_name ?? "User")}</h2>
+                <h2 id="admin-user-detail-title" className="text-xl font-bold text-slate-900 truncate">{String(selectedUser.fullName ?? selectedUser.full_name ?? "User")}</h2>
                 <p className="text-xs text-slate-500 truncate">{String(selectedUser.email ?? "")}</p>
               </div>
             </div>
@@ -1213,6 +1256,17 @@ export function AdminPage() {
                     onDismiss={() => setDrawerLink(null)}
                   />
                 )}
+                {canManageUsers
+                  && Number(selectedUser.id) !== Number(session?.user?.id)
+                  && /^active$/i.test(String(selectedUser.status ?? "")) && (
+                  <button
+                    className="btn-ghost w-full"
+                    onClick={() => openPasswordReset(selectedUser)}
+                  >
+                    <KeyRound className="h-4 w-4" />
+                    Set new password
+                  </button>
+                )}
                 {canUpdateUsers && (
                   <button
                     className="btn-ghost w-full text-rose-600 hover:text-rose-700"
@@ -1225,6 +1279,9 @@ export function AdminPage() {
                 )}
                 {drawerAccessError && (
                   <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{drawerAccessError}</p>
+                )}
+                {drawerAccessNotice && (
+                  <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">{drawerAccessNotice}</p>
                 )}
                 {canViewAudit && (
                   <button
@@ -1247,11 +1304,60 @@ export function AdminPage() {
         </div>
       )}
 
+      {passwordResetTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-2 backdrop-blur-sm sm:p-4">
+          <div ref={passwordResetDialogRef} className="iam iam-card max-h-[calc(100dvh-1rem)] w-full max-w-md space-y-4 overflow-y-auto p-4 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="admin-password-reset-title">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 id="admin-password-reset-title" className="font-bold text-slate-900">Set new password</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  {String(passwordResetTarget.fullName ?? passwordResetTarget.full_name ?? passwordResetTarget.email)} · no email will be sent
+                </p>
+              </div>
+              <button className="icon-btn" onClick={() => setPasswordResetTarget(null)} aria-label="Close"><X className="h-4 w-4" /></button>
+            </div>
+            <div>
+              <label className="label">New password</label>
+              <PasswordInput
+                value={passwordResetForm.password}
+                onChange={(event) => setPasswordResetForm((current) => ({ ...current, password: event.target.value }))}
+                autoComplete="new-password"
+                placeholder="Enter a policy-compliant password"
+              />
+            </div>
+            <div>
+              <label className="label">Confirm password</label>
+              <PasswordInput
+                value={passwordResetForm.confirm}
+                onChange={(event) => setPasswordResetForm((current) => ({ ...current, confirm: event.target.value }))}
+                autoComplete="new-password"
+                placeholder="Repeat the new password"
+              />
+            </div>
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+              This replaces the current credential, clears the lockout, revokes every active session and invalidates outstanding reset links. Share the new password through a secure channel.
+            </p>
+            {passwordResetError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{passwordResetError}</p>}
+            <div className="flex gap-2">
+              <button type="button" className="btn-ghost flex-1" onClick={() => setPasswordResetTarget(null)}>Cancel</button>
+              <button
+                type="button"
+                className="btn-primary flex-1"
+                onClick={submitPasswordReset}
+                disabled={resetPassword.isPending || !passwordResetForm.password || !passwordResetForm.confirm}
+              >
+                {resetPassword.isPending ? "Resetting…" : "Reset password"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {userModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm p-4">
-          <div className="iam iam-card w-full max-w-2xl space-y-4 p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-2 backdrop-blur-sm sm:p-4">
+          <div ref={userDialogRef} className="iam iam-card max-h-[calc(100dvh-1rem)] w-full max-w-2xl space-y-4 overflow-y-auto p-4 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="admin-user-editor-title">
             <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">{userModal === "create" ? "Add User" : "Edit User"}</h2>
+              <h2 id="admin-user-editor-title" className="font-bold text-slate-900">{userModal === "create" ? "Add User" : "Edit User"}</h2>
               <button className="icon-btn" onClick={() => setUserModal(null)} aria-label="Close"><X className="h-4 w-4" /></button>
             </div>
               <div className="grid gap-3 md:grid-cols-2">
@@ -1366,7 +1472,7 @@ export function AdminPage() {
                 </div>
               ) : (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                  Passwords are not changed from this form. Use the one-time activation link from User Detail for credential recovery.
+                  Passwords are not changed from this form. Open User Detail and choose Set new password for direct recovery, or generate an activation link for the user to choose it.
                 </div>
               )}
               <div>
@@ -1386,10 +1492,10 @@ export function AdminPage() {
       )}
 
       {roleModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm p-4">
-          <div className="iam iam-card w-full max-w-3xl space-y-4 p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-2 backdrop-blur-sm sm:p-4">
+          <div ref={roleDialogRef} className="iam iam-card max-h-[calc(100dvh-1rem)] w-full max-w-3xl space-y-4 overflow-y-auto p-4 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="admin-role-editor-title">
             <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">{roleModal.id ? "Edit Role" : "Create Role"}</h2>
+              <h2 id="admin-role-editor-title" className="font-bold text-slate-900">{roleModal.id ? "Edit Role" : "Create Role"}</h2>
               <button className="icon-btn" onClick={() => setRoleModal(null)} aria-label="Close"><X className="h-4 w-4" /></button>
             </div>
             <div>

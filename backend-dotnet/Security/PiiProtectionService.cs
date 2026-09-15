@@ -130,8 +130,23 @@ public sealed class PiiProtectionService(IDataKeyProvider keys, ILogger<PiiProte
         if (string.IsNullOrEmpty(value)) return null;
         if (!keys.IsConfigured) return null; // no index when not encrypting
         var normalized = value.Trim().ToLowerInvariant();
+        return HmacIndex(normalized);
+    }
+
+    /// <summary>Deterministic HMAC index that preserves the exact case and bytes
+    /// of an opaque external identifier. Use this for provider-generated IDs whose
+    /// comparison rules are controlled by the provider rather than by OpsTrax.</summary>
+    public string? BlindIndexExact(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return null;
+        if (!keys.IsConfigured) return null;
+        return HmacIndex(value);
+    }
+
+    private string HmacIndex(string value)
+    {
         using var hmac = new HMACSHA256(keys.IndexKey);
-        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(normalized));
+        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(value));
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 

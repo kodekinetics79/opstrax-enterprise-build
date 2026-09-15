@@ -1,9 +1,12 @@
+import { deviceWorkspaceRoute, measuredNumber, observationAge, observedMotion, recentObservation } from "@/utils/vehicleWorkspace";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
+import { telematicsService } from "@/services/telematicsService";
 import { FormEvent, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity, ArchiveRestore, ArrowUpRight, Boxes, Camera, ChevronRight, Cpu, Download, Gauge, Info,
-  MapPin, Navigation, Plus, Save, Search, ShieldAlert, Sparkles, Trash2, TrendingUp,
-  Truck, UserCheck, Video, Wrench, X, Radio,
+  Activity, ArchiveRestore, Boxes, Camera, ChevronRight, Cpu, Download, Gauge, Info,
+  MapPin, Navigation, Plus, Save, Search, ShieldAlert, Sparkles, Trash2,
+  UserCheck, Video, Wrench, X, Radio, RefreshCw,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
 import { vehiclesApi } from "@/services/vehiclesApi";
@@ -15,10 +18,10 @@ import { scopeRowsForSession } from "@/auth/accessScope";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { resolveAuthorizedSummaryCount } from "@/utils/vehicleSummaryPresentation";
 import { optionsWithPersistedValue, VEHICLE_TYPE_OPTIONS } from "@/utils/vehicleEditorOptions";
-import { labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { labelize, LoadingState, ErrorState, EmptyState, PageHeader, PageStack } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { AnyRecord, UserSession } from "@/types";
-import { optionalTelemetryHeading, readSpeedMph, telemetryMotion, telemetrySpeedSummary } from "@/utils/telemetryMeasurements";
+import { optionalTelemetryHeading, readSpeedMph, telemetrySpeedSummary } from "@/utils/telemetryMeasurements";
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -40,7 +43,7 @@ function riskTier(row: AnyRecord): "High" | "Medium" | "Low" {
 // Live movement is derived from real telemetry only. speedMph/lastSeenAt come from the
 // location_events join; where they are absent we say so honestly (no fabricated motion).
 function isMoving(row: AnyRecord): boolean {
-  return telemetryMotion(readSpeedMph(row), 1) === "Moving";
+  return observedMotion(readSpeedMph(row), g(row, "lastSeenAt", "last_seen_at")) === "Moving";
 }
 
 function vehicleDeviceStatus(row: AnyRecord): string {
@@ -64,8 +67,7 @@ function vehicleCameraStatus(row: AnyRecord): string {
 }
 
 function hasRecentHeartbeat(iso: unknown): boolean {
-  const timestamp = Date.parse(String(iso ?? ""));
-  return !Number.isNaN(timestamp) && Date.now() - timestamp <= 15 * 60_000;
+  return recentObservation(iso, Date.now(), 15 * 60_000);
 }
 
 function hasReadinessEvidence(row: AnyRecord): boolean {
@@ -81,9 +83,9 @@ function vehicleReadiness(row: AnyRecord): number | null {
 
 function freshness(iso?: unknown): { label: string; live: boolean } | null {
   if (iso == null || iso === "") return null;
-  const t = Date.parse(String(iso));
-  if (Number.isNaN(t)) return null;
-  const mins = Math.max(0, Math.round((Date.now() - t) / 60_000));
+  const age = observationAge(iso);
+  if (age == null) return null;
+  const mins = Math.floor(age / 60_000);
   if (mins < 3) return { label: "live", live: true };
   if (mins < 60) return { label: `${mins}m ago`, live: false };
   const hours = Math.round(mins / 60);
@@ -152,6 +154,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
   const canDelete = canManageFleet;
   const canAssign = canManageFleet;
   const canExport = hasPermission("vehicles:export");
+  const canViewCameraEvidence = hasPermission(PERMISSIONS.SAFETY_EVIDENCE_VIEW);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
@@ -193,7 +196,6 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
   const pagedRows = (list.data?.rows ?? []) as AnyRecord[];
   const totalRows = list.data?.total ?? pagedRows.length;
   const summary = useQuery({ queryKey: ["vehicles", "summary"], queryFn: vehiclesApi.summary, refetchInterval: 30_000 });
-  const planning = useQuery({ queryKey: ["vehicles", "planning-insights"], queryFn: vehiclesApi.planningInsights });
   const detail = useQuery({
     queryKey: ["vehicles", "detail", selectedId, archivedView ? "archived" : "active"],
     queryFn: () => vehiclesApi.detail(String(selectedId), archivedView ? "archived" : "active"),
@@ -220,13 +222,14 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
   const sum = (summary.data as AnyRecord) || {};
   const readinessRows = rows.filter(hasReadinessEvidence);
   const evidencedScores = readinessRows.map(vehicleReadiness).filter((score): score is number => score != null);
-  const readiness = readinessRows.length === 0
+  const readiness = evidencedScores.length === 0
     ? null
     : Math.round(evidencedScores.reduce((total, score) => total + score, 0) / Math.max(evidencedScores.length, 1));
   const available = rows.filter((r) => /available/i.test(String(g(r, "status")))).length;
   const moving = rows.filter(isMoving).length;
   const atRisk = resolveAuthorizedSummaryCount(summary.isSuccess, g(sum, "atRisk", "at_risk"));
   const deviceEx = resolveAuthorizedSummaryCount(summary.isSuccess, g(sum, "deviceExceptions", "device_exceptions"));
+  const pageScopeSummary = `${rows.length} on this page · ${moving} moving on page · ${available} available on page · ${atRisk == null ? "attention unavailable in authorized scope" : `${atRisk} need attention in authorized scope`}`;
 
   useEffect(() => {
     if (searchParams.get("new") !== "1") return;
@@ -291,12 +294,18 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
   const actionError = save.error ?? remove.error ?? reactivate.error ?? assign.error;
   const lifecycleBusy = (lifecycleDocumentState & 1) !== 0 || remove.isPending || reactivate.isPending;
 
+  const detailEnvelope = detail.data as AnyRecord | undefined;
+  const authoritativeRecord = detailEnvelope?.record as AnyRecord | undefined;
+  const observation = detailEnvelope?.latestObservation as AnyRecord | undefined;
+  const selectedDetailRecord = useMemo(() => authoritativeRecord && observation ? { ...authoritativeRecord,
+    lat: observation.lat, lng: observation.lng, speedMph: observation.speedMph, heading: observation.heading,
+    lastSeenAt: observation.eventTime, observationSource: observation.source,
+  } : authoritativeRecord, [authoritativeRecord, observation]);
+
   // A background list error must not detach an open confirmation or pending outcome.
   if (list.isLoading && !archiveTarget && !lifecycleBusy && !lifecycleNeedsRefresh) return <LoadingState />;
   if (list.isError && !archiveTarget && !lifecycleBusy && !lifecycleNeedsRefresh) return <ErrorState message={list.error instanceof Error ? list.error.message : "Unable to load vehicles."} />;
 
-  const detailEnvelope = detail.data as AnyRecord | undefined;
-  const selectedDetailRecord = detailEnvelope?.record as AnyRecord | undefined;
   const selectedRecord = selectedDetailRecord
     ? selectedDetailRecord
     : rows.find((r) => String(r.id) === String(selectedId)) || null;
@@ -375,49 +384,30 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
   };
 
   return (
-    <div className="fleet-console flex h-full min-h-0 flex-col gap-3">
+    <PageStack className={`fleet-console min-h-0 ${embedded ? "flex-1" : "h-full"}`}>
 
-      {/* ── Console rail — brushed header with screws + primary actions ───── */}
-      {!embedded && <header className="fc-rail relative shrink-0 px-5 py-3.5 pl-7 pr-7">
-        <Screw className="left-2.5 top-2.5" slot="20deg" />
-        <Screw className="right-2.5 top-2.5" slot="-38deg" />
-        <Screw className="bottom-2.5 left-2.5" slot="62deg" />
-        <Screw className="bottom-2.5 right-2.5" slot="-14deg" />
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <div className="min-w-0">
-            <span className="section-title inline-flex items-center gap-2">
-              <Truck className="h-3.5 w-3.5 text-teal-700" />
-              Fleet · Master Data
-            </span>
-            <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Vehicles</h1>
-            <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
-              <span className="font-bold text-slate-700 tabular-nums">{rows.length}</span> on this page ·{" "}
-              <span className="font-bold text-emerald-600 tabular-nums">{moving}</span> moving on page ·{" "}
-              <span className="font-bold text-sky-600 tabular-nums">{available}</span> available on page ·{" "}
-              {atRisk == null ? (
-                <span className="font-bold text-slate-500">attention unavailable in authorized scope</span>
-              ) : (
-                <><span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> need attention in authorized scope</>
-              )}
-            </p>
-          </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2.5">
+      {!embedded && <PageHeader
+        eyebrow="Fleet · Master Data"
+        title="Vehicles"
+        description={pageScopeSummary}
+        actions={
+          <>
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
               <Activity className="h-3 w-3 text-teal-600" /> Registry · 30 s
             </span>
             <button type="button" disabled={!canExport}
               onClick={() => { if (!canExport) return; setExportError(null); void downloadServerExport("/api/vehicles/export", `vehicles_${new Date().toISOString().slice(0, 10)}.csv`).catch((error: unknown) => setExportError(error instanceof Error ? error.message : "Full fleet export failed.")); }}
-              title="Export the full fleet (all pages)" className="btn-ghost h-10">
+              title="Export the full fleet (all pages)" className="btn-ghost min-h-11 sm:min-h-8">
               <Download className="h-4 w-4" /> Export
             </button>
             {canCreate ? (
-              <button type="button" onClick={() => { setIsCreating(true); setEditing({ type: "Truck", status: "Available" }); }} className="btn-primary h-10">
+              <button type="button" onClick={() => { setIsCreating(true); setEditing({ type: "Truck", status: "Available" }); }} className="btn-primary min-h-11 sm:min-h-8">
                 <Plus className="h-4 w-4" /> New vehicle
               </button>
             ) : null}
-          </div>
-        </div>
-      </header>}
+          </>
+        }
+      />}
 
       {actionError instanceof Error ? (
         <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
@@ -432,30 +422,29 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
       ) : null}
       {exportError ? <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{exportError} No partial-page fallback was downloaded.</div> : null}
 
-      {/* ── Clay KPI tiles ───────────────────────────────────────────────── */}
-      <div className="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-4">
+      {/* Compact operating summary keeps the roster in the first viewport. */}
+      <dl className="vehicle-summary-strip panel grid shrink-0 grid-cols-2 gap-1 p-1 xl:grid-cols-4" aria-label="Vehicle operating summary">
         <ClayStat Icon={Gauge}      tone="fc-clay-teal"    iconCls="text-teal-700"    label="Page readiness"      value={readiness == null ? "Unknown" : `${readiness}%`} meter={readiness ?? undefined} caption={`${readinessRows.length} assessed on this page · ${rows.length - readinessRows.length} unknown`} />
-        <ClayStat Icon={Navigation} tone="fc-clay-emerald" iconCls="text-emerald-700" label="Moving on page"      value={moving}          meter={rows.length ? (moving / rows.length) * 100 : 0} caption={`${available} available on this page`} />
-        <ClayStat Icon={ShieldAlert} tone="fc-clay-red"    iconCls="text-rose-700"    label="Authorized scope at risk" value={atRisk == null ? "Unknown" : atRisk} alert={atRisk != null && atRisk > 0} caption="Tenant or permitted branch summary" />
-        <ClayStat Icon={Cpu}        tone="fc-clay-amber"   iconCls="text-amber-700"   label="Authorized scope device / camera gaps" value={deviceEx == null ? "Unknown" : deviceEx} alert={deviceEx != null && deviceEx > 0} caption="Tenant or permitted branch summary" />
-      </div>
+        <ClayStat Icon={Navigation} tone="fc-clay-emerald" iconCls="text-emerald-700" label="Page moving"      value={moving}          meter={rows.length ? (moving / rows.length) * 100 : 0} caption={`${available} available on this page`} />
+        <ClayStat Icon={ShieldAlert} tone="fc-clay-red"    iconCls="text-rose-700"    label="Scope at risk" value={atRisk == null ? "Unknown" : atRisk} alert={atRisk != null && atRisk > 0} caption="Tenant or permitted branch summary" />
+        <ClayStat Icon={Cpu}        tone="fc-clay-amber"   iconCls="text-amber-700"   label="Scope device / camera gaps" value={deviceEx == null ? "Unknown" : deviceEx} alert={deviceEx != null && deviceEx > 0} caption="Tenant or permitted branch summary" />
+      </dl>
 
-      {/* ── Lifecycle band — replacement pressure + operational gaps ──────── */}
-      <LifecycleBand data={planning.data as AnyRecord} loading={planning.isLoading} />
-
-      {/* ── Roster console — neumorphic chassis, inset bezel screen ───────── */}
-      <section className="fc-neumo flex min-h-[460px] flex-col overflow-hidden xl:min-h-0 xl:flex-1">
-        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pb-3 pt-3.5">
+      {/* The roster is the primary task surface. */}
+      <section className="vehicle-roster-list panel flex min-h-[280px] flex-1 flex-col overflow-hidden sm:min-h-0">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-2">
           <div className="relative w-full sm:max-w-xs">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input value={search} onChange={(e) => { setSearch(e.target.value); setOffset(0); }}
+              aria-label="Search vehicles"
               placeholder="Search code, make, plate, driver…"
-              className="fc-search w-full py-2.5 pl-10 pr-3 text-sm text-slate-800 outline-none placeholder:text-slate-400" />
+              className="fc-search min-h-11 w-full py-2 pl-10 pr-3 text-sm text-slate-800 outline-none placeholder:text-slate-400 sm:min-h-8 sm:py-1.5" />
           </div>
-          <div className="fc-seg flex flex-wrap items-center gap-1 p-1">
+          <div className="flex min-w-0 max-w-full items-center gap-1 overflow-x-auto" aria-label="Vehicle roster filters">
             {FILTERS.map((f) => (
               <button key={f} type="button" onClick={() => { if (archiveTarget || lifecycleInFlight.current) return; setFilter(f); setOffset(0); setSelectedId(null); }}
-                className={`fc-seg-btn ${filter === f ? "fc-seg-btn-active" : ""}`}>
+                aria-pressed={filter === f}
+                className={`min-h-11 shrink-0 rounded-lg border px-2.5 text-xs font-semibold transition sm:min-h-8 ${filter === f ? "border-teal-300 bg-teal-50 text-teal-800" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"}`}>
                 {f}
               </button>
             ))}
@@ -465,21 +454,21 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
           </span>
         </div>
 
-        <div className="fc-bezel mx-3 mb-1 flex min-h-0 flex-1 flex-col">
-          <div className="fc-screen min-h-0 flex-1 overflow-auto">
+        <div className="mx-2 mb-1 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <div className="min-h-0 flex-1 overflow-auto">
             {filtered.length ? (
-              <table className="w-full text-left text-sm">
+              <table className="w-full min-w-[720px] text-left text-sm">
                 <thead className="sticky top-0 z-10 bg-[#fcfdff]">
                   <tr className="border-b border-slate-200/80 text-[10px] uppercase tracking-[0.12em] text-slate-400">
-                    <th className="px-5 py-3 font-bold">Vehicle</th>
-                    <th className="px-4 py-3 font-bold">Status</th>
-                    <th className="px-4 py-3 font-bold">Live speed</th>
-                    <th className="hidden px-4 py-3 font-bold lg:table-cell">Last seen</th>
-                    <th className="px-4 py-3 font-bold">Readiness</th>
-                    <th className="px-4 py-3 font-bold">Risk</th>
-                    <th className="hidden px-4 py-3 font-bold md:table-cell">Driver</th>
-                    <th className="hidden px-4 py-3 font-bold xl:table-cell">Health</th>
-                    <th className="px-4 py-3"><span className="sr-only">Open</span></th>
+                    <th className="px-3 py-2.5 font-bold">Vehicle</th>
+                    <th className="px-3 py-2.5 font-bold">Status</th>
+                    <th className="px-3 py-2.5 font-bold">Reported speed</th>
+                    <th className="hidden px-3 py-2.5 font-bold lg:table-cell">Last seen</th>
+                    <th className="px-3 py-2.5 font-bold">Readiness</th>
+                    <th className="px-3 py-2.5 font-bold">Risk</th>
+                    <th className="hidden px-3 py-2.5 font-bold md:table-cell">Driver</th>
+                    <th className="hidden px-3 py-2.5 font-bold xl:table-cell">Health</th>
+                    <th className="px-3 py-2.5"><span className="sr-only">Open</span></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100/90">
@@ -491,7 +480,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
                     return (
                       <tr key={String(row.id)} onClick={() => { if (!archiveTarget && !lifecycleInFlight.current) setSelectedId(row.id as string); }}
                         className="group cursor-pointer transition hover:bg-sky-50/50">
-                        <td className="px-5 py-3">
+                        <td className="px-3 py-2.5">
                           <div className="flex items-center gap-2.5">
                             <span className={`h-2 w-2 shrink-0 rounded-full ${moving ? "bg-emerald-500 animate-pulse" : fresh?.live ? "bg-sky-400" : "bg-slate-300"}`} />
                             <div className="min-w-0">
@@ -500,8 +489,8 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3"><StatusPill status={g(row, "status")} /></td>
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-2.5"><StatusPill status={g(row, "status")} /></td>
+                        <td className="px-3 py-2.5">
                           {fresh && speed != null ? (
                             <span className="inline-flex items-baseline gap-1">
                               <span className={`text-[15px] font-bold tabular-nums ${moving ? "text-emerald-600" : "text-slate-400"}`}>{Math.round(speed)}</span>
@@ -513,7 +502,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
                             <span className="text-xs italic text-slate-400">No GPS</span>
                           )}
                         </td>
-                        <td className="hidden px-4 py-3 lg:table-cell">
+                        <td className="hidden px-3 py-2.5 lg:table-cell">
                           {fresh ? (
                             <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${fresh.live ? "text-emerald-600" : "text-slate-500"}`}>
                               {fresh.live && <span className="live-dot h-1.5 w-1.5" />}
@@ -521,17 +510,19 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
                             </span>
                           ) : <span className="text-xs italic text-slate-400">—</span>}
                         </td>
-                        <td className="px-4 py-3"><Meter value={ready} /></td>
-                        <td className="px-4 py-3"><RiskChip tier={riskTier(row)} /></td>
-                        <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{String(g(row, "assignedDriver", "assigned_driver", "driverName") ?? "—")}</td>
-                        <td className="hidden px-4 py-3 xl:table-cell">
+                        <td className="px-3 py-2.5"><Meter value={ready} /></td>
+                        <td className="px-3 py-2.5"><RiskChip tier={riskTier(row)} /></td>
+                        <td className="hidden px-3 py-2.5 text-slate-600 md:table-cell">{String(g(row, "assignedDriver", "assigned_driver", "driverName") ?? "—")}</td>
+                        <td className="hidden px-3 py-2.5 xl:table-cell">
                           <div className="flex items-center gap-3">
                           <HealthDot status={vehicleDeviceStatus(row)} icon={<Cpu className="h-3.5 w-3.5" />} />
                           <HealthDot status={vehicleCameraStatus(row)} icon={<Camera className="h-3.5 w-3.5" />} />
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <ChevronRight className="ml-auto h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
+                        <td className="px-3 py-2.5 text-right">
+                          <button type="button" className="ml-auto grid min-h-11 min-w-11 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 sm:min-h-8 sm:min-w-8" aria-label={`Open ${String(g(row, "vehicleCode", "vehicle_code") ?? `vehicle ${row.id}`)}`} onClick={(event) => { event.stopPropagation(); setSelectedId(row.id as string); }}>
+                            <ChevronRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+                          </button>
                         </td>
                       </tr>
                     );
@@ -548,22 +539,22 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
 
         {/* Pager / instrument footer */}
         {totalRows > PAGE_SIZE ? (
-          <div className="flex shrink-0 items-center justify-between px-5 py-3 text-[12px] text-slate-600">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-2 text-[12px] text-slate-600">
             <span className="tabular-nums">
               Showing <strong>{totalRows === 0 ? 0 : offset + 1}–{Math.min(offset + PAGE_SIZE, totalRows)}</strong> of <strong>{totalRows.toLocaleString()}</strong>
             </span>
             <div className="flex items-center gap-2">
               <button type="button" disabled={offset === 0 || list.isFetching}
                 onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-                className="fc-pager-btn">← Prev</button>
+                className="fc-pager-btn min-h-11 sm:min-h-8">← Prev</button>
               <span className="text-xs text-slate-400 tabular-nums">Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(totalRows / PAGE_SIZE))}</span>
               <button type="button" disabled={offset + PAGE_SIZE >= totalRows || list.isFetching}
                 onClick={() => setOffset(offset + PAGE_SIZE)}
-                className="fc-pager-btn">Next →</button>
+                className="fc-pager-btn min-h-11 sm:min-h-8">Next →</button>
             </div>
           </div>
         ) : (
-          <div className="flex shrink-0 items-center gap-4 px-5 py-3 text-[11.5px] font-semibold text-slate-500">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2 text-[11.5px] font-semibold text-slate-500">
             <span className="inline-flex items-center gap-2"><span className="deck-led deck-led-emerald" /> {moving} moving on page</span>
             <span className="inline-flex items-center gap-2"><span className={`deck-led ${deviceEx != null && deviceEx > 0 ? "deck-led-amber" : "deck-led-slate"}`} /> {deviceEx == null ? "Device gaps unavailable" : `${deviceEx} device gaps in authorized scope`}</span>
             <button type="button" onClick={() => navigate("/iot-devices")} className="ml-auto inline-flex items-center gap-1 font-bold text-teal-700 hover:underline">
@@ -575,8 +566,10 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
 
       {selectedRecord && (
         <VehicleDrawer
-          record={selectedRecord} detail={detail.data} loading={detail.isLoading}
+          key={String(selectedRecord.id)} record={selectedRecord} detail={detail.data} loading={detail.isLoading}
+          refreshing={detail.isFetching} detailError={detail.isError ? apiErrorMessage(detail.error, "Vehicle data could not be refreshed.") : null} onRefresh={() => { void detail.refetch(); }}
           canUpdate={canUpdate && !archivedView} canDelete={canDelete && !archivedView} canAssign={canAssign && !archivedView} canReactivate={canUpdate && archivedView} assigning={assign.isPending}
+          canViewCameraEvidence={canViewCameraEvidence}
           lifecycleBusy={lifecycleBusy}
           lifecycleSelectionPreparing={lifecycleSelectionPreparing}
           lifecycleSelectionUnavailable={lifecycleSelectionUnavailable}
@@ -616,37 +609,42 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
           vehicle={assignmentVehicle}
           drivers={(drivers.data || []) as AnyRecord[]}
           saving={assign.isPending}
-          serverError={assign.error instanceof Error ? assign.error.message : undefined}
+          serverError={assign.error ? apiErrorMessage(assign.error, "The assignment could not be saved. Please try again.") : undefined}
           onClose={() => setAssignmentVehicle(null)}
           onSave={(driverId) => assign.mutate({ vehicleId: String(assignmentVehicle.id), driverId })}
         />
       ) : null}
-    </div>
+    </PageStack>
   );
 }
 
 /* ------------------------------------------------------------------ primitives */
 
-function Screw({ className, slot }: { className: string; slot: string }) {
-  return <span aria-hidden className={`deck-screw absolute ${className}`} style={{ "--slot": slot } as React.CSSProperties} />;
-}
-
 function ClayStat({ Icon, tone, iconCls, label, value, meter, caption, alert }:
   { Icon: React.ElementType; tone: string; iconCls: string; label: string; value: React.ReactNode; meter?: number; caption?: string; alert?: boolean }) {
   const valueColor = alert && num(value) > 0 ? (tone.includes("red") ? "text-rose-600" : "text-amber-600") : "text-slate-900";
+  const surfaceTone = tone.includes("red")
+    ? "border-rose-100 bg-rose-50/45"
+    : tone.includes("amber")
+      ? "border-amber-100 bg-amber-50/45"
+      : tone.includes("emerald")
+        ? "border-emerald-100 bg-emerald-50/45"
+        : "border-teal-100 bg-teal-50/45";
   return (
-    <div className={`fc-clay ${tone} p-4`}>
-      <div className="flex items-center justify-between">
-        <span className="text-[12px] font-bold text-slate-600">{label}</span>
-        <span className="fc-blob"><Icon className={`h-4 w-4 ${iconCls}`} /></span>
-      </div>
-      <div className={`mt-2 text-[30px] font-black leading-none tracking-tight tabular-nums ${valueColor}`}>{value}</div>
+    <div className={`min-w-0 rounded-lg border px-3 py-2 ${surfaceTone}`} title={caption ? `${label}: ${value}. ${caption}` : label}>
+      <dt className="flex min-w-0 items-center gap-2 text-[11px] font-bold leading-tight text-slate-600">
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${iconCls}`} />
+        <span className="min-w-0 flex-1">{label}</span>
+      </dt>
+      <dd className="mt-1 flex min-w-0 items-baseline gap-2">
+        <strong className={`shrink-0 text-base font-black leading-none tracking-tight tabular-nums ${valueColor}`}>{value}</strong>
+        {caption ? <span className="min-w-0 truncate text-[10px] font-medium text-slate-500" title={caption}>{caption}</span> : null}
+      </dd>
       {meter != null ? (
-        <div className="deck-track mt-3">
+        <div className="deck-track mt-1.5" aria-hidden="true">
           <div className="deck-fill deck-fill-teal" style={{ width: `${Math.min(100, meter)}%` }} />
         </div>
       ) : null}
-      {caption ? <p className="mt-2 text-[11px] font-medium text-slate-500">{caption}</p> : null}
     </div>
   );
 }
@@ -688,49 +686,6 @@ function HealthDot({ status, icon }: { status: string; icon: React.ReactNode }) 
 
 /* ------------------------------------------------------------------ lifecycle band */
 
-function LifecycleBand({ data, loading }: { data?: AnyRecord; loading: boolean }) {
-  const forecast = ((data?.replacementForecast as AnyRecord[]) || []).slice(0, 4);
-  const gaps = ((data?.operationalGaps as AnyRecord[]) || []).slice(0, 4);
-  if (loading) return <div className="fc-neumo h-24 shrink-0 animate-pulse" />;
-  if (!forecast.length && !gaps.length) return null;
-  return (
-    <div className="grid shrink-0 gap-3 lg:grid-cols-[1.4fr_1fr]">
-      <div className="fc-neumo p-4">
-        <div className="flex items-center justify-between">
-          <div className="section-title inline-flex items-center gap-2"><TrendingUp className="h-3.5 w-3.5 text-teal-700" /> Replacement priority</div>
-          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">CapEx forecast</span>
-        </div>
-        <div className="mt-3 space-y-2.5">
-          {forecast.map((row, i) => {
-            const score = num(g(row, "capexPriorityScore", "capex_priority_score"));
-            const pct = Math.min(100, Math.round(score / 2.6));
-            const color = score > 180 ? "deck-fill-red" : score > 90 ? "deck-fill-amber" : "deck-fill-teal";
-            return (
-              <div key={String(row.id ?? i)} className="flex items-center gap-3">
-                <span className="w-5 text-xs font-bold text-slate-400 tabular-nums">#{i + 1}</span>
-                <div className="w-24 shrink-0 truncate text-sm font-semibold text-slate-800">{String(g(row, "vehicleCode", "vehicle_code") ?? "—")}</div>
-                <div className="deck-track flex-1"><div className={`deck-fill ${color}`} style={{ width: `${pct}%` }} /></div>
-                <span className="hidden w-28 truncate text-right text-xs text-slate-500 sm:block">{String(g(row, "replacementWindow", "replacement_window") ?? "")}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <div className="fc-neumo p-4">
-        <div className="section-title inline-flex items-center gap-2"><Sparkles className="h-3.5 w-3.5 text-teal-700" /> Operational gaps</div>
-        <div className="mt-3 grid grid-cols-2 gap-2.5">
-          {gaps.map((gap, i) => (
-            <div key={i} className="deck-inset rounded-xl p-3">
-              <div className="text-xl font-black tabular-nums text-slate-900">{num(g(gap, "affectedRecords", "affected_records"))}</div>
-              <div className="mt-0.5 text-[11px] font-semibold leading-tight text-slate-500">{String(g(gap, "gapName", "gap_name") ?? "")}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function DriverAssignmentModal({ vehicle, drivers, saving, serverError, onClose, onSave }: {
   vehicle: AnyRecord;
   drivers: AnyRecord[];
@@ -739,6 +694,7 @@ function DriverAssignmentModal({ vehicle, drivers, saving, serverError, onClose,
   onClose: () => void;
   onSave: (driverId: string) => void;
 }) {
+  const dialogRef = useDialogFocus<HTMLFormElement>(true, () => { if (!saving) onClose(); });
   const currentDriverId = String(g(vehicle, "assignedDriverId", "assigned_driver_id") ?? "");
   const [driverId, setDriverId] = useState(currentDriverId);
   const availableDrivers = useMemo(() => drivers
@@ -752,12 +708,12 @@ function DriverAssignmentModal({ vehicle, drivers, saving, serverError, onClose,
 
   return (
     <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
-      <form role="dialog" aria-modal="true" aria-labelledby="driver-assignment-title" className="panel w-full max-w-xl p-6 shadow-2xl" onSubmit={(event) => { event.preventDefault(); if (driverId) onSave(driverId); }}>
+      <form ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="driver-assignment-title" className="panel w-full max-w-xl p-6 shadow-2xl" onSubmit={(event) => { event.preventDefault(); if (driverId) onSave(driverId); }}>
         <div className="flex items-start justify-between border-b border-slate-200 pb-4">
           <div>
             <p className="section-title text-teal-700">Fleet master assignment</p>
             <h2 id="driver-assignment-title" className="mt-1 text-xl font-bold text-slate-900">{currentDriverId ? "Reassign" : "Assign"} {vehicleCode}</h2>
-            <p className="mt-1 text-sm text-slate-500">Choose the intended driver, review the change, then confirm. The previous pairing will be released with an effective-to timestamp.</p>
+            <p className="mt-1 text-sm text-slate-500">Choose the intended driver, review the change, then confirm. The previous pairing will be recorded in assignment history. Dispatch readiness is checked separately before a job is assigned.</p>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} disabled={saving} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
@@ -789,218 +745,168 @@ function DriverAssignmentModal({ vehicle, drivers, saving, serverError, onClose,
 
 /* ------------------------------------------------------------------ drawer */
 
-function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssign, canReactivate, assigning, lifecycleBusy, lifecycleSelectionPreparing, lifecycleSelectionUnavailable, lifecycleStatusError, lifecycleNeedsRefresh, lifecycleError, onClose, onEdit, onDelete, onReactivate, onRetryLifecycleStatus, onAssign, onNavigate }: {
-  record: AnyRecord; detail?: AnyRecord; loading: boolean;
-  canUpdate: boolean; canDelete: boolean; canAssign: boolean; canReactivate: boolean; assigning: boolean;
+function VehicleDrawer({ record, detail, loading, refreshing, detailError, onRefresh, canUpdate, canDelete, canAssign, canReactivate, canViewCameraEvidence, assigning, lifecycleBusy, lifecycleSelectionPreparing, lifecycleSelectionUnavailable, lifecycleStatusError, lifecycleNeedsRefresh, lifecycleError, onClose, onEdit, onDelete, onReactivate, onRetryLifecycleStatus, onAssign, onNavigate }: {
+  record: AnyRecord; detail?: AnyRecord; loading: boolean; refreshing: boolean; detailError: string | null; onRefresh: () => void;
+  canUpdate: boolean; canDelete: boolean; canAssign: boolean; canReactivate: boolean; canViewCameraEvidence: boolean; assigning: boolean;
   lifecycleBusy: boolean; lifecycleSelectionPreparing: boolean; lifecycleSelectionUnavailable: boolean;
   lifecycleStatusError: string | null; lifecycleNeedsRefresh: boolean; lifecycleError: string | null;
   onClose: () => void; onEdit: () => void; onDelete: () => void; onReactivate: () => void; onRetryLifecycleStatus: () => void;
   onAssign: () => void; onNavigate: (r: string) => void;
 }) {
   const code = String(g(record, "vehicleCode", "vehicle_code") ?? `Vehicle ${record.id}`);
-  const recs = (detail?.recommendations as AnyRecord[]) || [];
-  const activeJobs = (detail?.activeJobs as AnyRecord[]) || [];
-  const replayTrail = (detail?.replayTrail as AnyRecord[]) || [];
-  const currentDevices = (detail?.currentDevices as AnyRecord[]) || [];
-  const installationHistory = (detail?.installationHistory as AnyRecord[]) || [];
-  const assignmentHistory = (detail?.assignmentHistory as AnyRecord[]) || [];
+  const dialogRef = useDialogFocus<HTMLElement>(true, onClose);
+  const [tab, setTab] = useState<"behaviour" | "devices" | "records">("behaviour");
+  const rows = (key: string) => Array.isArray(detail?.[key]) ? detail[key] as AnyRecord[] : [];
+  const currentDevices = rows("currentDevices");
+  const retainedInstallations = rows("installationHistory").filter((installation) => g(installation, "effectiveTo", "effective_to") == null && /^(Installed|Verified)$/i.test(String(installation.status)) && !currentDevices.some((current) => String(g(current, "installationId", "installation_id")) === String(g(installation, "installationId", "installation_id"))));
+  const activeJobs = rows("activeJobs");
+  const replayTrail = rows("replayTrail");
+  const access = detail?.activityAccess as AnyRecord | undefined;
   const speed = readSpeedMph(record);
-  const fresh = freshness(g(record, "lastSeenAt", "last_seen_at"));
-  const hasGps = g(record, "lat") != null && g(record, "lng") != null;
-
-  const snapshot = [
-    { label: "Status", value: String(g(record, "status") ?? "—") },
-    { label: "Driver", value: String(g(record, "assignedDriver", "assigned_driver", "driverName") ?? "Unassigned"), route: "/drivers" },
-    { label: "Odometer", value: `${num(g(record, "odometerMiles", "odometer_miles")).toLocaleString()} mi` },
-    { label: "Year", value: String(g(record, "year") ?? "—") },
-    { label: "Device", value: vehicleDeviceStatus(record) },
-    { label: "Camera", value: vehicleCameraStatus(record) },
-    { label: "VIN", value: String(g(record, "vin") ?? "—") },
-    { label: "Alternate identity", value: g(record, "alternateIdentifier", "alternate_identifier")
-      ? `${String(g(record, "alternateIdentifier", "alternate_identifier"))} (${String(g(record, "vinExceptionType", "vin_exception_type") ?? "governed exception")})`
-      : "—" },
-    { label: "Plate jurisdiction", value: String(g(record, "plateJurisdiction", "plate_jurisdiction") ?? "—") },
-    { label: "Vehicle class", value: String(g(record, "vehicleClass", "vehicle_class") ?? "—") },
+  const seenAt = g(record, "lastSeenAt", "last_seen_at");
+  const fresh = freshness(seenAt);
+  const motion = observedMotion(speed, seenAt);
+  const lat = g(record, "lat"), lng = g(record, "lng");
+  const hasGps = lat != null && lng != null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) && Math.abs(Number(lat)) <= 90 && Math.abs(Number(lng)) <= 180 && !(Number(lat) === 0 && Number(lng) === 0);
+  const track = () => onNavigate(`/map-view?vehicleId=${encodeURIComponent(String(record.id))}`);
+  const canReadDevices = useHasPermission()(PERMISSIONS.TELEMETRY_DEVICES_READ);
+  const profile = [
+    ["Recorded status", String(g(record, "status") ?? "Unknown")],
+    ["Assigned driver", String(g(record, "assignedDriver", "assigned_driver", "driverName") ?? "Unassigned")],
+    ["Odometer (recorded)", measuredNumber(g(record, "odometerMiles", "odometer_miles"), "mi")],
+    ["Year", String(g(record, "year") ?? "Unknown")],
+    ["VIN", String(g(record, "vin") ?? "Unknown")],
+    ["Plate", [g(record, "plateNumber", "plate_number"), g(record, "plateJurisdiction", "plate_jurisdiction")].filter(Boolean).join(" · ") || "Unknown"],
+    ["Class", String(g(record, "vehicleClass", "vehicle_class") ?? "Unknown")],
+    ["Alternate identity", g(record, "alternateIdentifier", "alternate_identifier") ? `${String(g(record, "alternateIdentifier", "alternate_identifier"))} (${String(g(record, "vinExceptionType", "vin_exception_type") ?? "governed exception")})` : "Not recorded"],
   ];
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-[2px]" onClick={onClose}>
-      <aside className="fleet-console h-full w-full max-w-xl overflow-y-auto border-l border-slate-200 shadow-2xl anim-slide-left" onClick={(e) => e.stopPropagation()}>
-        {/* sticky header */}
-        <div className="fc-drawer-head sticky top-0 z-10 px-6 py-4">
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Vehicle</div>
-              <h2 className="mt-1 text-xl font-black tracking-tight text-slate-900">{code}</h2>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <StatusPill status={g(record, "status")} />
-                <RiskChip tier={riskTier(record)} />
+      <aside ref={dialogRef} role="dialog" aria-modal="true" aria-label={`${code} vehicle workspace`} className="vehicle-workspace fleet-console flex h-full w-full max-w-[680px] flex-col border-l border-slate-200 shadow-2xl anim-slide-left" onClick={(e) => e.stopPropagation()}>
+        <div className="fc-drawer-head shrink-0 px-4 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0"><p className="text-[10px] font-semibold text-slate-500">Vehicle workspace</p><h2 className="truncate text-lg font-bold text-slate-900">{code}</h2></div>
+            <button type="button" aria-label="Close vehicle workspace" disabled={lifecycleBusy} onClick={onClose} className="icon-btn"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button type="button" disabled={refreshing || lifecycleBusy} onClick={onRefresh} className="btn-ghost h-8 px-2.5 text-xs"><RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} /> {refreshing ? "Refreshing…" : "Refresh vehicle"}</button>
+            {canUpdate ? <button type="button" disabled={lifecycleBusy} onClick={onEdit} className="btn-primary h-8 px-2.5 text-xs">Edit vehicle</button> : null}
+            <details className="relative ml-auto">
+              <summary className="btn-ghost h-8 cursor-pointer list-none px-2.5 text-xs [&::-webkit-details-marker]:hidden">More</summary>
+              <div className="absolute right-0 z-20 mt-1 flex w-48 flex-col gap-1 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                {canAssign ? <button type="button" disabled={assigning || lifecycleBusy} onClick={onAssign} className="btn-ghost text-xs"><UserCheck className="h-3.5 w-3.5" /> Change driver</button> : null}
+                {hasGps ? <button type="button" disabled={lifecycleBusy} onClick={track} className="btn-ghost text-xs"><MapPin className="h-3.5 w-3.5" /> Track vehicle</button> : null}
+                {canDelete ? <button type="button" disabled={lifecycleBusy || lifecycleSelectionPreparing || lifecycleSelectionUnavailable || lifecycleNeedsRefresh} aria-busy={lifecycleSelectionPreparing ? true : undefined} onClick={onDelete} className="btn-ghost text-xs text-rose-700"><Trash2 className="h-3.5 w-3.5" /> {lifecycleSelectionPreparing ? "Checking status…" : lifecycleSelectionUnavailable ? "Status unavailable" : "Archive vehicle"}</button> : null}
+                {canReactivate ? <button type="button" disabled={lifecycleBusy || lifecycleSelectionPreparing || lifecycleSelectionUnavailable || lifecycleNeedsRefresh} aria-busy={lifecycleSelectionPreparing ? true : undefined} onClick={onReactivate} className="btn-ghost text-xs"><ArchiveRestore className="h-3.5 w-3.5" /> {lifecycleSelectionPreparing ? "Checking status…" : lifecycleSelectionUnavailable ? "Status unavailable" : "Reactivate vehicle"}</button> : null}
               </div>
-            </div>
-            <button type="button" aria-label="Close" disabled={lifecycleBusy} onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button>
+            </details>
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {canUpdate ? <button type="button" disabled={lifecycleBusy} onClick={onEdit} className="btn-primary h-9 px-3 text-xs"><Wrench className="h-3.5 w-3.5" /> Edit</button> : null}
-            {canAssign ? <button type="button" disabled={assigning || lifecycleBusy} onClick={onAssign} className="btn-ghost h-9 px-3 text-xs"><UserCheck className="h-3.5 w-3.5" /> {g(record, "assignedDriverId", "assigned_driver_id") ? "Reassign driver" : "Assign driver"}</button> : null}
-            <button type="button" disabled={lifecycleBusy} onClick={() => onNavigate("/map-view")} className="btn-ghost h-9 px-3 text-xs"><MapPin className="h-3.5 w-3.5" /> Fleet map</button>
-            {canDelete ? <button type="button" disabled={lifecycleBusy || lifecycleSelectionPreparing || lifecycleSelectionUnavailable || lifecycleNeedsRefresh} aria-busy={lifecycleSelectionPreparing ? true : undefined} onClick={onDelete} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-200 px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> {lifecycleSelectionPreparing ? "Checking status…" : lifecycleSelectionUnavailable ? "Status unavailable" : "Archive vehicle"}</button> : null}
-            {canReactivate ? <button type="button" disabled={lifecycleBusy || lifecycleSelectionPreparing || lifecycleSelectionUnavailable || lifecycleNeedsRefresh} aria-busy={lifecycleSelectionPreparing ? true : undefined} onClick={onReactivate} className="ml-auto btn-primary h-9 px-3 text-xs"><ArchiveRestore className="h-3.5 w-3.5" /> {lifecycleSelectionPreparing ? "Checking status…" : lifecycleSelectionUnavailable ? "Status unavailable" : lifecycleBusy ? "Reactivating..." : "Reactivate vehicle"}</button> : null}
-          </div>
-          {lifecycleStatusError ? (
-            <div role="alert" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              <p>{lifecycleStatusError}</p>
-              <button type="button" disabled={lifecycleBusy || lifecycleSelectionPreparing} className="btn-ghost mt-2" onClick={onRetryLifecycleStatus}>Retry status check</button>
-            </div>
-          ) : null}
-          {lifecycleError ? (
-            <div role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
-              <p>{lifecycleError}</p>
-              {lifecycleNeedsRefresh ? <button type="button" disabled={lifecycleBusy} className="btn-ghost mt-2" onClick={() => window.location.reload()}>Reload vehicle status</button> : null}
-            </div>
-          ) : null}
+          {(lifecycleStatusError || lifecycleError) ? <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+            {lifecycleStatusError || lifecycleError}
+            {lifecycleNeedsRefresh ? <button type="button" disabled={lifecycleBusy} className="ml-2 underline" onClick={() => window.location.reload()}>Reload vehicle status</button> : <button type="button" disabled={lifecycleBusy || lifecycleSelectionPreparing} className="ml-2 underline" onClick={onRetryLifecycleStatus}>Retry status check</button>}
+          </div> : null}
+          <nav aria-label="Selected vehicle sections" className="mt-2 flex gap-1 border-t border-slate-200 pt-2">
+            {([['behaviour', 'Status & behaviour'], ['devices', `Devices (${currentDevices.length + retainedInstallations.length})`], ['records', 'Maintenance & history']] as const).map(([key, label]) => <button type="button" key={key} aria-pressed={tab === key} onClick={() => setTab(key)} className={`min-h-9 rounded-lg px-2.5 text-xs font-semibold ${tab === key ? "bg-teal-50 text-teal-800 ring-1 ring-teal-200" : "text-slate-600 hover:bg-slate-100"}`}>{label}</button>)}
+          </nav>
         </div>
-
-        <div className="space-y-5 p-6">
-          {/* Live telemetry gauge cluster — real GPS/speed only */}
-          <div className="fc-neumo p-4">
-            <div className="flex items-center justify-between">
-              <span className="section-title inline-flex items-center gap-2"><Radio className="h-3.5 w-3.5 text-teal-700" /> Live telemetry</span>
-              {fresh ? (
-                <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold ${fresh.live ? "text-emerald-600" : "text-slate-500"}`}>
-                  {fresh.live && <span className="live-dot h-1.5 w-1.5" />}{fresh.label}
-                </span>
-              ) : <span className="text-[11px] font-semibold italic text-slate-400">No telemetry</span>}
-            </div>
-            {fresh ? (
-              <div className="mt-3 grid grid-cols-3 gap-2.5">
-                <Instrument label="Speed" value={speed == null ? "—" : Math.round(speed)} unit={speed == null ? undefined : "mph"} tone={speed != null && speed > 1 ? "text-emerald-600" : "text-slate-500"} />
-                <Instrument label="Heading" value={headingLabel(g(record, "heading"))} />
-                <Instrument label="Odometer" value={num(g(record, "odometerMiles", "odometer_miles")).toLocaleString()} unit="mi" />
-              </div>
-            ) : (
-              <p className="mt-3 deck-inset rounded-xl px-3 py-3 text-[12px] font-medium text-slate-500">
-                No GPS fix reported for this unit yet. Live speed, heading and position appear here once its device sends a location event.
-              </p>
-            )}
-            {hasGps && (
-              <div className="mt-2.5 flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
-                <MapPin className="h-3.5 w-3.5 text-slate-400" />
-                <span className="tabular-nums">{Number(g(record, "lat")).toFixed(4)}, {Number(g(record, "lng")).toFixed(4)}</span>
-                <button type="button" onClick={() => onNavigate("/map-view")} className="ml-auto font-bold text-teal-700 hover:underline">Track on map →</button>
-              </div>
-            )}
-          </div>
-
-          {/* snapshot */}
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-            {snapshot.map((s) => (
-              <button key={s.label} type="button" disabled={!s.route} onClick={() => s.route && onNavigate(s.route)}
-                className={`deck-inset rounded-xl p-3 text-left ${s.route ? "transition hover:-translate-y-0.5" : ""}`}>
-                <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">{s.label}</div>
-                <div className="mt-1 flex items-center gap-1 text-sm font-bold text-slate-800">{s.value}{s.route && <ArrowUpRight className="h-3 w-3 text-teal-500" />}</div>
-              </button>
-            ))}
-          </div>
-
-          <DrawerSection title="Installed devices" icon={<Cpu className="h-4 w-4" />} count={currentDevices.length} loading={loading}>
-            {currentDevices.length ? (
-              <div className="space-y-2">
-                {currentDevices.map((device, i) => (
-                  <button key={String(g(device, "installationId", "installation_id") ?? i)} type="button"
-                    onClick={() => onNavigate("/iot-devices")} className="deck-alert flex w-full items-center gap-3 px-3 py-2.5 text-left">
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-bold text-slate-800">{String(g(device, "deviceSerial", "device_serial") ?? "Registered device")}</span>
-                      <span className="text-[11px] font-semibold text-slate-400">{String(g(device, "deviceRole", "device_role") ?? "Device")} · {String(g(device, "status") ?? "Unknown")}</span>
-                    </span>
-                    <span className="text-[10px] font-bold text-slate-500">{g(device, "lastSeenAt", "last_seen_at") ? fmt(g(device, "lastSeenAt", "last_seen_at")) : "Never seen"}</span>
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
-                  </button>
-                ))}
-              </div>
-            ) : <EmptyLine text="No authoritative device installation exists for this vehicle." />}
-          </DrawerSection>
-
-          <DrawerTable title="Device installation history" icon={<Radio className="h-4 w-4" />}
-            rows={installationHistory} cols={["deviceSerial", "deviceRole", "status", "effectiveFrom", "effectiveTo"]}
-            loading={loading} onEmpty="No device installation history recorded." />
-
-          <DrawerTable title="Driver assignment history" icon={<UserCheck className="h-4 w-4" />}
-            rows={assignmentHistory} cols={["driverCode", "driverName", "status", "effectiveFrom", "effectiveTo"]}
-            loading={loading} onEmpty="No driver assignment history recorded." />
-
-          {/* AI recommendation — from live detail envelope, not fabricated */}
-          {recs.length > 0 && (
-            <div className="fc-reco p-4">
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-teal-700"><Sparkles className="h-3.5 w-3.5" /> Recommended action</div>
-              <p className="mt-1.5 text-sm font-bold text-slate-800">{String(recs[0].title ?? "")}</p>
-              {recs[0].body ? <p className="mt-1 text-sm text-slate-600">{String(recs[0].body)}</p> : null}
-            </div>
-          )}
-
-          {/* Active jobs — live work tied to the unit */}
-          <DrawerSection title="Active jobs" icon={<Boxes className="h-4 w-4" />} count={activeJobs.length} loading={loading}>
-            {activeJobs.length ? (
-              <div className="space-y-2">
-                {activeJobs.map((j, i) => (
-                  <button key={String(j.id ?? i)} type="button" onClick={() => onNavigate("/jobs")} className="deck-alert flex w-full items-center gap-3 px-3 py-2.5 text-left">
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-bold text-slate-800">{String(g(j, "jobNumber", "job_number") ?? `Job ${j.id}`)}</span>
-                      <span className="text-[11px] font-semibold text-slate-400">{String(g(j, "status") ?? "—")}{g(j, "eta") ? ` · ETA ${fmt(g(j, "eta"))}` : ""}</span>
-                    </span>
-                    {g(j, "slaStatus", "sla_status") ? <SlaChip status={String(g(j, "slaStatus", "sla_status"))} /> : null}
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
-                  </button>
-                ))}
-              </div>
-            ) : <EmptyLine text="No active jobs assigned to this unit." />}
-          </DrawerSection>
-
-          {/* GPS replay trail — recent real location events */}
-          <DrawerSection title="GPS replay trail" icon={<Navigation className="h-4 w-4" />} count={replayTrail.length} loading={loading}>
-            {replayTrail.length ? (
-              <ReplayTrail points={replayTrail} />
-            ) : <EmptyLine text="No recent location events recorded for this unit." />}
-          </DrawerSection>
-
-          <DrawerTable title="Upcoming maintenance" icon={<Wrench className="h-4 w-4" />} rows={detail?.maintenance as AnyRecord[]} cols={["serviceType", "status", "priority", "dueDate"]} loading={loading} onEmpty="No maintenance items scheduled." />
-          <DrawerTable title="Safety events" icon={<ShieldAlert className="h-4 w-4" />} rows={detail?.safetyEvents as AnyRecord[]} cols={["eventNumber", "eventType", "severity", "reviewStatus"]} loading={loading} onEmpty="No safety events on record." />
-
-          {/* Dashcam / video events */}
-          <DrawerSection title="Video events" icon={<Video className="h-4 w-4" />} count={((detail?.videoEvents as AnyRecord[]) || []).length} loading={loading}>
-            {((detail?.videoEvents as AnyRecord[]) || []).length ? (
-              <div className="grid grid-cols-2 gap-2.5">
-                {((detail?.videoEvents as AnyRecord[]) || []).slice(0, 4).map((v, i) => (
-                  <div key={String(v.id ?? i)} className="deck-inset overflow-hidden rounded-xl">
-                    <div className="relative aspect-video bg-slate-800">
-                      {g(v, "thumbnailUrl", "thumbnail_url") ? (
-                        <img src={String(g(v, "thumbnailUrl", "thumbnail_url"))} alt="" className="h-full w-full object-cover opacity-90" loading="lazy" />
-                      ) : <div className="grid h-full place-items-center"><Video className="h-6 w-6 text-slate-500" /></div>}
-                      <span className="absolute right-1.5 top-1.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">{String(g(v, "severity") ?? "")}</span>
-                    </div>
-                    <div className="px-2.5 py-2">
-                      <p className="truncate text-[11.5px] font-bold text-slate-800">{String(g(v, "eventType", "event_type") ?? "Event")}</p>
-                      <p className="truncate text-[10px] font-semibold text-slate-400">{String(g(v, "reviewStatus", "review_status") ?? "")}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : <EmptyLine text="No dashcam video events captured." />}
-          </DrawerSection>
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4">
+          {detailError ? <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{detailError} {detail ? "Previously loaded records may be out of date." : "Devices and activity have not been loaded."}<button type="button" disabled={refreshing} onClick={onRefresh} className="ml-2 underline">Retry vehicle data</button></div> : null}
+          {loading ? <p role="status" className="p-3 text-sm text-slate-500">Loading vehicle, installations and activity…</p> : null}
+          {detail && !loading ? <>
+            {tab === "behaviour" ? <>
+              <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold text-slate-900">{motion}</h3><span className="text-xs text-slate-500">{fresh ? `GPS ${fresh.label}` : "No verified GPS timestamp"}</span></div>
+                <dl className="vehicle-property-list mt-2">
+                  <dt>Last reported speed</dt><dd>{measuredNumber(speed, "mph")}{speed != null && !fresh?.live ? " · historical sample" : ""}</dd>
+                  <dt>GPS time</dt><dd>{timestamp(seenAt)}</dd>
+                  <dt>Observation source</dt><dd>{String(g(record, "observationSource") ?? "Not reported")}</dd>
+                  <dt>Heading</dt><dd>{headingLabel(g(record, "heading"))}</dd>
+                  <dt>Last known position</dt><dd>{hasGps ? `${Number(lat).toFixed(4)}, ${Number(lng).toFixed(4)}` : "Not reported"}{hasGps ? <button type="button" onClick={track} className="ml-2 font-semibold text-teal-700 underline">Track vehicle</button> : null}</dd>
+                  <dt>Recorded status</dt><dd>{String(g(record, "status") ?? "Unknown")}</dd>
+                  <dt>Assigned driver</dt><dd>{String(g(record, "assignedDriver", "assigned_driver", "driverName") ?? "Unassigned")}</dd>
+                  <dt>Devices</dt><dd><button type="button" onClick={() => setTab("devices")} className="font-semibold text-teal-700 underline">Inspect {currentDevices.length} active / {retainedInstallations.length} retained installations</button></dd>
+                </dl>
+                {!fresh?.live ? <p className="mt-2 text-xs text-amber-700">Recorded status and old measurements do not establish current movement. Inspect device communication before dispatch.</p> : null}
+              </section>
+              <DrawerSection title="Active work" icon={<Boxes className="h-4 w-4" />} count={activeJobs.length}>
+                {access?.activeJobs === false ? <EmptyLine text="Job activity is not available for this role." /> : activeJobs.length ? <div className="space-y-1">{activeJobs.map((job, i) => <button type="button" key={String(job.id ?? i)} onClick={() => onNavigate(`/jobs?jobId=${encodeURIComponent(String(job.id))}`)} className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs"><span><strong>{String(g(job, "jobNumber", "job_number") ?? `Job ${job.id}`)}</strong> · {String(job.status ?? "Unknown")}{g(job, "eta") ? ` · ETA ${timestamp(job.eta)}` : ""}</span><ChevronRight className="h-4 w-4" /></button>)}</div> : <EmptyLine text="No active work returned for this vehicle." />}
+              </DrawerSection>
+              <DrawerTable title="Driving & device events" icon={<ShieldAlert className="h-4 w-4" />} rows={rows("safetyEvents")} cols={["eventType", "severity", "reviewStatus", "eventTime"]} onEmpty="No recorded driving or device events returned." />
+              <p className="text-[11px] text-slate-500">Active work returns up to 12 records. GPS history covers the latest 100 observations within 24 hours.</p>
+              <DrawerSection title="Recent GPS observations" icon={<Navigation className="h-4 w-4" />} count={replayTrail.length}>
+                {access?.replayTrail === false ? <EmptyLine text="GPS history is not available for this role." /> : replayTrail.length ? <><ReplayTrail points={replayTrail} /><DrawerTable title="GPS samples · latest 24 hours" icon={<Radio className="h-4 w-4" />} rows={replayTrail} cols={["eventTime", "speedMph", "lat", "lng"]} onEmpty="No samples." collapsed /></> : <EmptyLine text="No GPS observations returned for the last 24 hours." />}
+              </DrawerSection>
+            </> : null}
+            {tab === "devices" ? <>
+              <p className="text-xs text-slate-600">Every installation below belongs to this vehicle. Communication, received evidence and remote capability are separate checks.</p>
+              {currentDevices.length ? currentDevices.map((device, i) => <InstalledDeviceWorkspace key={String(g(device, "installationId", "installation_id") ?? i)} installation={device} vehicleId={String(record.id)} onNavigate={onNavigate} />) : <div><EmptyLine text="No active authoritative device installation exists for this vehicle. Inspect installation history for previous devices." /><button type="button" className="btn-ghost mt-2" onClick={() => onNavigate("/iot-devices")}>Open device registry & installation</button><p className="mt-2 text-xs text-slate-500">Install a supported device, verify its communication and capability, then return here to configure or test it. Registering a device alone does not establish a live connection.</p></div>}
+              {retainedInstallations.length ? <section><h3 className="mb-2 text-xs font-semibold text-amber-800">Retained installation records · excluded from active devices</h3><p className="mb-2 text-xs text-slate-600">These links may reference archived devices or an installation that changed. Their current state is checked below.</p><div className="space-y-2">{retainedInstallations.map((installation, index) => <InstalledDeviceWorkspace key={String(g(installation, "installationId", "installation_id") ?? index)} installation={installation} vehicleId={String(record.id)} onNavigate={onNavigate} />)}</div></section> : null}
+              <DrawerTable title="Device installation history" icon={<Radio className="h-4 w-4" />} rows={rows("installationHistory")} cols={["deviceSerial", "deviceRole", "status", "effectiveFrom", "effectiveTo"]} onEmpty="No installation history recorded." collapsed onOpen={canReadDevices ? (row) => { const id = g(row, "deviceId", "device_id"); if (id != null) onNavigate(deviceWorkspaceRoute(String(id))); } : undefined} />
+            </> : null}
+            {tab === "records" ? <>
+              <details className="record-detail-section" open><summary>Vehicle profile</summary><dl className="vehicle-property-list mt-2">{profile.map(([label, value]) => <div key={label} className="contents"><dt>{label}</dt><dd>{value}</dd></div>)}</dl></details>
+              <DrawerTable title="Maintenance records" icon={<Wrench className="h-4 w-4" />} rows={rows("maintenance")} cols={["serviceType", "status", "priority", "dueDate"]} onEmpty="No maintenance records returned." collapsed />
+              <DrawerTable title="Driver assignment history" icon={<UserCheck className="h-4 w-4" />} rows={rows("assignmentHistory")} cols={["driverCode", "driverName", "status", "effectiveFrom", "effectiveTo"]} onEmpty="No assignment history recorded." collapsed />
+              <DrawerTable title="Trips" icon={<Navigation className="h-4 w-4" />} rows={rows("trips")} cols={["tripNumber", "status", "startedAt", "completedAt"]} onEmpty="No trips returned." collapsed />
+              <DrawerTable title="Documents" icon={<Boxes className="h-4 w-4" />} rows={rows("documents")} cols={["documentName", "documentType", "status", "expiryDate"]} onEmpty="No vehicle documents returned." collapsed />
+              <DrawerTable title="Compliance records" icon={<ShieldAlert className="h-4 w-4" />} rows={rows("compliance")} cols={["documentType", "status", "expiryDate"]} onEmpty="No compliance records returned." collapsed />
+              <DrawerTable title="Audit history" icon={<Activity className="h-4 w-4" />} rows={rows("auditTrail")} cols={["actionName", "createdAt", "actorUserId"]} onEmpty="No linked audit records returned." collapsed />
+              {canViewCameraEvidence ? <DrawerSection title="Verified camera evidence" icon={<Video className="h-4 w-4" />} count={rows("videoEvents").length} collapsed>
+                {rows("videoEvents").length ? <div className="max-h-64 space-y-2 overflow-auto">{rows("videoEvents").map((event, index) => <div key={String(event.id ?? index)} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-2">
+                  {g(event, "thumbnailUrl", "thumbnail_url") ? <img src={String(g(event, "thumbnailUrl", "thumbnail_url"))} alt="Verified camera event thumbnail" loading="lazy" className="h-16 w-24 rounded object-cover" /> : <Video className="h-5 w-5 text-slate-400" />}
+                  <span className="text-xs"><strong>{String(g(event, "eventType", "event_type") ?? "Camera event")}</strong><br />{String(event.severity ?? "Unknown")} · {String(g(event, "reviewStatus", "review_status") ?? "Unknown")}</span>
+                </div>)}</div> : <EmptyLine text="No provider-verified, media-ready camera evidence is available for this vehicle." />}
+              </DrawerSection> : null}
+            </> : null}
+          </> : null}
         </div>
       </aside>
     </div>
   );
 }
 
-function Instrument({ label, value, unit, tone = "text-slate-800" }: { label: string; value: React.ReactNode; unit?: string; tone?: string }) {
-  return (
-    <div className="deck-inset rounded-xl px-3 py-2.5 text-center">
-      <div className="text-[9.5px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
-      <div className={`mt-0.5 text-[19px] font-black leading-none tabular-nums ${tone}`}>
-        {value}{unit && <span className="ml-0.5 text-[10px] font-bold text-slate-400">{unit}</span>}
+function InstalledDeviceWorkspace({ installation, vehicleId, onNavigate }: { installation: AnyRecord; vehicleId: string; onNavigate: (route: string) => void }) {
+  const hasPermission = useHasPermission();
+  const id = g(installation, "deviceId", "device_id");
+  const canRead = hasPermission(PERMISSIONS.TELEMETRY_DEVICES_READ);
+  const { session } = useAuth();
+  const device = useQuery({ queryKey: ["vehicle-device-workspace", session?.company?.id, session?.user?.id, vehicleId, id], queryFn: () => telematicsService.getDeviceById(String(id)), enabled: canRead && id != null, refetchInterval: 30_000, retry: false });
+  const detail = canRead && !device.isError ? device.data : undefined;
+  const record = detail?.device;
+  // Installation can change between the vehicle read and the device read. Do not expose
+  // another vehicle's mutable settings as actions belonging to this selected vehicle.
+  const stillInstalled = detail != null && String(detail.currentInstallation?.vehicleId) === vehicleId && record?.archivedAt == null && !/archived|retired/i.test(record?.lifecycleStatus ?? "");
+  const availableCommands = detail?.remoteCommandCapabilities.filter((capability) => capability.requestAdmissionAvailable && !capability.externalHold) ?? [];
+  const communication = record?.lastCheckIn;
+  return <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="break-all text-sm font-bold text-slate-900">{String(g(installation, "deviceSerial", "device_serial") ?? "Registered device")}</h3><span className="text-xs text-slate-500">{String(g(installation, "deviceRole", "device_role") ?? "Device")} · {String(g(installation, "status") ?? "Unknown")}</span></div>
+    {device.isLoading ? <p role="status" className="mt-2 text-xs text-slate-500">Reading device health and supported operations…</p> : null}
+    {!canRead ? <p className="mt-2 text-xs text-amber-700">Device settings and diagnostics require device-read access.</p> : null}
+    {device.isError ? <p role="alert" className="mt-2 text-xs text-rose-700">Device health could not be loaded. <button type="button" onClick={() => void device.refetch()} className="underline">Retry device</button></p> : null}
+    {detail ? <>
+      <dl className="vehicle-property-list mt-2">
+        <dt>Lifecycle / communication</dt><dd>{record?.lifecycleStatus} · {observationAge(communication) == null ? "Communication unverified" : record?.connectionStatus}</dd>
+        <dt>Last communication</dt><dd>{observationAge(communication) == null ? "Never reported or unverified timestamp" : timestamp(communication)}</dd>
+        <dt>Setup / software checks</dt><dd>{record?.deviceOpsAssessmentAvailable ? record.deviceOpsGaps.join(" · ") || "No issues in the recorded assessment" : "No device assessment available"}</dd>
+        <dt>Received faults</dt><dd>{detail.diagnostics.length ? detail.diagnostics.map((fault) => fault.faultCode).join(" · ") : "No received fault evidence returned"}</dd>
+        <dt>Remote operations</dt><dd>{availableCommands.length ? `${availableCommands.map((capability) => capability.displayName).join(", ")} · request admission only` : "No verified remote operation available"}</dd>
+        <dt>SIM / APN profile</dt><dd>{detail.currentConnectivityProfile ? `${detail.currentConnectivityProfile.carrierName} · inventory profile recorded` : "No inventory profile recorded"}</dd>
+      </dl>
+      {!stillInstalled ? <p role="status" className="mt-2 text-xs text-amber-700">This device is archived, removed or no longer active on this vehicle. Its historical device record remains available; refresh the vehicle after changing installation records.</p> : null}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button type="button" onClick={() => onNavigate(deviceWorkspaceRoute(String(id)))} className="btn-ghost h-8 px-2.5 text-xs">Device details</button>
+        {stillInstalled ? <><button type="button" onClick={() => onNavigate(deviceWorkspaceRoute(String(id), "configuration"))} className="btn-ghost h-8 px-2.5 text-xs">SIM / APN inventory</button><button type="button" onClick={() => onNavigate(deviceWorkspaceRoute(String(id), "diagnostics"))} className="btn-ghost h-8 px-2.5 text-xs">Diagnostics evidence</button><button type="button" onClick={() => onNavigate(deviceWorkspaceRoute(String(id), "commands"))} className="btn-ghost h-8 px-2.5 text-xs">Test / command options</button></> : null}
       </div>
-    </div>
-  );
+      <p className="mt-2 text-[11px] text-slate-500">Settings record inventory metadata. Hardware testing and restart require verified provider support; a request is not proof of execution.</p>
+    </> : null}
+  </section>;
+}
+
+function timestamp(value: unknown) {
+  if (value == null || value === "") return "Not reported";
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? "Unverified timestamp" : date.toLocaleString();
 }
 
 function headingLabel(heading: unknown): string {
@@ -1012,20 +918,15 @@ function headingLabel(heading: unknown): string {
   return dirs[Math.round(((h % 360) / 45)) % 8];
 }
 
-function SlaChip({ status }: { status: string }) {
-  const tone = /risk|breach|late/i.test(status) ? "bg-rose-50 text-rose-700 ring-rose-600/15" : /track|met|ok/i.test(status) ? "bg-emerald-50 text-emerald-700 ring-emerald-600/15" : "bg-slate-100 text-slate-600 ring-slate-500/15";
-  return <span className={`shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset ${tone}`}>{status}</span>;
-}
-
 function ReplayTrail({ points }: { points: AnyRecord[] }) {
-  const trail = points.slice(0, 12);
+  const trail = points.slice(-12);
   const speeds = trail.map(readSpeedMph);
   const { peak, knownCount, missingCount } = telemetrySpeedSummary(speeds);
   const scale = Math.max(1, peak ?? 0); // chart scale is not a measured peak
   return (
     <div className="deck-inset rounded-xl p-3">
       <div className="flex items-end gap-1" style={{ height: 44 }}>
-        {trail.slice().reverse().map((p, i) => {
+        {trail.map((p, i) => {
           const sp = readSpeedMph(p);
           if (sp == null) return <div key={i} className="flex-1 self-stretch border-b border-dashed border-slate-300" title="Speed unavailable" aria-label="Speed unavailable" />;
           const h = Math.max(4, Math.round((sp / scale) * 40));
@@ -1041,40 +942,20 @@ function ReplayTrail({ points }: { points: AnyRecord[] }) {
   );
 }
 
-function DrawerSection({ title, icon, count, loading, children }: { title: string; icon: React.ReactNode; count: number; loading?: boolean; children: React.ReactNode }) {
-  return (
-    <section>
-      <div className="mb-2 flex items-center justify-between">
-        <div className="section-title inline-flex items-center gap-2"><span className="text-teal-700">{icon}</span>{title}</div>
-        {count > 0 && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500 tabular-nums">{count}</span>}
-      </div>
-      {loading ? <div className="skeleton h-12 rounded-xl" /> : children}
-    </section>
-  );
+function DrawerSection({ title, icon, count, loading, children, collapsed = false }: { title: string; icon: React.ReactNode; count: number; loading?: boolean; children: React.ReactNode; collapsed?: boolean }) {
+  const heading = <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><span className="text-teal-700">{icon}</span>{title}<span className="ml-auto text-slate-500">{count}</span></span>;
+  const body = loading ? <p role="status" className="text-xs text-slate-500">Loading…</p> : children;
+  return collapsed ? <details className="record-detail-section"><summary>{heading}</summary><div className="mt-2">{body}</div></details> : <section><h3 className="mb-2">{heading}</h3>{body}</section>;
 }
 
-function DrawerTable({ title, icon, rows, cols, loading, onEmpty }: { title: string; icon: React.ReactNode; rows?: AnyRecord[]; cols: string[]; loading?: boolean; onEmpty: string }) {
+function DrawerTable({ title, icon, rows, cols, loading, onEmpty, collapsed = false, onOpen }: { title: string; icon: React.ReactNode; rows?: AnyRecord[]; cols: string[]; loading?: boolean; onEmpty: string; collapsed?: boolean; onOpen?: (row: AnyRecord) => void }) {
   const data = rows || [];
-  return (
-    <DrawerSection title={title} icon={icon} count={data.length} loading={loading}>
-      {data.length === 0 ? <EmptyLine text={onEmpty} /> : (
-        <div className="deck-inset overflow-hidden rounded-xl">
-          <table className="w-full text-left text-xs">
-            <thead><tr className="border-b border-slate-200/70 text-[10px] uppercase tracking-wide text-slate-400">
-              {cols.map((c) => <th key={c} className="px-3 py-2 font-bold">{labelize(c)}</th>)}
-            </tr></thead>
-            <tbody className="divide-y divide-slate-100">
-              {data.slice(0, 6).map((row, i) => (
-                <tr key={String(row.id ?? i)} className="text-slate-600">
-                  {cols.map((c) => <td key={c} className="px-3 py-2">{fmt(row[c])}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </DrawerSection>
-  );
+  return <DrawerSection title={title} icon={icon} count={data.length} loading={loading} collapsed={collapsed}>
+    {data.length === 0 ? <EmptyLine text={onEmpty} /> : <div className="max-h-64 overflow-auto rounded-lg border border-slate-200 bg-white"><table className="w-full text-left text-xs">
+      <thead className="sticky top-0 bg-slate-50"><tr>{cols.map((key) => <th key={key} className="px-2 py-2 font-semibold text-slate-500">{labelize(key)}</th>)}{onOpen ? <th className="px-2 py-2">Details</th> : null}</tr></thead>
+      <tbody className="divide-y divide-slate-100">{data.map((row, index) => <tr key={String(row.id ?? index)}>{cols.map((key) => <td key={key} className="px-2 py-2 text-slate-700">{fmt(g(row, key, key.replace(/[A-Z]/g, (char) => `_${char.toLowerCase()}`)))}</td>)}{onOpen ? <td className="px-2 py-2"><button type="button" className="text-teal-700 underline" onClick={() => onOpen(row)}>Device details</button></td> : null}</tr>)}</tbody>
+    </table></div>}
+  </DrawerSection>;
 }
 
 function EmptyLine({ text }: { text: string }) {
@@ -1088,13 +969,14 @@ function EmptyLine({ text }: { text: string }) {
 function fmt(v: unknown) {
   if (v == null || v === "") return "—";
   const s = String(v);
-  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return timestamp(s);
   return s;
 }
 
 /* ------------------------------------------------------------------ form modal */
 
 function VehicleFormModal({ title, initial, saving, serverError, onClose, onSave }: { title: string; initial: AnyRecord; saving: boolean; serverError?: string; onClose: () => void; onSave: (p: AnyRecord) => void }) {
+  const dialogRef = useDialogFocus<HTMLFormElement>(true, () => { if (!saving) onClose(); });
   const [form, setForm] = useState<AnyRecord>(initial);
   const [errors, setErrors] = useState<string[]>([]);
 
@@ -1152,7 +1034,7 @@ function VehicleFormModal({ title, initial, saving, serverError, onClose, onSave
   };
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} className="fc-neumo max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto overscroll-contain p-6 anim-fade-up">
+      <form ref={dialogRef} role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()} onSubmit={submit} className="fc-neumo max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto overscroll-contain p-6 anim-fade-up">
         <div className="flex items-start justify-between">
           <div>
             <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Fleet</div>

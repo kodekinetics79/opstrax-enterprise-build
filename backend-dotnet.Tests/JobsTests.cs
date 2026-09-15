@@ -62,12 +62,18 @@ public class JobsSeedPermissionTests
     public void JobsWriteSurfaces_ArePermissionGatedAndTransactional()
     {
         var source = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
-        foreach (var method in new[] { "AssignJob", "ChangeJobStatus", "SendEta", "CreateProofPlaceholder", "CaptureProof", "ArchiveJob" })
+        foreach (var method in new[] { "AssignJob", "ChangeJobStatus", "SendEta", "CaptureProof", "ArchiveJob" })
         {
             var block = MethodBlock(source, method);
             Assert.Contains("RequireAnyDirectPermission(http", block, StringComparison.Ordinal);
             Assert.Contains("RunInTenantTransactionAsync", block, StringComparison.Ordinal);
         }
+        var retiredPlaceholder = MethodBlock(source, "ProofPlaceholderUnavailable");
+        Assert.Contains("RequireAnyDirectPermission(http", retiredPlaceholder, StringComparison.Ordinal);
+        Assert.Contains("Status410Gone", retiredPlaceholder, StringComparison.Ordinal);
+        Assert.Contains("authentic proof of delivery", retiredPlaceholder, StringComparison.Ordinal);
+        Assert.DoesNotContain("RunInTenantTransactionAsync", retiredPlaceholder, StringComparison.Ordinal);
+        Assert.DoesNotContain("INSERT INTO proof_of_delivery", retiredPlaceholder, StringComparison.Ordinal);
         Assert.Contains("RequireAnyDirectPermission(http", MethodBlock(source, "JobsImportPreview"), StringComparison.Ordinal);
     }
 

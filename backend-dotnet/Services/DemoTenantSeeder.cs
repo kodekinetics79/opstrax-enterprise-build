@@ -36,7 +36,7 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
     public const string DemoCompanyCode = "MERIDIAN-DEMO";
     public const string DemoCompanyName = "Meridian Logistics — Demo";
     internal const string SafetyPilotFixtureKey = "safety-pilot";
-    internal const int SafetyPilotFixtureVersion = 7;
+    internal const int SafetyPilotFixtureVersion = 8;
     private readonly string demoPassword = ResolveDemoPassword(config);
     // Deterministic late-failure injection for transaction regression tests. Production
     // DI never sets this; keeping the hook internal prevents it becoming an app feature.
@@ -135,7 +135,8 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
         foreach (var (jobId, status) in new[] { (jobs[2], "active"), (jobs[3], "active"), (jobs[4], "exception"), (completedJobs[0], "completed") })
         {
             var tripId = await db.InsertAsync(
-                @"INSERT INTO trips (company_id, job_id, status, started_at) VALUES (@companyId, @jobId, @status, NOW() - INTERVAL '3 hours')",
+                @"INSERT INTO trips (company_id, job_id, status, started_at, data_origin, verification_status)
+                  VALUES (@companyId, @jobId, @status, NOW() - INTERVAL '3 hours','demo_seed','demo_seed')",
                 c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@jobId", jobId); c.Parameters.AddWithValue("@status", status); }, ct);
             trips++;
             await db.ExecuteAsync(
@@ -265,8 +266,14 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
         var suffix = isCanonical ? "" : "+" + companyCode.ToLowerInvariant();
         var adminEmail = $"admin{suffix}@meridian.demo";
         var portalEmail = $"portal{suffix}@acme.demo";
+        const string portalPerms = "[\"customer_portal:view\",\"shipments:view\"]";
+        // Seed tenant-local memberships before users. A fresh owner-capable
+        // database may not have the optional global role catalog yet, and role_id
+        // must never be silently left NULL.
+        await UpsertTenantRoleAsync(companyId, "Fleet Manager", internalPerms, ct);
+        await UpsertTenantRoleAsync(companyId, "Customer Portal User", portalPerms, ct);
         await SeedUserAsync(companyId, adminEmail, "Meridian Ops Admin", "Fleet Manager", null, internalPerms, ct);
-        await SeedUserAsync(companyId, portalEmail, "Acme Portal User", "Customer Portal User", customers[0], "[\"customer_portal:view\",\"shipments:view\"]", ct);
+        await SeedUserAsync(companyId, portalEmail, "Acme Portal User", "Customer Portal User", customers[0], portalPerms, ct);
 
         await ReconcileSafetyPilotFixtureAsync(companyId, companyCode, ct);
 
@@ -469,9 +476,14 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
                 WHERE NOT EXISTS (SELECT 1 FROM hos_logs WHERE company_id=@companyId AND source='demo' AND source_event_id='safety-pilot-hos-1');
               INSERT INTO eld_devices (company_id,branch_id,device_serial,device_model,provider,vehicle_id,driver_id,status,
                     last_sync_at,firmware_version,provider_sync_status,row_version)
-                SELECT @companyId,@branch,@eldSerial,'Pilot ELD','Synthetic Provider',@vehicle1,@driver1,'Diagnostic',
-                    NOW()-INTERVAL '5 minute','pilot-1.0','Healthy',1
-                WHERE NOT EXISTS (SELECT 1 FROM eld_devices WHERE company_id=@companyId AND device_serial=@eldSerial);",
+                SELECT @companyId,@branch,@eldSerial,'Synthetic demo ELD','Synthetic fixture — no provider account',@vehicle1,@driver1,'Diagnostic',
+                    NULL,'demo-fixture','Unverified',1
+                WHERE NOT EXISTS (SELECT 1 FROM eld_devices WHERE company_id=@companyId AND device_serial=@eldSerial);
+              UPDATE eld_devices SET device_model='Synthetic demo ELD',provider='Synthetic fixture — no provider account',
+                    last_sync_at=NULL,firmware_version='demo-fixture',provider_sync_status='Unverified'
+                WHERE company_id=@companyId AND device_serial=@eldSerial
+                  AND provider IN ('Synthetic Provider','Synthetic fixture — no provider account')
+                  AND device_model IN ('Pilot ELD','Synthetic demo ELD');",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branch", northBranchId); c.Parameters.AddWithValue("@driver1", driver1); c.Parameters.AddWithValue("@vehicle1", vehicle1); c.Parameters.AddWithValue("@eldSerial", eldSerial); }, ct);
 
         await db.ExecuteAsync(
@@ -481,12 +493,13 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
                     speeding_count=EXCLUDED.speeding_count,coaching_open_count=EXCLUDED.coaching_open_count,
                     coaching_completed_count=EXCLUDED.coaching_completed_count,incident_count=EXCLUDED.incident_count,
                     risk_score=EXCLUDED.risk_score,period_start=EXCLUDED.period_start,period_end=EXCLUDED.period_end;
-              INSERT INTO driver_safety_scores (company_id,driver_id,score_7d,score_30d,score_90d,events_7d,events_30d,events_90d,breakdown_json,computed_at)
-                VALUES (@companyId,@driver1,76,80,86,3,5,8,'{""formulaVersion"":""safety-pilot-v2"",""speeding"":3}'::jsonb,NOW()),
-                       (@companyId,@driver2,84,87,91,1,2,3,'{""formulaVersion"":""safety-pilot-v2"",""harshBraking"":1}'::jsonb,NOW())
+              INSERT INTO driver_safety_scores (company_id,driver_id,score_7d,score_30d,score_90d,events_7d,events_30d,events_90d,breakdown_json,computed_at,data_origin,verification_status)
+                VALUES (@companyId,@driver1,76,80,86,3,5,8,'{""formulaVersion"":""safety-pilot-v2"",""speeding"":3}'::jsonb,NOW(),'demo_seed','demo_seed'),
+                       (@companyId,@driver2,84,87,91,1,2,3,'{""formulaVersion"":""safety-pilot-v2"",""harshBraking"":1}'::jsonb,NOW(),'demo_seed','demo_seed')
                 ON CONFLICT (company_id,driver_id) DO UPDATE SET score_7d=EXCLUDED.score_7d,score_30d=EXCLUDED.score_30d,
                     score_90d=EXCLUDED.score_90d,events_7d=EXCLUDED.events_7d,events_30d=EXCLUDED.events_30d,
-                    events_90d=EXCLUDED.events_90d,breakdown_json=EXCLUDED.breakdown_json,computed_at=EXCLUDED.computed_at;",
+                    events_90d=EXCLUDED.events_90d,breakdown_json=EXCLUDED.breakdown_json,computed_at=EXCLUDED.computed_at,
+                    data_origin=EXCLUDED.data_origin,verification_status=EXCLUDED.verification_status;",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branch", northBranchId); c.Parameters.AddWithValue("@driver1", driver1); c.Parameters.AddWithValue("@driver2", driver2); }, ct);
 
         await db.ExecuteAsync(
@@ -620,10 +633,11 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
                 await db.ExecuteAsync(
                     @"INSERT INTO fuel_transactions
                         (company_id, vehicle_id, transaction_time, gallons, quantity, unit, unit_price,
-                         total_cost, currency, fuel_type, idle_minutes, payment_method, anomaly_status, fuel_station)
+                         total_cost, currency, fuel_type, idle_minutes, payment_method, anomaly_status, fuel_station,
+                         data_origin, verification_status)
                       VALUES
                         (@cid, @vid, NOW() - make_interval(days => @d, hours => @h), @g, @g, 'gallon', @up,
-                         @tc, 'USD', 'Diesel', @idle, 'Fuel Card', 'normal', @station)",
+                         @tc, 'USD', 'Diesel', @idle, 'Fuel Card', 'normal', @station,'demo_seed','demo_seed')",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);
@@ -666,44 +680,28 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
             }
         }
 
-        // Real ELD/telematics devices — one per vehicle — so the IoT / Telematics
-        // pages render genuine device records instead of the frontend seed overlay.
+        // Synthetic device workflow records — one per vehicle. They exercise the
+        // customer UI without naming a provider, inventing a provider heartbeat, or
+        // carrying credentials that could be mistaken for external evidence.
         if (await db.ScalarLongAsync("SELECT COUNT(*) FROM eld_devices WHERE company_id=@cid",
                 c => c.Parameters.AddWithValue("@cid", companyId), ct) == 0)
         {
-            var providers = new[] { "Geotab", "Samsara", "Motive" };
-            var models = new[] { "GO9", "VG34", "LBB-3" };
-            var deviceStatuses = new[] { "Active", "Active", "Active", "Diagnostic", "Active" };
             var di = 0;
             foreach (var v in vehicleRows)
             {
                 var vehicleId = Convert.ToInt64(v["id"]);
-                var p = di % providers.Length;
-                // Active devices must carry real credentials (ck_eld_devices_active_credentials):
-                // generate per-device random creds exactly like the provisioning endpoint.
-                var rawApiKey  = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-                var hmacSecret = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
                 await db.ExecuteAsync(
                     @"INSERT INTO eld_devices
                         (company_id, device_serial, device_model, provider, vehicle_id, firmware_version,
-                         api_key_hash, hmac_secret,
-                         status, last_heartbeat_at, last_sync_at, created_at)
+                         status, last_heartbeat_at, last_sync_at, provider_sync_status, created_at)
                       VALUES
-                        (@cid, @serial, @model, @provider, @vid, @fw,
-                         encode(sha256(@rawKey::bytea), 'hex'), @hmac,
-                         @status, NOW() - make_interval(mins => @hb), NOW() - make_interval(mins => @hb), NOW() - INTERVAL '90 days')",
+                        (@cid, @serial, 'Synthetic demo gateway', 'Synthetic fixture — no provider account', @vid, 'demo-fixture',
+                         'Diagnostic', NULL, NULL, 'Unverified', NOW() - INTERVAL '90 days')",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);
-                        c.Parameters.AddWithValue("@serial", $"ELD-{companyId}-{di + 1:D3}");
-                        c.Parameters.AddWithValue("@model", models[p]);
-                        c.Parameters.AddWithValue("@provider", providers[p]);
+                        c.Parameters.AddWithValue("@serial", $"DEMO-ELD-{companyId}-{di + 1:D3}");
                         c.Parameters.AddWithValue("@vid", vehicleId);
-                        c.Parameters.AddWithValue("@fw", $"v{4 + p}.{rng.Next(0, 9)}.{rng.Next(0, 9)}");
-                        c.Parameters.AddWithValue("@rawKey", rawApiKey);
-                        c.Parameters.AddWithValue("@hmac", hmacSecret);
-                        c.Parameters.AddWithValue("@status", deviceStatuses[di % deviceStatuses.Length]);
-                        c.Parameters.AddWithValue("@hb", rng.Next(1, 45));
                     }, ct);
                 di++;
             }

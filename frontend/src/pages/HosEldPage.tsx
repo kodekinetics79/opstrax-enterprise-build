@@ -119,19 +119,16 @@ export function HosEldPage() {
   };
 
   return (
-    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
-      {/* Header — ConsoleRail, matching Vehicles/Cold Chain/Fleet Compliance instead of a
-          bespoke plain <h1>, with the same live-count subtitle convention those pages use. */}
-      <ConsoleRail
-        eyebrow="Compliance · HOS/ELD"
-        icon={<Clock className="h-3.5 w-3.5 text-teal-700" />}
-        title={t("hos_eld")}
-        meta={<>
-          <span className="font-bold text-slate-700 tabular-nums">{drivers.length}</span> drivers tracked ·{" "}
-          <span className={`font-bold tabular-nums ${violationCount > 0 ? "text-red-600" : "text-emerald-600"}`}>{violationCount}</span> HOS violations ·{" "}
-          <span className={`font-bold tabular-nums ${eldMalfCount > 0 ? "text-red-600" : "text-emerald-600"}`}>{eldMalfCount}</span> ELD malfunctions
-        </>}
-      />
+    <div className="fleet-console page-stack min-w-0">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-extrabold text-slate-900 flex items-center gap-2">
+            <Clock className="h-5 w-5 text-amber-600" />{t("hos_eld")}
+          </h1>
+          <p className="text-xs text-slate-500 mt-0.5">Hours of service monitoring, driver clocks, ELD device tracking</p>
+        </div>
+      </div>
 
       <Disclaimer />
 
@@ -141,7 +138,7 @@ export function HosEldPage() {
         </div>
       )}
       <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800" role="status">
-        Back-office users may review HOS records but cannot certify for a driver. Daily certification is available only to the authenticated driver in the Driver Portal and does not submit records to a regulator.
+        Back-office users may review HOS records but cannot attest for a driver. Daily driver attestation is available only to the authenticated driver in the Driver Portal. It is not ELD product certification and does not submit records to a regulator.
       </div>
       {actionMessage && (
         <div className={`rounded-xl border p-3 text-xs ${actionMessage.kind === "error" ? "border-red-300 bg-red-50 text-red-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`} role={actionMessage.kind === "error" ? "alert" : "status"}>
@@ -246,7 +243,7 @@ export function HosEldPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-left">
-                {["Driver","Date","Status","Start","End","Duration","Location","Certified"].map(h => (
+                {["Driver","Date","Status","Start","End","Duration","Location","Driver attestation"].map(h => (
                   <th key={h} className="pb-2 pr-4 text-[10px] font-bold uppercase tracking-wide text-slate-500">{h}</th>
                 ))}
               </tr>
@@ -274,8 +271,8 @@ export function HosEldPage() {
                   <td className="py-2 pr-4 text-xs text-slate-600 truncate max-w-[120px]">{String(l.location ?? "—")}</td>
                   <td className="py-2 pr-4">
                     {Boolean(l.isCertified) ? (
-                      <span className="text-emerald-700 text-xs flex items-center gap-1"><CheckCircle className="h-3 w-3" />Yes</span>
-                    ) : <span className="text-xs text-slate-500">Pending driver</span>}
+                      <span className="text-emerald-700 text-xs flex items-center gap-1"><CheckCircle className="h-3 w-3" />Attested</span>
+                    ) : <span className="text-xs text-slate-500">Not attested</span>}
                   </td>
                 </tr>
               ))}
@@ -298,14 +295,14 @@ export function HosEldPage() {
         ) : <div className="space-y-3">
           <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-[11px] text-amber-700">
             <span className="font-bold text-amber-800">ELD Notice: </span>
-            OpsTrax is not a certified ELD. This table shows third-party ELD device status as reported by the connected provider. FMCSA-registered ELD certification is the responsibility of the ELD provider.
+            OpsTrax is not a certified ELD. Provider status is evidence only when a real provider account is connected. Synthetic or unverified rows are workflow records and are never ELD certification evidence.
           </div>
           <div className="panel p-5 overflow-auto">
             <p className="section-title mb-3 flex items-center gap-2"><Cpu className="h-3.5 w-3.5 text-teal-600" />Connected devices</p>
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-left">
-                  {["Serial","Model","Provider","Vehicle","Driver","Status","Last Sync","Firmware","Actions"].map(h => (
+                  {["Serial","Model","Provider","Vehicle","Driver","Status","Provider evidence","Last Sync","Firmware","Actions"].map(h => (
                     <th key={h} className="pb-2 pr-4 text-[10px] font-bold uppercase tracking-wide text-slate-500">{h}</th>
                   ))}
                 </tr>
@@ -324,7 +321,8 @@ export function HosEldPage() {
                         {String(e.status)}
                       </span>
                     </td>
-                    <td className="py-2 pr-4 text-xs text-slate-500">{formatDateTime(String(e.lastSyncAt ?? ""))}</td>
+                    <td className="py-2 pr-4 text-xs font-semibold text-slate-600">{String(e.providerSyncStatus ?? "Unverified")}</td>
+                    <td className="py-2 pr-4 text-xs text-slate-500">{e.lastSyncAt ? formatDateTime(String(e.lastSyncAt)) : "Never"}</td>
                     <td className="py-2 pr-4 text-xs font-mono text-slate-600">{String(e.firmwareVersion ?? "—")}</td>
                     <td className="py-2 pr-4">
                       {String(e.status) === "Malfunction" ? (

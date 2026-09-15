@@ -1,6 +1,7 @@
 using Opstrax.Telematics.Contracts.Provenance;
 using Opstrax.Telematics.Contracts.Quality;
 using Opstrax.Telematics.Contracts.Signals;
+using Opstrax.Telematics.Contracts.Diagnostics;
 
 namespace Opstrax.Telematics.Contracts;
 
@@ -155,8 +156,18 @@ public sealed record CanonicalTelemetryEvent
     /// <summary>Engine coolant temperature in degrees Celsius, when reported.</summary>
     public double? CoolantTempC { get; init; }
 
-    /// <summary>Active diagnostic trouble codes reported with this observation. Defaults to empty.</summary>
+    /// <summary>
+    /// Diagnostic trouble-code labels reported with this observation. Use
+    /// <see cref="Diagnostic"/> to distinguish active from historical evidence.
+    /// Defaults to empty.
+    /// </summary>
     public IReadOnlyList<string> DtcCodes { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Structured diagnostic evidence when this event originated from a supported diagnostic
+    /// message. A historical snapshot does not by itself clear an active fault projection.
+    /// </summary>
+    public DiagnosticSnapshot? Diagnostic { get; init; }
 
     // ── Quality ────────────────────────────────────────────────────────────────
 

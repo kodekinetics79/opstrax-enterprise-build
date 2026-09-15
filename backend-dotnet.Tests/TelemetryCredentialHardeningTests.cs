@@ -20,6 +20,15 @@ public sealed class TelemetryCredentialHardeningTests
     }
 
     [Fact]
+    public void SchemaStartup_DoesNotFabricateDeviceCheckIns()
+    {
+        var source = ReadRepositoryFile("backend-dotnet", "Services", "TelemetrySchemaService.cs");
+
+        Assert.DoesNotContain("UPDATE eld_devices SET last_seen_at", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("WHERE last_seen_at IS NULL", source, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void SchemaStartup_QuarantinesIncompleteAndLegacyCredentials()
     {
         var source = ReadRepositoryFile("backend-dotnet", "Services", "TelemetrySchemaService.cs");

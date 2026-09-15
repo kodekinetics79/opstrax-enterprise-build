@@ -1,5 +1,6 @@
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   ArrowRight,
   CheckCircle2,
@@ -100,6 +101,8 @@ function JSONSummary({ value }: { value: unknown }) {
 }
 
 export function OperationsProofCenterPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const permissions = usePermissions();
   const directPermissions = new Set(permissions.map((permission) => permission.trim().toLowerCase().replaceAll(".", ":")));
   const hasPermission = (permission: string) => directPermissions.has("*") || directPermissions.has(permission.toLowerCase().replaceAll(".", ":"));
@@ -115,6 +118,14 @@ export function OperationsProofCenterPage() {
     proofPackage: { proofType: "proof_of_delivery", receiverName: "", receiverPhone: "" },
     proofArtifact: { artifactType: "photo", fileId: "", notes: "" },
   });
+
+  useEffect(() => {
+    const requested = searchParams.get("jobId");
+    const parsed = requested == null ? Number.NaN : Number.parseInt(requested, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    setJobInput(String(parsed));
+    setJobId(parsed);
+  }, [searchParams]);
 
   const summaryQuery = useQuery({
     queryKey: ["operations", "execution-summary", jobId],
@@ -274,7 +285,7 @@ export function OperationsProofCenterPage() {
   }
 
   return (
-    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
+    <div className="fleet-console page-stack min-w-0">
       <PageHeader
         eyebrow="Operational Proof"
         title="Operational Proof Center"
@@ -288,12 +299,14 @@ export function OperationsProofCenterPage() {
                 onChange={(event) => setJobInput(event.target.value)}
                 inputMode="numeric"
                 placeholder="Job ID"
+                aria-label="Job ID"
               />
               <button className="btn-primary" type="submit">
                 <RefreshCw className="h-4 w-4" />
                 Load
               </button>
             </form>
+            <button type="button" className="btn-ghost h-10" onClick={() => navigate("/jobs")}>Browse jobs</button>
           </>
         }
       />
@@ -305,17 +318,18 @@ export function OperationsProofCenterPage() {
           Failed to load execution summary. Check the backend connection and RBAC permission.
         </div>
       ) : !summary ? (
-        <section className="panel p-6">
-          <p className="text-sm text-slate-500">Enter a job ID to load its execution and proof evidence.</p>
+        <section className="panel flex flex-wrap items-center justify-between gap-3 p-4">
+          <p className="text-sm text-slate-500">Select a job from the Jobs board or enter its ID to load execution and proof evidence.</p>
+          <button type="button" className="btn-ghost" onClick={() => navigate("/jobs")}>Open Jobs board <ArrowRight className="h-4 w-4" /></button>
         </section>
       ) : (
         <>
           {actionError ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{actionError}</div> : null}
-          <div className="grid gap-4 lg:grid-cols-4">
-            <KpiCard label="Risk Status" value={summaryStatus} icon={<TriangleAlert />} status={summaryStatus} />
-            <KpiCard label="Next Best Actions" value={String(nextBestActions?.length ?? 0)} icon={<Sparkles />} status="Active" />
-            <KpiCard label="Mobile Ready Actions" value={String(mobileReadyActions?.length ?? 0)} icon={<ShieldCheck />} status="Active" />
-            <KpiCard label="Billing Confidence" value={String(billingConfidence?.confidence_score ?? "No data")} icon={<CheckCircle2 />} status={billingConfidence?.status as string | undefined} />
+          <div className="panel flex flex-wrap divide-x divide-slate-200 overflow-hidden">
+            <KpiCard compact label="Risk Status" value={summaryStatus} icon={<TriangleAlert />} status={summaryStatus} />
+            <KpiCard compact label="Next Best Actions" value={String(nextBestActions?.length ?? 0)} icon={<Sparkles />} status="Active" />
+            <KpiCard compact label="Mobile Ready Actions" value={String(mobileReadyActions?.length ?? 0)} icon={<ShieldCheck />} status="Active" />
+            <KpiCard compact label="Billing Confidence" value={String(billingConfidence?.confidence_score ?? "No data")} icon={<CheckCircle2 />} status={billingConfidence?.status as string | undefined} />
           </div>
 
           <section className="panel p-5">

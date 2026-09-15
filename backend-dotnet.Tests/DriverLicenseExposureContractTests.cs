@@ -184,7 +184,10 @@ public class DriverLicenseExposureContractTests
 
         Assert.Contains("INTERNAL_RECORD_KEY", source, StringComparison.Ordinal);
         Assert.Contains("bidx|blind.?index|password|secret|token|cipher", source, StringComparison.Ordinal);
-        Assert.Contains("customerVisibleRecordEntries(record).slice", source, StringComparison.Ordinal);
+        Assert.Contains("Object.entries(record).filter(([key]) => !INTERNAL_RECORD_KEY.test(key))", source, StringComparison.Ordinal);
+        Assert.Contains("const entries = customerVisibleRecordEntries(record).filter", source, StringComparison.Ordinal);
+        Assert.Contains("uniqueDetailScores(customerVisibleRecordEntries(record), record)", source, StringComparison.Ordinal);
+        Assert.Contains("entries.map(([key, value])", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Object.entries(record).slice", source, StringComparison.Ordinal);
     }
 

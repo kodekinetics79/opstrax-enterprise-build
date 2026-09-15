@@ -4,6 +4,8 @@ This guide describes the customer-visible Telematics workflow. A device registry
 
 ## Onboard devices
 
+Before buying a new OEM model, use the [device supplier intake and zero-code commissioning guide](telematics/DEVICE_SUPPLIER_INTAKE_AND_ZERO_CODE_COMMISSIONING.md). Platform administrators register the exact product-wide model/HW/FW/SHA candidate in **Platform Console → Hardware Readiness**. Tenant administrators then provision each purchased IMEI, assignment, installation, and commissioning record in **Device Health**. The platform declaration remains External Hold until physical evidence is accepted.
+
 1. Sign in with an administrator role that can manage fleet devices.
 2. Open **Device Health** and download the current customer import template.
 3. Populate non-duplicated serial numbers, device type, provider, branch, and any supported optional identifiers.

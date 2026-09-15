@@ -65,6 +65,7 @@ export function PredictiveAnalyticsPage() {
   const maintenance = (maintQ.data  ?? []) as AnyRecord[];
   const driverRisk  = (driverQ.data ?? []) as AnyRecord[];
   const slaRisk     = (slaQ.data   ?? []) as AnyRecord[];
+  const signalCount = maintenance.length + driverRisk.length + slaRisk.length;
 
   const isLoading = maintQ.isLoading || driverQ.isLoading || slaQ.isLoading;
 
@@ -93,7 +94,7 @@ export function PredictiveAnalyticsPage() {
   if (maintQ.isError) return <ErrorState message={(maintQ.error as Error)?.message} />;
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="page-stack">
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -109,13 +110,12 @@ export function PredictiveAnalyticsPage() {
           {(() => {
             // Honest status: reflect whether real risk signals are present rather than asserting
             // running ML models. These feeds are rule-based risk scoring, not a trained model.
-            const signals = maintenance.length + driverRisk.length + slaRisk.length;
-            const active = signals > 0;
+            const active = signalCount > 0;
             return (
               <div className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 ${active ? "border-violet-200 bg-violet-50" : "border-slate-200 bg-slate-50"}`}>
                 <Bot className={`h-3.5 w-3.5 ${active ? "text-violet-600" : "text-slate-400"}`} />
                 <span className={`text-xs font-semibold ${active ? "text-violet-700" : "text-slate-500"}`}>
-                  {active ? `Risk scoring · ${signals} active` : "Preview — no active risk signals"}
+                  {active ? `Risk scoring · ${signalCount} active` : "Preview — no active risk signals"}
                 </span>
               </div>
             );
@@ -133,9 +133,9 @@ export function PredictiveAnalyticsPage() {
           { label: "Maintenance Alerts",  value: `${criticalMaint} Critical`,                        icon: <Wrench className="h-5 w-5" />,     accent: "text-amber-700", bg: "bg-amber-50" },
           { label: "Drivers at Risk",     value: `${urgentDrivers} Urgent`,                          icon: <Shield className="h-5 w-5" />,     accent: "text-amber-700", bg: "bg-amber-50" },
           { label: "SLA Breach Risk",     value: `${highSlaRisk} High Risk`,                         icon: <Clock className="h-5 w-5" />,      accent: "text-red-700",   bg: "bg-red-50" },
-          { label: "Avg Signal Score",     value: (maintenance.length + driverRisk.length + slaRisk.length) > 0 ? `${avgConfidence}%` : "—", icon: <Activity className="h-5 w-5" />, accent: "text-violet-700",bg: "bg-violet-50" },
+          { label: "Avg Signal Score",     value: signalCount > 0 ? `${avgConfidence}%` : "—", icon: <Activity className="h-5 w-5" />, accent: "text-violet-700",bg: "bg-violet-50" },
         ].map((k) => (
-          <div key={k.label} className="panel flex items-start gap-3 p-4">
+          <div key={k.label} className="panel flex items-start gap-2 p-3">
             <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${k.bg} ${k.accent}`}>
               {k.icon}
             </div>
@@ -147,66 +147,15 @@ export function PredictiveAnalyticsPage() {
         ))}
       </div>
 
-      {/* Charts row */}
-      <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-
-        {/* Open risk items right now, by category (live snapshot — no historical trend data is collected yet) */}
-        <div className="panel p-5">
-          <p className="section-title mb-0.5">Open Risk Items by Category</p>
-          <p className="text-xs text-slate-400 mb-4">Current rule-based risk items — maintenance, safety and SLA</p>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart
-              data={[
-                { cat: "Maintenance", value: maintenance.length, color: chart.amber500 },
-                { cat: "Safety",      value: driverRisk.length,  color: chart.red600 },
-                { cat: "SLA",         value: slaRisk.length,     color: chart.teal600 },
-              ]}
-              margin={{ top: 4, right: 8, left: -16, bottom: 0 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
-              <XAxis dataKey="cat" tick={{ fontSize: 10, fill: chart.slate400 }} />
-              <YAxis tick={{ fontSize: 10, fill: chart.slate400 }} allowDecimals={false} />
-              <Tooltip contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8 }} />
-              <Bar dataKey="value" name="Open items" radius={[4, 4, 0, 0]}>
-                {[chart.amber500, chart.red600, chart.teal600].map((c, i) => <Cell key={i} fill={c} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Revenue at risk by category */}
-        <div className="panel p-5">
-          <p className="section-title mb-0.5">Revenue at Risk by Category</p>
-          <p className="text-xs text-slate-400 mb-4">AED × estimated operational exposure</p>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart
-              data={[
-                { cat: "SLA Breach",   value: Math.round(slaRisk.reduce((s, r) => s + Number(r.revenueAtRisk ?? 0), 0) / 1000) },
-                { cat: "Maintenance",  value: Math.round(maintenance.reduce((s, r) => s + Number(r.revenueAtRisk ?? 0), 0) / 1000) },
-                { cat: "Driver Risk",  value: Math.round(driverRisk.reduce((s, r) => s + Number(r.revenueImpact ?? 0), 0) / 1000) },
-              ]}
-              margin={{ top: 4, right: 8, left: -16, bottom: 0 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
-              <XAxis dataKey="cat" tick={{ fontSize: 10, fill: chart.slate400 }} />
-              <YAxis tick={{ fontSize: 10, fill: chart.slate400 }} unit="K" />
-              <Tooltip formatter={(v: unknown) => [`AED ${Number(v ?? 0)}K`, "At Risk"]} contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8 }} />
-              <ReferenceLine y={0} stroke={tokens.border} />
-              <Bar dataKey="value" name="AED K" fill={chart.red600} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
       {/* Feed tabs */}
-      <div className="panel flex gap-1 p-1.5">
+      <div className="panel flex gap-1 overflow-x-auto p-1.5">
         {([
           { key: "maintenance", label: "Maintenance Risk Signals", icon: <Wrench className="h-3.5 w-3.5" />, count: maintenance.length },
           { key: "driver-risk", label: "Driver Safety Risk",      icon: <Shield className="h-3.5 w-3.5" />,  count: driverRisk.length },
           { key: "sla-risk",    label: "SLA Breach Risk",         icon: <Clock className="h-3.5 w-3.5" />,  count: slaRisk.length },
         ] as const).map(({ key, label, icon, count }) => (
           <button key={key} type="button" onClick={() => { setFeed(key); setExpandedId(null); }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${feed === key ? "bg-teal-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}>
+            className={`flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors sm:min-h-9 ${feed === key ? "bg-teal-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}>
             {icon}{label}
             <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${feed === key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>{count}</span>
           </button>
@@ -367,11 +316,69 @@ export function PredictiveAnalyticsPage() {
       {(feed === "maintenance" && maintenance.length === 0) ||
        (feed === "driver-risk" && driverRisk.length === 0)  ||
        (feed === "sla-risk"    && slaRisk.length === 0) ? (
-        <div className="panel p-10 flex flex-col items-center gap-3 text-center">
-          <AlertTriangle className="h-8 w-8 text-slate-300" />
+        <div className="panel flex flex-col items-center gap-2 p-4 text-center">
+          <AlertTriangle className="h-6 w-6 text-slate-300" />
           <p className="text-slate-500 text-sm">No risk signals available at this time.</p>
         </div>
       ) : null}
+
+      {/* Optional chart detail follows the primary decision queue. */}
+      <details className="panel group">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-sm font-semibold text-slate-800 marker:content-none sm:min-h-9">
+          <span>Risk distribution charts</span>
+          <span className="text-xs font-medium text-slate-500 group-open:hidden">Open category analysis</span>
+          <span className="hidden text-xs font-medium text-slate-500 group-open:inline">Hide charts</span>
+        </summary>
+        <div className="grid items-start gap-3 border-t border-slate-200 p-3 xl:grid-cols-[1.6fr_1fr]">
+
+        {/* Open risk items right now, by category (live snapshot — no historical trend data is collected yet) */}
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <p className="section-title mb-0.5">Open Risk Items by Category</p>
+          <p className="text-xs text-slate-400 mb-4">Current rule-based risk items — maintenance, safety and SLA</p>
+          {signalCount > 0 ? <ResponsiveContainer width="100%" height={180}>
+            <BarChart
+              data={[
+                { cat: "Maintenance", value: maintenance.length, color: chart.amber500 },
+                { cat: "Safety",      value: driverRisk.length,  color: chart.red600 },
+                { cat: "SLA",         value: slaRisk.length,     color: chart.teal600 },
+              ]}
+              margin={{ top: 4, right: 8, left: -16, bottom: 0 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
+              <XAxis dataKey="cat" tick={{ fontSize: 10, fill: chart.slate400 }} />
+              <YAxis tick={{ fontSize: 10, fill: chart.slate400 }} allowDecimals={false} />
+              <Tooltip contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8 }} />
+              <Bar dataKey="value" name="Open items" radius={[4, 4, 0, 0]}>
+                {[chart.amber500, chart.red600, chart.teal600].map((c, i) => <Cell key={i} fill={c} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer> : <p className="py-3 text-sm text-slate-500">No open risk signals are available to chart.</p>}
+        </div>
+
+        {/* Revenue at risk by category */}
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <p className="section-title mb-0.5">Revenue at Risk by Category</p>
+          <p className="text-xs text-slate-400 mb-4">AED × estimated operational exposure</p>
+          {totalRevenueAtRisk > 0 ? <ResponsiveContainer width="100%" height={180}>
+            <BarChart
+              data={[
+                { cat: "SLA Breach",   value: Math.round(slaRisk.reduce((s, r) => s + Number(r.revenueAtRisk ?? 0), 0) / 1000) },
+                { cat: "Maintenance",  value: Math.round(maintenance.reduce((s, r) => s + Number(r.revenueAtRisk ?? 0), 0) / 1000) },
+                { cat: "Driver Risk",  value: Math.round(driverRisk.reduce((s, r) => s + Number(r.revenueImpact ?? 0), 0) / 1000) },
+              ]}
+              margin={{ top: 4, right: 8, left: -16, bottom: 0 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke={tokens.border} />
+              <XAxis dataKey="cat" tick={{ fontSize: 10, fill: chart.slate400 }} />
+              <YAxis tick={{ fontSize: 10, fill: chart.slate400 }} unit="K" />
+              <Tooltip formatter={(v: unknown) => [`AED ${Number(v ?? 0)}K`, "At Risk"]} contentStyle={{ background: tokens.surface, border: `1px solid ${tokens.border}`, borderRadius: 8 }} />
+              <ReferenceLine y={0} stroke={tokens.border} />
+              <Bar dataKey="value" name="AED K" fill={chart.red600} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer> : <p className="py-3 text-sm text-slate-500">No recorded revenue exposure is available to chart.</p>}
+        </div>
+        </div>
+      </details>
 
     </div>
   );

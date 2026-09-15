@@ -60,8 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // rendering: /me returns a fresh session (same bearer token + CURRENT permissions/role). We block on
   // it once, so the app only ever renders from server-current permissions. No stored session → nothing
   // to revalidate (the login screen renders immediately).
-  const [revalidating, setRevalidating] = useState<boolean>(MOCK_MODE || initialRef.current != null);
-  const didRevalidate = useRef(false);
+  const [revalidating, setRevalidating] = useState<boolean>(initialRef.current != null);
 
   const setSession = (next: UserSession | null) => {
     setSessionState(next);
@@ -80,24 +79,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    if (didRevalidate.current) return;
-    didRevalidate.current = true;
-
-    if (MOCK_MODE) {
-      // No `cancelled` guard here (unlike the real path below): under dev StrictMode,
-      // React mounts this effect, runs its cleanup, then remounts -- but `didRevalidate`
-      // (a ref, so it survives that cycle) blocks the second mount from ever re-running,
-      // while the FIRST mount's own cleanup would have already flipped a `cancelled` flag
-      // before its import() resolves, permanently skipping setSession. A static, synchronous
-      // mock session has no staleness/race to guard against, so it just always applies.
-      import("@/mocks/fixtures").then(({ FIXTURES }) => {
-        const mockSession = (FIXTURES["/api/auth/me"].body as { data: UserSession }).data;
-        setSession(mockSession);
-        setRevalidating(false);
-      });
-      return;
-    }
-
     if (!initialRef.current) { setRevalidating(false); return; }
     let cancelled = false;
     authApi.me()

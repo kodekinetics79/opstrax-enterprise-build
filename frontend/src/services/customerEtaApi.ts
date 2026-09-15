@@ -7,6 +7,7 @@ export const customerEtaApi = {
   job: (jobId: string | number) => unwrap<AnyRecord>(apiClient.get(`/api/customer-eta/job/${jobId}`)),
   sendUpdate: (jobId: string | number, payload: AnyRecord = {}) => unwrap<AnyRecord>(apiClient.post(`/api/customer-eta/job/${jobId}/send-update`, payload)),
   feedback: (jobId: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post(`/api/customer-eta/job/${jobId}/feedback`, payload)),
+  publicFeedback: (trackingCode: string, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post(`/api/customer-eta/track/${encodeURIComponent(trackingCode)}/feedback`, payload)),
   communications: () => unwrap<AnyRecord[]>(apiClient.get("/api/customer-eta/communications")),
   recommendations: () => unwrap<AnyRecord[]>(apiClient.get("/api/customer-eta/recommendations")),
 };

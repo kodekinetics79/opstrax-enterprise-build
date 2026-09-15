@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import {
-  Bell, ChevronDown, ChevronLeft, ChevronRight, Filter, LogOut,
+  Bell, ChevronDown, ChevronLeft, ChevronRight, LogOut,
   Menu, Search, Settings, ShieldAlert, User, X,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
-import { WorkspaceExperience } from "@/components/WorkspaceExperience";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
 import { useFlag } from "@/hooks/useFeatureFlags";
@@ -14,28 +14,26 @@ import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { moduleAvailableForCountry, useTenantCountry } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useRuntimeDiagnostics } from "@/services/runtimeDiagnostics";
+import { notificationsApi } from "@/services/notificationsApi";
 import type { AnyRecord, UserSession } from "@/types";
+import { consolidateNavigation, navigationRouteActive, splitNavigationItems } from "@/utils/navigationPresentation";
+import "./sidebar-navigation.css";
 
 const NAV_SECTIONS = [
   {
     label: "Operations",
     color: "text-teal-600",
-    items: ["command-center", "control-tower", "fleet-health", "live-dashboard", "map-view", "fleet-live-wall", "geofences", "alerts"],
+    items: ["command-center", "live-dashboard", "fleet-health", "alerts", "map-view", "control-tower", "fleet-live-wall", "geofences"],
   },
   {
     label: "Fleet",
     color: "text-blue-600",
-    items: ["vehicles", "drivers", "branches", "owners", "assignments", "documents", "fleet-utilization", "fleet-workspace", "fleet-cold-chain", "fleet-assets", "fleet-saudi-readiness", "fleet-compliance"],
+    items: ["vehicles", "drivers", "assignments", "documents", "fleet-assets", "fleet-utilization", "branches", "owners", "fleet-workspace", "fleet-cold-chain"],
   },
   {
-    label: "Dispatch",
+    label: "Dispatch & Shipments",
     color: "text-cyan-700",
-    items: ["load-bookings", "dispatch-board", "jobs", "trips", "route-plans", "last-mile-delivery", "operations-proof-center", "logistics-workspace", "workforce", "driver-messaging"],
-  },
-  {
-    label: "Shipments",
-    color: "text-teal-700",
-    items: ["active-shipments", "shipments", "proof-of-delivery"],
+    items: ["dispatch-board", "jobs", "load-bookings", "active-shipments", "shipments", "trips", "proof-of-delivery", "route-plans", "last-mile-delivery", "operations-proof-center", "logistics-workspace", "workforce", "driver-messaging"],
   },
   {
     label: "Safety",
@@ -43,7 +41,7 @@ const NAV_SECTIONS = [
     items: [
       "safety-center", "dashcam", "incidents", "coaching", "driver-scorecards",
       "evidence-packages", "traffic-violations", "digital-forms", "dvir-inspections",
-      "hos-eld", "compliance-center",
+      "hos-eld", "compliance-center", "fleet-compliance", "fleet-saudi-readiness",
     ],
   },
   {
@@ -57,14 +55,9 @@ const NAV_SECTIONS = [
     items: ["telematics-control-tower", "iot-devices", "gps-tracking", "obd-j1939", "sensor-health", "cold-chain"],
   },
   {
-    label: "CRM & Growth",
+    label: "Customers & Sales",
     color: "text-indigo-600",
-    items: ["leads", "sales-pipeline", "opportunities", "campaigns", "account-health", "follow-ups", "support-tickets", "renewals", "upsell-opportunities"],
-  },
-  {
-    label: "Commercial",
-    color: "text-indigo-600",
-    items: ["customers", "contracts", "rate-cards", "price-simulation", "quotations", "customer-eta", "customer-portal", "customer-visibility"],
+    items: ["customers", "leads", "opportunities", "sales-pipeline", "quotations", "contracts", "account-health", "rate-cards", "follow-ups", "support-tickets", "renewals", "campaigns", "upsell-opportunities", "price-simulation", "customer-eta", "customer-portal", "customer-visibility"],
   },
   {
     // moduleConfig has always declared a "Financials" group, but this nav never
@@ -80,12 +73,12 @@ const NAV_SECTIONS = [
   {
     label: "Reports",
     color: "text-purple-600",
-    items: ["reports-analytics", "predictive-analytics", "ai-copilot", "sla-kpi", "carbon-tracking"],
+    items: ["reports-analytics", "predictive-analytics", "ai-copilot", "carbon-tracking"],
   },
   {
     label: "Admin",
     color: "text-slate-500",
-    items: ["user-management", "audit-logs", "alert-rules", "feature-flags", "integrations", "settings", "about"],
+    items: ["user-management", "audit-logs", "alert-rules", "feature-flags", "integrations", "about"],
   },
 ] as const;
 
@@ -96,7 +89,7 @@ type BreadcrumbItem = {
   current?: boolean;
 };
 type SessionLike = Pick<UserSession, "role" | "user" | "company" | "permissions"> | null | undefined;
-type NavState = Partial<Record<Group, boolean>>;
+type NavState = { pathname: string; identity: string; group: Group | null };
 
 const NAV_STORAGE_PREFIX = "opstrax.nav.sidebar";
 
@@ -202,7 +195,7 @@ function buildBreadcrumbs(pathname: string, session: SessionLike): BreadcrumbIte
     segments.forEach((segment, index) => {
       const to = `${base}/${segments.slice(0, index + 1).join("/")}`;
       crumbs.push({
-        label: humanizeSegment(segment),
+        label: activeModule.key === "assignments" && (segment === "board" || segment === "list") ? "List" : humanizeSegment(segment),
         to,
         current: index === segments.length - 1,
       });
@@ -215,81 +208,24 @@ function buildBreadcrumbs(pathname: string, session: SessionLike): BreadcrumbIte
   return crumbs;
 }
 
-function matchesFilter(module: (typeof modules)[number], sectionLabel: string, query: string) {
+function matchesFilter(module: (typeof modules)[number] & { navigationSearch?: string }, sectionLabel: string, query: string) {
   if (!query) return true;
-  const haystack = [module.key, module.title, module.route, module.description, module.group, sectionLabel].join(" ").toLowerCase();
+  const haystack = [module.key, module.title, module.route, module.description, module.group, sectionLabel, module.navigationSearch].join(" ").toLowerCase();
   return haystack.includes(query);
 }
 
-type ExperienceProfile = {
-  clientOutcome: string;
-  maintenanceOutcome: string;
-  shortcuts: Array<{ label: string; route: string }>;
-};
-
-function getExperienceProfile(pathname: string, title: string): ExperienceProfile {
-  const base = {
-    clientOutcome: `Work through ${title.toLowerCase()} with clear next actions and one-click access to the surfaces that resolve each issue.`,
-    maintenanceOutcome: "",
-    shortcuts: [
-      { label: "Dashboard", route: "/command-center" },
-      { label: "Proof Center", route: "/operations/proof-center" },
-      { label: "Control Tower", route: "/control-tower" },
-    ],
-  };
-
-  if (/^\/(command-center|control-tower|live-dashboard|map-view|alerts)/.test(pathname)) {
-    return {
-      clientOutcome: "See live fleet status, risk, and exceptions immediately, then jump to the exact operational surface that resolves the issue.",
-      maintenanceOutcome: "This cluster uses the shared control-room pattern, so future ops modules can be added by configuration instead of one-off page work.",
-      shortcuts: [
-        { label: "Alerts", route: "/alerts" },
-        { label: "Fleet Health", route: "/fleet-health" },
-        { label: "Proof Center", route: "/operations/proof-center" },
-      ],
-    };
-  }
-
-  if (/^\/(vehicles|drivers|fleet-health|fleet-utilization)/.test(pathname)) {
-    return {
-      clientOutcome: "Give transport teams a fast path to readiness, service state, and the next operational decision.",
-      maintenanceOutcome: "These pages now share the same shell and action model, so new roster or readiness views can be added without inventing a new UI language.",
-      shortcuts: [
-        { label: "Vehicles", route: "/vehicles" },
-        { label: "Drivers", route: "/drivers" },
-        { label: "Fleet Health", route: "/fleet-health" },
-      ],
-    };
-  }
-
-  if (/^\/(dispatch|jobs|trips|last-mile-delivery|operations\/proof-center|proof-of-delivery)/.test(pathname)) {
-    return {
-      clientOutcome: "Keep dispatch, proof, and recovery work in one flow so operators always know what happens next.",
-      maintenanceOutcome: "Shared route shortcuts and one set of proof/action patterns make it easier to extend the dispatch spine without redoing every screen.",
-      shortcuts: [
-        { label: "Dispatch", route: "/dispatch" },
-        { label: "Trips", route: "/trips" },
-        { label: "Proof Center", route: "/operations/proof-center" },
-      ],
-    };
-  }
-
-  if (/^\/(fleet-workspace|fleet-cold-chain|fleet-assets|fleet-saudi-readiness|fleet-compliance)/.test(pathname)) {
-    return {
-      clientOutcome: "Keep fleet control surfaces professional, credible, and easy to trust during client walkthroughs.",
-      maintenanceOutcome: "The same surface language now spans fleet submodules, which reduces styling drift and makes future module delivery cheaper.",
-      shortcuts: [
-        { label: "Fleet Workspace", route: "/fleet-workspace" },
-        { label: "Cold Chain", route: "/fleet-cold-chain" },
-        { label: "Fleet Compliance", route: "/fleet-compliance" },
-      ],
-    };
-  }
-
-  return base;
+function notificationTone(severity: unknown): "danger" | "warning" | "info" {
+  const normalized = String(severity ?? "").toLowerCase();
+  if (normalized === "critical" || normalized === "high") return "danger";
+  if (normalized === "medium" || normalized === "warning") return "warning";
+  return "info";
 }
 
-const NOTIFS: Array<{ text: string; time: string; type: "danger" | "warning" | "info" }> = [];
+function notificationTime(value: unknown): string {
+  if (!value) return "Time unavailable";
+  const parsed = new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? "Time unavailable" : parsed.toLocaleString();
+}
 
 export function AppShell() {
   const { session, logout } = useAuth();
@@ -297,6 +233,7 @@ export function AppShell() {
   const navigate = useNavigate();
   const hasPermission = useHasPermission();
   const hasDirectPermission = useHasDirectPermission();
+  const canViewNotifications = hasPermission("notifications:view");
   const canViewSettings = hasPermission(PERMISSIONS.SETTINGS_VIEW);
   const canViewUserManagement = [
     PERMISSIONS.USERS_VIEW,
@@ -305,12 +242,26 @@ export function AppShell() {
   ].some(hasDirectPermission);
   const tenantCountry = useTenantCountry();
   const runtimeQuery = useRuntimeDiagnostics();
-  const tenantIsExplicitlySynthetic = /\b(demo|synthetic|test)\b/i.test(String(session?.company?.name ?? ""));
-  const runtimeState = tenantIsExplicitlySynthetic ? "Demo Data" : (runtimeQuery.data?.state ?? "Unavailable");
+  const tenantNameSuggestsDemo = /\b(demo|synthetic|test)\b/i.test(String(session?.company?.name ?? ""));
+  // Deployment health and data provenance are independent facts. A demo tenant
+  // must never hide a stale bundle or a frontend/API SHA mismatch.
+  const runtimeState = runtimeQuery.data?.state ?? "Unavailable";
   const runtimeIsVerified = runtimeState === "Live" || runtimeState === "Staging";
+  const showReleaseMismatch = runtimeQuery.isFetched && runtimeState === "Mismatch";
+  const notificationsQuery = useQuery({
+    queryKey: ["notifications"],
+    queryFn: notificationsApi.list,
+    enabled: canViewNotifications,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+  const recentNotifications = ((notificationsQuery.data ?? []) as AnyRecord[]).slice(0, 5);
+  const unreadNotificationCount = ((notificationsQuery.data ?? []) as AnyRecord[])
+    .filter((item) => String(item.status ?? item.recipientStatus ?? "").toLowerCase() === "unread").length;
 
   const navStateKey = useMemo(() => getSessionIdentityKey(session), [session?.company?.id, session?.company?.companyId, session?.role, session?.user?.email, session?.user?.id, session?.user?.name]);
   const [sectionOpen, setSectionOpen] = useState<NavState | null>(null);
+  const [moreToolsOpen, setMoreToolsOpen] = useState<Partial<Record<Group, boolean>>>({});
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -326,24 +277,6 @@ export function AppShell() {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(navStateKey);
-      setSectionOpen(raw ? JSON.parse(raw) as NavState : {});
-    } catch {
-      setSectionOpen({});
-    }
-  }, [navStateKey]);
-
-  useEffect(() => {
-    if (sectionOpen === null) return;
-    try {
-      localStorage.setItem(navStateKey, JSON.stringify(sectionOpen));
-    } catch {
-      // Ignore storage failures. Navigation should continue to work without persistence.
-    }
-  }, [navStateKey, sectionOpen]);
 
   const activeModule = useMemo(() => findActiveModule(location.pathname), [location.pathname]);
   const activeModuleEntitled = !activeModule || moduleAllowedByEntitlement(activeModule, session);
@@ -374,7 +307,7 @@ export function AppShell() {
 
       return {
         ...section,
-        items: accessibleItems,
+        items: consolidateNavigation(accessibleItems),
       };
     }).filter((section) => section.items.length > 0),
     [hasDirectPermission, hasPermission, session, tenantCountry, moduleAllowedByFlag],
@@ -386,13 +319,11 @@ export function AppShell() {
 
     return visibleSections
       .map((section) => {
-        const items = section.items.filter((module) => matchesFilter(module, section.label, normalizedSidebarQuery) || isRouteActive(module.route, location.pathname));
+        const items = section.items.filter((module) => matchesFilter(module, section.label, normalizedSidebarQuery));
         return { ...section, items };
       })
       .filter((section) => section.items.length > 0);
   }, [location.pathname, normalizedSidebarQuery, visibleSections]);
-
-  const experience = useMemo(() => getExperienceProfile(location.pathname, currentPageTitle), [location.pathname, currentPageTitle]);
 
   // close transient navigation surfaces on route change
   useEffect(() => {
@@ -423,12 +354,10 @@ export function AppShell() {
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [profileOpen]);
 
-  const toggleGroup = (g: Group) =>
-    setSectionOpen((prev) => {
-      const next: NavState = { ...(prev ?? {}) };
-      next[g] = !(prev?.[g] ?? true);
-      return next;
-    });
+  const activeGroup = visibleSections.find(section => section.items.some(module => navigationRouteActive(module, location.pathname)))?.label ?? visibleSections[0]?.label;
+  const openGroup = sectionOpen?.pathname === location.pathname && sectionOpen.identity === navStateKey
+    ? sectionOpen.group : activeGroup;
+  const toggleGroup = (group: Group) => setSectionOpen({ pathname: location.pathname, identity: navStateKey, group: openGroup === group ? null : group });
 
   const displayName = getSessionDisplayName(session);
   const initials = displayName
@@ -441,22 +370,24 @@ export function AppShell() {
   const roleLabel = getSessionRoleLabel(session);
   const companyLabel = getSessionCompanyLabel(session);
   const planLabel = getSessionPlanLabel(session);
-  const accessibleModuleCount = visibleSections.reduce((total, section) => total + section.items.length, 0);
   const firstFilteredRoute = filteredSections.flatMap((section) => section.items).find((module) => matchesFilter(module, module.group, normalizedSidebarQuery));
-  const backTarget = pageBreadcrumbs.length > 2 ? pageBreadcrumbs[pageBreadcrumbs.length - 2]?.to : undefined;
+  const candidateBackTarget = pageBreadcrumbs.length > 2 ? pageBreadcrumbs[pageBreadcrumbs.length - 2]?.to : undefined;
+  // Wildcard module index routes such as /vehicles/overview use /vehicles as a
+  // redirect to the same screen. Suppress that circular back action.
+  const backTarget = /\/overview\/?$/.test(location.pathname) ? undefined : candidateBackTarget;
 
   /* ── Sidebar nav content (shared between desktop + mobile) ──
      Design system: ONE quiet surface (no nested cards), hierarchy from spacing +
-     a single hairline, single-line 32px rows, identity rendered exactly once
-     (footer). Section color survives only as two precise signals: a 4px dot by
+     a single hairline, compact 32px pointer rows and 44px touch rows. Section
+     color survives only as two precise signals: a 4px dot by
      the group label, and the active item lighting up a segment of the group's
      guide-line. */
   const navContent = (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="sidebar-navigation flex h-full min-h-0 flex-col">
 
       {/* ── Brand ── */}
-      <div className="mx-3 flex items-center gap-2.5 border-b border-slate-200/60 px-1 pb-3.5 pt-4">
-        <OpsTraxLogo size={28} />
+      <div className="mx-2 flex items-center gap-2.5 border-b border-slate-200/60 px-1 pb-2.5 pt-3 pr-10 xl:pr-1">
+        <OpsTraxLogo size={24} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <p className="text-[14px] font-black tracking-tight text-slate-950">OpsTrax</p>
@@ -469,36 +400,42 @@ export function AppShell() {
         </div>
       </div>
 
+      <div className="sidebar-search">
+        <Search aria-hidden="true" className="h-3.5 w-3.5" />
+        <input aria-label="Find a page" placeholder="Find a page…" value={sidebarQuery} onChange={event => setSidebarQuery(event.target.value)} onKeyDown={event => {
+          if (event.key === "Escape") setSidebarQuery("");
+          if (event.key === "Enter" && firstFilteredRoute) { navigate(firstFilteredRoute.route); setSidebarQuery(""); }
+        }} />
+        {sidebarQuery && <button type="button" aria-label="Clear page search" onClick={() => setSidebarQuery("")}><X className="h-3.5 w-3.5" /></button>}
+      </div>
+
       {/* ── Navigation ── */}
-      <nav className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-2">
+      <nav aria-label="Workspace pages" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-1.5">
         {filteredSections.length === 0 ? (
           <div className="px-2 py-6 text-center">
             <p className="text-[13px] font-semibold text-slate-700">No modules match</p>
             <p className="mt-1 text-xs text-slate-400">Try a different term or clear the search.</p>
           </div>
         ) : filteredSections.map((section) => {
-          const isPinnedOpen = section.items.some((module) => isRouteActive(module.route, location.pathname));
-          const isOpen = normalizedSidebarQuery.length > 0 || isPinnedOpen || sectionOpen?.[section.label] !== false;
+          const isCurrentSection = section.items.some(module => navigationRouteActive(module, location.pathname));
+          const isOpen = normalizedSidebarQuery.length > 0 || openGroup === section.label;
+          const { primary, more } = splitNavigationItems(section.items, location.pathname);
+          const shownItems = normalizedSidebarQuery || moreToolsOpen[section.label] ? section.items : primary;
           return (
-            <div key={section.label} className="mb-0.5">
+            <div key={section.label}>
               {/* Group header */}
               <button
                 type="button"
-                className="group/hdr flex w-full items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-slate-100/70"
+                className={`sidebar-group-button group/hdr ${isCurrentSection ? "is-current" : ""}`}
                 onClick={() => toggleGroup(section.label)}
                 aria-expanded={isOpen}
               >
-                <span aria-hidden className={`h-1 w-1 shrink-0 rounded-full bg-current ${section.color}`} />
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                <span aria-hidden className={`sidebar-group-dot bg-current ${section.color}`} />
+                <span className="sidebar-group-label">
                   {section.label}
                 </span>
-                {!isOpen && (
-                  <span className="rounded-full bg-slate-100 px-1.5 text-[10px] font-semibold leading-4 text-slate-400">
-                    {section.items.length}
-                  </span>
-                )}
                 <ChevronDown
-                  className="ml-auto h-3 w-3 text-slate-300 opacity-0 transition-all duration-200 group-hover/hdr:opacity-100"
+                  className="ml-auto h-3.5 w-3.5 text-slate-400 transition-transform"
                   style={{ transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)" }}
                 />
               </button>
@@ -506,17 +443,18 @@ export function AppShell() {
               {/* Group items — hung off a guide-line; the active item lights up
                   its segment of the line in the section color. */}
               {isOpen && (
-                <div className="mb-1 ml-[13px] border-l border-slate-200/80 pl-2">
-                  {section.items.map((module) => {
+                <div className="mb-0.5 ml-[13px] border-l border-slate-200/80 pl-2">
+                  {shownItems.map((module) => {
                     const Icon = moduleIcons[module.key] ?? moduleIcons.assets;
-                    const active = isRouteActive(module.route, location.pathname);
+                    const active = navigationRouteActive(module, location.pathname);
                     return (
                       <Link
                         key={module.key}
                         to={module.route}
+                        onClick={() => setSidebarQuery("")}
                         title={module.description}
                         aria-current={active ? "page" : undefined}
-                        className={`relative flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors duration-100 ${
+                        className={`sidebar-page-link relative flex h-11 items-center gap-2 rounded-md px-2 text-[13px] transition-colors duration-100 xl:h-8 ${
                           active
                             ? "bg-slate-100 font-semibold text-slate-950"
                             : "font-medium text-slate-600 hover:bg-slate-100/70 hover:text-slate-950"
@@ -530,6 +468,9 @@ export function AppShell() {
                       </Link>
                     );
                   })}
+                  {!normalizedSidebarQuery && more.length > 0 && <button type="button" className="sidebar-more" aria-expanded={Boolean(moreToolsOpen[section.label])} onClick={() => setMoreToolsOpen(previous => ({ ...previous, [section.label]: !previous[section.label] }))}>
+                    {moreToolsOpen[section.label] ? "Fewer tools" : `More tools (${more.length})`}<ChevronDown className="h-3 w-3" style={{ transform: moreToolsOpen[section.label] ? "rotate(180deg)" : undefined }} />
+                  </button>}
                 </div>
               )}
             </div>
@@ -545,7 +486,7 @@ export function AppShell() {
 
       {/* ── Desktop Sidebar ── */}
       {/* Single quiet surface — no nested shells; hierarchy comes from spacing. */}
-      <aside className="glass-nav fixed left-4 top-4 bottom-4 z-30 hidden w-[280px] overflow-hidden rounded-2xl border shadow-[0_18px_44px_rgba(15,23,42,.08)] xl:flex xl:flex-col">
+      <aside className="glass-nav fixed bottom-2 left-2 top-2 z-30 hidden w-[248px] overflow-hidden rounded-xl border shadow-[0_14px_36px_rgba(15,23,42,.08)] xl:flex xl:flex-col">
         {navContent}
       </aside>
 
@@ -556,11 +497,11 @@ export function AppShell() {
             className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm"
             onClick={() => setMobileOpen(false)}
           />
-          <aside ref={mobileNavRef} id="tenant-mobile-navigation" className="anim-slide-left absolute inset-y-0 left-0 w-[272px] overflow-y-auto border-r border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-3 shadow-2xl" role="dialog" aria-modal="true" aria-label="Tenant navigation">
+          <aside ref={mobileNavRef} id="tenant-mobile-navigation" className="anim-slide-left absolute inset-y-0 left-0 flex w-[min(18rem,90vw)] flex-col overflow-hidden border-r border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] shadow-2xl" role="dialog" aria-modal="true" aria-label="Tenant navigation">
             <button
               type="button"
               aria-label="Close navigation"
-              className="absolute right-3 top-3 icon-btn"
+              className="icon-btn absolute right-2 top-2 h-11 w-11"
               onClick={() => setMobileOpen(false)}
             >
               <X className="h-4 w-4" />
@@ -573,24 +514,28 @@ export function AppShell() {
       {/* ── Main ── */}
       {/* Fixed to viewport height: header stays pinned, the page body below owns
           its own scroll so KPIs/metrics never leave the visible screen. */}
-      <div className="flex h-screen flex-col overflow-hidden xl:pl-[296px]">
+      <div className="flex h-screen flex-col overflow-hidden xl:pl-[256px]">
 
         {/* ── Header ── */}
         <header className="glass-nav shell-header relative z-40 shrink-0 border-b">
-          <div className="mx-auto max-w-[1800px] px-4 md:px-6">
-            <div className="flex h-[54px] items-center gap-3">
+          <div className="mx-auto max-w-[1800px] px-3 md:px-4 xl:px-5">
+            <div className="flex h-12 items-center gap-2">
 
               {/* Mobile menu button */}
-              <button type="button" aria-label="Open navigation" aria-expanded={mobileOpen} aria-controls="tenant-mobile-navigation" className="icon-btn xl:hidden shrink-0" onClick={() => setMobileOpen(true)}>
+              <button type="button" aria-label="Open navigation" aria-expanded={mobileOpen} aria-controls="tenant-mobile-navigation" className="icon-btn h-11 w-11 shrink-0 xl:hidden" onClick={() => setMobileOpen(true)}>
                 <Menu className="h-4 w-4" />
               </button>
 
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 lg:hidden">
+                {currentPageTitle}
+              </span>
+
               {/* Page context breadcrumb (fills the centre gap) */}
-              <div className="ml-1 hidden min-w-0 items-center gap-3 border-l border-slate-200 pl-4 lg:flex">
+              <div className="hidden min-w-0 max-w-[min(34vw,30rem)] items-center gap-2 border-l border-slate-200 pl-3 lg:flex">
                 {backTarget ? (
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                    className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
                     onClick={() => navigate(backTarget)}
                   >
                     <ChevronLeft className="h-3.5 w-3.5" />
@@ -608,7 +553,7 @@ export function AppShell() {
                             <Link
                               to={crumb.to}
                               className={`truncate text-[12px] font-semibold transition hover:text-slate-950 ${
-                                index === 0 ? "uppercase tracking-[0.18em] text-slate-400" : "text-slate-600"
+                                index === 0 ? "uppercase tracking-[0.12em] text-slate-400" : "text-slate-600"
                               }`}
                             >
                               {crumb.label}
@@ -616,7 +561,7 @@ export function AppShell() {
                           ) : (
                             <span
                               className={`truncate text-[12px] font-semibold ${
-                                isLast ? "text-slate-900" : index === 0 ? "uppercase tracking-[0.18em] text-slate-400" : "text-slate-500"
+                                isLast ? "text-slate-900" : index === 0 ? "uppercase tracking-[0.12em] text-slate-400" : "text-slate-500"
                               }`}
                             >
                               {crumb.label}
@@ -629,37 +574,10 @@ export function AppShell() {
                 </nav>
               </div>
 
-              {/* ── Global module search (top center) ── */}
-              <div className="hidden min-w-0 flex-1 justify-center px-4 md:flex">
-                <div className="relative w-full max-w-md">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                  <input
-                    className="h-9 w-full rounded-lg border border-transparent bg-slate-100/80 pl-8 pr-8 text-[13px] text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-slate-200 focus:bg-white"
-                    placeholder={`Search ${accessibleModuleCount} modules…`}
-                    value={sidebarQuery}
-                    onChange={(event) => setSidebarQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter") return;
-                      event.preventDefault();
-                      if (firstFilteredRoute) {
-                        navigate(firstFilteredRoute.route);
-                        setSidebarQuery("");
-                        return;
-                      }
-                    }}
-                    aria-describedby={sidebarQuery.length > 0 && !firstFilteredRoute ? "module-search-status" : undefined}
-                  />
-                  {sidebarQuery.length > 0 && firstFilteredRoute && (
-                    <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-slate-200 bg-white px-1 text-[10px] font-semibold leading-4 text-slate-400">↵</kbd>
-                  )}
-                  {sidebarQuery.length > 0 && !firstFilteredRoute && (
-                    <span id="module-search-status" className="sr-only" role="status">No accessible modules match.</span>
-                  )}
-                </div>
-              </div>
+              <div className="flex-1" />
 
               {/* Live clock */}
-              <div className="ml-auto hidden flex-col items-end leading-none md:flex">
+              <div className="ml-auto hidden flex-col items-end leading-none 2xl:flex">
                 <span className="font-mono text-[15px] font-bold tabular-nums text-slate-800">
                   {now.toLocaleTimeString("en-GB", { hour12: false })}
                 </span>
@@ -669,11 +587,11 @@ export function AppShell() {
               </div>
 
               {/* Right section */}
-              <div className="ml-auto flex items-center gap-2 md:ml-3 md:border-l md:border-slate-200 md:pl-3">
+              <div className="ml-auto flex items-center gap-1.5 md:ml-2 md:border-l md:border-slate-200 md:pl-2">
 
                 {/* Runtime truth status: green only after API/DB/worker/telemetry verification. */}
                 <div
-                  className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold sm:flex ${
+                  className={`hidden items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-semibold sm:flex ${
                     runtimeIsVerified
                       ? "border-emerald-500/30 bg-emerald-50 text-emerald-700"
                       : runtimeState === "Stale"
@@ -687,15 +605,15 @@ export function AppShell() {
                 </div>
 
                 {/* Notifications */}
-                <div className="relative" ref={notifRef}>
+                {canViewNotifications ? <div className="relative" ref={notifRef}>
                   <button
                     type="button"
                     aria-label="Notifications"
-                    className="icon-btn relative h-8 w-8"
+                    className="icon-btn relative h-11 w-11 md:h-8 md:w-8"
                     onClick={() => setNotifOpen((v) => !v)}
                   >
                     <Bell className="h-3.5 w-3.5" />
-                    {NOTIFS.length > 0 ? <span className="notif-badge">{NOTIFS.length}</span> : null}
+                    {unreadNotificationCount > 0 ? <span className="notif-badge">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span> : null}
                   </button>
 
                   {notifOpen && (
@@ -703,50 +621,65 @@ export function AppShell() {
                       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
                         <p className="section-title">Notifications</p>
                         <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
-                          {NOTIFS.length} new
+                          {unreadNotificationCount} unread
                         </span>
                       </div>
                       <div className="max-h-[320px] overflow-y-auto divide-y divide-slate-100">
-                        {NOTIFS.length === 0 ? (
+                        {notificationsQuery.isLoading ? (
+                          <div className="px-4 py-8 text-center">
+                            <p className="text-sm font-semibold text-slate-700">Loading notifications…</p>
+                          </div>
+                        ) : notificationsQuery.isError ? (
+                          <div className="px-4 py-8 text-center" role="alert">
+                            <p className="text-sm font-semibold text-rose-700">Notifications unavailable</p>
+                            <p className="mt-1 text-xs text-slate-500">Open Notification Center or retry after the service recovers.</p>
+                          </div>
+                        ) : recentNotifications.length === 0 ? (
                           <div className="px-4 py-8 text-center">
                             <p className="text-sm font-semibold text-slate-700">No notifications yet</p>
-                            <p className="mt-1 text-xs text-slate-500">Live alerts will appear here when the backend emits them.</p>
+                            <p className="mt-1 text-xs text-slate-500">No persisted notification is assigned to this user or role.</p>
                           </div>
                         ) : (
-                          NOTIFS.map((n, i) => (
-                            <div key={i} className="flex items-start gap-3 px-4 py-3 transition hover:bg-slate-50 cursor-pointer">
+                          recentNotifications.map((item, i) => {
+                            const tone = notificationTone(item.severity);
+                            return <button
+                              type="button"
+                              key={String(item.id ?? i)}
+                              className="flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-slate-50"
+                              onClick={() => { navigate("/notifications"); setNotifOpen(false); }}
+                            >
                               <span
                                 className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${
-                                  n.type === "danger" ? "bg-red-400" : n.type === "warning" ? "bg-amber-400" : "bg-sky-400"
+                                  tone === "danger" ? "bg-red-400" : tone === "warning" ? "bg-amber-400" : "bg-sky-400"
                                 }`}
                               />
                               <div className="min-w-0 flex-1">
-                                <p className="text-[13px] text-slate-700 leading-snug">{n.text}</p>
-                                <p className="mt-0.5 text-xs text-slate-500">{n.time}</p>
+                                <p className="text-[13px] leading-snug text-slate-700">{String(item.title ?? item.message ?? "Notification")}</p>
+                                <p className="mt-0.5 text-xs text-slate-500">{notificationTime(item.createdAt ?? item.created_at)}</p>
                               </div>
-                            </div>
-                          ))
+                            </button>;
+                          })
                         )}
                       </div>
                       <div className="border-t border-slate-200 px-4 py-2.5">
                         <button
                           type="button"
                           className="text-xs font-semibold text-teal-700 hover:text-teal-600 transition"
-                          onClick={() => navigate("/audit-logs")}
+                          onClick={() => { navigate("/notifications"); setNotifOpen(false); }}
                         >
                           View all notifications
                         </button>
                       </div>
                     </div>
                   )}
-                </div>
+                </div> : null}
 
                 {/* Avatar / profile dropdown */}
                 <div className="relative" ref={profileRef}>
                   <button
                     ref={profileTriggerRef}
                     type="button"
-                    className="flex shrink-0 items-center gap-2 rounded-lg border border-transparent px-1 py-1 transition hover:border-slate-200 hover:bg-slate-100/70 lg:pr-2"
+                    className="flex min-h-11 shrink-0 items-center gap-2 rounded-lg border border-transparent px-1 py-1 transition hover:border-slate-200 hover:bg-slate-100/70 lg:min-h-8 lg:pr-2"
                     title="My profile"
                     aria-label="Open account menu"
                     aria-expanded={profileOpen}
@@ -781,6 +714,12 @@ export function AppShell() {
                           <p className="text-[11px] text-slate-500 truncate">{roleLabel} · {companyLabel}</p>
                         </div>
                       </div>
+                      {tenantNameSuggestsDemo ? (
+                        <div className="border-b border-slate-100 px-4 py-3 text-xs text-slate-600" data-testid="tenant-data-context">
+                          <p className="font-semibold text-slate-800">Demo / test workspace name</p>
+                          <p className="mt-1 leading-5">Based on the organization name. Check individual records for their source.</p>
+                        </div>
+                      ) : null}
                       {/* Actions */}
                       <div className="py-1">
                         {canViewSettings && (
@@ -829,26 +768,31 @@ export function AppShell() {
             the shell off-screen; scrollbar-gutter keeps width stable across load states so
             charts measured before the scrollbar appears never lock in a too-wide layout. */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-clip scrollbar-gutter-stable">
+          {showReleaseMismatch && (
+            <div
+              className="flex shrink-0 flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-red-300 bg-red-50 px-3 py-2 text-center text-xs font-semibold text-red-950"
+              role="alert"
+              data-testid="release-mismatch-banner"
+            >
+              <ShieldAlert className="h-4 w-4 shrink-0 text-red-600" />
+              <span>Browser and API releases differ. Reload to check for the latest release.</span>
+              <button
+                type="button"
+                className="rounded-md border border-red-300 bg-white px-2.5 py-1 text-[11px] font-bold text-red-800 shadow-sm transition hover:bg-red-100"
+                onClick={() => window.location.reload()}
+              >
+                Reload now
+              </button>
+            </div>
+          )}
           {session?.supportAccess?.active && (
-            <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-2 text-center text-sm font-semibold text-amber-950" role="status" data-testid="support-access-banner">
+            <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-center text-xs font-semibold text-amber-950" role="status" data-testid="support-access-banner">
               Read-only Platform support session · tenant changes are blocked · reference {session.supportAccess.grantRef}
             </div>
           )}
-          {/* The dashboard renders its own status strip; a second title/shortcut band there
-              costs ~90px of first-viewport space and duplicates the sidebar nav. */}
-          {location.pathname !== "/command-center" && (
-            <div className="mx-auto w-full max-w-[1800px] shrink-0 px-4 pt-4 md:px-6">
-              <WorkspaceExperience
-                pageTitle={currentPageTitle}
-                clientOutcome={experience.clientOutcome}
-                maintenanceOutcome={experience.maintenanceOutcome}
-                shortcuts={experience.shortcuts}
-              />
-            </div>
-          )}
-
           {/* ── Content ── */}
-          <main className="mx-auto flex w-full min-h-0 max-w-[1800px] flex-1 flex-col px-4 py-6 md:px-6">
+          <main className="tenant-workspace mx-auto flex w-full min-h-0 max-w-[1800px] flex-1 flex-col px-3 py-3 md:px-4 xl:px-5">
+            {import.meta.env.DEV && import.meta.env.VITE_POC_REHEARSAL === "true" && <p role="status" className="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800">LOCAL SOFTWARE REHEARSAL - synthetic HOS, device and delivery evidence; test ledger only; no live ELD certification or money movement.</p>}
             {activeModuleEntitled ? <Outlet /> : (
               <div className="grid min-h-[55vh] place-items-center px-4">
                 <div className="panel max-w-xl p-8 text-center">

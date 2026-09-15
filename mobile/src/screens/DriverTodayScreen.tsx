@@ -5,7 +5,6 @@ import {
   EmptyState,
   ErrorState,
   Field,
-  HeroPanel,
   LoadingState,
   MetricCard,
   Panel,
@@ -15,6 +14,7 @@ import {
   SectionHeader,
   toneForStatus,
 } from "@/components/ui";
+import { DriverActionTile, DriverSceneHero } from "@/components/DriverExperience";
 import { useSession } from "@/auth/SessionProvider";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
 import { textOf, titleCase } from "@/data/records";
@@ -49,36 +49,22 @@ export function DriverTodayScreen() {
 
   return (
     <Screen>
-      <HeroPanel tone={blocked ? "red" : "teal"}>
-        <SectionHeader
-          eyebrow={session?.company.name}
-          title={`Good day, ${driver?.fullName ?? session?.user.name ?? "driver"}`}
-          description={blocked
-            ? "A safety block is active. Resolve it before operating the assigned vehicle."
-            : "Your vehicle, load, compliance state, and next action are synchronized with dispatch."}
-          right={<Pill label={blocked ? "Action required" : textOf(driver?.status, "Driver")} tone={blocked ? "red" : toneForStatus(String(driver?.status ?? ""))} />}
-        />
+      <DriverSceneHero
+        eyebrow={session?.company.name ?? "Driver workspace"}
+        title={`Good day, ${driver?.fullName ?? session?.user.name ?? "driver"}`}
+        description={blocked
+          ? "A safety block is active. Resolve it before operating the assigned vehicle."
+          : "Your route, vehicle, proof, compliance state, and next action stay synchronized with dispatch."}
+        status={blocked ? "Action required" : textOf(driver?.status, "Driver ready")}
+        tone={blocked ? "red" : "teal"}
+      >
         <Row>
-          <MetricCard
-            label="Vehicle"
-            value={textOf(assignment?.vehicleCode ?? driver?.vehicleCode, "Unassigned")}
-            helper={blocked ? "Blocked from operation" : "Current assignment"}
-            tone={blocked ? "red" : "teal"}
-          />
-          <MetricCard
-            label="Drive left"
-            value={profile.data?.hos?.dataAvailable ? `${textOf(profile.data.hos.remainingDriveHours)}h` : "No ELD data"}
-            helper={profile.data?.hos?.dataAvailable ? "Available drive time" : "No certified HOS feed"}
-            tone="blue"
-          />
-          <MetricCard
-            label="Coaching"
-            value={String(profile.data?.coaching?.pendingCount ?? 0)}
-            helper="Items waiting"
-            tone={(profile.data?.coaching?.pendingCount ?? 0) > 0 ? "amber" : "green"}
-          />
+          <DriverActionTile code="A" title="Assignment" subtitle={assignment ? "Live load" : "Awaiting dispatch"} tone={assignment ? "teal" : "blue"} />
+          <DriverActionTile code="V" title="Vehicle" subtitle={textOf(assignment?.vehicleCode ?? driver?.vehicleCode, "Unassigned")} tone={blocked ? "red" : "blue"} />
+          <DriverActionTile code="P" title="Proof" subtitle={assignment ? "Ready when required" : "No active load"} tone="green" />
+          <DriverActionTile code="D" title="Dispatch" subtitle="Connected" tone="violet" />
         </Row>
-      </HeroPanel>
+      </DriverSceneHero>
 
       {profile.loading || current.loading ? <LoadingState label="Loading your live work…" /> : null}
       {profile.error ? <ErrorState title="Driver profile unavailable" body={profile.error} /> : null}
@@ -87,6 +73,27 @@ export function DriverTodayScreen() {
       {blocked ? (
         <ErrorState title="Vehicle blocked" body={profile.data?.vehicleBlocking?.reason ?? "Do not operate this vehicle until maintenance clears it."} />
       ) : null}
+
+      <Row>
+        <MetricCard
+          label="Vehicle"
+          value={textOf(assignment?.vehicleCode ?? driver?.vehicleCode, "Unassigned")}
+          helper={blocked ? "Blocked from operation" : "Current assignment"}
+          tone={blocked ? "red" : "teal"}
+        />
+        <MetricCard
+          label="Drive left"
+          value={profile.data?.hos?.dataAvailable ? `${textOf(profile.data.hos.remainingDriveHours)}h` : "No ELD data"}
+          helper={profile.data?.hos?.dataAvailable ? "Available drive time" : "No certified HOS feed"}
+          tone="blue"
+        />
+        <MetricCard
+          label="Coaching"
+          value={String(profile.data?.coaching?.pendingCount ?? 0)}
+          helper="Items waiting"
+          tone={(profile.data?.coaching?.pendingCount ?? 0) > 0 ? "amber" : "green"}
+        />
+      </Row>
 
       <Panel variant="elevated" tone={assignment ? "teal" : undefined}>
         <SectionHeader

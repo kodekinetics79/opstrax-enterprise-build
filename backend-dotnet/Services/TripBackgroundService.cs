@@ -119,7 +119,18 @@ public sealed class TripBackgroundService(
     }
 
     // ── Step 1: Create trips ──────────────────────────────────────────────────────
-    private async Task CreateTripsFromActiveRoutesAsync(CancellationToken ct)
+    private Task CreateTripsFromActiveRoutesAsync(CancellationToken ct)
+        => ProjectActiveRoutesAsync(db, null, null, log, ct);
+
+    // Call only inside the caller's tenant transaction: projection and activation
+    // commit together and share the worker's per-route advisory lock.
+    internal static Task ProjectAssignedRouteAsync(Database db, long companyId, long routeId, CancellationToken ct)
+    {
+        if (companyId <= 0 || routeId <= 0) throw new ArgumentOutOfRangeException(nameof(routeId));
+        return ProjectActiveRoutesAsync(db, companyId, routeId, null, ct);
+    }
+
+    private static async Task ProjectActiveRoutesAsync(Database db, long? companyFilter, long? routeFilter, ILogger? projectionLog, CancellationToken ct)
     {
         var routes = await db.QueryAsync(
             @"SELECT r.id, r.company_id, r.assigned_vehicle_id, r.assigned_driver_id,
@@ -132,15 +143,21 @@ public sealed class TripBackgroundService(
               FROM routes r
               JOIN vehicles route_vehicle ON route_vehicle.id=r.assigned_vehicle_id AND route_vehicle.company_id=r.company_id
               LEFT JOIN drivers route_driver ON route_driver.id=r.assigned_driver_id AND route_driver.company_id=r.company_id
-              LEFT JOIN route_stops rs ON rs.route_id=r.id
-              LEFT JOIN route_stops rs_first ON rs_first.route_id=r.id
-                    AND rs_first.stop_sequence=(SELECT MIN(s2.stop_sequence) FROM route_stops s2 WHERE s2.route_id=r.id)
-              LEFT JOIN route_stops rs_last ON rs_last.route_id=r.id
-                    AND rs_last.stop_sequence=(SELECT MAX(s3.stop_sequence) FROM route_stops s3 WHERE s3.route_id=r.id)
-              WHERE r.status='Active' AND r.assigned_vehicle_id IS NOT NULL
+              LEFT JOIN route_stops rs ON rs.route_id=r.id AND rs.company_id=r.company_id
+              LEFT JOIN route_stops rs_first ON rs_first.route_id=r.id AND rs_first.company_id=r.company_id
+                    AND rs_first.stop_sequence=(SELECT MIN(s2.stop_sequence) FROM route_stops s2 WHERE s2.route_id=r.id AND s2.company_id=r.company_id)
+              LEFT JOIN route_stops rs_last ON rs_last.route_id=r.id AND rs_last.company_id=r.company_id
+                    AND rs_last.stop_sequence=(SELECT MAX(s3.stop_sequence) FROM route_stops s3 WHERE s3.route_id=r.id AND s3.company_id=r.company_id)
+              WHERE r.status='Active' AND r.deleted_at IS NULL AND r.assigned_vehicle_id IS NOT NULL
+                AND (@companyFilter::BIGINT IS NULL OR r.company_id=@companyFilter)
+                AND (@routeFilter::BIGINT IS NULL OR r.id=@routeFilter)
                 AND (r.assigned_driver_id IS NULL OR route_driver.id IS NOT NULL)
               GROUP BY r.id, rs_first.address, rs_last.address",
-            ct: ct);
+            c =>
+            {
+                c.Parameters.AddWithValue("companyFilter", (object?)companyFilter ?? DBNull.Value);
+                c.Parameters.AddWithValue("routeFilter", (object?)routeFilter ?? DBNull.Value);
+            }, ct);
 
         foreach (var route in routes)
         {
@@ -177,11 +194,13 @@ public sealed class TripBackgroundService(
                     (company_id, driver_id, vehicle_id, route_id, job_id,
                      status, planned_start_time, planned_end_time,
                      origin, destination,
-                     planned_distance_miles, planned_duration_minutes, total_planned_stops)
+                     planned_distance_miles, planned_duration_minutes, total_planned_stops,
+                     data_origin, verification_status)
                   VALUES (@cid, @did, @vid, @rid, @jid,
                           'planned', @pstart, @pend,
                           @origin, @dest,
-                          @pdist, @pdur, @tstops)",
+                          @pdist, @pdur, @tstops,
+                          'runtime_route_projection','derived_from_recorded_route')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid",    companyId);
@@ -217,7 +236,7 @@ public sealed class TripBackgroundService(
                          rs.time_window_start, rs.time_window_end,
                          rs.eta, 'pending'
                   FROM route_stops rs
-                  WHERE rs.route_id=@rid
+                  WHERE rs.route_id=@rid AND rs.company_id=@cid
                   ORDER BY rs.stop_sequence",
                 c =>
                 {
@@ -226,7 +245,7 @@ public sealed class TripBackgroundService(
                     c.Parameters.AddWithValue("@rid", routeId);
                 }, ct);
 
-            log.LogInformation("[TripBgSvc] Created trip {TripId} for route {RouteId}", tripId, routeId);
+            projectionLog?.LogInformation("[TripBgSvc] Created trip {TripId} for route {RouteId}", tripId, routeId);
         }
     }
 

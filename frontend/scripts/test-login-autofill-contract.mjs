@@ -39,4 +39,5 @@ assert.doesNotMatch(loginPage, /console\.(?:log|debug|info|warn|error)\([^\n]*(?
 assert.doesNotMatch(loginPage, /localStorage[^\n]*(?:password|nextPassword)/i);
 assert.doesNotMatch(loginPage, /sessionStorage[^\n]*(?:password|nextPassword)/i);
 
-console.log("Login browser-autofill behavior contract passed.");
+console.log("Login autofill static source contract passed (no browser claim).");
+await import("./test-login-flow-behavior.mjs");

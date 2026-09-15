@@ -161,7 +161,9 @@ public class DemoTenantSeederPostgresTests
             c => c.Parameters.AddWithValue("@c", companyId)));
         Assert.Equal(1, await db.ScalarLongAsync(
             @"SELECT COUNT(*) FROM eld_devices WHERE company_id=@c AND device_serial LIKE 'MER-ELD-%'
-                AND branch_id IS NOT NULL AND status='Diagnostic' AND provider_sync_status='Healthy'
+                AND branch_id IS NOT NULL AND status='Diagnostic' AND provider_sync_status='Unverified'
+                AND device_model='Synthetic demo ELD' AND provider='Synthetic fixture — no provider account'
+                AND last_sync_at IS NULL AND firmware_version='demo-fixture'
                 AND api_key_hash IS NULL AND hmac_secret_encrypted IS NULL",
             c => c.Parameters.AddWithValue("@c", companyId)));
         Assert.Equal(2, await db.ScalarLongAsync("SELECT COUNT(*) FROM driver_safety_scores WHERE company_id=@c AND breakdown_json->>'formulaVersion'='safety-pilot-v2'", c => c.Parameters.AddWithValue("@c", companyId)));
@@ -198,6 +200,47 @@ public class DemoTenantSeederPostgresTests
 
         // NOTE: intentionally NOT deleted — the demo tenant persists so it is usable in a
         // live demo. The seeder is idempotent, so a subsequent suite run re-seeds cleanly.
+    }
+
+    [Fact]
+    public async Task DemoTimeSeriesEnrichment_DoesNotMintProviderOrDeviceEvidence()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyCode = $"ENRICH-DEMO-{Guid.NewGuid():N}"[..36];
+        await DeleteDemoTenantAsync(db, companyCode);
+
+        try
+        {
+            var companyId = await db.InsertAsync(
+                "INSERT INTO companies(company_code,name,industry,timezone,status) VALUES(@code,'Enrichment — Demo','Transport & Logistics','America/New_York','Active') RETURNING id",
+                c => c.Parameters.AddWithValue("@code", companyCode));
+            await db.InsertAsync(
+                "INSERT INTO vehicles(company_id,vehicle_code,type,vin_exception_type,alternate_identifier,status) VALUES(@c,@code,'Truck','legacy-fleet-identifier',@code,'Available') RETURNING id",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"ENRICH-{companyId}"); });
+
+            var inserted = await new DemoTenantSeeder(db).EnrichTimeSeriesAsync(companyId);
+
+            Assert.True(inserted > 0);
+            Assert.Equal(1, await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM eld_devices
+                  WHERE company_id=@c AND device_serial LIKE 'DEMO-ELD-%'
+                    AND device_model='Synthetic demo gateway'
+                    AND provider='Synthetic fixture — no provider account'
+                    AND status='Diagnostic' AND provider_sync_status='Unverified'
+                    AND last_heartbeat_at IS NULL AND last_sync_at IS NULL
+                    AND api_key_hash IS NULL AND hmac_secret_encrypted IS NULL",
+                c => c.Parameters.AddWithValue("@c", companyId)));
+            Assert.Equal(0, await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM eld_devices
+                  WHERE company_id=@c AND (provider IN ('Geotab','Samsara','Motive')
+                    OR status='Active' OR last_heartbeat_at IS NOT NULL OR last_sync_at IS NOT NULL)",
+                c => c.Parameters.AddWithValue("@c", companyId)));
+        }
+        finally
+        {
+            await DeleteDemoTenantAsync(db, companyCode);
+        }
     }
 
     [Fact]
@@ -571,12 +614,15 @@ public class DemoTenantSeederPostgresTests
         // Match the production bootstrap order for every table/column DemoTenantSeeder
         // writes. Do not manually ALTER individual columns here: doing so previously
         // masked clean-install drift in both customer_feedback and documents.
+        await new CoreSchemaService(db, NullLogger<CoreSchemaService>.Instance).EnsureAsync();
         await new Batch1SchemaService(db).EnsureAsync();
         await new Batch2SchemaService(db).EnsureAsync();
         await new Batch3SchemaService(db).EnsureAsync();
         await new Batch4SchemaService(db).EnsureAsync();
         await new Batch5SchemaService(db).EnsureAsync();
         await new Batch6SchemaService(db).EnsureAsync();
+        await db.ExecuteAsync(File.ReadAllText(Path.Combine(
+            RepoRootPath(), "database", "migrations", "2026_09_03_stage99_hos_clock_source_truth.sql")));
         await new Batch7SchemaService(db).EnsureAsync();
         await new TelemetrySchemaService(db).EnsureAsync();
         await new SafetySchemaService(db).EnsureAsync();
@@ -593,6 +639,9 @@ public class DemoTenantSeederPostgresTests
         await new FinanceActivationSchemaService(db).EnsureAsync();
         await new TaxSchemaService(db).EnsureAsync();
         await new Stage9SchemaService(db).EnsureAsync();
+        await new FeatureFlagSchemaService(db).EnsureAsync();
+        await new SecuritySchemaService(db).EnsureAsync();
+        await new PlatformSchemaService(db).EnsureAsync();
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS company_id BIGINT NOT NULL DEFAULT 1");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS module_key VARCHAR(100) NULL");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS body TEXT NULL");

@@ -28,38 +28,53 @@ test("installed parser regressions stay outside zero-install launch tooling", ()
   }
 });
 
-test("CI reapplies Stage76 after Stage58, Stage59 and Stage67", () => {
+test("CI reapplies terminal security and migration-owned boundaries through the production runner", () => {
   const workflow = read(".github/workflows/ci.yml");
   const terminalStep = workflow.slice(
-    workflow.indexOf("Reapply mandatory terminal tenant and telemetry boundaries"),
-    workflow.indexOf("Run DB-backed integration suites"),
+    workflow.indexOf("Reapply mandatory terminal and migration-owned boundaries after schema materialization"),
+    workflow.indexOf("Apply bounded Canada and KSA HOS shadow candidate migrations"),
   );
-  assertOrdered(terminalStep, [
-    "2026_07_31_stage58_nonforgeable_tenant_ticket.sql",
-    "2026_07_31_stage59_data_protection_key_ring.sql",
-    "2026_08_02_stage67_telematics_diagnostics_integrity.sql",
-    "2026_08_11_stage76_telematics_security_hardening.sql",
-  ]);
+  assert.match(terminalStep, /\.\/tools\/apply-neon-predeploy-migrations\.sh/);
   assert.match(terminalStep, /version='2026_08_11_stage76_telematics_security_hardening'/);
+  assert.match(terminalStep, /version='2026_09_08_stage132_private_user_row_authority'/);
+  assert.match(terminalStep, /private_policy_contract_valid/);
+  assert.match(terminalStep, /migration_owned_policy_contract_valid/);
   assert.match(terminalStep, /defaclnamespace=0 OR n\.nspname='public'/);
   assert.match(terminalStep, /canonical_telemetry_events_id_seq/);
   assert.match(terminalStep, /telemetry_replay_device_state/);
 });
 
-test("predeploy runner makes Stage76 terminal on first and repair runs", () => {
+test("predeploy runner makes Stage76 terminal on first and verification runs", () => {
   const runner = read("tools/apply-neon-predeploy-migrations.sh");
-  const repair = runner.slice(runner.indexOf('if [ "$stage58_already_applied" = "1" ]'), runner.indexOf("Post-check: auth-critical columns"));
-  assertOrdered(repair, [
+  const rerun = runner.slice(runner.indexOf('if [ "$stage58_already_applied" = "1" ]'), runner.indexOf("Post-check: auth-critical columns"));
+  assertOrdered(rerun, [
     "2026_07_31_stage58_nonforgeable_tenant_ticket.sql",
     "2026_07_31_stage59_data_protection_key_ring.sql",
     "2026_08_02_stage67_telematics_diagnostics_integrity.sql",
     "2026_08_11_stage76_telematics_security_hardening.sql",
   ]);
+  assert.match(
+    rerun,
+    /2026_07_31_stage58_nonforgeable_tenant_ticket\.sql Stage58 "30s" 4/,
+    "hot production Stage58 reconciliation must retain its bounded lock queue",
+  );
   const initial = runner.slice(runner.indexOf("Reapplying Stage67 least-privilege"));
   assertOrdered(initial, [
     "2026_08_02_stage67_telematics_diagnostics_integrity.sql",
     "2026_08_11_stage76_telematics_security_hardening.sql",
     "Ledger:",
+  ]);
+});
+
+test("Stage58 avoids redundant policy DDL on already exact hot tables", () => {
+  const stage58 = read("database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql");
+  assertOrdered(stage58, [
+    "INTO policy_contract_exact",
+    "IF NOT rec.relrowsecurity THEN",
+    "IF NOT rec.relforcerowsecurity THEN",
+    "IF NOT policy_contract_exact THEN",
+    "DROP POLICY %I ON public.%I",
+    "CREATE POLICY tenant_ticket_app ON public.%I",
   ]);
 });
 
@@ -114,7 +129,7 @@ test("clean chain and production rehearsal require Stage76 evidence", () => {
   const clean = read("tools/test-predeploy-clean-chain.sh");
   const rehearsal = read("tools/test-production-shaped-local-rehearsal.sh");
   assert.match(clean, /2026_08_11_stage76_telematics_security_hardening/);
-  assert.match(clean, /Stage76-terminal runner replays/);
+  assert.match(clean, /verification-only ledger rerun/);
   assert.match(rehearsal, /migration_ledgers=16/);
   assert.match(rehearsal, /stage76_secret_read_violations=0/);
   assert.match(rehearsal, /stage76_default_acl_violations=0/);
@@ -168,6 +183,8 @@ test("release container Telematics tests have a hermetic Postgres service", () =
 
 test("release API image contains the required gateway and terminal migrations", () => {
   const dockerfile = read("backend-dotnet/Dockerfile");
+  const renderDockerfile = read("Dockerfile");
+  const gatewayDockerfile = read("telematics/Dockerfile");
   const workflow = read(".github/workflows/ci.yml");
   const release = workflow.slice(
     workflow.indexOf("release-container-builds:"),
@@ -179,6 +196,23 @@ test("release API image contains the required gateway and terminal migrations", 
   // per-file docker cp + cmp assertions below still prove the image payload itself.
   assert.match(release, /sed -n '\/\^MIGRATIONS=\(\/,\/\^\)\/p' tools\/apply-neon-predeploy-migrations\.sh/);
   assert.match(release, /runner enrolls missing file/);
+  assert.ok(dockerfile.includes(
+    "COPY telematics/src/Opstrax.Telematics.Contracts/Opstrax.Telematics.Contracts.csproj telematics/src/Opstrax.Telematics.Contracts/",
+  ));
+  assert.ok(dockerfile.includes(
+    "COPY telematics/src/Opstrax.Telematics.Contracts/ telematics/src/Opstrax.Telematics.Contracts/",
+  ));
+  for (const required of [
+    "COPY telematics/src/Opstrax.Telematics.Contracts/Opstrax.Telematics.Contracts.csproj telematics/src/Opstrax.Telematics.Contracts/",
+    "COPY telematics/src/Opstrax.Telematics.Contracts/ telematics/src/Opstrax.Telematics.Contracts/",
+  ]) {
+    assert.ok(renderDockerfile.includes(required), `Render Dockerfile missing ${required}`);
+  }
+  assert.match(renderDockerfile, /COPY database\/migrations\/ database\/migrations\//);
+  assert.match(release, /docker build --file Dockerfile --tag opstrax-api:ci \./);
+  assert.ok(gatewayDockerfile.includes(
+    "COPY telematics/src/Opstrax.Telematics.Protocols.J1939/Opstrax.Telematics.Protocols.J1939.csproj telematics/src/Opstrax.Telematics.Protocols.J1939/",
+  ));
 
   for (const migration of [
     "2026_07_16_stage42_telemetry_gateways.sql",

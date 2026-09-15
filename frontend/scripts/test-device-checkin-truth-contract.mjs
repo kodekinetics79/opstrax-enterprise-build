@@ -66,8 +66,8 @@ function render(query) {
   let options;
   const queryHook = (value) => { options = value; return query; };
   const api = { getDeviceConnectionState: () => assert.fail("query factory must not perform transport during component evaluation") };
-  new Function("module", "exports", "h", "useQuery", "telematicsService", "CheckCircle2", "AlertTriangle", "CopyField", "Terminal", "RadioTower", dialogCode)(
-    module, module.exports, h, queryHook, api, "check-icon", "alert-icon", "copy-field", "terminal-icon", "radio-icon",
+  new Function("module", "exports", "h", "useQuery", "useDialogFocus", "telematicsService", "CheckCircle2", "AlertTriangle", "CopyField", "Terminal", "RadioTower", dialogCode)(
+    module, module.exports, h, queryHook, () => null, api, "check-icon", "alert-icon", "copy-field", "terminal-icon", "radio-icon",
   );
   const tree = module.exports.DeviceCredentialsDialog({
     result: { credentials: { deviceId: "741", deviceSerial: "FIXTURE", apiKey: "", hmacSecret: "", note: "Fixture only" }, ingestUrl: "https://example.invalid/api/telemetry/ingest", device: { deviceName: "Fixture", serialNumber: "FIXTURE" } },

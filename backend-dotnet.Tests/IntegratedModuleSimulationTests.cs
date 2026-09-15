@@ -96,7 +96,8 @@ public class IntegratedModuleSimulationTests
                 alert => alert["alertType"]?.ToString() == "speeding"
                          && alert["status"]?.ToString() == "Open"
                          && Convert.ToInt64(alert["sourceEventId"]) == 90001);
-            Assert.True((bool)safetySummary["foundation_ready"]!);
+            Assert.True((bool)safetySummary["foundation_ready"]!,
+                System.Text.Json.JsonSerializer.Serialize(safetySummary));
             Assert.Contains("fleet_health_summary", safetySummary.Keys);
             Assert.Contains("next_best_actions", safetySummary.Keys);
         }
@@ -176,8 +177,24 @@ public class IntegratedModuleSimulationTests
         Stage9OperationalFoundationService stage9,
         TelemetryLiveStateService telemetry)
     {
-        var vehicleId = await GetAnyVehicleIdAsync(db);
-        var driverId = await GetAnyDriverIdAsync(db);
+        var vehicleId = await db.InsertAsync(
+            @"INSERT INTO vehicles
+                (company_id,vehicle_code,type,vin_exception_type,alternate_identifier,status)
+              VALUES
+                (@companyId,@code,'Truck','legacy-fleet-identifier',@code,'Available')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@code", $"SIM-VEH-{companyId}");
+            });
+        var driverId = await db.InsertAsync(
+            @"INSERT INTO drivers(company_id,driver_code,full_name,status)
+              VALUES(@companyId,@code,'Integrated Simulation Driver','Available')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@code", $"SIM-DRV-{companyId}");
+            });
         var shipmentNumber = $"SIM-SHP-{companyId}";
         var routeCode = $"SIM-ROUTE-{companyId}";
         var orderNumber = $"SIM-ORD-{companyId}";
@@ -586,15 +603,15 @@ public class IntegratedModuleSimulationTests
         Assert.Equal("passed", validate.ValidationStatus);
 
         await db.ExecuteAsync(
-            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_at, updated_at)
-              VALUES (@companyId, 'speeding', 65, 'High', true, 'Simulation rule', NOW(), NOW())
-              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity, enabled=TRUE, updated_at=NOW()",
+            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_by, policy_origin, approval_status, approved_by, approved_at, created_at, updated_at)
+              VALUES (@companyId, 'speeding', 65, 'High', true, 'Simulation rule', 1, 'user_workflow', 'approved', 1, NOW(), NOW(), NOW())
+              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity, enabled=TRUE, created_by=1, policy_origin='user_workflow', approval_status='approved', approved_by=1, approved_at=NOW(), updated_at=NOW()",
             c => c.Parameters.AddWithValue("@companyId", companyId));
 
         await db.ExecuteAsync(
-            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_at, updated_at)
-              VALUES (@companyId, 'stale_device', 900, 'Warning', true, 'Simulation rule', NOW(), NOW())
-              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity, enabled=TRUE, updated_at=NOW()",
+            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_by, policy_origin, approval_status, approved_by, approved_at, created_at, updated_at)
+              VALUES (@companyId, 'stale_device', 900, 'Warning', true, 'Simulation rule', 1, 'user_workflow', 'approved', 1, NOW(), NOW(), NOW())
+              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity, enabled=TRUE, created_by=1, policy_origin='user_workflow', approval_status='approved', approved_by=1, approved_at=NOW(), updated_at=NOW()",
             c => c.Parameters.AddWithValue("@companyId", companyId));
 
         // Active devices require real credentials (ck_eld_devices_active_credentials).
@@ -618,12 +635,12 @@ public class IntegratedModuleSimulationTests
                 (company_id, vehicle_id, device_id, driver_id, lat, lng, speed_mph, heading,
                  accuracy_meters, engine_status, fuel_level, odometer_miles, battery_voltage,
                  event_time, received_at, event_count, source_event_id, telemetry_status,
-                 risk_level, alert_count, open_alert_count, next_action, summary_json, updated_at)
+                 risk_level, alert_count, open_alert_count, next_action, summary_json, source_channel, updated_at)
               VALUES
                 (@companyId, @vehicleId, @deviceId, @driverId, 24.7136000, 46.6753000, 51.0, 90,
                  5.0, 'Running', 78.5, 220123.4, 12.6, NOW() - INTERVAL '3 minutes',
                  NOW() - INTERVAL '3 minutes', 4, 90001, 'healthy',
-                 'low', 1, 1, 'Continue route monitoring', '{}'::jsonb, NOW())
+                 'low', 1, 1, 'Continue route monitoring', '{}'::jsonb, 'trusted-gateway', NOW())
               ON CONFLICT (company_id, vehicle_id) DO UPDATE SET
                  device_id=EXCLUDED.device_id,
                  driver_id=EXCLUDED.driver_id,
@@ -658,6 +675,29 @@ public class IntegratedModuleSimulationTests
 
         await telemetry.RefreshVehicleAsync(companyId, vehicleId);
 
+        await db.ExecuteAsync(
+            @"INSERT INTO safety_events
+                (company_id,driver_id,vehicle_id,event_type,severity,status,event_time,risk_score,score_impact,data_origin,verification_status)
+              VALUES
+                (@companyId,@driverId,@vehicleId,'speeding','High','open',NOW(),75,10,'runtime_detection','derived_from_qualified_source')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@driverId", driverId);
+                c.Parameters.AddWithValue("@vehicleId", vehicleId);
+            });
+
+        await db.ExecuteAsync(
+            @"INSERT INTO maintenance_items
+                (company_id,vehicle_id,service_type,title,category,status,priority,due_date,risk_score,recommended_action,data_origin,verification_status)
+              VALUES
+                (@companyId,@vehicleId,'Inspection','Simulation inspection','Preventive Maintenance','Open','Medium',CURRENT_DATE + INTERVAL '7 days',35,'Schedule inspection','user_workflow','recorded_by_authenticated_actor')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@vehicleId", vehicleId);
+            });
+
         return new SeededSimulationContext(companyId, jobId, tripId, shipmentNumber, routeCode, orderNumber, vehicleId, driverId, deviceId);
     }
 
@@ -675,12 +715,6 @@ public class IntegratedModuleSimulationTests
     private static long NextCompanyId() => Interlocked.Increment(ref _nextCompanyId);
 
     private static long _nextCompanyId = 77000;
-
-    private static async Task<long> GetAnyVehicleIdAsync(Database db)
-        => await db.ScalarLongAsync("SELECT id FROM vehicles ORDER BY id LIMIT 1");
-
-    private static async Task<long> GetAnyDriverIdAsync(Database db)
-        => await db.ScalarLongAsync("SELECT id FROM drivers ORDER BY id LIMIT 1");
 
     private static async Task CleanupTenantAsync(Database db, long companyId)
     {
@@ -727,6 +761,8 @@ public class IntegratedModuleSimulationTests
         await db.ExecuteAsync("DELETE FROM billing_confidence_records WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM smart_assignment_recommendations WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM assignment_confirmations WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM drivers WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM vehicles WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM companies WHERE id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
     }
 

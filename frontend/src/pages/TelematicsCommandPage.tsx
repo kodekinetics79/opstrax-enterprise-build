@@ -60,7 +60,7 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
     eyebrow: "Telematics & IoT",
     title: "OBD / J1939",
     description: "Received OBD/J1939/CAN evidence with explicit protocol identity, active DTCs, freshness, and maintenance escalation. DTCs are not assumed to be emissions faults.",
-    columns: ["serialNumber", "vehicleCode", "deviceName", "protocolType", "troubleCodes", "engineStatus", "odometer", "fuelLevel", "batteryVoltage", "lastEngineDataAt", "dataFreshnessStatus"],
+    columns: ["serialNumber", "vehicleCode", "protocolType", "troubleCodes", "engineSpeed", "engineHours", "batteryVoltage", "signalAvailability", "lastEngineDataAt", "dataFreshnessStatus"],
     emptyTitle: "No diagnostics records found",
     emptySubtitle: "No engine or bus diagnostics are visible for the current filters.",
     searchPlaceholder: "Search vehicle, protocol, driver, fault code, freshness, or provider...",
@@ -165,9 +165,12 @@ const columnLabels: Record<string, string> = {
   protocolType: "Protocol",
   troubleCodes: "Trouble codes",
   engineStatus: "Engine status",
+  engineSpeed: "Engine speed",
+  engineHours: "Engine hours",
   odometer: "Odometer",
   fuelLevel: "Fuel level",
   batteryVoltage: "Battery voltage",
+  signalAvailability: "Signal state",
   lastEngineDataAt: "Last engine data",
 };
 
@@ -205,6 +208,9 @@ function renderCell(column: string, row: TelematicsClusterRecord) {
         <p className="text-xs text-slate-400">{row.provider} · {row.deviceType}</p>
       </div>
     );
+  }
+  if (column === "alertStatus" && row.offlineWarning && /^clear$/i.test(String(row.alertStatus))) {
+    return <span className="text-xs font-semibold text-slate-500">No active alert record</span>;
   }
   if (column === "sensorStatus" || column === "dataFreshnessStatus" || column === "alertStatus") {
     return <StatusBadge status={String(row[column as keyof TelematicsClusterRecord])} />;
@@ -385,7 +391,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   const selectedRecord = rows.find((row) => row.id === selected?.id) ?? selected;
   const offlineCount = paged ? recordsQ.data?.summary.offline ?? 0 : rows.filter((row) => row.offlineWarning).length;
-  const issueCount = paged ? recordsQ.data?.summary.attention ?? 0 : rows.filter((row) => row.alertStatus === "Open" || (row.troubleCodes?.length ?? 0) > 0 || (row.deviceHealthAvailable && row.deviceHealth < 70)).length;
+  const issueCount = paged ? recordsQ.data?.summary.attention ?? 0 : rows.filter((row) => row.offlineWarning || row.alertStatus === "Open" || (row.troubleCodes?.length ?? 0) > 0 || (row.deviceHealthAvailable && row.deviceHealth < 70)).length;
 
   // Average health only counts rows that carry a real numeric health signal. With an
   // empty (or all-signal-less) fleet there is nothing to average, so we surface "—"
@@ -432,7 +438,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   }
 
   return (
-    <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
+    <div className="fleet-console space-y-3">
       <PageHeader
         eyebrow={config.eyebrow}
         title={config.title}
@@ -480,11 +486,12 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
         </div>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Fleet managed units" value={fleetUnits} status="Active" icon={kpiIcon} />
-        <KpiCard label="Fleet offline / stale" value={offlineCount} status={offlineCount ? "Critical" : "Healthy"} icon={<AlertTriangle className="h-4 w-4" />} />
-        <KpiCard label="Fleet needs action" value={issueCount} status={issueCount ? "Watch" : "Healthy"} icon={<RadioTower className="h-4 w-4" />} />
+      <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label={`${config.title} summary`}>
+        <KpiCard compact label="Fleet managed units" value={fleetUnits} status={fleetUnits ? "Recorded" : "None recorded"} icon={kpiIcon} />
+        <KpiCard compact label="Fleet offline / stale" value={offlineCount} status={!fleetUnits ? "Unknown" : offlineCount ? "Critical" : "No recorded gaps"} icon={<AlertTriangle className="h-4 w-4" />} />
+        <KpiCard compact label="Fleet needs action" value={issueCount} status={!fleetUnits ? "Unknown" : issueCount ? "Watch" : "No recorded issues"} icon={<RadioTower className="h-4 w-4" />} />
         <KpiCard
+          compact
           label="Current page health"
           value={avgHealth == null ? "—" : `${avgHealth}%`}
           status={avgHealth == null ? "Unknown" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"}
@@ -493,37 +500,16 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       </div>
       {paged ? <p className="text-xs text-slate-500">Fleet cards cover every authorized unit. Health is averaged only across evidence-bearing rows on the current page.</p> : null}
 
-      {kind === "gps-tracking" ? (
-        <div className="grid gap-4 xl:grid-cols-3">
-          {rows.slice(0, 6).map((row) => (
-            <button type="button" key={row.id} className="panel rounded-2xl p-4 text-left transition hover:border-teal-300 hover:bg-slate-50" onClick={() => setSelected(row)}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-semibold text-slate-900">{row.vehicleCode}</p>
-                  <p className="mt-1 text-xs text-slate-400">{row.locationLabel} · {row.positionSource}</p>
-                </div>
-                <RiskBadge risk={row.geofenceStatus} />
-              </div>
-              <div className="mt-4 grid gap-2 text-sm text-slate-700">
-                <div className="flex justify-between"><span>GPS ping</span><span>{row.staleGps || "—"}</span></div>
-                <div className="flex justify-between"><span>Coordinates</span><span>{formatCoordinates(row.latitude, row.longitude)}</span></div>
-                <div className="flex justify-between"><span>Speed / heading</span><span>{formatSpeedHeading(row.speedMph, row.heading)}</span></div>
-                <div className="flex justify-between gap-3"><span>Operational use</span><span className="text-right">{row.routingReadiness}</span></div>
-              </div>
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="panel space-y-4 p-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+      <div className="panel space-y-3 p-3">
+        <div className={`grid gap-2 xl:items-center ${paged ? "xl:grid-cols-[minmax(260px,1fr)_200px_auto]" : "xl:grid-cols-[minmax(260px,1fr)_auto]"}`}>
           <input
             className="field xl:min-w-[360px]"
+            aria-label={`Search ${config.eyebrow.toLowerCase()} records`}
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
             placeholder={config.searchPlaceholder}
           />
-          {paged ? <label className="min-w-48">
+          {paged ? <label>
             <span className="sr-only">Sort telemetry records</span>
             <select className="field" value={serverSort} onChange={(event) => { setServerSort(event.target.value as typeof serverSort); setPage(1); }}>
               <option value="risk">Highest risk first</option>
@@ -534,9 +520,9 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
               <option value="provider">Provider</option>
             </select>
           </label> : null}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5 xl:justify-end" role="group" aria-label={`${config.eyebrow} status filters`}>
             {config.filterTabs.map((item) => (
-              <button key={item} className={tab === item ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item); setPage(1); }}>
+              <button key={item} type="button" aria-pressed={tab === item} className={tab === item ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item); setPage(1); }}>
                 {item}
               </button>
             ))}
@@ -563,21 +549,21 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
               <thead>
                 <tr className="border-b border-slate-200">
                   {config.columns.map((column) => (
-                    <th key={column} className={`px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 ${column === config.columns[0] ? "sticky left-0 z-10 bg-white" : ""}`}>{columnLabels[column] ?? column}</th>
+                    <th key={column} className={`px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 ${column === config.columns[0] ? "sticky left-0 z-10 bg-white" : ""}`}>{columnLabels[column] ?? column}</th>
                   ))}
-                  <th className="sticky right-0 z-10 bg-white px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">Actions</th>
+                  <th className="sticky right-0 z-10 bg-white px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((row) => (
                   <tr key={row.id} className="transition hover:bg-slate-50">
                     {config.columns.map((column) => (
-                      <td key={column} className={`px-4 py-3 text-slate-700 ${column === config.columns[0] ? "sticky left-0 z-[1] bg-white" : ""}`}>
+                      <td key={column} className={`px-3 py-2.5 text-slate-700 ${column === config.columns[0] ? "sticky left-0 z-[1] bg-white" : ""}`}>
                         {renderCell(column, row)}
                       </td>
                     ))}
-                    <td className="sticky right-0 z-[1] bg-white px-4 py-3">
-                      <div className="flex flex-wrap gap-2">
+                    <td className="sticky right-0 z-[1] bg-white px-3 py-2.5">
+                      <div className="flex flex-wrap gap-1.5">
                         <button className="btn-ghost h-8 px-3" onClick={() => setSelected(row)}>
                           {kind === "gps-tracking" ? "Inspect position" : kind === "obd-j1939" ? "View diagnostics" : "View sensor"}
                         </button>
@@ -627,7 +613,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
           </div>
         )}
         {paged && total > 0 ? (
-          <nav className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4" aria-label={`${config.title} pagination`}>
+          <nav className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3" aria-label={`${config.title} pagination`}>
             <p className="text-sm text-slate-600">
               Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total}
             </p>
@@ -640,9 +626,34 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
         ) : null}
       </div>
 
+      {kind === "gps-tracking" && rows.length > 0 ? (
+        <details className="panel p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-700">Current-page position previews ({Math.min(rows.length, 6)})</summary>
+          <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 xl:grid-cols-3">
+            {rows.slice(0, 6).map((row) => (
+              <button type="button" key={row.id} className="panel rounded-xl p-3 text-left transition hover:border-teal-300 hover:bg-slate-50" onClick={() => setSelected(row)}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-900">{row.vehicleCode}</p>
+                    <p className="mt-1 text-xs text-slate-400">{row.locationLabel} · {row.positionSource}</p>
+                  </div>
+                  <RiskBadge risk={row.geofenceStatus} />
+                </div>
+                <div className="mt-2 grid gap-1.5 text-xs text-slate-700">
+                  <div className="flex justify-between"><span>GPS ping</span><span>{row.staleGps || "—"}</span></div>
+                  <div className="flex justify-between"><span>Coordinates</span><span>{formatCoordinates(row.latitude, row.longitude)}</span></div>
+                  <div className="flex justify-between"><span>Speed / heading</span><span>{formatSpeedHeading(row.speedMph, row.heading)}</span></div>
+                  <div className="flex justify-between gap-3"><span>Operational use</span><span className="text-right">{row.routingReadiness}</span></div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </details>
+      ) : null}
+
       {selectedRecord ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelected(null)}>
-          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-4 sm:p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <button className="float-right icon-btn" aria-label="Close telematics details" onClick={() => setSelected(null)}><X className="h-4 w-4" /></button>
             {!paged && detailQ.isLoading ? (
               <LoadingState />
@@ -716,7 +727,7 @@ function TelematicsDetailDrawer({
         </div>
       </div>
 
-      <div className="mt-6 flex flex-wrap gap-3">
+      <div className="mt-4 flex flex-wrap gap-2">
         {canViewMap ? <button className="btn-ghost" disabled={!row.positionAvailable} title={row.positionAvailable ? "Open the reported position on the fleet map and verify its freshness before operational use." : "Map unavailable because this record has no valid position."} onClick={() => row.positionAvailable && window.location.assign(`/map-view`)}><MapPinned className="h-4 w-4" /> {row.positionAvailable ? "View on map" : "No valid map fix"}</button> : null}
         {canViewDevices ? <button className="btn-ghost" onClick={() => window.location.assign(`/iot-devices`)}><Truck className="h-4 w-4" /> View device</button> : null}
         {canViewVehicles ? <button className="btn-ghost" onClick={() => window.location.assign(`/vehicles`)}><Truck className="h-4 w-4" /> View vehicle</button> : null}
@@ -725,7 +736,7 @@ function TelematicsDetailDrawer({
         {kind !== "gps-tracking" ? <button className="btn-primary" disabled={!canCreateMaintenance || isMaintenancePending} title={permissionTitle(canCreateMaintenance, "Create a maintenance follow-up.")} onClick={onMaintenance}><Wrench className="h-4 w-4" /> Create maintenance</button> : null}
       </div>
 
-      <div className="mt-6 grid gap-4 lg:grid-cols-3">
+      <div className="mt-4 grid gap-3 lg:grid-cols-3">
         <InfoPanel title="Position evidence" items={[
           ["Location", row.locationLabel],
           ["Source", row.positionSource],
@@ -750,15 +761,26 @@ function TelematicsDetailDrawer({
           ["Protocol", row.protocolType],
           ["Trouble codes", row.troubleCodes.join(", ") || "None reported"],
           ["Battery", row.batteryVoltage],
+          ["Signal availability", row.signalAvailability],
+          ["Transport", row.signalTransport],
+          ["Adapter version", row.signalAdapterVersion],
+          ["Trust", row.signalTrust],
+          ["Signal capture reference", row.signalEvidenceReference],
+          ["Diagnostic capture reference", row.diagnosticEvidenceReference],
+          ["Diagnostic capture-set digest", row.diagnosticEvidenceDigest],
+          ["Diagnostic evidence", row.diagnosticEvidenceClassification],
+          ["Safety action", row.diagnosticSafetyAction],
+          ["Evidence boundary", row.certificationBoundary],
           ["Latest reading", row.latestReading],
           ["Expected range", row.expectedRange],
           ["Alert status", row.alertStatus],
         ]} />
       </div>
 
-      <div className="mt-6 grid gap-4 xl:grid-cols-2">
+      <div className="mt-3 grid gap-3 xl:grid-cols-2">
         <InfoPanel title="Engine / Powertrain" items={[
           ["Engine status", row.engineStatus],
+          ["Engine speed", row.engineSpeed],
           ["Engine hours", row.engineHours],
           ["Odometer", row.odometer],
           ["Fuel level", row.fuelLevel],
@@ -775,9 +797,9 @@ function TelematicsDetailDrawer({
         ]} />
       </div>
 
-      <div className="mt-6 panel p-5">
+      <div className="mt-3 panel p-4">
         <p className="section-title">Field Notes</p>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
           <ContextCard
             title="Latest diagnostic"
             body={latestDiagnostic
@@ -796,11 +818,11 @@ function TelematicsDetailDrawer({
 
 function InfoPanel({ title, items }: { title: string; items: Array<[string, string]> }) {
   return (
-    <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
+    <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-3">
       <p className="text-sm font-semibold text-white">{title}</p>
-      <div className="mt-4 space-y-2">
+      <div className="mt-2 space-y-1.5">
         {items.map(([label, value]) => (
-          <div key={label} className="flex items-start justify-between gap-3 rounded-xl border border-white/[0.05] bg-black/10 px-3 py-2">
+          <div key={label} className="flex items-start justify-between gap-3 rounded-lg border border-white/[0.05] bg-black/10 px-2.5 py-1.5">
             <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">{label}</span>
             <span className="text-right text-sm text-slate-200">{value || "—"}</span>
           </div>
@@ -812,9 +834,9 @@ function InfoPanel({ title, items }: { title: string; items: Array<[string, stri
 
 function ContextCard({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
       <p className="font-semibold text-white">{title}</p>
-      <p className="mt-2 text-sm text-slate-400">{body}</p>
+      <p className="mt-1 text-sm text-slate-400">{body}</p>
     </div>
   );
 }

@@ -17,6 +17,7 @@ import { PlatformEmailSettingsPage } from "./PlatformEmailSettingsPage";
 import { PlatformAcceptInvitePage } from "./PlatformAcceptInvitePage";
 import { PlatformAccountPage } from "./PlatformAccountPage";
 import { PlatformProductPilotPage } from "./PlatformProductPilotPage";
+import { PlatformHardwareReadinessPage } from "./PlatformHardwareReadinessPage";
 
 // Permission-gated wrapper: redirects to the platform login if not authenticated,
 // and to the command center if the role lacks the required permission.
@@ -48,6 +49,7 @@ export default function PlatformApp() {
           <Route path="tenants" element={<Guard permission="platform:tenants:view"><PlatformTenantsPage /></Guard>} />
           <Route path="product-pilot" element={<Guard permission="platform:pilot:run" requireProductPilot><PlatformProductPilotPage /></Guard>} />
           <Route path="packages" element={<Guard permission="platform:packages:view"><PlatformPackagesPage /></Guard>} />
+          <Route path="hardware-readiness" element={<Guard permission="platform:devices:view"><PlatformHardwareReadinessPage /></Guard>} />
           <Route path="revenue" element={<Guard permission="platform:packages:view"><PlatformRevenuePage /></Guard>} />
           <Route path="billing" element={<Guard permission="platform:billing:view"><PlatformBillingPage /></Guard>} />
           <Route path="health" element={<Guard permission="platform:health:view"><PlatformHealthPage /></Guard>} />

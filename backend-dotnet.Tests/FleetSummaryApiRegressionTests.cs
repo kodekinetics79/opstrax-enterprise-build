@@ -51,7 +51,7 @@ public sealed class FleetSummaryApiRegressionTests
 
         var vehiclePage = ReadSource("frontend", "src", "pages", "VehiclesModulePage.tsx");
         Assert.Contains("visibleSummary.total != null ? num(visibleSummary.total) : rows.length", vehiclePage);
-        Assert.Contains("{total}</span> units in the fleet registry", vehiclePage);
+        Assert.Contains("description={`${total} units in the fleet registry", vehiclePage);
 
         Assert.Contains("COUNT(*) total", driverSummary);
         Assert.Contains("at_risk", driverSummary);

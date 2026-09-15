@@ -5,7 +5,7 @@ namespace Opstrax.Api.Services;
 // Creates new maintenance tables and adds missing columns to existing tables.
 // Safe to run repeatedly — all CREATE TABLE uses IF NOT EXISTS, ALTER TABLE
 // checks information_schema before adding columns.
-public sealed class MaintenanceSchemaService(Database db)
+public sealed class MaintenanceSchemaService(Database db, IConfiguration? configuration = null)
 {
     public async Task EnsureAsync(CancellationToken ct = default)
     {
@@ -14,7 +14,8 @@ public sealed class MaintenanceSchemaService(Database db)
         foreach (var col in DiagnosticColumns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in DiagnosticHardening) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
-        foreach (var sql in Seeds) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
+        if (DemoSeedGate.IsExplicitlyEnabled(configuration))
+            foreach (var sql in DemoSeeds) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
     }
 
     private async Task EnsureColumnAsync(string table, string column, string definition, CancellationToken ct)
@@ -39,6 +40,8 @@ public sealed class MaintenanceSchemaService(Database db)
         // the baselines the PM evaluator reads to arm the next mileage / engine-hours interval.
         new("maintenance_items", "odometer_miles", "DECIMAL(12,2) NULL"),
         new("maintenance_items", "engine_hours",   "DECIMAL(12,2) NULL"),
+        new("maintenance_items", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("maintenance_items", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
 
         // DVIR reports — trip binding + odometer + review workflow
         new("dvir_reports", "trip_id",         "BIGINT NULL"),
@@ -50,6 +53,8 @@ public sealed class MaintenanceSchemaService(Database db)
         new("dvir_reports", "signature_attestation_text", "TEXT NULL"),
         new("dvir_reports", "signed_at",       "TIMESTAMPTZ NULL"),
         new("dvir_reports", "signed_by",       "BIGINT NULL"),
+        new("dvir_reports", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("dvir_reports", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
 
         // DVIR defects — unified defect model
         new("dvir_defects", "vehicle_id",      "BIGINT NULL"),
@@ -59,6 +64,8 @@ public sealed class MaintenanceSchemaService(Database db)
         new("dvir_defects", "out_of_service",  "BOOLEAN NOT NULL DEFAULT false"),
         new("dvir_defects", "resolved_at",     "TIMESTAMPTZ NULL"),
         new("dvir_defects", "resolved_by",     "BIGINT NULL"),
+        new("dvir_defects", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("dvir_defects", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
 
         // Work orders — cost tracking + lifecycle timestamps
         new("work_orders", "defect_id",        "BIGINT NULL"),
@@ -66,6 +73,8 @@ public sealed class MaintenanceSchemaService(Database db)
         new("work_orders", "completed_at",     "TIMESTAMPTZ NULL"),
         new("work_orders", "assigned_at",      "TIMESTAMPTZ NULL"),
         new("work_orders", "company_id",       "BIGINT NOT NULL DEFAULT 1"),
+        new("work_orders", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("work_orders", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
 
     ];
 
@@ -272,8 +281,9 @@ public sealed class MaintenanceSchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_vehicles_oos ON vehicles(company_id, out_of_service)",
     ];
 
-    // Seed default PM rules per company that doesn't have them yet.
-    private static readonly string[] Seeds =
+    // Optional demo presets. Real tenants must configure intervals and costs from
+    // their own fleet, equipment, manufacturer and regulatory requirements.
+    private static readonly string[] DemoSeeds =
     [
         @"INSERT INTO maintenance_pm_rules
             (company_id, rule_name, service_type, trigger_type, interval_miles, warning_threshold_pct, priority, estimated_cost)

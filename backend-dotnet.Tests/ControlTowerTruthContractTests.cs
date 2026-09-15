@@ -16,6 +16,37 @@ public sealed class ControlTowerTruthContractTests
         Assert.DoesNotContain("placeholder", summary, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("competitorGapAnalysis", summary, StringComparison.Ordinal);
         Assert.DoesNotContain("available = true", summary, StringComparison.Ordinal);
+        Assert.Contains("var canViewDeviceEvidence = RequirePermission(http, \"telematics:devices:view\") is null", summary, StringComparison.Ordinal);
+        Assert.Contains("var canViewCameraEvidence = RequirePermission(http, \"dashcam:view\") is null", summary, StringComparison.Ordinal);
+        Assert.Contains("i.device_role IN ('GPS','ELD','OBD-II','J1939/CAN')", summary, StringComparison.Ordinal);
+        Assert.Contains("de.source_authority='Authoritative' AND de.media_status='Ready'", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("v.device_status deviceStatus", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("SUM(CASE WHEN v.device_status='Online'", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("v.camera_status cameraStatus", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("SUM(CASE WHEN v.camera_status='Online'", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VehicleDetailsExposeOnlyAuthorizedAuthoritativeReadyCameraMedia()
+    {
+        var source = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var controlStart = source.IndexOf("private static async Task<IResult> ControlTowerVehicleDetail(", StringComparison.Ordinal);
+        var controlEnd = source.IndexOf("private const string VehicleOperationalProjectionSql", controlStart, StringComparison.Ordinal);
+        var vehicleStart = source.IndexOf("private static async Task<IResult> VehicleDetail(", StringComparison.Ordinal);
+        var vehicleEnd = source.IndexOf("private static async Task<IResult> DriverDetail(", vehicleStart, StringComparison.Ordinal);
+        Assert.True(controlStart >= 0 && controlEnd > controlStart && vehicleStart >= 0 && vehicleEnd > vehicleStart);
+
+        foreach (var detail in new[] { source[controlStart..controlEnd], source[vehicleStart..vehicleEnd] })
+        {
+            Assert.Contains("RequirePermission(http, \"dashcam:view\") is null", detail, StringComparison.Ordinal);
+            Assert.Contains("source_authority='Authoritative' AND media_status='Ready'", detail, StringComparison.Ordinal);
+        }
+
+        var controlDetail = source[controlStart..controlEnd];
+        Assert.Contains("RequirePermission(http, \"telematics:devices:view\") is null", controlDetail, StringComparison.Ordinal);
+        Assert.Contains("END device_status", controlDetail, StringComparison.Ordinal);
+        Assert.Contains("END camera_status", controlDetail, StringComparison.Ordinal);
+        Assert.Contains("i.device_role IN ('GPS','ELD','OBD-II','J1939/CAN')", controlDetail, StringComparison.Ordinal);
     }
 
     [Fact]

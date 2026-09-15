@@ -56,6 +56,69 @@ Proceed without fabricating provider data:
 9. SDET contract cases for duplicate/reordered events, missing driver, late assignment, cross-tenant ID collision, offline retrieval, expired media URL and revoked access;
 10. visible Chrome responsive/overflow/accessibility acceptance after a real provider event is available.
 
+## 2026-09-07 BUILD increment — provider intake spine
+
+Status: **BUILD COMPLETE / INTEGRATE PARTIAL / CERTIFY EXTERNAL HOLD**
+
+Stage 112 and `CameraProviderIngestService` now provide a provider-neutral intake boundary for exact authenticated payload bytes. The service calculates its own SHA-256 fingerprint, scopes the idempotency identity by tenant + provider + provider account + provider event, serializes concurrent duplicates, and quarantines a reused identity carrying different bytes. It retains opaque media identifiers, expiry, camera role, recording mode, retention and privacy metadata without storing a URL, signed query string, media bytes, AI conclusion or playable-media claim.
+
+The intake relations are FORCE-RLS control-plane tables. `opstrax_system` receives the minimum read/insert/update path; `opstrax_app` receives no direct provider-identity access. Internal branch/vehicle/driver/trip references are checked against the owning tenant before persistence. A later replay may add a valid driver assignment, while a cross-tenant identity is quarantined and not retained as a linked vehicle or driver.
+
+Independent test coverage currently proves:
+
+- exact payload hashing and bounded payload admission;
+- UTC/future-time rejection;
+- URL and signed-link rejection at the media-identity boundary;
+- expired-media state without access promotion;
+- one stored identity and exact replay count under eight simultaneous deliveries;
+- same-payload replay and late driver assignment;
+- different-payload reuse quarantine without overwriting the first fingerprint;
+- provider-account separation for reused provider event IDs;
+- cross-tenant reference quarantine;
+- repeat-safe migration application, FORCE RLS, system-only grants and permanent `ExternalHold` constraints.
+
+This increment does **not** establish provider authenticity, ingest a real Samsara event, retrieve or display media, create an authoritative `dashcam_events` record, or satisfy Chrome/customer acceptance. The next INTEGRATE package must connect an authenticated provider adapter, add the safe provider-pending customer projection and reconciliation observability, and exercise it with authentic account data. Certification remains blocked on the external evidence listed below.
+
+The customer camera page now reads a separate tenant/branch-scoped operational status projection from the system-only intake ledger. It shows whether the scope has received any provider intake records, how many are matched, unmatched or quarantined, how many opaque media references remain pending or expired, and the last provider receipt time. It always reports provider verification, media availability and certification as unavailable/`ExternalHold`. Provider accounts, event IDs, payload hashes and media identifiers are never returned by this endpoint. An account with no intake records now says that it has no provider-backed camera evidence instead of implying an empty-but-connected camera service.
+
+This completes the safe status/observability slice only. A provider-pending camera event will not appear in the customer event table until a real authenticated adapter has parsed an authentic provider response and the customer projection is proven against that provider account.
+
+## 2026-09-07 INTEGRATE increment — Samsara safety-event intake adapter
+
+Status: **INTEGRATE CODE COMPLETE / PROVIDER EXECUTION EXTERNAL HOLD / CERTIFY EXTERNAL HOLD**
+
+The registered Samsara connector now has a separate bounded camera-safety lane using the Safety Events Stream with an `updatedAtTime` cursor. It parses exact provider event bytes, rejects ambiguous asset identities, malformed timestamps, duplicate IDs and broken pagination, then sends the accepted envelope to the Stage 112 protected ledger. Every provider write revalidates the exact connector generation and lease inside the same transaction, so a credential change or disconnect during a remote request leaves no stale-generation ledger row. The camera cursor, completion time and result are stored separately from GPS health, so a missing camera permission cannot mark working telematics as failed. Credential replacement clears both provider cursors. The verified provider organization reference, rather than a local credential generation, scopes the account-bound device and camera-event identities.
+
+The Samsara configuration journey now exposes a distinct **Intake camera safety events** action and refreshes the customer camera status projection after it runs. The result shows observed, accepted, replayed and quarantined counts while continuing to state that media, provider verification, privacy acceptance and certification are on External hold. The adapter does not ingest signed media URLs and does not manufacture a playable clip or authoritative safety event.
+
+The camera page also exposes a separate, read-only provider-intake queue for the current tenant and branch. It shows the event classification, occurrence time, safe matched vehicle label and reconciliation state while suppressing provider accounts, provider event IDs, external asset identities, payload hashes and media identifiers. Quarantined classifications are shown as unavailable. The queue has no review, coaching, export or evidence action and remains visibly marked External hold.
+
+Samsara connection verification now also requires the provider's read-only `GET /me` organization response. The server persists its bounded organization reference only behind the connector boundary, clears it when credentials are replaced or the connector is disconnected, and carries it through the generation-bound operation lease. GPS device discovery and telemetry idempotency are keyed by organization plus asset, and camera event identity uses the same organization boundary. A token for another Samsara organization therefore cannot reuse the prior organization's device installation or camera event identity. Controlled response/database tests support this behavior; a real Samsara organization is still required for field acceptance.
+
+The connector now uses a strict cloud selector for the official Samsara US, EU/UK and Canada API hosts. It does not accept an arbitrary provider URL. Changing the cloud selection clears the verified organization identity and both GPS and camera cursors before a new handshake. Controlled host-routing tests support this behavior; every region remains field blocked until tested with an authorized account in that Samsara cloud.
+
+Verification for this increment uses controlled provider-response fixtures plus the isolated Stage 112 PostgreSQL role. Those fixtures prove parser, retry, cursor, quarantine, independent GPS/camera state and customer-copy behavior; they are software evidence only. No authorized Samsara account was contacted and no real camera event, media object, device or customer journey is claimed by this increment.
+
+## 2026-09-07 INTEGRATE increment — event-time provider asset reconciliation
+
+Status: **INTEGRATE CODE COMPLETE / PROVIDER EXECUTION EXTERNAL HOLD / CERTIFY EXTERNAL HOLD**
+
+Stage 114 now reconciles a provider camera event's external vehicle identity only through the exact `(tenant, provider, verified provider organization, provider asset)` device row and the single device installation effective at the event occurrence time. It accepts current `Installed`/`Verified` installations and historical `Removed` installations only inside their closed effective period. Missing device or installation mappings remain `Pending`; inactive or quarantined devices, broken tenant/vehicle references and overlapping installations are quarantined. No vehicle is selected by name, serial, current assignment or cross-account coincidence.
+
+The intake ledger retains the exact device and installation IDs used for the match. The database enforces their tenant-scoped relationship and prevents a populated device/installation mapping from being rewritten. A later replay can move a previously pending or correctable mapping quarantine to `Matched` after the fleet identity record is repaired. A replay that would change a previously stored device, installation, vehicle or branch instead enters `derived_mapping_conflict` while preserving the first mapping.
+
+The isolated PostgreSQL oracle applies Stages 112–114 twice and exercises exact-account matching, wrong-account isolation, out-of-period handling, inactive-device quarantine, overlapping-installation quarantine and repair, pending-to-matched replay, mapping-drift quarantine and database-level mapping immutability. The bounded camera/connector regression set passed **125/125** locally, and both provider-device and installation-period lookups were shown to be index eligible. These results are software integration evidence. They do not prove an authentic Samsara event or camera device and do not change the external-hold or certification status.
+
+## 2026-09-07 INTEGRATE increment — explicit automatic safety-event polling
+
+The scheduled Samsara worker now carries the verified provider-organization boundary into both GPS and camera requests. A customer can explicitly select **Automatic camera safety intake** in the Samsara configuration; the default remains **Manual only**. After a successful GPS cycle, an enabled connector takes a new generation-bound lease and runs a bounded five-page/60-second safety-event pull. Successful camera intake follows the normal five-minute connector cadence; camera failures use a 15-minute retry cadence.
+
+Camera polling retains its own cursor, completion time and outcome. Losing the optional Safety & Cameras permission records `AttentionRequired` for that lane without changing a healthy GPS connector to `Error`. A concurrent configuration change or disconnect invalidates the lease, and a second eligibility check prevents stale opt-in state from authorizing provider I/O. The customer UI states these boundaries and continues to label media, provider verification, privacy acceptance and certification as **External hold**.
+
+Focused verification covers the opt-in/default-off rule, success and failure cadence, exact tenant/integration/generation/lease/account request identity, independent camera cursor and start time, UI truth copy, and database preservation of the primary GPS status during camera failure or a no-op lease release. This is local software evidence only. No provider account was contacted, no deployment was performed, and no camera or Samsara capability is certified by this increment.
+
+The Camera Safety status projection also consumes the connector's bounded camera outcome. It distinguishes no current provider connection, a current provider connection awaiting its first camera intake, an unverified successful intake, and an intake/reconciliation condition requiring attention. Provider credentials and organization/event identifiers remain server-side. The status card links directly to the Samsara setup journey and never presents connection evidence as certification.
+
 ## External evidence still required
 
 - authorized Samsara organization/account/token with Safety & Cameras scopes and written commercial integration rights;

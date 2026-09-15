@@ -4,7 +4,7 @@ import {
   Fuel, RefreshCw, ShieldCheck, Sparkles,
 } from "lucide-react";
 import { marketPackApi } from "@/services/marketPackApi";
-import { DataTable, ErrorState, EmptyState, LoadingState, StatusBadge } from "@/components/ui";
+import { DataTable, ErrorState, EmptyState, LoadingState, StatusBadge, KpiCard } from "@/components/ui";
 import { ClayStat, ConsoleNav, ConsoleRail } from "@/components/console";
 import { useHasPermission } from "@/hooks/usePermission";
 
@@ -183,15 +183,13 @@ function CanadaReadiness() {
   };
 
   return (
-    <div className="space-y-3">
-      {!canManage && <ReadOnlyNotice>Compliance manage permission is required to add documents, record inspections, or log jurisdiction mileage/fuel.</ReadOnlyNotice>}
-      {mutationError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{mutationError}</div> : null}
-
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <ClayStat Icon={FileCheck2} tone="fc-clay-sky" iconCls="text-sky-700" label="Driver/Vehicle docs" value={docs.length} />
-        <ClayStat Icon={ClipboardCheck} tone="fc-clay-teal" iconCls="text-teal-700" label="Inspections" value={inspections.length} />
-        <ClayStat Icon={CalendarClock} tone="fc-clay-amber" iconCls="text-amber-700" label="Expiry alerts" value={expiries.length} alert={expiries.length > 0} />
-        <ClayStat Icon={ShieldCheck} tone="fc-clay-emerald" iconCls="text-emerald-700" label="ELD" value={(hos?.eldDevices ?? []).length ? "Registered" : "None"} />
+    <div className="space-y-5">
+      {mutationError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{mutationError}</div> : null}
+      <div className="grid gap-4 sm:grid-cols-4">
+        <KpiCard label="Driver/Vehicle docs" value={docs.length} />
+        <KpiCard label="Inspections" value={inspections.length} />
+        <KpiCard label="Expiry alerts" value={expiries.length} />
+        <KpiCard label="ELD records" value={(hos?.eldDevices ?? []).length} />
       </div>
 
       <ConsoleSection eyebrow="Compliance" title="Driver Qualification & Documents" icon={<FileCheck2 className="h-5 w-5 text-sky-600" />}>

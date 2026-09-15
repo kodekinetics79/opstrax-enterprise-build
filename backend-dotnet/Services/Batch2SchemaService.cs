@@ -309,15 +309,6 @@ public sealed class Batch2SchemaService(Database db, IConfiguration? configurati
                  COALESCE((SELECT tracking_code FROM jobs WHERE id=n), 'B2ETA-' || (2000+n)),
                  'Active', NOW() + 14 * INTERVAL '1 day'
           FROM seq WHERE (SELECT COUNT(*) FROM customer_eta_links) < 10",
-        @"INSERT INTO proof_of_delivery (company_id, job_id, receiver_name, received_by, proof_type, status, notes)
-          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10)
-          SELECT 1, n,
-                 (ARRAY['R. Morgan','C. Rivera','D. Chen','M. Ahmed','S. Brooks'])[(n%5)+1],
-                 (ARRAY['R. Morgan','C. Rivera','D. Chen','M. Ahmed','S. Brooks'])[(n%5)+1],
-                 'Placeholder',
-                 CASE WHEN n % 4 = 0 THEN 'Pending' ELSE 'Captured' END,
-                 'Batch 2 proof placeholder.'
-          FROM seq WHERE (SELECT COUNT(*) FROM proof_of_delivery) < 10",
         @"INSERT INTO dispatch_recommendations (company_id, job_id, vehicle_id, driver_id, recommendation, score, status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 12)
           SELECT 1, n, ((n - 1) % 20)+1, ((n - 1) % 20)+1,

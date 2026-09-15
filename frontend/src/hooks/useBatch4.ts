@@ -10,6 +10,8 @@ export const useSafetySummary   = () => useQuery<AnyRecord>      ({ queryKey: ["
 export const useSafetyEvents    = () => useQuery<AnyRecord[]>    ({ queryKey: ["safety"],            queryFn: () => safetyApi.events() });
 export const useSafetyEventDetail = (id?: string | number) => useQuery<AnyRecord>({ queryKey: ["safety", "detail", id], queryFn: () => safetyApi.detail(id!), enabled: Boolean(id) });
 export const useDashcamSummary = () => useQuery({ queryKey: ["dashcam", "summary"], queryFn: dashcamApi.summary });
+export const useDashcamProviderStatus = (enabled = true) => useQuery({ queryKey: ["dashcam", "provider-status"], queryFn: dashcamApi.providerStatus, enabled });
+export const useDashcamProviderEvents = (enabled = true) => useQuery({ queryKey: ["dashcam", "provider-events"], queryFn: dashcamApi.providerEvents, enabled });
 export const useDashcamEvents = () => useQuery({ queryKey: ["dashcam"], queryFn: dashcamApi.events });
 export const useDashcamEventDetail = (id?: string | number) => useQuery({ queryKey: ["dashcam", "detail", id], queryFn: () => dashcamApi.detail(id!), enabled: Boolean(id) });
 export const useCoachingSummary = () => useQuery({ queryKey: ["coaching", "summary"], queryFn: coachingApi.summary });

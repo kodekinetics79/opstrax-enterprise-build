@@ -51,6 +51,7 @@ export interface ActiveShipmentSummary {
 }
 
 export interface ActiveShipmentFilters {
+  jobId?: string;
   lifecycle?: string;
   risk?: string;
   assignment?: string;

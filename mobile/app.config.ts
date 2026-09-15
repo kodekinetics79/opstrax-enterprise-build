@@ -2,11 +2,15 @@ import type { ExpoConfig } from "expo/config";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
+const STAGE = process.env.EXPO_PUBLIC_STAGE?.trim().toLowerCase() || "pilot";
+// Canonical deployed .NET API host. The `osptrax` spelling is the actual Render service name.
+const DEFAULT_API_BASE_URL = STAGE === "development" || STAGE === "local"
+  ? "http://localhost:8088"
+  : "https://osptrax-fleet-management.onrender.com";
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL?.trim() ||
   process.env.EXPO_PUBLIC_DOTNET_API_URL?.trim() ||
-  "http://localhost:8088";
-const STAGE = process.env.EXPO_PUBLIC_STAGE?.trim().toLowerCase() || "pilot";
+  DEFAULT_API_BASE_URL;
 const isProductionBuild = process.env.EAS_BUILD_PROFILE?.startsWith("production") || STAGE === "production";
 const allowedApiHosts = (process.env.EXPO_PUBLIC_ALLOWED_API_HOSTS ?? "")
   .split(",")
@@ -16,6 +20,7 @@ const PRIVACY_URL = process.env.EXPO_PUBLIC_PRIVACY_URL?.trim() || "";
 const SUPPORT_URL = process.env.EXPO_PUBLIC_SUPPORT_URL?.trim() || "";
 const ACCOUNT_DELETION_URL = process.env.EXPO_PUBLIC_ACCOUNT_DELETION_URL?.trim() || "";
 const ACCOUNT_CREATION_ENABLED = process.env.EXPO_PUBLIC_ACCOUNT_CREATION_ENABLED?.trim().toLowerCase() === "true";
+const EAS_PROJECT_ID = process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim() || process.env.EAS_PROJECT_ID?.trim() || "";
 const hasBundledAssets = existsSync(resolve(__dirname, "assets/icon.png"));
 
 function requirePublicHttpsUrl(value: string, label: string) {
@@ -29,9 +34,13 @@ function requirePublicHttpsUrl(value: string, label: string) {
 type AppVariant = "driver" | "fleet" | "customer" | "unified";
 
 function resolveVariant(): AppVariant {
-  const raw = process.env.EXPO_PUBLIC_APP_VARIANT?.trim().toLowerCase() || "unified";
+  const raw = (
+    process.env.EXPO_PUBLIC_APP_VARIANT?.trim().toLowerCase() ||
+    process.env.EXPO_PUBLIC_PRODUCT?.trim().toLowerCase() ||
+    "unified"
+  );
   if (["driver", "fleet", "customer", "unified"].includes(raw)) return raw as AppVariant;
-  throw new Error(`Unsupported EXPO_PUBLIC_APP_VARIANT: ${raw}`);
+  throw new Error(`Unsupported mobile app variant: ${raw}`);
 }
 
 const APP_VARIANT = resolveVariant();
@@ -67,6 +76,8 @@ const stageSuffix = STAGE.replace(/[^a-z0-9]+/g, "");
 const defaultBundle = STAGE === "production" ? product.bundle : `${product.bundle}.${stageSuffix}`;
 const plugins: NonNullable<ExpoConfig["plugins"]> = [
   "expo-secure-store",
+  "expo-notifications",
+  ...(APP_VARIANT !== "customer" ? ["expo-location"] : []),
   [
     "expo-image-picker",
     {
@@ -77,7 +88,6 @@ const plugins: NonNullable<ExpoConfig["plugins"]> = [
   ],
   "./plugins/with-no-inbound-linking",
 ];
-if (APP_VARIANT !== "customer") plugins.splice(2, 0, "expo-location");
 
 if (isProductionBuild) {
   if (APP_VARIANT === "unified") {
@@ -136,6 +146,7 @@ const config: ExpoConfig = {
     supportUrl: SUPPORT_URL,
     accountDeletionUrl: ACCOUNT_DELETION_URL,
     accountCreationEnabled: ACCOUNT_CREATION_ENABLED,
+    ...(EAS_PROJECT_ID ? { easProjectId: EAS_PROJECT_ID, eas: { projectId: EAS_PROJECT_ID } } : {}),
   },
 };
 

@@ -9,6 +9,122 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
+        await db.ExecuteAsync(
+            @"UPDATE fuel_transactions
+                 SET data_origin=CASE
+                     WHEN transaction_number LIKE 'FT-B5-%' THEN 'demo_seed'
+                     ELSE COALESCE(data_origin, 'legacy_unverified') END
+               WHERE data_origin IS NULL OR transaction_number LIKE 'FT-B5-%';
+              UPDATE idling_events
+                 SET data_origin=CASE
+                     WHEN event_number ~ '^IDLE-10[0-9]{2}$' THEN 'demo_seed'
+                     ELSE COALESCE(data_origin, 'legacy_unverified') END,
+                     cost_evidence_status=COALESCE(cost_evidence_status,
+                         CASE WHEN estimated_cost > 0 THEN 'Recorded estimate' ELSE 'Unavailable' END)
+               WHERE data_origin IS NULL OR cost_evidence_status IS NULL OR event_number ~ '^IDLE-10[0-9]{2}$';
+              UPDATE fuel_anomalies
+                 SET data_origin=CASE
+                     WHEN description LIKE 'AI fuel advisor detected anomaly:%' THEN 'demo_seed'
+                     ELSE COALESCE(data_origin, 'legacy_unverified') END,
+                     amount_evidence_status=COALESCE(amount_evidence_status,
+                         CASE WHEN estimated_loss > 0 THEN 'Recorded estimate' ELSE 'Unavailable' END)
+               WHERE data_origin IS NULL OR amount_evidence_status IS NULL
+                  OR description LIKE 'AI fuel advisor detected anomaly:%'",
+            ct: ct);
+        await db.ExecuteAsync(
+            @"UPDATE cost_leakage_items
+                 SET data_origin=COALESCE(data_origin, 'runtime_detector'),
+                     amount_evidence_status=COALESCE(
+                         amount_evidence_status,
+                         CASE WHEN estimated_loss > 0 THEN 'Recorded' ELSE 'Unavailable' END)
+               WHERE leakage_number LIKE 'RLK-%'
+                 AND (data_origin IS NULL OR amount_evidence_status IS NULL)",
+            ct: ct);
+        await db.ExecuteAsync(
+            @"UPDATE contracts
+                 SET data_origin=CASE
+                     WHEN contract_code LIKE 'CON-B5-%'
+                       OR contract_number LIKE 'CON-B5-%'
+                       OR (contract_code ~ '^CTR-[0-9]{3}$' AND title LIKE '% Master Transport Agreement')
+                       THEN 'demo_seed'
+                     ELSE COALESCE(data_origin, 'legacy_unverified') END
+               WHERE data_origin IS NULL
+                  OR contract_code LIKE 'CON-B5-%'
+                  OR contract_number LIKE 'CON-B5-%'
+                  OR (contract_code ~ '^CTR-[0-9]{3}$' AND title LIKE '% Master Transport Agreement');
+              UPDATE contract_rates cr
+                 SET data_origin=CASE
+                     WHEN EXISTS (
+                         SELECT 1 FROM contracts con
+                          WHERE con.id=cr.contract_id
+                            AND con.company_id=cr.company_id
+                            AND con.data_origin='demo_seed') THEN 'demo_seed'
+                     ELSE COALESCE(cr.data_origin, 'legacy_unverified') END
+               WHERE cr.data_origin IS NULL
+                  OR EXISTS (
+                      SELECT 1 FROM contracts con
+                       WHERE con.id=cr.contract_id
+                         AND con.company_id=cr.company_id
+                         AND con.data_origin='demo_seed')",
+            ct: ct);
+        await db.ExecuteAsync(
+            @"UPDATE carriers
+                 SET data_origin=CASE
+                     WHEN company_id=1 AND (carrier_number LIKE 'CAR-B5-%'
+                       OR (mc_number ~ '^MC-9000[1-6]$' AND name IN
+                           ('Blue Ridge Carrier','Capital Freight','Dulles Express','Potomac Partner','NOVA Regional','Arlington Courier'))
+                       )
+                       THEN 'demo_seed'
+                     ELSE COALESCE(data_origin, 'legacy_unverified') END,
+                     compliance_evidence_status=CASE
+                     WHEN company_id=1 AND (carrier_number LIKE 'CAR-B5-%'
+                       OR (mc_number ~ '^MC-9000[1-6]$' AND name IN
+                           ('Blue Ridge Carrier','Capital Freight','Dulles Express','Potomac Partner','NOVA Regional','Arlington Courier'))
+                       )
+                       THEN 'demo_seed'
+                     ELSE COALESCE(compliance_evidence_status, 'unverified') END
+               WHERE data_origin IS NULL OR compliance_evidence_status IS NULL
+                  OR (company_id=1 AND (carrier_number LIKE 'CAR-B5-%'
+                      OR (mc_number ~ '^MC-9000[1-6]$' AND name IN
+                          ('Blue Ridge Carrier','Capital Freight','Dulles Express','Potomac Partner','NOVA Regional','Arlington Courier'))));
+              UPDATE carrier_documents cd
+                 SET data_origin=CASE
+                     WHEN (cd.company_id=1 AND cd.document_number ~ '^DOC-CAR-00(0[1-9]|1[0-5])$')
+                       OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cd.carrier_id
+                                  AND ca.company_id=cd.company_id AND ca.data_origin='demo_seed')
+                         THEN 'demo_seed'
+                     ELSE COALESCE(cd.data_origin, 'legacy_unverified') END,
+                     verification_status=CASE
+                     WHEN (cd.company_id=1 AND cd.document_number ~ '^DOC-CAR-00(0[1-9]|1[0-5])$')
+                       OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cd.carrier_id
+                                  AND ca.company_id=cd.company_id AND ca.data_origin='demo_seed')
+                         THEN 'demo_seed'
+                     ELSE COALESCE(cd.verification_status, 'unverified') END
+               WHERE cd.data_origin IS NULL OR cd.verification_status IS NULL
+                  OR (cd.company_id=1 AND cd.document_number ~ '^DOC-CAR-00(0[1-9]|1[0-5])$')
+                  OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cd.carrier_id
+                             AND ca.company_id=cd.company_id AND ca.data_origin='demo_seed');
+              UPDATE carrier_performance cp
+                 SET data_origin=CASE
+                     WHEN (cp.company_id=1 AND cp.expense_total BETWEEN 2801 AND 2810
+                           AND cp.jobs_handled=12+(cp.expense_total-2800)::INT)
+                       OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cp.carrier_id
+                                  AND ca.company_id=cp.company_id AND ca.data_origin='demo_seed')
+                         THEN 'demo_seed'
+                     ELSE COALESCE(cp.data_origin, 'legacy_unverified') END,
+                     calculation_status=CASE
+                     WHEN (cp.company_id=1 AND cp.expense_total BETWEEN 2801 AND 2810
+                           AND cp.jobs_handled=12+(cp.expense_total-2800)::INT)
+                       OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cp.carrier_id
+                                  AND ca.company_id=cp.company_id AND ca.data_origin='demo_seed')
+                         THEN 'demo_seed'
+                     ELSE COALESCE(cp.calculation_status, 'unverified') END
+               WHERE cp.data_origin IS NULL OR cp.calculation_status IS NULL
+                  OR (cp.company_id=1 AND cp.expense_total BETWEEN 2801 AND 2810
+                      AND cp.jobs_handled=12+(cp.expense_total-2800)::INT)
+                  OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cp.carrier_id
+                             AND ca.company_id=cp.company_id AND ca.data_origin='demo_seed')",
+            ct: ct);
         // Fabricated business rows for a REAL tenant (hardcoded company_id/tenant_id=1).
         // These used to run on EVERY boot, inventing safety events / contracts / invoices /
         // SLA + cost records that the product then presented as fact. Now they require the
@@ -49,6 +165,8 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         new("fuel_transactions", "notes",               "TEXT NULL"),
         new("fuel_transactions", "updated_at",          "TIMESTAMPTZ NULL"),
         new("fuel_transactions", "deleted_at",          "TIMESTAMPTZ NULL"),
+        new("fuel_transactions", "data_origin",         "VARCHAR(80) NULL"),
+        new("fuel_transactions", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
 
         new("expenses", "expense_number",       "VARCHAR(80) NULL"),
         new("expenses", "category_id",          "BIGINT NULL"),
@@ -87,6 +205,16 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         new("carriers", "notes",                "TEXT NULL"),
         new("carriers", "updated_at",           "TIMESTAMPTZ NULL"),
         new("carriers", "deleted_at",           "TIMESTAMPTZ NULL"),
+        new("carriers", "data_origin",          "VARCHAR(80) NULL"),
+        new("carriers", "compliance_evidence_status", "VARCHAR(80) NULL"),
+
+        new("carrier_documents", "data_origin",         "VARCHAR(80) NULL"),
+        new("carrier_documents", "verification_status", "VARCHAR(80) NULL"),
+        new("carrier_documents", "verified_at",         "TIMESTAMPTZ NULL"),
+        new("carrier_documents", "verified_by",         "BIGINT NULL"),
+
+        new("carrier_performance", "data_origin",       "VARCHAR(80) NULL"),
+        new("carrier_performance", "calculation_status", "VARCHAR(80) NULL"),
 
         new("contracts", "contract_number",         "VARCHAR(80) NULL"),
         new("contracts", "carrier_id",              "BIGINT NULL"),
@@ -99,13 +227,27 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         new("contracts", "sla_terms",               "TEXT NULL"),
         new("contracts", "margin_risk",             "VARCHAR(50) NOT NULL DEFAULT 'Low'"),
         new("contracts", "notes",                   "TEXT NULL"),
+        new("contracts", "created_at",              "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
         new("contracts", "updated_at",              "TIMESTAMPTZ NULL"),
         new("contracts", "deleted_at",              "TIMESTAMPTZ NULL"),
+        new("contracts", "data_origin",             "VARCHAR(80) NULL"),
+
+        new("contract_rates", "currency",           "VARCHAR(10) NOT NULL DEFAULT 'USD'"),
+        new("contract_rates", "data_origin",        "VARCHAR(80) NULL"),
+        new("contract_rates", "updated_at",         "TIMESTAMPTZ NULL"),
 
         new("audit_logs", "entity_type",            "VARCHAR(100) NULL"),
         new("idling_events", "threshold_status",         "VARCHAR(80) NOT NULL DEFAULT 'Normal'"),
-        new("idling_events", "risk_score",               "DECIMAL(6,2) NOT NULL DEFAULT 20"),
+        new("idling_events", "risk_score",               "DECIMAL(6,2) NULL"),
         new("idling_events", "recommended_action",       "VARCHAR(260) NULL"),
+        new("idling_events", "data_origin",              "VARCHAR(80) NULL"),
+        new("idling_events", "verification_status",      "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
+        new("idling_events", "cost_evidence_status",     "VARCHAR(40) NULL"),
+        new("idling_events", "deleted_at",               "TIMESTAMPTZ NULL"),
+        new("fuel_anomalies", "currency",                "VARCHAR(10) NULL"),
+        new("fuel_anomalies", "data_origin",             "VARCHAR(80) NULL"),
+        new("fuel_anomalies", "verification_status",     "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
+        new("fuel_anomalies", "amount_evidence_status",  "VARCHAR(40) NULL"),
         new("cost_margin_records", "carrier_cost",       "DECIMAL(12,2) NOT NULL DEFAULT 0"),
         new("cost_margin_records", "expense_total",      "DECIMAL(12,2) NOT NULL DEFAULT 0"),
         new("cost_margin_records", "delay_cost",         "DECIMAL(12,2) NOT NULL DEFAULT 0"),
@@ -117,7 +259,12 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
 
         new("cost_margin_predictions", "recommendation", "TEXT NULL"),
 
-        new("cost_leakage_items", "owner_role", "VARCHAR(120) NULL")
+        new("cost_leakage_items", "owner_role", "VARCHAR(120) NULL"),
+        new("cost_leakage_items", "risk_score", "DECIMAL(6,2) NOT NULL DEFAULT 40"),
+        new("cost_leakage_items", "deleted_at", "TIMESTAMPTZ NULL"),
+        new("cost_leakage_items", "currency", "VARCHAR(10) NULL"),
+        new("cost_leakage_items", "data_origin", "VARCHAR(80) NULL"),
+        new("cost_leakage_items", "amount_evidence_status", "VARCHAR(40) NULL")
     ];
 
     private static readonly string[] Tables =
@@ -129,17 +276,21 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), ended_at TIMESTAMPTZ NULL,
             duration_minutes DECIMAL(8,2) NOT NULL DEFAULT 0, estimated_fuel_burn DECIMAL(10,3) NOT NULL DEFAULT 0,
             estimated_cost DECIMAL(12,2) NOT NULL DEFAULT 0, currency VARCHAR(10) NOT NULL DEFAULT 'USD',
-            threshold_status VARCHAR(80) NOT NULL DEFAULT 'Normal', risk_score DECIMAL(6,2) NOT NULL DEFAULT 20,
-            recommended_action VARCHAR(260) NULL,
+            threshold_status VARCHAR(80) NOT NULL DEFAULT 'Normal', risk_score DECIMAL(6,2) NULL,
+            recommended_action VARCHAR(260) NULL, data_origin VARCHAR(80) NULL,
+            verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified',
+            cost_evidence_status VARCHAR(40) NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NULL)",
+            updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL)",
 
         @"CREATE TABLE IF NOT EXISTS fuel_anomalies (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             fuel_transaction_id BIGINT NULL, vehicle_id BIGINT NULL, driver_id BIGINT NULL,
             anomaly_type VARCHAR(120) NOT NULL, severity VARCHAR(50) NOT NULL DEFAULT 'Medium',
             description TEXT NULL, estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
-            status VARCHAR(80) NOT NULL DEFAULT 'Open',
+            currency VARCHAR(10) NULL, data_origin VARCHAR(80) NULL,
+            verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified',
+            amount_evidence_status VARCHAR(40) NULL, status VARCHAR(80) NOT NULL DEFAULT 'Open',
             reviewed_at TIMESTAMPTZ NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS expense_categories (
@@ -153,17 +304,20 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             contract_id BIGINT NOT NULL, rate_code VARCHAR(80) NOT NULL,
             rate_type VARCHAR(80) NOT NULL DEFAULT 'Per Mile', origin_zone VARCHAR(120) NULL,
             destination_zone VARCHAR(120) NULL, vehicle_type VARCHAR(80) NULL,
+            currency VARCHAR(10) NOT NULL DEFAULT 'USD',
             base_rate DECIMAL(12,4) NOT NULL DEFAULT 0, minimum_charge DECIMAL(12,2) NULL,
             fuel_surcharge_percent DECIMAL(6,2) NULL, accessorial_type VARCHAR(120) NULL,
             effective_date DATE NOT NULL, expiry_date DATE NULL, status VARCHAR(50) NOT NULL DEFAULT 'Active',
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NULL)",
+            updated_at TIMESTAMPTZ NULL, data_origin VARCHAR(80) NULL)",
 
         @"CREATE TABLE IF NOT EXISTS carrier_documents (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
             carrier_id BIGINT NOT NULL, document_type VARCHAR(120) NOT NULL,
             document_number VARCHAR(120) NULL, expiry_date DATE NULL,
             status VARCHAR(50) NOT NULL DEFAULT 'Active', file_url VARCHAR(400) NULL,
+            data_origin VARCHAR(80) NULL, verification_status VARCHAR(80) NULL,
+            verified_at TIMESTAMPTZ NULL, verified_by BIGINT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS carrier_performance (
@@ -172,6 +326,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             jobs_handled INT NOT NULL DEFAULT 0, on_time_percent DECIMAL(6,2) NOT NULL DEFAULT 90,
             incident_count INT NOT NULL DEFAULT 0, expense_total DECIMAL(12,2) NOT NULL DEFAULT 0,
             performance_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+            data_origin VARCHAR(80) NULL, calculation_status VARCHAR(80) NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS cost_margin_records (
@@ -205,10 +360,13 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             entity_type VARCHAR(80) NULL, entity_id BIGINT NULL, title VARCHAR(220) NOT NULL,
             description TEXT NULL, estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
             projected_monthly_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
+            currency VARCHAR(10) NULL, data_origin VARCHAR(80) NULL,
+            amount_evidence_status VARCHAR(40) NULL,
             severity VARCHAR(50) NOT NULL DEFAULT 'Medium', status VARCHAR(80) NOT NULL DEFAULT 'Open',
+            risk_score DECIMAL(6,2) NOT NULL DEFAULT 40,
             owner_role VARCHAR(120) NULL, recommended_action VARCHAR(260) NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NULL)",
+            updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL)",
 
         @"CREATE TABLE IF NOT EXISTS cost_leakage_actions (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
@@ -255,7 +413,8 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         @"INSERT INTO fuel_transactions
             (company_id, transaction_number, vehicle_id, driver_id, job_id, route_id,
              fuel_date, fuel_type, gallons, quantity, unit, unit_price, total_cost,
-             currency, odometer, fuel_station, payment_method, fuel_card_number, region, anomaly_status, notes)
+             currency, odometer, fuel_station, payment_method, fuel_card_number, region, anomaly_status, notes,
+             data_origin, verification_status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<50)
           SELECT 1,
             'FT-B5-' || (1000+n),
@@ -274,14 +433,16 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             CASE WHEN n%3=0 THEN 'FC-' || LPAD((n)::TEXT,6,'0') ELSE NULL END,
             (ARRAY['Northern VA','DC Metro','Southern VA','Maryland','West VA'])[(n%5)+1],
             CASE WHEN n%9=0 THEN 'Anomaly Detected' WHEN n%7=0 THEN 'Under Review' ELSE 'Normal' END,
-            CASE WHEN n%9=0 THEN 'AI detected possible quantity discrepancy vs odometer reading.' ELSE NULL END
+            CASE WHEN n%9=0 THEN 'AI detected possible quantity discrepancy vs odometer reading.' ELSE NULL END,
+            'demo_seed','demo_seed'
           FROM seq
           WHERE (SELECT COUNT(*) FROM fuel_transactions WHERE transaction_number LIKE 'FT-B5-%') < 50",
 
         @"INSERT INTO idling_events
             (company_id, event_number, vehicle_id, driver_id, job_id, route_id,
              location_description, started_at, ended_at, duration_minutes,
-             estimated_fuel_burn, estimated_cost, currency, threshold_status, risk_score, recommended_action)
+             estimated_fuel_burn, estimated_cost, currency, threshold_status, risk_score, recommended_action,
+             data_origin, verification_status, cost_evidence_status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<30)
           SELECT 1,
             'IDLE-' || (1000+n),
@@ -297,18 +458,20 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             CASE WHEN n%3=0 THEN 72+(n%20) ELSE 18+(n%30) END,
             CASE WHEN n%3=0 THEN 'Idle cost leakage detected — coach driver on idling policy'
                  WHEN n%5=0 THEN 'Review idle duration — approaching threshold'
-                 ELSE 'Normal idle within policy' END
+                 ELSE 'Normal idle within policy' END,
+            'demo_seed','demo_seed','Recorded estimate'
           FROM seq
           WHERE (SELECT COUNT(*) FROM idling_events) < 30",
 
         @"INSERT INTO fuel_anomalies
-            (company_id, fuel_transaction_id, vehicle_id, driver_id, anomaly_type, severity, description, estimated_loss, status)
+            (company_id, fuel_transaction_id, vehicle_id, driver_id, anomaly_type, severity, description,
+             estimated_loss, currency, data_origin, verification_status, amount_evidence_status, status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<12)
           SELECT 1, ((n-1)%50)+1, ((n-1)%20)+1, ((n-1)%20)+1,
             (ARRAY['Quantity vs Odometer Mismatch','Unusual Station','High Unit Price','Repeated Fill-up','High Cost per Mile','Off-route Purchase'])[(n%6)+1],
             (ARRAY['Low','Medium','High','Critical'])[(n%4)+1],
             'AI fuel advisor detected anomaly: ' || (ARRAY['fuel quantity inconsistent with odometer delta','transaction at unusual station outside normal route corridor','unit price 18% above regional average — possible mis-key','duplicate fill-up within 4 hours of prior transaction','cost per mile significantly above fleet average','fuel purchase recorded outside active job route'])[(n%6)+1],
-            ROUND((28 + (n%120))::NUMERIC, 2),
+            ROUND((28 + (n%120))::NUMERIC, 2), 'USD', 'demo_seed', 'demo_seed', 'Recorded estimate',
             (ARRAY['Open','Under Review','Resolved','Closed'])[(n%4)+1]
           FROM seq
           WHERE (SELECT COUNT(*) FROM fuel_anomalies) < 12",
@@ -363,18 +526,19 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
               fuel_surcharge_enabled  = CASE WHEN id%3=0 THEN TRUE ELSE fuel_surcharge_enabled END,
               fuel_surcharge_percent  = CASE WHEN id%3=0 THEN ROUND((3+(id%5))::NUMERIC,2) ELSE fuel_surcharge_percent END,
               margin_risk             = COALESCE(CASE WHEN base_rate < 2.2 THEN 'High' WHEN base_rate < 2.8 THEN 'Medium' ELSE 'Low' END, 'Low'),
-              contract_type           = COALESCE(contract_type, (ARRAY['Customer','Carrier','Internal'])[(id%3)+1])
+              contract_type           = COALESCE(contract_type, (ARRAY['Customer','Carrier','Internal'])[(id%3)+1]),
+              data_origin             = 'demo_seed'
           WHERE contract_number IS NULL",
 
         @"INSERT INTO contracts
             (company_id, contract_code, title, contract_number, customer_id, carrier_id, contract_type, effective_date, expiry_date,
              status, currency, base_rate, rate_type, fuel_surcharge_enabled, fuel_surcharge_percent,
-             sla_terms, margin_risk, notes)
+             sla_terms, margin_risk, notes, data_origin)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<12)
           SELECT 1,
             'CON-B5-' || (3000+n),
-            'CON-B5-' || (3000+n),
             (ARRAY['Customer','Carrier','Internal'])[(n%3)+1] || ' rate agreement ' || n,
+            'CON-B5-' || (3000+n),
             (SELECT ids[((n - 1) % COALESCE(array_length(ids,1),1)) + 1] FROM (SELECT array_agg(id ORDER BY id) ids FROM customers WHERE company_id=1) customer_ids),
             CASE WHEN n%3=0 THEN ((n-1)%5)+1 ELSE NULL END,
             (ARRAY['Customer','Carrier','Internal'])[(n%3)+1],
@@ -390,30 +554,34 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             CASE WHEN n%2=0 THEN 'On-time delivery 96%, 4h ETA window, damage liability per cargo value.' ELSE NULL END,
             CASE WHEN 1.75+(n%40)*0.09 < 2.20 THEN 'High'
                  WHEN 1.75+(n%40)*0.09 < 2.80 THEN 'Medium' ELSE 'Low' END,
-            CASE WHEN n%4=0 THEN 'Contract nearing expiry — schedule renewal review.' ELSE NULL END
+            CASE WHEN n%4=0 THEN 'Contract nearing expiry — schedule renewal review.' ELSE NULL END,
+            'demo_seed'
           FROM seq
-          WHERE (SELECT COUNT(*) FROM contracts WHERE contract_number LIKE 'CON-B5-%') < 12",
+          WHERE (SELECT COUNT(*) FROM contracts WHERE contract_code LIKE 'CON-B5-%') < 12",
 
         @"INSERT INTO contract_rates
             (company_id, contract_id, rate_code, rate_type, origin_zone, destination_zone,
-             vehicle_type, base_rate, minimum_charge, fuel_surcharge_percent, accessorial_type,
-             effective_date, expiry_date, status)
-          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<30)
-          SELECT 1, ((n-1)%12)+1,
+             vehicle_type, currency, base_rate, minimum_charge, fuel_surcharge_percent, accessorial_type,
+             effective_date, expiry_date, status, data_origin)
+          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<30),
+          demo_contracts AS (SELECT ARRAY_AGG(id ORDER BY id) ids FROM contracts WHERE data_origin='demo_seed')
+          SELECT 1,
+            (SELECT ids[((n-1)%ARRAY_LENGTH(ids,1))+1] FROM demo_contracts),
             'RATE-' || LPAD(n::TEXT,4,'0'),
             (ARRAY['Per Mile','Per Kilometer','Flat Rate','Hourly','Per Stop','Weight Based'])[(n%6)+1],
             (ARRAY['Northern VA','DC Metro','Southern VA','Maryland','West VA'])[(n%5)+1],
             (ARRAY['DC Metro','Northern VA','Maryland','West VA','Southern VA'])[(n%5)+1],
-            (ARRAY['Truck','Van','Reefer','Flatbed'])[(n%4)+1],
+            (ARRAY['Truck','Van','Reefer','Flatbed'])[(n%4)+1], 'USD',
             ROUND((1.45 + (n%60)*0.045)::NUMERIC, 4),
             ROUND((85 + (n%90))::NUMERIC, 2),
             CASE WHEN n%3=0 THEN ROUND((3+(n%5))::NUMERIC,2) ELSE NULL END,
             CASE WHEN n%4=0 THEN (ARRAY['Liftgate','Fuel Surcharge','Detention'])[(n%3)+1] ELSE NULL END,
             CURRENT_DATE - n*15 * INTERVAL '1 day',
             CURRENT_DATE + (31-n)*20 * INTERVAL '1 day',
-            CASE WHEN n%8=0 THEN 'Inactive' ELSE 'Active' END
+            CASE WHEN n%8=0 THEN 'Inactive' ELSE 'Active' END, 'demo_seed'
           FROM seq
-          WHERE (SELECT COUNT(*) FROM contract_rates) < 30",
+          WHERE (SELECT ARRAY_LENGTH(ids,1) FROM demo_contracts) > 0
+            AND (SELECT COUNT(*) FROM contract_rates WHERE data_origin='demo_seed') < 30",
 
         @"UPDATE carriers
           SET carrier_number      = COALESCE(carrier_number, 'CAR-' || LPAD(id::TEXT,5,'0')),
@@ -425,13 +593,17 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
               safety_score        = CASE WHEN safety_score=88 THEN GREATEST(68,96-(id%4)*7) ELSE safety_score END,
               performance_score   = CASE WHEN performance_score=86 THEN GREATEST(70,95-(id%4)*6) ELSE performance_score END,
               risk_score          = CASE WHEN risk_score=20 THEN 12+(id%6)*10 ELSE risk_score END,
-              recommended_action  = COALESCE(recommended_action, CASE WHEN compliance_status='Non-Compliant' THEN 'Suspend carrier — compliance risk' WHEN insurance_expiry < CURRENT_DATE + 60 * INTERVAL '1 day' THEN 'Renew insurance immediately' ELSE 'Monitor performance' END)
-          WHERE carrier_number IS NULL",
+              recommended_action  = COALESCE(recommended_action, CASE WHEN compliance_status='Non-Compliant' THEN 'Suspend carrier — compliance risk' WHEN insurance_expiry < CURRENT_DATE + 60 * INTERVAL '1 day' THEN 'Renew insurance immediately' ELSE 'Monitor performance' END),
+              data_origin='demo_seed', compliance_evidence_status='demo_seed'
+          WHERE company_id=1 AND carrier_number IS NULL
+            AND mc_number ~ '^MC-9000[1-6]$'
+            AND name IN ('Blue Ridge Carrier','Capital Freight','Dulles Express','Potomac Partner','NOVA Regional','Arlington Courier')",
 
         @"INSERT INTO carriers
             (company_id, carrier_number, name, mc_number, contact_name, phone, email, region, status,
              compliance_status, insurance_expiry, contract_status, on_time_percent, safety_score,
-             cost_score, performance_score, risk_score, recommended_action, notes)
+             cost_score, performance_score, risk_score, recommended_action, notes,
+             data_origin, compliance_evidence_status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<10)
           SELECT 1,
             'CAR-B5-' || (4000+n),
@@ -453,30 +625,41 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             CASE WHEN n%5=0 THEN 'Suspend carrier — compliance risk'
                  WHEN n%4=0 THEN 'Review carrier compliance before next tender'
                  ELSE 'Monitor carrier performance quarterly' END,
-            CASE WHEN n%5=0 THEN 'Carrier suspended pending compliance review.' ELSE NULL END
+            CASE WHEN n%5=0 THEN 'Carrier suspended pending compliance review.' ELSE NULL END,
+            'demo_seed', 'demo_seed'
           FROM seq
           WHERE (SELECT COUNT(*) FROM carriers WHERE carrier_number LIKE 'CAR-B5-%') < 10",
 
         @"INSERT INTO carrier_documents
-            (company_id, carrier_id, document_type, document_number, expiry_date, status)
-          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<15)
-          SELECT 1, ((n-1)%10)+1,
+            (company_id, carrier_id, document_type, document_number, expiry_date, status,
+             data_origin, verification_status)
+          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<15),
+          demo_carriers AS (SELECT ARRAY_AGG(id ORDER BY id) ids FROM carriers WHERE company_id=1 AND data_origin='demo_seed')
+          SELECT 1,
+            (SELECT ids[((n-1)%ARRAY_LENGTH(ids,1))+1] FROM demo_carriers),
             (ARRAY['Operating Authority','Insurance Certificate','Safety Rating','MC Number','DOT Registration'])[(n%5)+1],
             'DOC-CAR-' || LPAD(n::TEXT,4,'0'),
             CURRENT_DATE + (n%18-3) * INTERVAL '1 month',
-            CASE WHEN n%5=0 THEN 'Expired' WHEN n%6=0 THEN 'Expiring' ELSE 'Active' END
+            CASE WHEN n%5=0 THEN 'Expired' WHEN n%6=0 THEN 'Expiring' ELSE 'Active' END,
+            'demo_seed', 'demo_seed'
           FROM seq
-          WHERE (SELECT COUNT(*) FROM carrier_documents) < 15",
+          WHERE (SELECT ARRAY_LENGTH(ids,1) FROM demo_carriers) > 0
+            AND (SELECT COUNT(*) FROM carrier_documents WHERE data_origin='demo_seed') < 15",
 
         @"INSERT INTO carrier_performance
-            (company_id, carrier_id, period_start, period_end, jobs_handled, on_time_percent, incident_count, expense_total, performance_score)
-          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<10)
-          SELECT 1, ((n-1)%10)+1,
+            (company_id, carrier_id, period_start, period_end, jobs_handled, on_time_percent, incident_count, expense_total, performance_score,
+             data_origin, calculation_status)
+          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<10),
+          demo_carriers AS (SELECT ARRAY_AGG(id ORDER BY id) ids FROM carriers WHERE company_id=1 AND data_origin='demo_seed')
+          SELECT 1,
+            (SELECT ids[((n-1)%ARRAY_LENGTH(ids,1))+1] FROM demo_carriers),
             CURRENT_DATE - n * INTERVAL '1 month',
             CURRENT_DATE - (n-1) * INTERVAL '1 month',
-            12+(n%28), GREATEST(70, 97-(n%4)*6), n%4, ROUND((2800+(n%3200))::NUMERIC, 2), GREATEST(68, 95-(n%5)*5)
+            12+(n%28), GREATEST(70, 97-(n%4)*6), n%4, ROUND((2800+(n%3200))::NUMERIC, 2), GREATEST(68, 95-(n%5)*5),
+            'demo_seed', 'demo_seed'
           FROM seq
-          WHERE (SELECT COUNT(*) FROM carrier_performance) < 10",
+          WHERE (SELECT ARRAY_LENGTH(ids,1) FROM demo_carriers) > 0
+            AND (SELECT COUNT(*) FROM carrier_performance WHERE data_origin='demo_seed') < 10",
 
         @"INSERT INTO cost_margin_records
             (company_id, entity_type, entity_id, customer_id, job_id, route_id, vehicle_id, driver_id,

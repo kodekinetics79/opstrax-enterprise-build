@@ -38,8 +38,8 @@ public sealed class SamsaraEngineStateTruthPostgresTests
         try
         {
             var integrationId = await db.InsertAsync(
-                @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
-                  VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+                @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
+                  VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb,'samsara-org:engine-test',NOW()) RETURNING id",
                 c => c.Parameters.AddWithValue("@cid", companyId));
             var branchId = await db.InsertAsync(
                 "INSERT INTO branches(company_id,branch_code,name,status) VALUES(@cid,@code,'Synthetic branch','Active') RETURNING id",
@@ -55,12 +55,13 @@ public sealed class SamsaraEngineStateTruthPostgresTests
                 });
             var providerVehicleId = $"synthetic-engine-{suffix}";
             var deviceId = await db.InsertAsync(
-                @"INSERT INTO eld_devices(company_id,device_serial,provider,vehicle_id,status)
-                  VALUES(@cid,@serial,'Samsara',@vid,'Provisioning') RETURNING id",
+                @"INSERT INTO eld_devices(company_id,device_serial,provider,provider_account_ref,provider_external_id,vehicle_id,status)
+                  VALUES(@cid,@serial,'Samsara','samsara-org:engine-test',@external,@vid,'Provisioning') RETURNING id",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", companyId);
-                    c.Parameters.AddWithValue("@serial", $"samsara-{providerVehicleId}");
+                    c.Parameters.AddWithValue("@serial", SamsaraSync.DeviceSerial(companyId, "samsara-org:engine-test", providerVehicleId));
+                    c.Parameters.AddWithValue("@external", providerVehicleId);
                     c.Parameters.AddWithValue("@vid", vehicleId);
                 });
             await db.ExecuteAsync(

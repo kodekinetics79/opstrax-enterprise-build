@@ -18,6 +18,8 @@ public sealed class NotificationSchemaService(Database db)
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS source_id BIGINT",
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS title VARCHAR(255)",
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS message TEXT",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS body TEXT",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS severity VARCHAR(40) NOT NULL DEFAULT 'Medium'",
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS audience_type VARCHAR(80) NOT NULL DEFAULT 'dispatcher'",
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS channel VARCHAR(40) NOT NULL DEFAULT 'in_app'",
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS status VARCHAR(40) NOT NULL DEFAULT 'unread'",
@@ -30,6 +32,7 @@ public sealed class NotificationSchemaService(Database db)
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS acknowledged_by BIGINT",
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS acknowledgement_note TEXT",
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS escalated_from BIGINT",
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
         // SMS delivery target for ops users. Driver phones live on drivers.phone; this is the
         // first per-user contact number, resolved as COALESCE(users.phone, drivers.phone).
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50)",

@@ -68,7 +68,7 @@ function AssistantBubble({ message }: { message: Message }) {
         {message.evidence && message.evidence.length > 0 && (
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {message.evidence.slice(0, 4).map((item, i) => (
-              <AiInsightCard key={i} insight={item} />
+              <AiInsightCard key={i} insight={item} label="Recorded telemetry alert" />
             ))}
           </div>
         )}
@@ -178,18 +178,23 @@ export function AiCopilotPage() {
           </div>
         </div>
 
-        {/* Agentic Ops Copilot — live proposed actions awaiting dispatcher approval */}
+        {/* Agentic Ops Copilot — proposed actions awaiting dispatcher approval */}
         <CopilotProposals />
 
         {/* Evidence feed */}
         <div className="panel p-4">
-          <h2 className="text-sm font-semibold text-slate-900 mb-3">Live evidence</h2>
+          <h2 className="text-sm font-semibold text-slate-900 mb-1">Recorded telemetry alerts</h2>
+          <p className="mb-3 text-[11px] leading-snug text-slate-400">Current persisted records within your account and branch access.</p>
           <div className="flex flex-col gap-2">
             {insights.isLoading ? (
               <LoadingState />
+            ) : insights.isError ? (
+              <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-3 text-[11px] text-rose-700">Telemetry alert evidence is unavailable. No substitute evidence is shown.</p>
+            ) : ((insights.data as AnyRecord[]) ?? []).length === 0 ? (
+              <p className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-[11px] text-slate-500">No telemetry alert records are available in the current authorized scope.</p>
             ) : (
               ((insights.data as AnyRecord[]) ?? []).slice(0, 5).map((item) => (
-                <AiInsightCard key={String(item.id)} insight={item} />
+                <AiInsightCard key={String(item.id)} insight={item} label="Recorded telemetry alert" />
               ))
             )}
           </div>
@@ -205,7 +210,7 @@ export function AiCopilotPage() {
               <Bot className="w-4 h-4 text-violet-700" />
             </div>
             <span className="font-semibold text-slate-900 text-sm">Operations Copilot</span>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-teal-50 border border-teal-200 text-teal-700 font-medium">Ready</span>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-50 border border-slate-200 text-slate-600 font-medium">Availability checked on request</span>
           </div>
           {messages.length > 0 && (
             <button type="button" className="btn-secondary text-xs" onClick={exportConversation}>
@@ -222,9 +227,9 @@ export function AiCopilotPage() {
                 <Bot className="w-7 h-7 text-violet-600" />
               </div>
               <div>
-                <p className="text-slate-700 font-semibold">Operations Copilot ready</p>
+                <p className="text-slate-700 font-semibold">Operations Copilot</p>
                 <p className="text-sm text-slate-400 mt-1 max-w-sm">
-                  Ask about dispatch risk, cost leakage, safety, maintenance, customer SLA, or get an executive brief. Press ⌘↵ or click Ask.
+                  Answers are generated only when the configured AI provider returns a valid response grounded in the authorized operational context. Press ⌘↵ or click Ask.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2 justify-center mt-2">
@@ -271,6 +276,11 @@ export function AiCopilotPage() {
 
         {/* Input */}
         <div className="panel p-4 shrink-0">
+          {ask.isError ? (
+            <div role="alert" className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              The operations assistant is unavailable. No generated answer or substitute recommendation was created.
+            </div>
+          ) : null}
           <div className="flex items-center gap-2 mb-2">
             <span className="text-xs text-slate-500">Category:</span>
             <select
@@ -303,7 +313,7 @@ export function AiCopilotPage() {
               <span className="text-xs font-medium">Ask</span>
             </button>
           </div>
-          <p className="text-xs text-slate-400 mt-2">⌘↵ to send · Evidence is pulled from live fleet data</p>
+          <p className="text-xs text-slate-400 mt-2">⌘↵ to send · Context uses persisted records from your authorized scope</p>
         </div>
       </div>
     </div>
@@ -337,13 +347,17 @@ function CopilotProposals() {
         <Zap className="h-3.5 w-3.5 text-violet-500" /> Copilot proposals
       </h2>
       <p className="mb-3 text-[11px] leading-snug text-slate-400">
-        AI-proposed dispatch actions. Approve to execute through the audited workflow, or dismiss.
+        AI-provider-generated proposals linked to recorded dispatch exceptions. Approval is recorded for an operator to carry out; it does not execute the proposed action.
       </p>
       {proposed.isLoading ? (
         <p className="text-xs text-slate-400">Loading…</p>
+      ) : proposed.isError ? (
+        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-3 text-[11px] text-rose-700">
+          Proposal records are unavailable. No empty queue state has been inferred.
+        </p>
       ) : rows.length === 0 ? (
         <p className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-[11px] text-slate-400">
-          No proposals right now. The copilot posts here when it spots a dispatch exception worth acting on.
+          No provider-generated proposals are recorded in the current scope.
         </p>
       ) : (
         <div className="flex flex-col gap-2.5">

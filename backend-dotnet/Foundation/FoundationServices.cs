@@ -176,7 +176,8 @@ public sealed class AuthorizationDecisionService(IFeatureAccessService? featureA
         if (permission is "telemetry.devices.read" or "telemetry.devices.view")
             return ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view"];
 
-        // ROUND-2 FIX — the device credential kill switch was unreachable.
+        // Device lifecycle controls remain reachable to explicit lifecycle and fleet
+        // managers. Provider credential management is a separate write domain.
         // DeviceRevoke/DeviceSuspend/DeviceActivate gate on telemetry.devices.manage.
         // EndpointMappings declared this satisfy-set but the ENGINE did not, so the
         // required side expanded to the bare token and only a wildcard role could
@@ -184,7 +185,7 @@ public sealed class AuthorizationDecisionService(IFeatureAccessService? featureA
         // EndpointMappings list) rendered the control and the API 403'd. Mirrored
         // EXACTLY, group for group, with EndpointMappings.
         if (permission is "telemetry.devices.manage")
-            return ["telemetry.devices.manage", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:providers:manage", "fleet:manage", "fleet.manage"];
+            return ["telemetry.devices.manage", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "fleet:manage", "fleet.manage"];
 
         // ROUND-2 FIX — same dead-in-enforcement defect on the alert tiers.
         if (permission is "telemetry.alerts.read" or "telemetry.alerts.view")

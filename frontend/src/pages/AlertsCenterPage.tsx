@@ -1,22 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
+import axios from "axios";
+import { WorkspaceGuidance } from "@/components/WorkspaceGuidance";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import {
-  AlertTriangle,
-  ArrowRight,
-  BadgeCheck,
-  BellRing,
   Clock3,
   RefreshCw,
   Search,
-  ShieldAlert,
-  Sparkles,
-  Wrench,
+  X,
 } from "lucide-react";
 import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
-import { EmptyState, ErrorState, exportCsv, KpiCard, LoadingState, StatusBadge } from "@/components/ui";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
+import { EmptyState, ErrorState, exportCsv, LoadingState, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
+import "./alerts-workspace.css";
 
 type Alert = {
   id: string | number;
@@ -147,13 +145,6 @@ function statusClass(status: string) {
   return "bg-slate-100 border-slate-200 text-slate-600";
 }
 
-function severityTone(severity: string) {
-  if (/critical/i.test(severity)) return "border-red-200 bg-red-50/90";
-  if (/high/i.test(severity)) return "border-orange-200 bg-orange-50/90";
-  if (/warning/i.test(severity)) return "border-amber-200 bg-amber-50/90";
-  return "border-sky-200 bg-sky-50/90";
-}
-
 function ageHours(createdAt?: string) {
   if (!createdAt) return 0;
   const created = new Date(createdAt).getTime();
@@ -175,13 +166,18 @@ function ActionModal({
   alert,
   onClose,
   onConfirm,
+  pending,
+  error,
 }: {
   type: ActionType;
   alert: Alert | null;
   onClose: () => void;
   onConfirm: (payload: AnyRecord) => void;
+  pending: boolean;
+  error: string | null;
 }) {
   const [note, setNote] = useState("");
+  const dialogRef = useDialogFocus<HTMLDivElement>(Boolean(type && alert), onClose);
 
   if (!type || !alert) return null;
 
@@ -202,28 +198,32 @@ function ActionModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
-      <div className="panel mx-4 w-full max-w-md" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+      <div ref={dialogRef} className="panel mx-4 w-full max-w-md" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="alert-action-title">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-          <button type="button" className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
+          <h3 id="alert-action-title" className="text-base font-semibold text-slate-900">{title}</h3>
+          <button type="button" className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" onClick={onClose} aria-label="Close alert action"><X className="h-4 w-4" /></button>
         </div>
         <p className="mt-3 text-sm text-slate-600">
           <span className="font-medium text-slate-900">{alert.title}</span> · {alert.severity} · {alert.category}
         </p>
         <div className="mt-4">
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</label>
+          <label htmlFor="alert-action-note" className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</label>
           <textarea
+            id="alert-action-note"
+            autoFocus
             className="min-h-[110px] w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
             value={note}
             onChange={(event) => setNote(event.target.value)}
             placeholder={type === "task" ? `Follow-up for ${alert.title}` : "Add context for the team"}
           />
         </div>
+        {error ? <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" className="btn-ghost h-10" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-ghost h-10" disabled={pending} onClick={onClose}>Cancel</button>
           <button
             type="button"
-            className={`rounded-xl px-4 py-2 text-sm font-semibold text-white transition ${buttonClass}`}
+            disabled={pending}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold text-white transition disabled:opacity-50 ${buttonClass}`}
             onClick={() => {
               const payload =
                 type === "acknowledge" ? { note } :
@@ -232,7 +232,7 @@ function ActionModal({
               onConfirm(payload);
             }}
           >
-            {type === "acknowledge" ? "Acknowledge" : type === "close" ? "Close alert" : "Create task"}
+            {pending ? "Saving…" : type === "acknowledge" ? "Acknowledge" : type === "close" ? "Close alert" : "Create task"}
           </button>
         </div>
       </div>
@@ -240,197 +240,47 @@ function ActionModal({
   );
 }
 
-function AlertCard({
-  alert,
-  active,
-  onSelect,
-  canAcknowledge,
-  canClose,
-  onAction,
-}: {
-  alert: Alert;
-  active: boolean;
-  onSelect: () => void;
-  canAcknowledge: boolean;
-  canClose: boolean;
-  onAction: (type: ActionType, alert: Alert) => void;
+function AlertInspector({ alert, detail, loading, failed, retry, canAcknowledge, canClose, onAction, onNavigate }: {
+  alert: Alert; detail: AlertDetailRecord; loading: boolean; failed: boolean; retry: () => void;
+  canAcknowledge: boolean; canClose: boolean; onAction: (type: ActionType, alert: Alert) => void; onNavigate: (route: string) => void;
 }) {
-  return (
-    <article
-      className={`rounded-[22px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,.07)] transition hover:-translate-y-0.5 hover:shadow-[0_16px_34px_rgba(15,23,42,.10)] ${active ? "border-sky-300 bg-[linear-gradient(180deg,rgba(248,252,255,.98),rgba(235,243,255,.94))]" : `bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] ${severityTone(alert.severity)}`}`}
-    >
-      <button type="button" onClick={onSelect} className="w-full text-left">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={alert.severity} />
-              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(alert.status)}`}>{alert.status}</span>
-            </div>
-            <h3 className="mt-3 text-sm font-semibold text-slate-900">{alert.title}</h3>
-          </div>
-          <span className="text-xs font-semibold text-slate-400">{alert.age ?? "Live"}</span>
-        </div>
-        <p className="mt-2 text-sm text-slate-600">{alert.entity ?? alert.entityType ?? "Unmapped entity"} · {alert.category}</p>
-        <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">{alert.recommendedAction || alert.body || "No recommended action recorded."}</p>
-      </button>
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-black/5 pt-3">
-        {canAcknowledge && /open/i.test(alert.status) && (
-          <button type="button" className="btn-ghost h-9 border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" onClick={() => onAction("acknowledge", alert)}>
-            Acknowledge
-          </button>
-        )}
-        {canAcknowledge && (
-          <button type="button" className="btn-ghost h-9 border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100" onClick={() => onAction("task", alert)}>
-            Create task
-          </button>
-        )}
-        {canClose && !/closed/i.test(alert.status) && (
-          <button type="button" className="btn-ghost h-9" onClick={() => onAction("close", alert)}>
-            Close
-          </button>
-        )}
-      </div>
-    </article>
-  );
-}
-
-function DetailPanel({
-  alert,
-  liveDetail,
-  tasks,
-  auditTrail,
-  loading,
-  onNavigate,
-  canAcknowledge,
-  canClose,
-  onAction,
-}: {
-  alert: Alert | null;
-  liveDetail: Alert | null;
-  tasks: AlertTask[];
-  auditTrail: AlertAuditEntry[];
-  loading: boolean;
-  onNavigate: (route: string) => void;
-  canAcknowledge: boolean;
-  canClose: boolean;
-  onAction: (type: ActionType, alert: Alert) => void;
-}) {
-  const record = liveDetail ?? alert;
-
-  if (!record) {
-    return (
-      <div className="panel p-5">
-        <EmptyState title="No alert selected" subtitle="Choose an alert from the live queue to inspect it in context." />
-      </div>
-    );
-  }
-
-  const actionRoute = record.entityRoute || routeForCategory(record.category);
-  const rationale =
-    record.severity === "Critical"
-      ? "Immediate action is warranted because this signal can turn into a safety, compliance or service event if it sits in the queue."
-      : record.severity === "High"
-        ? "High severity means the issue is not catastrophic yet, but delay increases the chance of cascading dispatch or customer impact."
-        : record.severity === "Warning"
-          ? "This is an early-warning signal. The best teams reduce critical volume by clearing these before shift handoff."
-          : "Informational signals should still stay linked to operational context so they can be audited later.";
-
-  return (
-    <aside className="panel p-4 lg:p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Selected alert</p>
-          <h2 className="mt-1 text-lg font-semibold text-slate-900">{record.title}</h2>
-          <p className="mt-1 text-sm text-slate-500">{record.alertId} · {record.category}</p>
-        </div>
-        {loading ? <RefreshCw className="h-4 w-4 animate-spin text-slate-400" /> : null}
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        <StatusBadge status={record.severity} />
-        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(record.status)}`}>{record.status}</span>
-        {record.entity ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">{record.entity}</span> : null}
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <MetaCard label="Entity type" value={record.entityType || "Not tagged"} />
-        <MetaCard label="Age" value={record.age || "Live"} />
-        <MetaCard label="Acknowledged by" value={record.acknowledgedBy || "Unowned"} />
-        <MetaCard label="Created" value={record.createdAt ? new Date(record.createdAt).toLocaleString() : "Unknown"} />
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_10px_22px_rgba(15,23,42,.05)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-teal-600">Recommended action</p>
-        <p className="mt-2 text-sm text-slate-700">{record.recommendedAction || record.body || "No action guidance recorded on this alert."}</p>
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-600">Priority rationale</p>
-        <p className="mt-2 text-sm text-slate-600">{rationale}</p>
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Follow-up tasks</p>
-          <span className="text-xs font-medium text-slate-400">{tasks.length} linked</span>
-        </div>
-        <div className="mt-3 space-y-3">
-          {tasks.length ? tasks.map((task) => (
-            <div key={String(task.id)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">{task.title}</p>
-                  <p className="mt-1 text-xs text-slate-500">{task.owner || "Unassigned"} · {task.priority || "Priority not set"}</p>
-                </div>
-                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(task.status || "Open")}`}>{task.status || "Open"}</span>
-              </div>
-              {task.description ? <p className="mt-2 text-sm text-slate-600">{task.description}</p> : null}
-            </div>
-          )) : (
-            <p className="text-sm text-slate-500">No follow-up task has been created from this alert yet.</p>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,.04)]">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Audit trail</p>
-          <span className="text-xs font-medium text-slate-400">{auditTrail.length} events</span>
-        </div>
-        <div className="mt-3 space-y-3">
-          {auditTrail.length ? auditTrail.map((entry) => (
-            <div key={String(entry.id)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-              <p className="text-sm font-semibold text-slate-900">{entry.actionName || "Alert event"}</p>
-              <p className="mt-1 text-xs text-slate-500">{entry.actorName || "system"} · {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "Unknown time"}</p>
-            </div>
-          )) : (
-            <p className="text-sm text-slate-500">No audit entries are available for this alert yet.</p>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-black/5 pt-3">
-        <button type="button" className="btn-ghost h-9" onClick={() => onNavigate(actionRoute)}>Open related module</button>
-        {canAcknowledge && /open/i.test(record.status) && (
-          <button type="button" className="btn-ghost h-9 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" onClick={() => onAction("acknowledge", record)}>
-            Acknowledge
-          </button>
-        )}
-        {canClose && !/closed/i.test(record.status) && (
-          <button type="button" className="btn-ghost h-9" onClick={() => onAction("close", record)}>Close</button>
-        )}
-      </div>
-    </aside>
-  );
-}
-
-function MetaCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] px-3 py-2 shadow-[0_6px_14px_rgba(15,23,42,.04)]">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-slate-900">{value}</p>
+  const record = { ...detail.alert, ...alert };
+  return <div className="alerts-inspector-content">
+    <header>
+      <div className="alerts-inline"><StatusBadge status={record.severity} /><span className={`alerts-status ${statusClass(record.status)}`}>{record.status}</span></div>
+      <h2>{record.title}</h2>
+      <p className="alerts-context">{record.entity || "Unmapped entity"} · {record.category} · #{record.alertId}</p>
+    </header>
+    <p className="alerts-message">{record.body || "No event description recorded."}</p>
+    <div className="alerts-actions" aria-label="Selected alert actions">
+      {canAcknowledge && /open/i.test(record.status) && <button type="button" className="btn-primary btn-compact" onClick={() => onAction("acknowledge", record)}>Acknowledge</button>}
+      {canAcknowledge && <button type="button" className="btn-secondary btn-compact" onClick={() => onAction("task", record)}>Create task</button>}
+      {canClose && !/closed/i.test(record.status) && <button type="button" className="btn-ghost btn-compact" onClick={() => onAction("close", record)}>Close alert</button>}
     </div>
-  );
+    <dl className="alerts-metadata">
+      <div><dt>Recorded</dt><dd>{record.createdAt ? new Date(record.createdAt).toLocaleString() : "Unavailable"}</dd></div>
+      <div><dt>Age</dt><dd>{record.age || "Unavailable"}</dd></div>
+      <div><dt>Acknowledged by</dt><dd>{record.acknowledgedBy || "Not recorded"}</dd></div>
+      <div><dt>Entity type</dt><dd>{record.entityType || "Not tagged"}</dd></div>
+    </dl>
+    <button type="button" className="alerts-related" onClick={() => onNavigate(record.entityRoute || routeForCategory(record.category))}>Open related module →</button>
+    {record.recommendedAction && <details className="alerts-disclosure"><summary>Action guidance</summary><p>{record.recommendedAction}</p></details>}
+    {loading ? <p role="status" className="alerts-context">Loading linked tasks and history…</p> : failed ? <div role="alert" className="alerts-detail-error">Linked tasks and history could not be loaded. <button type="button" onClick={retry}>Retry details</button></div> : <>
+      <details className="alerts-disclosure" open={detail.tasks.length > 0}>
+        <summary>Follow-up tasks <span>{detail.tasks.length}</span></summary>
+        {detail.tasks.length ? detail.tasks.map(task => <div className="alerts-history" key={String(task.id)}><strong>{task.title}</strong><p>{task.status || "Open"} · {task.owner || "Unassigned"} · {task.priority || "Priority not set"}</p>{task.description && <p>{task.description}</p>}</div>) : <p>No follow-up tasks recorded.</p>}
+      </details>
+      <details className="alerts-disclosure"><summary>Activity history <span>{detail.auditTrail.length}</span></summary>
+        {detail.auditTrail.length ? detail.auditTrail.map(entry => <div className="alerts-history" key={String(entry.id)}><strong>{entry.actionName || "Alert event"}</strong><p>{entry.actorName || "system"} · {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "Unknown time"}</p></div>) : <p>No activity history recorded.</p>}
+      </details>
+    </>}
+    <p className="alerts-source-note">Recorded alert severity. Confirm the source event and current asset context before acting.</p>
+  </div>;
+}
+
+function MobileInspector({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  const ref = useDialogFocus<HTMLDivElement>(true, onClose);
+  return <div className="alerts-mobile-overlay" onClick={onClose}><div ref={ref} role="dialog" aria-modal="true" aria-label="Selected alert details" className="alerts-mobile-inspector" onClick={event => event.stopPropagation()}><button type="button" className="btn-ghost alerts-back" onClick={onClose}>← Back to alert queue</button>{children}</div></div>;
 }
 
 export function AlertsCenterPage() {
@@ -448,6 +298,11 @@ export function AlertsCenterPage() {
   const [actionType, setActionType] = useState<ActionType>(null);
   const [actionAlert, setActionAlert] = useState<Alert | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [mobileDetail, setMobileDetail] = useState(false);
+  const [page, setPage] = useState(0);
+  const [sortOrder, setSortOrder] = useState("priority");
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   const alertsQuery = useQuery({
     queryKey: ["alerts"],
@@ -465,6 +320,7 @@ export function AlertsCenterPage() {
     queryKey: ["alerts", "detail", selectedAlert?.id],
     queryFn: () => alertsApi.detail(String(selectedAlert?.id)),
     enabled: selectedAlert != null,
+    refetchInterval: 15_000,
   });
 
   const acknowledgeMutation = useMutation({
@@ -507,15 +363,15 @@ export function AlertsCenterPage() {
   );
 
   const summary = useMemo<AlertsSummary>(() => {
-    const live = summaryQuery.data as AnyRecord | undefined;
-    if (live) {
+    const persistedSummary = summaryQuery.data as AnyRecord | undefined;
+    if (persistedSummary) {
       return {
-        total: Number(live.total ?? alerts.length),
-        critical: Number(live.critical ?? alerts.filter((alert) => alert.severity === "Critical").length),
-        high: Number(live.high ?? alerts.filter((alert) => alert.severity === "High").length),
-        open: Number(live.open ?? alerts.filter((alert) => /open/i.test(alert.status)).length),
-        acknowledged: Number(live.acknowledged ?? alerts.filter((alert) => /ack/i.test(alert.status)).length),
-        closed: Number(live.closed ?? alerts.filter((alert) => /closed/i.test(alert.status)).length),
+        total: Number(persistedSummary.total ?? alerts.length),
+        critical: Number(persistedSummary.critical ?? alerts.filter((alert) => alert.severity === "Critical").length),
+        high: Number(persistedSummary.high ?? alerts.filter((alert) => alert.severity === "High").length),
+        open: Number(persistedSummary.open ?? alerts.filter((alert) => /open/i.test(alert.status)).length),
+        acknowledged: Number(persistedSummary.acknowledged ?? alerts.filter((alert) => /ack/i.test(alert.status)).length),
+        closed: Number(persistedSummary.closed ?? alerts.filter((alert) => /closed/i.test(alert.status)).length),
       };
     }
     return {
@@ -538,6 +394,8 @@ export function AlertsCenterPage() {
         if (!query) return true;
         return [
           alert.title,
+          alert.body,
+          alert.alertType,
           alert.alertId,
           alert.entity,
           alert.entityType,
@@ -545,41 +403,57 @@ export function AlertsCenterPage() {
           alert.recommendedAction,
         ].some((value) => String(value ?? "").toLowerCase().includes(query));
       })
-      .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9) || ageHours(b.createdAt) - ageHours(a.createdAt));
-  }, [alerts, categoryFilter, statusFilter, severityFilter, search]);
+      .sort((a, b) => {
+        const aKnown = Boolean(a.createdAt && Number.isFinite(Date.parse(a.createdAt)));
+        const bKnown = Boolean(b.createdAt && Number.isFinite(Date.parse(b.createdAt)));
+        if (sortOrder !== "priority" && aKnown !== bKnown) return aKnown ? -1 : 1;
+        if (sortOrder === "newest") return ageHours(a.createdAt) - ageHours(b.createdAt);
+        if (sortOrder === "oldest") return ageHours(b.createdAt) - ageHours(a.createdAt);
+        return Number(/closed/i.test(a.status)) - Number(/closed/i.test(b.status)) || (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9) || ageHours(b.createdAt) - ageHours(a.createdAt);
+      });
+  }, [alerts, categoryFilter, statusFilter, severityFilter, search, sortOrder]);
 
-  const openAlerts = filtered.filter((alert) => !/closed/i.test(alert.status));
-  const agingOpen = alerts.filter((alert) => /open|ack/i.test(alert.status) && ageHours(alert.createdAt) >= 24).length;
-  const unownedOpen = alerts.filter((alert) => /open/i.test(alert.status) && !alert.acknowledgedBy).length;
-  const categoryBuckets = CATEGORIES.filter((category) => category !== "All").map((category) => ({
-    category,
-    count: alerts.filter((alert) => alert.category === category && !/closed/i.test(alert.status)).length,
-    route: routeForCategory(category),
-  })).filter((row) => row.count > 0).sort((a, b) => b.count - a.count);
+  const unresolvedCount = alerts.filter((alert) => !/closed/i.test(alert.status)).length;
+  const agingUnresolved = alerts.filter((alert) => !/closed/i.test(alert.status) && ageHours(alert.createdAt) >= 24).length;
+  const awaitingAcknowledgement = alerts.filter((alert) => /open/i.test(alert.status) && !alert.acknowledgedBy).length;
+  const criticalUnresolved = alerts.filter((alert) => !/closed/i.test(alert.status) && alert.severity === "Critical").length;
+  const highUnresolved = alerts.filter((alert) => !/closed/i.test(alert.status) && alert.severity === "High").length;
+  const hasActiveFilters = categoryFilter !== "All" || statusFilter !== "All" || severityFilter !== "All" || search.trim().length > 0;
   const detailRecord = normalizeAlertDetail(detailQuery.data as AnyRecord | undefined);
-  const liveDetail = detailRecord.alert;
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 25) - 1));
+  const visibleRows = filtered.slice(currentPage * 25, (currentPage + 1) * 25);
+  const currentSelection = filtered.find(alert => alert.id === selectedAlert?.id) ?? null;
+  const actionPending = acknowledgeMutation.isPending || closeMutation.isPending || taskMutation.isPending;
 
+  useEffect(() => { setPage(0); }, [categoryFilter, statusFilter, severityFilter, search, sortOrder]);
   useEffect(() => {
-    if (!filtered.length) return;
-    if (!selectedAlert || !filtered.some((alert) => alert.id === selectedAlert.id)) {
-      setSelectedAlert(filtered[0]);
-    }
+    if (!filtered.length) { setSelectedAlert(null); setMobileDetail(false); return; }
+    if (!selectedAlert || !filtered.some(alert => alert.id === selectedAlert.id)) setSelectedAlert(filtered[0]);
   }, [filtered, selectedAlert]);
 
   function handleAction(type: ActionType, alert: Alert) {
+    setActionError(null);
     setActionType(type);
     setActionAlert(alert);
   }
 
-  function handleActionConfirm(payload: AnyRecord) {
-    if (!actionType || !actionAlert) return;
+  async function handleActionConfirm(payload: AnyRecord) {
+    if (!actionType || !actionAlert || actionPending) return;
+    setActionError(null);
     const id = actionAlert.id;
-    if (actionType === "acknowledge") acknowledgeMutation.mutate({ id, payload });
-    else if (actionType === "close") closeMutation.mutate({ id, payload });
-    else taskMutation.mutate({ id, payload });
-    setActionType(null);
-    setActionAlert(null);
+    try {
+      if (actionType === "acknowledge") await acknowledgeMutation.mutateAsync({ id, payload });
+      else if (actionType === "close") await closeMutation.mutateAsync({ id, payload });
+      else await taskMutation.mutateAsync({ id, payload });
+      setActionType(null);
+      setActionAlert(null);
+    } catch (error) {
+      const reason = axios.isAxiosError(error) ? (error.response?.data?.message ?? error.response?.data?.error) : error instanceof Error ? error.message : null;
+      setActionError(`${typeof reason === "string" ? reason + " " : "The action could not be saved. "}Your text is still here. Retry, or cancel and refresh the alert.`);
+    }
   }
+
+  const inspector = currentSelection ? <AlertInspector alert={currentSelection} detail={detailRecord} loading={detailQuery.isLoading} failed={detailQuery.isError} retry={() => void detailQuery.refetch()} canAcknowledge={canAcknowledge} canClose={canClose} onAction={handleAction} onNavigate={navigate} /> : null;
 
   if (alertsQuery.isLoading) return <LoadingState />;
   if (alertsQuery.isError) {
@@ -592,216 +466,114 @@ export function AlertsCenterPage() {
   }
 
   return (
-    <div className="alerts-command-room alerts-center-workbench space-y-4 pb-8">
+    <div className="alerts-workspace page-stack pb-4">
       {toastMsg ? (
         <div className="fixed right-4 top-4 z-50 rounded-2xl border border-emerald-500/20 bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-2xl shadow-emerald-900/20">
           {toastMsg}
         </div>
       ) : null}
 
-      <header className="panel relative overflow-hidden border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(243,248,253,.96))] p-4 shadow-sm">
-        {/* `absolute!` (forced) because `.panel > *` sets position:relative on every direct
-            child for z-index stacking, which otherwise demotes these decorative layers back
-            into normal flow and pushes the real header content down by their full height. */}
-        <div className="pointer-events-none absolute! inset-x-0 top-0 h-[3px] bg-[linear-gradient(90deg,rgba(37,99,235,.95),rgba(13,148,136,.95),rgba(124,58,237,.7))]" />
-        <div className="pointer-events-none absolute! -right-16 -top-14 h-36 w-36 rounded-full bg-sky-200/30 blur-3xl" />
-        <div className="relative grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_0.85fr] lg:items-start">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700 shadow-sm">
-              <BellRing className="h-3.5 w-3.5" /> Live alerts command room
-            </div>
-            <h1 className="mt-3 text-[1.9rem] font-black tracking-tight text-slate-900 sm:text-[2.2rem]">
-              Alerts Center
-            </h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              A live, backend-backed triage surface for open alerts, ownership, audit trail, and resolution actions. Tight layout, no demo queue, no fake feed, and no hidden fallback layer.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-ghost h-10 border-slate-200 bg-white/90 text-slate-700 hover:bg-white">
-                Export live queue
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void queryClient.invalidateQueries({ queryKey: ["alerts"] });
-                  void queryClient.invalidateQueries({ queryKey: ["alerts", "summary"] });
-                }}
-                className="btn-primary h-10 bg-gradient-to-r from-sky-600 via-teal-600 to-indigo-600 shadow-md shadow-sky-200/70 hover:from-sky-500 hover:via-teal-500 hover:to-indigo-500"
-              >
-                Refresh alerts <RefreshCw className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">Connected to live backend</span>
-              <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Auto refresh 15s</span>
-              <span className="rounded-full border border-slate-200 bg-white px-3 py-1">No demo fallback</span>
-            </div>
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-2 lg:self-start">
-            <MiniStat label="Open queue" value={summary.open} sublabel={`${summary.critical} critical / ${summary.high} high`} />
-            <MiniStat label="Aging open" value={agingOpen} sublabel="24h+ still active" />
-            <MiniStat label="Unowned" value={unownedOpen} sublabel="Needs an acknowledged owner" />
-            <MiniStat label="Closed today" value={`${summary.closed}/${summary.total || 1}`} sublabel="Visible set" />
-          </div>
-        </div>
-
-        <div className="relative mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_0.85fr]">
-          <div>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">Live lanes</h2>
-                <p className="text-xs text-slate-500">Directly driven by the current queue, not static demo cards.</p>
-              </div>
-              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                {filtered.length} visible
-              </span>
-            </div>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-              {categoryBuckets.slice(0, 4).map((bucket) => (
-                <button
-                  key={bucket.category}
-                  type="button"
-                  onClick={() => navigate(bucket.route)}
-                  className="rounded-2xl border border-slate-200 bg-white p-2.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{bucket.category}</p>
-                    <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
-                  </div>
-                  <p className="mt-1.5 text-xl font-black tracking-tight text-slate-900">{bucket.count}</p>
-                  <p className="mt-0.5 text-[11px] text-slate-500">Open alert{bucket.count === 1 ? "" : "s"}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_8px_18px_rgba(15,23,42,.05)]">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">Queue health</h2>
-                <p className="text-xs text-slate-500">Live operating pressure from the current alert feed.</p>
-              </div>
-              <ShieldAlert className="h-4 w-4 text-sky-500" />
-            </div>
-            <div className="mt-2 space-y-2.5">
-              <HealthLine label="Critical open" value={summary.critical} total={Math.max(summary.open, 1)} tone="red" />
-              <HealthLine label="Aging 24h+" value={agingOpen} total={Math.max(summary.open, 1)} tone="amber" />
-              <HealthLine label="Unowned" value={unownedOpen} total={Math.max(summary.open, 1)} tone="sky" />
-            </div>
-          </div>
-        </div>
+      <header className="alerts-page-header">
+        <div><h1>Alerts Center</h1><p>Review exceptions, act on priorities, and track follow-up.</p></div>
+        <div className="alerts-actions"><button type="button" onClick={() => exportCsv("alerts", filtered)} className="btn-secondary btn-compact">Export filtered</button><button type="button" onClick={() => void queryClient.invalidateQueries({ queryKey: ["alerts"] })} className="btn-primary btn-compact"><RefreshCw className="h-4 w-4" /> Refresh</button></div>
       </header>
 
-      <section className="panel p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Workspace controls</h2>
-            <p className="text-sm text-slate-500">Compact filters for a dense queue view.</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <div className="relative w-full min-w-[16rem] sm:w-[20rem]">
+      <section className="panel p-3 alerts-controls-panel" aria-label="Alert queue summary and filters">
+        <p className="alerts-scope-label">Loaded queue · {alerts.length} records in your authorized scope</p>
+        <div className="alerts-summary-bar">
+          <dl className="alerts-summary" aria-label="Alert queue summary for loaded records">
+            <CompactMetric label="Unresolved" value={unresolvedCount} detail={`${criticalUnresolved} critical · ${highUnresolved} high`} tone={criticalUnresolved > 0 ? "danger" : "neutral"} />
+            <CompactMetric label="Aging unresolved" value={agingUnresolved} detail="24h+ and not closed" tone={agingUnresolved > 0 ? "warning" : "neutral"} />
+            <CompactMetric label="Not acknowledged" value={awaitingAcknowledgement} detail="Open alerts" tone={awaitingAcknowledgement > 0 ? "info" : "neutral"} />
+            <CompactMetric label="Closed" value={alerts.filter(alert => /closed/i.test(alert.status)).length} detail={`${alerts.length} loaded of ${summary.total || alerts.length}` } tone="success" />
+          </dl>
+
+          <div className="relative min-w-0">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 type="search"
+                aria-label="Search alerts"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search alerts, entities, categories…"
-                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
+                className="field w-full pl-9"
               />
-            </div>
-            <button type="button" className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition ${categoryFilter === "All" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600"}`} onClick={() => setCategoryFilter("All")}>
-              All lanes
-            </button>
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-2">
-          {CATEGORIES.filter((category) => category !== "All").map((category) => (
-            <button
-              key={category}
-              type="button"
-              onClick={() => setCategoryFilter(category)}
-              className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
-                categoryFilter === category ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
-              }`}
-            >
-              {category}
+        <button type="button" className="alerts-filter-toggle btn-ghost" aria-expanded={filtersExpanded} aria-controls="alerts-filters" onClick={() => setFiltersExpanded(value => !value)}>Filters and sort{hasActiveFilters ? " · active" : ""}</button>
+        <div id="alerts-filters" className={`alerts-filter-controls mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 ${filtersExpanded ? "is-expanded" : ""}`}>
+          <label className="min-w-0">
+            <span className="sr-only">Filter alerts by category</span>
+            <select aria-label="Alert categories" className="field min-w-36" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as (typeof CATEGORIES)[number])}>
+              {CATEGORIES.map((category) => <option key={category} value={category}>{category === "All" ? "All categories" : category}</option>)}
+            </select>
+          </label>
+          <label className="min-w-0">
+            <span className="sr-only">Filter alerts by severity</span>
+            <select aria-label="Alert severity" className="field min-w-32" value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value as (typeof SEVERITY_FILTERS)[number])}>
+              {SEVERITY_FILTERS.map((severity) => <option key={severity} value={severity}>{severity === "All" ? "All severities" : severity}</option>)}
+            </select>
+          </label>
+          <label className="min-w-0">
+            <span className="sr-only">Filter alerts by status</span>
+            <select aria-label="Alert status" className="field min-w-36" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as (typeof STATUS_FILTERS)[number])}>
+              {STATUS_FILTERS.map((status) => <option key={status} value={status}>{status === "All" ? "All statuses" : status}</option>)}
+            </select>
+          </label>
+          <select aria-label="Sort alerts" className="field alerts-sort" value={sortOrder} onChange={event => setSortOrder(event.target.value)}><option value="priority">Priority · unresolved first</option><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select>
+          {hasActiveFilters ? (
+            <button type="button" className="btn-ghost btn-compact" onClick={() => { setCategoryFilter("All"); setSeverityFilter("All"); setStatusFilter("All"); setSearch(""); }}>
+              Clear filters
             </button>
-          ))}
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          {SEVERITY_FILTERS.map((severity) => (
-            <button
-              key={severity}
-              type="button"
-              onClick={() => setSeverityFilter(severity)}
-              className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
-                severityFilter === severity ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
-              }`}
-            >
-              {severity}
-            </button>
-          ))}
-          {STATUS_FILTERS.map((status) => (
-            <button
-              key={status}
-              type="button"
-              onClick={() => setStatusFilter(status)}
-              className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
-                statusFilter === status ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
-              }`}
-            >
-              {status}
-            </button>
-          ))}
+          ) : null}
+          <span className="ml-auto text-xs font-medium text-slate-500" role="status" aria-live="polite">
+            <strong className="font-semibold text-slate-700">{filtered.length}</strong> matching · {alerts.length} loaded
+          </span>
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
-          {openAlerts.length ? openAlerts.map((alert) => (
-            <AlertCard
-              key={String(alert.id)}
-              alert={alert}
-              active={selectedAlert?.id === alert.id}
-              onSelect={() => setSelectedAlert(alert)}
-              canAcknowledge={canAcknowledge}
-              canClose={canClose}
-              onAction={handleAction}
-            />
-          )) : (
-            <div className="md:col-span-2">
-              <EmptyState title="No alerts match your filters" subtitle="Adjust the search or filter chips to broaden the live queue." />
-            </div>
-          )}
+      <WorkspaceGuidance
+        nextStep={canAcknowledge ? "Select an alert, review its message, then acknowledge it or create follow-up work." : "Select an alert to review its message and history. Your role has view access to this queue."}
+        steps={[
+          "Use severity, status and search to narrow the queue. Select a row to read its full context; filters and sorting do not change records.",
+          "Acknowledge records your review. Create task adds follow-up work; it does not assign or close the alert.",
+          "Close ends the alert workflow after your review. It does not confirm that a vehicle or physical condition has recovered.",
+        ]}
+      />
+      <div className="alerts-split">
+        <section className="panel alerts-queue" aria-label="Alert work queue">
+          <div className="alerts-queue-heading"><h2>Alert queue</h2><span>Choose a row to inspect and act</span></div>
+          <div className="alerts-list-scroll">
+            <div className="alerts-column-head" aria-hidden="true"><span>Severity</span><span>Alert / recorded message</span><span>Asset</span><span>Status</span><span>Age</span></div>
+            {visibleRows.map(alert => <button type="button" key={String(alert.id)} className={`alerts-row ${currentSelection?.id === alert.id ? "is-selected" : ""}`} aria-pressed={currentSelection?.id === alert.id} onClick={() => { setSelectedAlert(alert); if (window.matchMedia("(max-width: 1199px)").matches) setMobileDetail(true); }}>
+              <span className={`alerts-severity severity-${alert.severity.toLowerCase()}`}>{alert.severity}</span>
+              <span className="alerts-row-description"><strong>{alert.title}</strong><span>{alert.body || "No event description recorded"}</span></span>
+              <span className="alerts-row-asset">{alert.entity || "Unmapped"}</span>
+              <span className={`alerts-status ${statusClass(alert.status)}`}>{alert.status}</span>
+              <span className="alerts-row-age" title={alert.createdAt ? new Date(alert.createdAt).toLocaleString() : "Recorded time unavailable"}>{alert.age || "—"}</span>
+            </button>)}
+          </div>
+          {!filtered.length && <EmptyState title="No alerts match your filters" subtitle="Adjust the search or filters to broaden the current record set." />}
+          <footer className="alerts-pagination"><span>{filtered.length ? currentPage * 25 + 1 : 0}–{Math.min((currentPage + 1) * 25, filtered.length)} of {filtered.length} matching</span><div><button type="button" className="btn-ghost btn-compact" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button><span>Page {currentPage + 1} / {Math.max(1, Math.ceil(filtered.length / 25))}</span><button type="button" className="btn-ghost btn-compact" disabled={(currentPage + 1) * 25 >= filtered.length} onClick={() => setPage(currentPage + 1)}>Next</button></div></footer>
         </section>
-
-        <div className="xl:sticky xl:top-4 xl:self-start">
-          <DetailPanel
-            alert={selectedAlert}
-            liveDetail={liveDetail}
-            tasks={detailRecord.tasks}
-            auditTrail={detailRecord.auditTrail}
-            loading={detailQuery.isLoading}
-            onNavigate={navigate}
-            canAcknowledge={canAcknowledge}
-            canClose={canClose}
-            onAction={handleAction}
-          />
-        </div>
+        <aside className="panel alerts-desktop-inspector" aria-label="Selected alert details">{inspector || <EmptyState title="No alert selected" subtitle="Choose an alert from the queue." />}</aside>
       </div>
+      {mobileDetail && inspector && <MobileInspector onClose={() => setMobileDetail(false)}>{inspector}</MobileInspector>}
 
       <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
         <Clock3 className="h-3.5 w-3.5" />
-        Refreshed every 15 seconds from the live backend. No fallback data layer is used here.
+        Refreshed every 15 seconds from persisted telemetry alert records. Missing records remain unavailable.
       </div>
 
       <ActionModal
+        key={`${actionType}:${actionAlert?.id}`}
+        pending={actionPending}
+        error={actionError}
         type={actionType}
         alert={actionAlert}
         onClose={() => {
+          if (actionPending) return;
           setActionType(null);
           setActionAlert(null);
         }}
@@ -811,44 +583,32 @@ export function AlertsCenterPage() {
   );
 }
 
-function GuidanceCard({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] p-4 shadow-[0_10px_24px_rgba(15,23,42,.05)]">
-      <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-50 text-sky-600 shadow-sm">{icon}</div>
-        <p className="text-sm font-semibold text-slate-900">{title}</p>
-      </div>
-      <p className="mt-3 text-sm text-slate-500">{body}</p>
-    </div>
-  );
-}
-
-function MiniStat({ label, value, sublabel }: { label: string; value: number | string; sublabel: string }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,249,253,.94))] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,.85),0_8px_20px_rgba(15,23,42,.06)]">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-black tracking-tight text-slate-900">{value}</p>
-      <p className="mt-1 text-xs font-medium text-slate-500">{sublabel}</p>
-    </div>
-  );
-}
-
-function HealthLine({ label, value, total, tone }: { label: string; value: number; total: number; tone: "red" | "amber" | "sky" }) {
-  const pct = Math.min(100, Math.round((value / total) * 100));
-  const toneClass =
-    tone === "red" ? "bg-red-500" :
-    tone === "amber" ? "bg-amber-500" :
-    "bg-sky-500";
+function CompactMetric({
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  label: string;
+  value: number | string;
+  detail: string;
+  tone: "danger" | "warning" | "info" | "success" | "neutral";
+}) {
+  const toneClass = {
+    danger: "border-red-200 bg-red-50/70 text-red-700",
+    warning: "border-amber-200 bg-amber-50/70 text-amber-700",
+    info: "border-sky-200 bg-sky-50/70 text-sky-700",
+    success: "border-emerald-200 bg-emerald-50/70 text-emerald-700",
+    neutral: "border-slate-200 bg-slate-50/70 text-slate-700",
+  }[tone];
 
   return (
-    <div>
-      <div className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-600">
-        <span>{label}</span>
-        <span>{value}</span>
-      </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-        <div className={`h-full rounded-full ${toneClass}`} style={{ width: `${pct}%` }} />
-      </div>
+    <div className={`alerts-metric min-w-0 rounded-xl border px-3 py-2 ${toneClass}`}>
+      <dt className="text-[10px] font-bold uppercase tracking-[0.12em] opacity-75">{label}</dt>
+      <dd className="mt-1 flex min-w-0 items-baseline gap-2 flex-wrap">
+        <strong className="text-lg font-bold leading-none tabular-nums">{value}</strong>
+        <span className="min-w-0 text-[11px] font-medium" title={detail}>{detail}</span>
+      </dd>
     </div>
   );
 }

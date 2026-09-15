@@ -392,7 +392,7 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
                     }
 
                     var scopes = http.RequestServices.GetRequiredService<TenantScopeAccessor>();
-                    await using var tenant = await db.BeginTenantScopeAsync(companyId, http.RequestAborted);
+                    await using var tenant = await db.BeginTenantScopeAsync(companyId, userId, http.RequestAborted);
                     scopes.Current = tenant;
                     try
                     {
@@ -514,9 +514,11 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
         {
             Assert.False(string.IsNullOrWhiteSpace(connectionString), "Explicit local database identity required; no fallback.");
             var connection = new NpgsqlConnectionStringBuilder(connectionString);
-            Assert.Equal("127.0.0.1", connection.Host);
-            Assert.Equal(5433, connection.Port);
-            Assert.Equal("opstrax_local", connection.Database);
+            var owner = new NpgsqlConnectionStringBuilder(TestDb.ConnectionString);
+            Assert.Contains(connection.Host, new[] { "127.0.0.1", "localhost" });
+            Assert.Equal(owner.Host, connection.Host);
+            Assert.Equal(owner.Port, connection.Port);
+            Assert.Equal(owner.Database, connection.Database);
             Assert.Equal(expectedRole, connection.Username);
             Assert.Equal(expectedApplicationName, connection.ApplicationName);
             Assert.False(connection.Pooling, "The isolated HTTP fixture requires pooling disabled.");
@@ -568,8 +570,14 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
             var systemApplicationName = "opstrax-g5-xfer-system-" + nonce;
             static string Local(string key, string role, string applicationName)
             {
-                var value = Environment.GetEnvironmentVariable(key) ?? string.Empty;
-                var connection = new NpgsqlConnectionStringBuilder(value)
+                var configured = key switch
+                {
+                    "OPSTRAX_TEST_DB" => TestDb.ConnectionString,
+                    "OPSTRAX_TEST_DB_APP" => TestDb.AppConnectionString,
+                    "OPSTRAX_TEST_DB_SYSTEM" => TestDb.SystemConnectionString,
+                    _ => throw new InvalidOperationException($"Unsupported test database identity: {key}")
+                };
+                var connection = new NpgsqlConnectionStringBuilder(configured)
                 {
                     Pooling = false,
                     ApplicationName = applicationName

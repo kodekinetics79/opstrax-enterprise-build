@@ -57,7 +57,41 @@ public class Stage16ASourceRegressionTests
         Assert.Contains("buildAgingByCurrency(await loadInvoiceRows())", finance);
         Assert.DoesNotContain("/api/finance/ar-aging", finance);
         Assert.DoesNotContain("/api/invoices", finance);
-        Assert.Contains("Sourced from the live revenue spine (issued_invoices).", finance);
+        Assert.Contains("Calculated from tenant-scoped issued invoice records.", finance);
+        Assert.Contains("Provider Settlement", finance);
+        Assert.Contains("Margin stays unavailable where allocated cost evidence is missing.", finance);
+        Assert.DoesNotContain("Collections are within expected range", finance);
+        Assert.DoesNotContain("No fabricated finance rows are used here", finance);
+    }
+
+    [Fact]
+    public void CommercialRegisters_PersistTheirVisibleFields_AndDiscloseConversionBoundaries()
+    {
+        var endpoints = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var leads = ReadSource("frontend", "src", "pages", "LeadsPage.tsx");
+        var opportunities = ReadSource("frontend", "src", "pages", "OpportunitiesPage.tsx");
+        var quotations = ReadSource("frontend", "src", "pages", "QuotationsPage.tsx");
+        var rateCards = ReadSource("frontend", "src", "pages", "RateCardsPage.tsx");
+        var campaigns = ReadSource("frontend", "src", "pages", "CampaignsPage.tsx");
+
+        Assert.Contains("BuildGenericModuleMetadata", endpoints);
+        Assert.Contains("NpgsqlDbType.Jsonb", endpoints);
+        Assert.Contains("IsBlank(Get(body, \"riskLevel\")) ? \"Medium\"", endpoints);
+        Assert.Contains("\"estimatedMonthlyLoads\"", endpoints);
+        Assert.Contains("\"probability\"", endpoints);
+        Assert.Contains("\"quoteAmount\"", endpoints);
+        Assert.Contains("\"startDate\"", endpoints);
+
+        Assert.Contains("conversion is not automated", leads);
+        Assert.Contains("conversion is not automated", opportunities);
+        Assert.Contains("quoteHandoff: selected", quotations);
+        Assert.Contains("No automatic acceptance or contract activation", quotations);
+        Assert.DoesNotContain("r.currency ?? \"SAR\"", opportunities);
+        Assert.Contains("rateCardName: form.title", rateCards);
+        Assert.Contains("billingBasis: form.pricingMethod", rateCards);
+        Assert.Contains("fuelSurchargePercent: form.fuelSurcharge", rateCards);
+        Assert.Contains("Campaign-to-lead creation and revenue attribution are not automated", campaigns);
+        Assert.DoesNotContain("r.currency ?? \"SAR\"", campaigns);
     }
 
     [Fact]

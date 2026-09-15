@@ -86,6 +86,7 @@ export const PERMISSIONS = {
   OPERATIONS_PROOF_ARTIFACT_CREATE: "operations.proof_artifact.create",
 
   USERS_VIEW: "users:view",
+  USERS_MANAGE: "users:manage",
   USERS_CREATE: "users:create",
   USERS_UPDATE: "users:update",
   USERS_DELETE: "users:delete",
@@ -106,6 +107,8 @@ export const PERMISSIONS = {
   TELEMATICS_DEVICES_ASSIGN: "telematics:devices:assign",
   TELEMATICS_DEVICES_DIAGNOSTICS: "telematics:devices:diagnostics",
   TELEMATICS_DEVICES_FIRMWARE: "telematics:devices:firmware",
+  TELEMATICS_DEVICES_RMA: "telematics:devices:rma",
+  TELEMATICS_DEVICES_COMMAND: "telematics:devices:command",
   TELEMATICS_DEVICES_EXPORT: "telematics:devices:export",
   TELEMATICS_PROVIDERS_MANAGE: "telematics:providers:manage",
   TELEMATICS_GPS_VIEW: "telematics:gps:view",
@@ -199,7 +202,9 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.SAFETY_CREATE]: ["safety.manage", "safety:manage"],
   [P.SAFETY_UPDATE]: ["safety.manage", "safety:manage"],
   [P.SAFETY_REVIEW]: ["safety.manage", "safety:manage"],
-  [P.SAFETY_EVIDENCE_VIEW]: ["safety.view", "safety:view", "dashcam.view", "dashcam:view"],
+  // Mirrors the server's evidence tier. A broad safety:view grant can read the
+  // safety center, but it must not silently acquire camera/evidence access.
+  [P.SAFETY_EVIDENCE_VIEW]: ["dashcam.view", "dashcam:view"],
   [P.SAFETY_EVIDENCE_EXPORT]: ["safety.manage", "safety:manage", "dashcam.manage", "dashcam:manage"],
 
   [P.MAINTENANCE_VIEW]: ["maintenance.view", "maintenance:view"],
@@ -258,6 +263,7 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   // The view groups now carry ONLY their own view token. Do not add a manage
   // token back: there is no one-way edge in this closure, only equivalence.
   [P.USERS_VIEW]: ["users.view", "users:view"],
+  [P.USERS_MANAGE]: ["users.manage", "users:manage"],
   [P.USERS_CREATE]: ["users.manage", "users:manage"],
   [P.USERS_UPDATE]: ["users.manage", "users:manage"],
   [P.USERS_DELETE]: ["users.manage", "users:manage"],
@@ -284,6 +290,8 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.TELEMATICS_DEVICES_ASSIGN]: ["fleet.manage", "fleet:manage", "dispatch.manage", "dispatch:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_DIAGNOSTICS]: ["maintenance.manage", "maintenance:manage", "compliance.manage", "compliance:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_FIRMWARE]: ["maintenance.manage", "maintenance:manage", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_DEVICES_RMA]: ["maintenance.update", "maintenance:update", "maintenance.manage", "maintenance:manage", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_DEVICES_COMMAND]: ["telemetry.devices.manage", "telematics.manage", "telematics:manage", "fleet.manage", "fleet:manage"],
   [P.TELEMATICS_DEVICES_EXPORT]: ["telematics.devices.export", "telematics:devices:export"],
   [P.TELEMATICS_PROVIDERS_MANAGE]: ["settings.manage", "settings:manage", "fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
   // PAGE-GATING token, same reasoning: this group is merged into
@@ -301,7 +309,7 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.TELEMATICS_SENSORS_EXPORT]: ["fleet.view", "fleet:view", "telematics.sensors.export", "telematics:sensors:export", "telematics.view", "telematics:view"],
   [P.TELEMETRY_LIVE_STATE_READ]: ["telemetry.live_state.read", "telemetry.live-state.read", "map:view", "map.view", "telematics:gps:view"],
   [P.TELEMETRY_DEVICES_READ]: ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view"],
-  [P.TELEMETRY_DEVICES_MANAGE]: ["telemetry.devices.manage", "telematics:providers:manage", "fleet:manage", "fleet.manage"],
+  [P.TELEMETRY_DEVICES_MANAGE]: ["telemetry.devices.manage", "fleet:manage", "fleet.manage"],
   [P.TELEMETRY_ALERTS_READ]: ["telemetry.alerts.read", "telemetry.alerts.view", "alerts:view", "alerts.view", "safety:view", "safety.view", "maintenance:view", "maintenance.view"],
   [P.TELEMETRY_ALERTS_MANAGE]: ["telemetry.alerts.manage", "alerts.manage", "alerts:manage"],
   [P.TELEMETRY_RULES_READ]: ["telemetry.rules.read", "telemetry.rules.view"],
@@ -395,7 +403,7 @@ const TENANT_ADMIN_PERMISSIONS = [
   P.SETTINGS_VIEW, P.SETTINGS_UPDATE,
   P.AUDIT_VIEW,
   P.TELEMATICS_DEVICES_VIEW, P.TELEMATICS_DEVICES_CREATE, P.TELEMATICS_DEVICES_UPDATE, P.TELEMATICS_DEVICES_DELETE,
-  P.TELEMATICS_DEVICES_ASSIGN, P.TELEMATICS_DEVICES_DIAGNOSTICS, P.TELEMATICS_DEVICES_FIRMWARE, P.TELEMATICS_DEVICES_EXPORT,
+  P.TELEMATICS_DEVICES_ASSIGN, P.TELEMATICS_DEVICES_DIAGNOSTICS, P.TELEMATICS_DEVICES_FIRMWARE, P.TELEMATICS_DEVICES_COMMAND, P.TELEMATICS_DEVICES_EXPORT,
   P.TELEMATICS_PROVIDERS_MANAGE,
   P.TELEMATICS_GPS_VIEW, P.TELEMATICS_GPS_EXPORT,
   P.TELEMATICS_DIAGNOSTICS_VIEW, P.TELEMATICS_DIAGNOSTICS_UPDATE, P.TELEMATICS_DIAGNOSTICS_EXPORT,
@@ -416,7 +424,7 @@ const FLEET_MANAGER_PERMISSIONS = [
   P.CUSTOMER_PORTAL_VIEW, P.CUSTOMER_PORTAL_MANAGE,
   P.CARRIERS_VIEW, P.CARRIERS_MANAGE, P.FUEL_VIEW, P.FUEL_MANAGE, P.BILLING_VIEW,
   P.TELEMATICS_DEVICES_VIEW, P.TELEMATICS_DEVICES_CREATE, P.TELEMATICS_DEVICES_UPDATE, P.TELEMATICS_DEVICES_DELETE,
-  P.TELEMATICS_DEVICES_ASSIGN, P.TELEMATICS_DEVICES_DIAGNOSTICS, P.TELEMATICS_DEVICES_FIRMWARE, P.TELEMATICS_DEVICES_EXPORT,
+  P.TELEMATICS_DEVICES_ASSIGN, P.TELEMATICS_DEVICES_DIAGNOSTICS, P.TELEMATICS_DEVICES_FIRMWARE, P.TELEMATICS_DEVICES_COMMAND, P.TELEMATICS_DEVICES_EXPORT,
   P.TELEMATICS_GPS_VIEW, P.TELEMATICS_GPS_EXPORT,
   P.TELEMATICS_DIAGNOSTICS_VIEW, P.TELEMATICS_DIAGNOSTICS_UPDATE, P.TELEMATICS_DIAGNOSTICS_EXPORT,
   P.TELEMATICS_SENSORS_VIEW, P.TELEMATICS_SENSORS_UPDATE, P.TELEMATICS_SENSORS_EXPORT,

@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle, ChevronRight, Clock, MapPin, Radio, ShieldAlert, Truck, User, XCircle, Zap } from "lucide-react";
+import { useSearchParams } from "react-router";
+import { AlertTriangle, CheckCircle, ChevronRight, Clock, Radio, ShieldAlert, Truck, User, XCircle, Zap } from "lucide-react";
 import { DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
-import { ClayStat, ConsoleRail } from "@/components/console";
+import { ConsoleRail } from "@/components/console";
 import { dispatchApi } from "@/services/dispatchApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
@@ -63,7 +64,10 @@ function nextStatusOptions(row: AnyRecord): string[] {
 }
 
 export function DispatchCommandPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("Board");
+  const [searchParams] = useSearchParams();
+  const requestedJobId = searchParams.get("jobId");
+  const requestedJobOpened = useRef<string | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>("Assignments");
   const [selectedAssignment, setSelectedAssignment] = useState<AnyRecord | null>(null);
   const [eligVehicleId, setEligVehicleId] = useState("");
   const [eligDriverId,  setEligDriverId]  = useState("");
@@ -84,10 +88,23 @@ export function DispatchCommandPage() {
     refetchInterval: 30_000,
   });
   const assignments = useQuery<AnyRecord[]>({
-    queryKey: ["dispatch", "assignments"],
-    queryFn: () => dispatchApi.assignments({ limit: 100 }),
+    queryKey: ["dispatch", "assignments", requestedJobId],
+    queryFn: () => dispatchApi.assignments({
+      limit: 100,
+      jobId: requestedJobId && Number.isInteger(Number(requestedJobId)) && Number(requestedJobId) > 0
+        ? Number(requestedJobId)
+        : undefined,
+    }),
     staleTime: 15_000,
   });
+
+  useEffect(() => {
+    if (!requestedJobId || requestedJobOpened.current === requestedJobId || !assignments.data) return;
+    const linked = assignments.data.find((row) => String(row.jobId ?? row.job_id ?? "") === requestedJobId);
+    setActiveTab("Assignments");
+    if (linked) setSelectedAssignment(linked);
+    requestedJobOpened.current = requestedJobId;
+  }, [assignments.data, requestedJobId]);
   const exceptions = useQuery<AnyRecord[]>({
     queryKey: ["dispatch", "exceptions"],
     queryFn: () => dispatchApi.exceptions(),
@@ -163,6 +180,9 @@ export function DispatchCommandPage() {
       .reduce((acc, [, v]) => acc + v.length, 0),
     exceptions: (stageMap["Exception"] ?? []).length,
   };
+  const focusedJobNumber = requestedJobId
+    ? assignments.data?.find((row) => String(row.jobId ?? row.job_id ?? "") === requestedJobId)?.jobNumber
+    : null;
 
   return (
     <div className="fleet-console space-y-3">
@@ -187,13 +207,12 @@ export function DispatchCommandPage() {
         }
       />
 
-      {/* KPI Strip */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <ClayStat Icon={Truck}         tone="fc-clay-amber"   iconCls="text-amber-700"   label="Unassigned Loads" value={summary.unassigned} caption="Waiting for a pairing" alert={summary.unassigned > 0} />
-        <ClayStat Icon={MapPin}        tone="fc-clay-teal"    iconCls="text-teal-700"    label="Active Assignments" value={summary.active} caption="Assigned through delivery" />
-        <ClayStat Icon={AlertTriangle} tone="fc-clay-red"     iconCls="text-rose-700"    label="Open Exceptions" value={summary.exceptions} caption={summary.exceptions > 0 ? "Needs dispatcher action" : "No open exceptions"} alert={summary.exceptions > 0} />
-        <ClayStat Icon={User}          tone="fc-clay-emerald" iconCls="text-emerald-700" label="Available Drivers" value={availDrivers.data?.length ?? "—"} caption="Cleared for assignment" />
-      </div>
+      <section className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Dispatch summary">
+        <KpiCard compact label="Unassigned Loads" value={summary.unassigned} trend="Waiting for a pairing" />
+        <KpiCard compact label="Active Assignments" value={summary.active} trend="Assigned through delivery" />
+        <KpiCard compact label="Open Exceptions" value={summary.exceptions} trend={summary.exceptions > 0 ? "Needs dispatcher action" : "No open exceptions"} />
+        <KpiCard compact label="Available Drivers" value={availDrivers.data?.length ?? "—"} trend="Cleared for assignment" />
+      </section>
 
       {operationError ? (
         <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
@@ -208,18 +227,25 @@ export function DispatchCommandPage() {
 
       {/* System Dispatch Insights */}
       {insights.length > 0 && (
-        <section className="panel p-5">
-          <h2 className="section-title">System Dispatch Insights</h2>
+        <details className="panel p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-700">System Dispatch Insights ({insights.length})</summary>
           <div className="mt-4 space-y-3">
             {insights.map((ins, i) => (
               <DispatchInsightRow key={i} insight={ins} />
             ))}
           </div>
-        </section>
+        </details>
       )}
 
       {/* Tabs */}
-      <section className="fc-neumo p-5">
+      <section className="fc-neumo p-3">
+        {requestedJobId ? (
+          <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+            Focused on {String(focusedJobNumber ?? `job ${requestedJobId}`)}. The current assignment is listed first;
+            terminal rows are retained as history. Job state and assignment state are shown separately because a delayed
+            job can still have an in-transit assignment.
+          </div>
+        ) : null}
         <div className="fc-seg flex flex-wrap items-center gap-1 p-1">
           {TABS.map((tab) => (
             <button
@@ -233,7 +259,7 @@ export function DispatchCommandPage() {
           ))}
         </div>
 
-        <div className="mt-5">
+        <div className="mt-3">
           {activeTab === "Board" && (
             <BoardTab
               stageMap={stageMap}
@@ -510,6 +536,20 @@ function AssignmentsTab({
       />
     );
 
+  const terminal = new Set(["cancelled", "delivered", "rejected"]);
+  const currentByJob = new Map<string, string>();
+  for (const row of rows) {
+    const jobKey = String(row["jobId"] ?? row["job_id"] ?? row["jobNumber"] ?? "");
+    const rowId = String(row["id"] ?? "");
+    const status = String(row["assignmentStatus"] ?? "").toLowerCase();
+    if (jobKey && rowId && !terminal.has(status) && !currentByJob.has(jobKey)) currentByJob.set(jobKey, rowId);
+  }
+  for (const row of rows) {
+    const jobKey = String(row["jobId"] ?? row["job_id"] ?? row["jobNumber"] ?? "");
+    const rowId = String(row["id"] ?? "");
+    if (jobKey && rowId && !currentByJob.has(jobKey)) currentByJob.set(jobKey, rowId);
+  }
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
@@ -529,6 +569,8 @@ function AssignmentsTab({
         <tbody className="divide-y divide-slate-100">
           {rows.map((r) => {
             const status     = String(r["assignmentStatus"] ?? "").toLowerCase();
+            const jobKey     = String(r["jobId"] ?? r["job_id"] ?? r["jobNumber"] ?? "");
+            const isCurrent  = currentByJob.get(jobKey) === String(r["id"] ?? "");
             const nextOpts   = nextStatusOptions(r).filter((s) => s !== "cancelled");
             const showCancel = canCancel && ["assigned", "accepted", "exception"].includes(status);
 
@@ -541,7 +583,15 @@ function AssignmentsTab({
                 <td className="px-3 py-2 font-mono text-xs font-semibold">{String(r["jobNumber"] ?? "--")}</td>
                 <td className="px-3 py-2">{String(r["driverName"] ?? "--")}</td>
                 <td className="px-3 py-2">{String(r["vehicleCode"] ?? "--")}</td>
-                <td className="px-3 py-2"><StatusBadge status={r["assignmentStatus"]} /></td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <StatusBadge status={r["assignmentStatus"]} />
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${isCurrent ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                      {isCurrent ? "Current" : "History"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-500">Job: {String(r["jobStatus"] ?? "Unknown")}</p>
+                </td>
                 <td className="px-3 py-2">
                   <SafetyScorePill score={r["driverSafetyScore"]} />
                 </td>
@@ -881,8 +931,11 @@ function AssignmentDrawer({
         <InfoRow label="Customer"   value={assignment["customerName"]} />
         <InfoRow label="Driver"     value={assignment["driverName"]} />
         <InfoRow label="Vehicle"    value={assignment["vehicleCode"]} />
-        <InfoRow label="Status">
+        <InfoRow label="Assignment State">
           <StatusBadge status={isUnassignedJob ? "Unassigned" : assignment["assignmentStatus"]} />
+        </InfoRow>
+        <InfoRow label="Job State">
+          <StatusBadge status={assignment["jobStatus"] ?? "Unknown"} />
         </InfoRow>
         <InfoRow label="Safety Score">
           <SafetyScorePill score={assignment["driverSafetyScore"]} />

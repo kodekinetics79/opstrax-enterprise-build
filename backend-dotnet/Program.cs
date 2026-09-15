@@ -117,6 +117,13 @@ builder.Services.AddScoped<Opstrax.Api.Storage.FileStorageService>();
 builder.Services.AddSingleton<TenantScopeAccessor>();
 builder.Services.AddSingleton<Database>();
 builder.Services.AddHttpClient(); // POD asset proxy (token-scoped public POD delivery)
+// Native mobile push delivery. The sender uses only generic lock-screen copy; full
+// operational detail remains behind authenticated Driver/Fleet/Customer surfaces.
+builder.Services.AddHttpClient("expo-push", client =>
+{
+    client.BaseAddress = new Uri("https://exp.host/");
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
 builder.Services.AddSingleton<PostgresDataProtectionXmlRepository>();
 builder.Services.AddSingleton<DataProtectionReadinessService>();
 var dataProtection = builder.Services.AddDataProtection()
@@ -181,6 +188,10 @@ builder.Services.AddSingleton<ServiceRunTracker>();
 builder.Services.AddSingleton<ConfigValidationService>();
 builder.Services.AddSingleton<FleetProductionReadinessService>();
 builder.Services.AddSingleton<TelemetryLiveStateService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<CameraProviderIngestService>();
+builder.Services.AddSingleton<CameraProviderStatusService>();
+builder.Services.AddSingleton<DeviceConnectivityObservationService>();
 // Agentic Brain — the model behind the AI foundation's empty reasoning slot.
 builder.Services.AddSingleton<AgenticBrainService>();
 builder.Services.AddScoped<IncidentService>();
@@ -229,6 +240,9 @@ builder.Services.AddSingleton<IOutboxMessageHandler, CreditNoteIssuedGeneralLedg
 builder.Services.AddSingleton<IOutboxMessageHandler, DetentionWarningNotificationHandler>();
 // Alert notifications: email/SMS fan-out per user_notification_prefs (Settings → Notifications).
 builder.Services.AddSingleton<IOutboxMessageHandler, AlertNotificationDeliveryHandler>();
+// Recipient-scoped native push fan-out; outbox retries are idempotent via
+// notification_recipients.external_ref and server-owned device-token rows.
+builder.Services.AddSingleton<IOutboxMessageHandler, MobilePushNotificationHandler>();
 builder.Services.AddSingleton<FinancialConfigService>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();
@@ -698,6 +712,11 @@ app.UseWhen(
                 path.StartsWith("/api/maintenance/fault-codes/ingest", StringComparison.OrdinalIgnoreCase) ||
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                  path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase)) ||
+                // Customer feedback is authorized by the same active, expiring ETA
+                // capability token and is validated again by the endpoint before insert.
+                (context.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) &&
+                 path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase) &&
+                 path.EndsWith("/feedback", StringComparison.OrdinalIgnoreCase)) ||
                 // Customer-facing public tracking — token-scoped, expiring, revocable; no user session
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                  path.StartsWith("/api/customer-visibility/tracking/", StringComparison.OrdinalIgnoreCase)) ||
@@ -974,7 +993,7 @@ app.UseWhen(
             // only from its DB-signed, PID+txid-bound ticket.
             if (rlsEnforceTenantContext)
             {
-                await using var reqScope = await scopedDb.BeginTenantScopeAsync(companyId, context.RequestAborted);
+                await using var reqScope = await scopedDb.BeginTenantScopeAsync(companyId, userId, context.RequestAborted);
                 scopes.Current = reqScope;
                 try
                 {

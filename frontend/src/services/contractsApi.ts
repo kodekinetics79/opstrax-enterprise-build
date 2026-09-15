@@ -2,6 +2,7 @@ import { apiClient, unwrap } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
 
 export const contractsApi = {
+  customerOptions: (search = "") => unwrap<AnyRecord[]>(apiClient.get("/api/contracts/customer-options", { params: { search, limit: 200 } })),
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/contracts/summary")),
   list: () => unwrap<AnyRecord[]>(apiClient.get("/api/contracts")),
   detail: (id: string | number) => unwrap<AnyRecord>(apiClient.get(`/api/contracts/${id}`)),

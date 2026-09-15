@@ -18,7 +18,7 @@ public sealed class DispatchHosAuthorityContractTests
         Assert.DoesNotContain("FROM hos_records", s, StringComparison.Ordinal);
         Assert.Contains("FROM hos_clocks hc", s, StringComparison.Ordinal);
         Assert.Contains("hc.source_authority='Authoritative'", s, StringComparison.Ordinal);
-        Assert.Contains("hc.source_observed_at >= NOW() - INTERVAL '24 hours'", s, StringComparison.Ordinal);
+        Assert.Contains("hc.source_observed_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW()", s, StringComparison.Ordinal);
         Assert.Contains("hos.drive_time_remaining_minutes >= 60", s, StringComparison.Ordinal);
     }
     [Fact] public void DispatchEligibility_FailsClosedWithoutFreshAuthority()

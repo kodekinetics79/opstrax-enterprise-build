@@ -80,6 +80,54 @@ public sealed class ConnectorRegistry
         return SensitiveKeys.Contains(normalized) || SensitiveContainerKeys.Contains(normalized);
     }
 
+    /// <summary>
+    /// Detects whether an integration patch contains a new, replaced, or removed
+    /// credential. Display masks preserve the stored value and therefore do not
+    /// invalidate provider cursors. Traversal matches the recursive secret-protection
+    /// rules, including credentials nested in provider-specific objects and arrays.
+    /// </summary>
+    public static bool ContainsCredentialMutation(JsonElement config) =>
+        ContainsCredentialMutation(config, null, forceSensitiveLeaf: false);
+
+    private static bool ContainsCredentialMutation(
+        JsonElement element,
+        string? propertyName,
+        bool forceSensitiveLeaf)
+    {
+        if (forceSensitiveLeaf)
+        {
+            if (IsRedactionMask(element)) return false;
+            if (element.ValueKind == JsonValueKind.Object)
+                return element.EnumerateObject().Any(property =>
+                    ContainsCredentialMutation(property.Value, property.Name, forceSensitiveLeaf: true));
+            if (element.ValueKind == JsonValueKind.Array)
+                return element.EnumerateArray().Any(item =>
+                    ContainsCredentialMutation(item, null, forceSensitiveLeaf: true));
+            return true;
+        }
+
+        if (propertyName is not null && IsSensitive(propertyName))
+        {
+            if (IsRedactionMask(element)) return false;
+            if (!IsSensitiveContainer(propertyName)) return true;
+            if (element.ValueKind == JsonValueKind.Object)
+                return element.EnumerateObject().Any(property =>
+                    ContainsCredentialMutation(property.Value, property.Name, forceSensitiveLeaf: true));
+            if (element.ValueKind == JsonValueKind.Array)
+                return element.EnumerateArray().Any(item =>
+                    ContainsCredentialMutation(item, null, forceSensitiveLeaf: true));
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.Object)
+            return element.EnumerateObject().Any(property =>
+                ContainsCredentialMutation(property.Value, property.Name, forceSensitiveLeaf: false));
+        if (element.ValueKind == JsonValueKind.Array)
+            return element.EnumerateArray().Any(item =>
+                ContainsCredentialMutation(item, null, forceSensitiveLeaf: false));
+        return false;
+    }
+
     private static bool IsSensitiveContainer(string key) =>
         SensitiveContainerKeys.Contains(NormalizeKey(key));
 

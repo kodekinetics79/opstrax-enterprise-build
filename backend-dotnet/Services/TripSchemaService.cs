@@ -50,6 +50,8 @@ public sealed class TripSchemaService(Database db)
         new("trips", "compliance_breakdown_json",   "JSONB NULL"),
         new("trips", "created_at",                 "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
         new("trips", "updated_at",                 "TIMESTAMPTZ NULL"),
+        new("trips", "data_origin",               "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("trips", "verification_status",       "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
         // Bind location_events to trips for breadcrumb replay
         new("location_events", "trip_id",          "BIGINT NULL"),
         // Capture odometer at trip start/end for actual_distance
@@ -91,6 +93,8 @@ public sealed class TripSchemaService(Database db)
             max_telemetry_gap_minutes INT NOT NULL DEFAULT 0,
             speeding_events_count INT NOT NULL DEFAULT 0,
             compliance_breakdown_json JSONB NULL,
+            data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+            verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified',
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL
         )",

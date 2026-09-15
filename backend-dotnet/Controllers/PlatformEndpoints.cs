@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
+using Opstrax.Api.Observability;
 using Opstrax.Api.Services;
 
 namespace Opstrax.Api.Controllers;
@@ -97,6 +98,15 @@ public static class PlatformEndpoints
         app.MapPost("/api/platform/packages", PackageCreate);
         app.MapPut("/api/platform/packages/{id:long}", PackageUpdate);
         app.MapDelete("/api/platform/packages/{id:long}", PackageDelete);
+
+        // ── Hardware readiness ────────────────────────────────────────────────
+        // Configuration-only intake for exact device tuples. These routes can
+        // prepare an already-supported GT06/J1939 device for physical evidence,
+        // but the database keeps every candidate on ExternalHold and refuses any
+        // certification claim from this surface.
+        app.MapGet("/api/platform/device-compatibility-candidates", DeviceCompatibilityCandidatesList);
+        app.MapPost("/api/platform/device-compatibility-candidates", DeviceCompatibilityCandidateCreate);
+        app.MapPost("/api/platform/device-compatibility-candidates/{id:long}/declare", DeviceCompatibilityCandidateDeclare);
 
         // ── Billing & Invoices ──────────────────────────────────────────────────
         app.MapGet("/api/platform/invoices", InvoicesList);
@@ -1374,41 +1384,70 @@ public static class PlatformEndpoints
     }
 
     // Platform-initiated password reset for a tenant user. Generates a strong one-time
-    // password, sets it, kills that user's sessions, and returns the password ONCE so the
-    // operator can hand it over. Deliberately does NOT depend on SMTP, and never changes
-    // the user's status (a disabled user stays disabled).
-    private static async Task<IResult> TenantUserResetPassword(long id, long userId, HttpContext http, Database db, CancellationToken ct)
+    // password, sets it, kills that user's sessions and reset links, and returns the
+    // password ONCE so the operator can hand it over. Deliberately does NOT depend on SMTP.
+    private static async Task<IResult> TenantUserResetPassword(long id, long userId, HttpContext http, Database db, SecuritySettingsService securitySettings, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
         if (error is not null) return error;
 
         var user = await db.QuerySingleAsync(
-            "SELECT id, email, full_name FROM users WHERE id=@uid AND company_id=@cid",
+            "SELECT id, email, full_name, status FROM users WHERE id=@uid AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", id); }, ct);
         if (user is null)
             return Results.Json(ApiResponse<object>.Fail("Not found", "That user does not belong to this tenant"),
                 statusCode: StatusCodes.Status404NotFound);
 
-        var temp = GenerateTempPassword();
-        // Mirrors the canonical self-service reset path: set the hash, stamp the change,
-        // and CLEAR the lockout counters — a locked-out user is usually the reason an
-        // operator is resetting in the first place.
-        await db.ExecuteAsync(
-            @"UPDATE users SET
-                password_hash=@h, demo_password='', password_changed_at=NOW(),
-                failed_login_attempts=0, locked_until=NULL
-              WHERE id=@uid AND company_id=@cid",
-            c =>
-            {
-                c.Parameters.AddWithValue("@h", PlatformSchemaService.HashPassword(temp));
-                c.Parameters.AddWithValue("@uid", userId);
-                c.Parameters.AddWithValue("@cid", id);
-            }, ct);
-        var revoked = await db.ExecuteAsync("DELETE FROM user_sessions WHERE user_id=@uid",
-            c => c.Parameters.AddWithValue("@uid", userId), ct);
+        if (!string.Equals(user["status"]?.ToString(), "Active", StringComparison.OrdinalIgnoreCase))
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "Direct password reset is available only for active users. Re-enable the user first, or resend an activation invite for a pending user."));
+
+        var policy = await securitySettings.GetAsync(id, ct);
+        var temp = GenerateTempPassword(policy);
+        var validation = PasswordPolicyService.ValidatePassword(temp, policy);
+        if (!validation.valid)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "The tenant password policy cannot produce a safe temporary password.", validation.failures));
+
+        var revoked = 0L;
+        var applied = await db.RunInTenantTransactionAsync(id, async () =>
+        {
+            var updated = await db.ExecuteAsync(
+                @"UPDATE users SET
+                    password_hash=@h, demo_password='', password_changed_at=NOW(),
+                    failed_login_attempts=0, locked_until=NULL
+                  WHERE id=@uid AND company_id=@cid AND status='Active'",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@h", PlatformSchemaService.HashPassword(temp));
+                    c.Parameters.AddWithValue("@uid", userId);
+                    c.Parameters.AddWithValue("@cid", id);
+                }, ct);
+            if (updated != 1) return false;
+
+            revoked = await db.ScalarLongAsync(
+                "WITH gone AS (DELETE FROM user_sessions WHERE user_id=@uid AND company_id=@cid RETURNING 1) SELECT COUNT(*) FROM gone",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@uid", userId);
+                    c.Parameters.AddWithValue("@cid", id);
+                }, ct);
+            await db.ExecuteAsync(
+                "DELETE FROM password_reset_tokens WHERE user_id=@uid AND company_id=@cid",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@uid", userId);
+                    c.Parameters.AddWithValue("@cid", id);
+                }, ct);
+            return true;
+        }, ct);
+
+        if (!applied)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "The user changed while the reset was being applied. Reload the user and try again."));
 
         await AuditAsync(db, principal!, http, "tenant.user.password_reset", "User", userId, id,
-            new { email = user["email"], sessionsRevoked = revoked }, ct);
+            new { email = user["email"], sessionsRevoked = revoked, resetTokensRevoked = true }, ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -1422,7 +1461,7 @@ public static class PlatformEndpoints
 
     // Roles carrying tenant-wide authority. Used both to seed a new administrator
     // and to guard against removing the last one.
-    private static readonly string[] TenantAdminRoles = ["Company Admin", "Super Admin", "Reseller / Partner Admin"];
+    private static readonly string[] TenantAdminRoles = ["Tenant Admin", "Company Admin", "Super Admin", "Reseller / Partner Admin"];
 
     private static bool IsTenantAdminRole(string? roleName) =>
         roleName is not null && TenantAdminRoles.Contains(roleName, StringComparer.OrdinalIgnoreCase);
@@ -1733,13 +1772,24 @@ public static class PlatformEndpoints
     }
 
     // Unambiguous alphabet (no O/0, I/l/1) so a handed-over password is easy to type.
-    private static string GenerateTempPassword()
+    private static string GenerateTempPassword(SecuritySettings? policy = null)
     {
-        const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-        var bytes = RandomNumberGenerator.GetBytes(16);
-        var sb = new System.Text.StringBuilder(16);
-        foreach (var b in bytes) sb.Append(chars[b % chars.Length]);
-        return sb.ToString();
+        const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%*?";
+        var length = Math.Clamp(Math.Max(16, policy?.PasswordMinLength ?? 16), 16, 256);
+        var value = new char[length];
+        value[0] = 'A';
+        value[1] = 'a';
+        value[2] = '2';
+        value[3] = '!';
+        var bytes = RandomNumberGenerator.GetBytes(length);
+        for (var i = 4; i < value.Length; i++) value[i] = chars[bytes[i] % chars.Length];
+        // Shuffle the guaranteed policy characters away from predictable positions.
+        for (var i = value.Length - 1; i > 0; i--)
+        {
+            var j = RandomNumberGenerator.GetInt32(i + 1);
+            (value[i], value[j]) = (value[j], value[i]);
+        }
+        return new string(value);
     }
 
     private static async Task<IResult> TenantAudit(long id, HttpContext http, Database db, CancellationToken ct)
@@ -2283,6 +2333,197 @@ public static class PlatformEndpoints
 
         await AuditAsync(db, principal!, http, "package.created", "Package", newId, null, new { name, code }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id = newId, name, code }, "Package created"));
+    }
+
+    private static readonly HashSet<string> SoftwareReadyHardwareProtocols = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "GT06",
+        "J1939",
+    };
+
+    internal static async Task<IResult> DeviceCompatibilityCandidatesList(
+        HttpContext http, Database db, CancellationToken ct)
+    {
+        var (_, error) = await RequireAsync(http, db, "platform:devices:view", ct);
+        if (error is not null) return error;
+
+        var rows = await db.QueryAsync(
+            @"SELECT id,manufacturer,device_model,hardware_revision,firmware_version,
+                     software_candidate_sha,engineering_status,certification_status,
+                     external_hold_reason,capability_declaration_status,protocol_names,
+                     supported_fields,supported_events,supported_commands,known_limitations,
+                     declaration_source_reference,declared_at,catalog_support_tier,
+                     certification_reference,certification_date,physical_evidence_claim,
+                     provider_evidence_claim,certification_claim,created_at,updated_at
+                FROM device_compatibility_candidates
+               ORDER BY created_at DESC,id DESC LIMIT 500", ct: ct);
+
+        var runtimeSha = BuildInfo.Version.Trim();
+        var frozenRuntime = System.Text.RegularExpressions.Regex.IsMatch(runtimeSha, "^[0-9a-f]{40}$");
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            runtime = new { sha = runtimeSha, exactSha = frozenRuntime },
+            supportedPaths = new object[]
+            {
+                new { key = "GT06", label = "GT06 direct TCP", state = "SoftwareReadyForPhysicalConfirmation", next = "Configure IMEI and server destination, then run bench, route, recovery and soak evidence." },
+                new { key = "J1939", label = "J1939 / CAN", state = "SoftwareReadyForPhysicalConfirmation", next = "Connect the supported CAN acquisition host, then capture physical signal and diagnostic evidence." },
+                new { key = "PACIFIC_TRACK", label = "Pacific Track proprietary", state = "ExternalDependency", next = "Obtain the vendor parser or protocol specification and a real frame capture before declaring capabilities." },
+                new { key = "VENDOR_CLOUD", label = "Supplier cloud", state = "ExternalDependency", next = "Obtain API access, commercial data rights and a real provider-account handshake." },
+            },
+            candidates = rows,
+        }, "Hardware readiness candidates"));
+    }
+
+    internal static async Task<IResult> DeviceCompatibilityCandidateCreate(
+        HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:devices:manage", ct);
+        if (error is not null) return error;
+
+        var manufacturer = Str(body, "manufacturer")?.Trim();
+        var model = Str(body, "deviceModel")?.Trim();
+        var hardwareRevision = Str(body, "hardwareRevision")?.Trim();
+        var firmwareVersion = Str(body, "firmwareVersion")?.Trim();
+        var holdReason = Str(body, "externalHoldReason")?.Trim();
+        var validation = new List<string>();
+        ValidateRequiredHardwareText(manufacturer, "Manufacturer", 120, validation);
+        ValidateRequiredHardwareText(model, "Device model", 160, validation);
+        ValidateRequiredHardwareText(hardwareRevision, "Hardware revision", 120, validation);
+        ValidateRequiredHardwareText(firmwareVersion, "Firmware version", 120, validation);
+        ValidateRequiredHardwareText(holdReason, "External-hold reason", 500, validation, minimumLength: 3);
+        if (validation.Count > 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", validation.ToArray()));
+
+        var runtimeSha = BuildInfo.Version.Trim();
+        if (!System.Text.RegularExpressions.Regex.IsMatch(runtimeSha, "^[0-9a-f]{40}$"))
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "A compatibility candidate can be frozen only from a deployed exact 40-character release SHA."));
+
+        try
+        {
+            var candidateId = await db.RunInSystemTransactionAsync(async () =>
+            {
+                var inserted = await db.InsertAsync(
+                    @"INSERT INTO device_compatibility_candidates
+                        (manufacturer,device_model,hardware_revision,firmware_version,
+                         software_candidate_sha,engineering_status,certification_status,external_hold_reason)
+                      VALUES (@manufacturer,@model,@hardware,@firmware,@sha,'Candidate','ExternalHold',@reason)
+                      RETURNING id",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@manufacturer", manufacturer!);
+                        command.Parameters.AddWithValue("@model", model!);
+                        command.Parameters.AddWithValue("@hardware", hardwareRevision!);
+                        command.Parameters.AddWithValue("@firmware", firmwareVersion!);
+                        command.Parameters.AddWithValue("@sha", runtimeSha);
+                        command.Parameters.AddWithValue("@reason", holdReason!);
+                    }, ct);
+                await AuditAsync(db, principal!, http, "device.compatibility_candidate.created",
+                    "DeviceCompatibilityCandidate", inserted, null,
+                    new { manufacturer, model, hardwareRevision, firmwareVersion, softwareCandidateSha = runtimeSha, certificationStatus = "ExternalHold" }, ct);
+                return inserted;
+            }, ct);
+
+            return Results.Created($"/api/platform/device-compatibility-candidates/{candidateId}",
+                ApiResponse<object>.Ok(new { id = candidateId, softwareCandidateSha = runtimeSha, certificationStatus = "ExternalHold" },
+                    "Exact device candidate registered on external hold"));
+        }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "This exact hardware, firmware and software candidate is already registered."));
+        }
+    }
+
+    internal static async Task<IResult> DeviceCompatibilityCandidateDeclare(
+        long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:devices:manage", ct);
+        if (error is not null) return error;
+
+        var protocols = ReadStringArray(body, "protocolNames");
+        var fields = ReadStringArray(body, "supportedFields");
+        var events = ReadStringArray(body, "supportedEvents");
+        var commands = ReadStringArray(body, "supportedCommands");
+        var limitations = Str(body, "knownLimitations")?.Trim();
+        var source = Str(body, "declarationSourceReference")?.Trim();
+        var validation = new List<string>();
+        ValidateHardwareList(protocols, "Protocol", 16, validation);
+        ValidateHardwareList(fields, "Supported field", 64, validation);
+        ValidateHardwareList(events, "Supported event", 64, validation);
+        ValidateHardwareList(commands, "Supported command", 32, validation, required: false);
+        ValidateRequiredHardwareText(limitations, "Known limitations", 2000, validation, minimumLength: 3);
+        ValidateRequiredHardwareText(source, "Declaration source reference", 240, validation, minimumLength: 3);
+        var unsupported = protocols.Where(protocol => !SoftwareReadyHardwareProtocols.Contains(protocol)).ToArray();
+        if (unsupported.Length > 0)
+            validation.Add($"These protocol paths are not software-ready: {string.Join(", ", unsupported)}. Keep the candidate unconfirmed until the required parser or provider adapter is installed.");
+        if (validation.Count > 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", validation.ToArray()));
+
+        var candidate = await db.QuerySingleAsync(
+            "SELECT id,capability_declaration_status,certification_status FROM device_compatibility_candidates WHERE id=@id",
+            command => command.Parameters.AddWithValue("@id", id), ct);
+        if (candidate is null)
+            return Results.NotFound(ApiResponse<object>.Fail("Compatibility candidate not found"));
+        if (!string.Equals(candidate["capabilityDeclarationStatus"]?.ToString(), "NotRecorded", StringComparison.Ordinal))
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "This engineering declaration is already frozen. Register a new exact candidate for changed capabilities."));
+
+        var declared = await db.RunInSystemTransactionAsync(async () =>
+        {
+            var updated = await db.ExecuteAsync(
+                @"UPDATE device_compatibility_candidates SET
+                     capability_declaration_status='EngineeringDeclaredUnverified',
+                     protocol_names=@protocols,supported_fields=@fields,supported_events=@events,
+                     supported_commands=@commands,known_limitations=@limitations,
+                     declaration_source_reference=@source,declared_at=NOW(),updated_at=NOW()
+                   WHERE id=@id AND capability_declaration_status='NotRecorded'",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@protocols", protocols.ToArray());
+                    command.Parameters.AddWithValue("@fields", fields.ToArray());
+                    command.Parameters.AddWithValue("@events", events.ToArray());
+                    command.Parameters.AddWithValue("@commands", commands.ToArray());
+                    command.Parameters.AddWithValue("@limitations", limitations!);
+                    command.Parameters.AddWithValue("@source", source!);
+                    command.Parameters.AddWithValue("@id", id);
+                }, ct);
+            if (updated != 1) return false;
+            await AuditAsync(db, principal!, http, "device.compatibility_candidate.declared",
+                "DeviceCompatibilityCandidate", id, null,
+                new { protocols, fields, events, commands, certificationStatus = "ExternalHold", evidenceClaims = false }, ct);
+            return true;
+        }, ct);
+
+        if (!declared)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "This engineering declaration was frozen by another request. Reload the candidate."));
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            id,
+            capabilityDeclarationStatus = "EngineeringDeclaredUnverified",
+            certificationStatus = "ExternalHold",
+            certificationClaim = false,
+        }, "Engineering capabilities frozen; physical certification evidence remains pending"));
+    }
+
+    private static void ValidateRequiredHardwareText(
+        string? value, string label, int maximumLength, List<string> errors, int minimumLength = 1)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Trim().Length < minimumLength)
+            errors.Add($"{label} is required.");
+        else if (value.Length > maximumLength)
+            errors.Add($"{label} must be {maximumLength} characters or fewer.");
+    }
+
+    private static void ValidateHardwareList(
+        List<string> values, string label, int maximumItems, List<string> errors, bool required = true)
+    {
+        if (required && values.Count == 0) errors.Add($"At least one {label.ToLowerInvariant()} is required.");
+        if (values.Count > maximumItems) errors.Add($"{label} list accepts at most {maximumItems} values.");
+        if (values.Any(value => value.Length > 120)) errors.Add($"Each {label.ToLowerInvariant()} must be 120 characters or fewer.");
+        if (values.Distinct(StringComparer.OrdinalIgnoreCase).Count() != values.Count)
+            errors.Add($"{label} list contains duplicates.");
     }
 
     private static async Task<IResult> PackageUpdate(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
@@ -2866,8 +3107,8 @@ public static class PlatformEndpoints
             if (!string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase))
             {
                 await db.ExecuteAsync(
-                    @"UPDATE users SET full_name=@n, role_name='Company Admin',
-                          role_id=(SELECT id FROM roles WHERE LOWER(name)=LOWER('Company Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
+                    @"UPDATE users SET full_name=@n, role_name='Tenant Admin',
+                          role_id=(SELECT id FROM roles WHERE LOWER(name)=LOWER('Tenant Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
                           status='Pending'
                       WHERE id=@id AND company_id=@cid",
                     c =>
@@ -2887,8 +3128,8 @@ public static class PlatformEndpoints
             userId = await db.InsertAsync(
                 @"INSERT INTO users (company_id, role_id, full_name, email, role_name, status)
                   VALUES (@cid,
-                          (SELECT id FROM roles WHERE LOWER(name)=LOWER('Company Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
-                          @name, @email, 'Company Admin', 'Pending')
+                          (SELECT id FROM roles WHERE LOWER(name)=LOWER('Tenant Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
+                          @name, @email, 'Tenant Admin', 'Pending')
                   RETURNING id",
                 c =>
                 {
@@ -3066,6 +3307,11 @@ public static class PlatformEndpoints
     private static List<string> ReadStringArray(Dictionary<string, object?> body, string key)
     {
         if (!body.TryGetValue(key, out var v) || v is null) return [];
+        if (v is IEnumerable<string> values)
+            return values
+                .Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Select(static value => value.Trim())
+                .ToList();
         if (v is JsonElement je && je.ValueKind == JsonValueKind.Array)
             return je.EnumerateArray()
                 .Select(e => e.ValueKind == JsonValueKind.String ? e.GetString() : e.ToString())

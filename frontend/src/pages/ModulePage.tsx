@@ -1,3 +1,4 @@
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Plus, RadioTower, ShieldCheck, Target, X } from "lucide-react";
@@ -16,7 +17,7 @@ const CREATE_FIELDS: { key: string; label: string; type?: string }[] = [
   { key: "dueAt",        label: "Due Date", type: "date" },
 ];
 
-function CreateModal({ moduleTitle, saving, onClose, onSave }: { moduleTitle: string; saving: boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
+function CreateModal({ moduleTitle, saving, error, onClose, onSave }: { moduleTitle: string; saving: boolean; error?: string; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
   const [form, setForm] = useState<AnyRecord>({ status: "Active", riskLevel: "Low" });
   const submit = (e: FormEvent) => { e.preventDefault(); onSave(form); };
   return (
@@ -40,6 +41,7 @@ function CreateModal({ moduleTitle, saving, onClose, onSave }: { moduleTitle: st
               />
             </div>
           ))}
+          {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn-primary" disabled={saving}>
@@ -92,14 +94,14 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
   ).filter(STATUS_FILTERS[statusFilter] ?? STATUS_FILTERS.All);
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack flex h-full flex-col overflow-y-auto">
       <PageHeader
         eyebrow={module.group}
         title={module.title}
         description={module.description}
         actions={
           <>
-            <button className="btn-primary" onClick={() => setCreating(true)}>
+            <button className="btn-primary" onClick={() => { create.reset(); setCreating(true); }}>
               <Plus className="h-4 w-4" />
               Create
             </button>
@@ -113,29 +115,34 @@ export function ModulePage({ moduleKey }: { moduleKey: string }) {
           </>
         }
       />
-      <div className="grid gap-4 md:grid-cols-4">
-        <KpiCard label="Records" value={records.length} icon={<Icon />} status="Active" />
-        <KpiCard label="Open / Active" value={String(query.data?.summary?.active ?? records.filter((x) => String(x.status).match(/open|active|progress/i)).length)} icon={<ShieldCheck />} status="Healthy" />
+      <div className="grid gap-3 md:grid-cols-4">
+        <KpiCard label="Records" value={records.length} icon={<Icon />} status="Recorded" />
+        <KpiCard label="Open / Active" value={String(query.data?.summary?.active ?? records.filter((x) => String(x.status).match(/open|active|progress/i)).length)} icon={<ShieldCheck />} />
         <KpiCard label="Risk Items" value={String(query.data?.summary?.riskItems ?? records.filter((x) => String(x.riskLevel).match(/high|critical/i)).length)} icon={<Target />} status="Review" />
-        <KpiCard label="Fleet Insights" value={query.data?.insights?.length || 0} icon={<Bot />} status="Recommended" />
+        <KpiCard label="Recorded Insights" value={query.data?.insights?.length || 0} icon={<Bot />} status="Recorded" />
       </div>
       <FilterBar
         options={["All", "Active", "At Risk", "Completed", "Pending"]}
         value={statusFilter}
         onChange={setStatusFilter}
       />
-      <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
+      <div className="flex min-w-0 flex-col gap-3">
         <DataTable rows={displayRecords} columns={columns} onSelect={setSelected} />
-        <div className="space-y-4">
+        <details className="panel p-3"><summary className="cursor-pointer text-sm font-semibold">Recorded insights</summary><div className="mt-3 space-y-3">
           {(query.data?.insights || []).slice(0, 3).map((insight) => <AiInsightCard key={String(insight.id)} insight={insight} />)}
-          {!query.data?.insights?.length ? <AiInsightCard insight={{ title: `${module.title} insights`, body: "Operational recommendations will surface as live events and data flow through this module." }} /> : null}
-        </div>
+          {!query.data?.insights?.length ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-5 text-sm text-slate-500">
+              No recorded recommendations are available for this module.
+            </div>
+          ) : null}
+        </div></details>
       </div>
       <DetailDrawer record={selected} onClose={() => setSelected(null)} />
       {creating && (
         <CreateModal
           moduleTitle={module.title}
           saving={create.isPending}
+          error={create.isError ? apiErrorMessage(create.error, "The record could not be created.") : undefined}
           onClose={() => setCreating(false)}
           onSave={(p) => create.mutate(p)}
         />

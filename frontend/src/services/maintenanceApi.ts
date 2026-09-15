@@ -76,6 +76,15 @@ export const maintenanceApi = {
   // Fault Codes
   faultCodes: (status?: string) =>
     unwrap<AnyRecord[]>(apiClient.get("/api/maintenance/fault-codes", { params: { status: status ?? "active" } })),
+  diagnosticHolds: (status?: string) =>
+    unwrap<AnyRecord[]>(apiClient.get("/api/maintenance/diagnostic-holds", { params: status ? { status } : undefined })),
+  acknowledgeDiagnosticHold: (id: number | string) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/maintenance/diagnostic-holds/${id}/acknowledge`)),
+  resolveDiagnosticHold: (id: number | string, payload: {
+    resolutionNote: string;
+    verificationType: "technician_scan" | "provider_diagnostic" | "service_record";
+    evidenceReference: string;
+  }) => unwrap<AnyRecord>(apiClient.post(`/api/maintenance/diagnostic-holds/${id}/resolve`, payload)),
 
   // Legacy list/detail used by existing hooks
   list: () => unwrap<AnyRecord[]>(apiClient.get("/api/maintenance")),

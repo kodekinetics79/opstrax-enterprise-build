@@ -152,10 +152,13 @@ public sealed class PostgresApprovalWorkflowService(Database db, ICorrelationCon
 
     public ApprovalDecisionRecord Decide(long approvalRequestId, string approverUserId, string decision, string? notes = null)
     {
+        decision = decision.Trim().ToLowerInvariant();
+        if (decision is not ("approved" or "rejected")) throw new InvalidOperationException("Approval decision must be approved or rejected");
+        if (string.IsNullOrWhiteSpace(approverUserId)) throw new InvalidOperationException("Authorized reviewer is required");
         return db.WithTransactionAsync(async (conn, tx) =>
         {
             await using var requestCmd = new NpgsqlCommand(
-                @"SELECT tenant_id, requested_by_actor_type, correlation_id
+                @"SELECT tenant_id, requested_by_actor_type, correlation_id, requested_by_actor_id, status
                   FROM approval_requests
                   WHERE id=@id
                   FOR UPDATE", conn, tx);
@@ -168,7 +171,11 @@ public sealed class PostgresApprovalWorkflowService(Database db, ICorrelationCon
             var companyId = reader.GetInt64(0);
             var requestedByActorType = reader.IsDBNull(1) ? null : reader.GetString(1);
             var correlationId = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var requesterId = reader.IsDBNull(3) ? null : reader.GetString(3);
+            var requestStatus = reader.GetString(4);
             await reader.DisposeAsync();
+            if (requestStatus != "pending") throw new InvalidOperationException("Approval request is no longer pending");
+            if (requesterId == approverUserId) throw new InvalidOperationException("A different authorized reviewer must decide this approval");
 
             await using (var updateCmd = new NpgsqlCommand(
                 "UPDATE approval_requests SET status=@status WHERE id=@id", conn, tx))
@@ -582,19 +589,23 @@ public sealed class PostgresAiFoundationService(Database db, ICorrelationContext
         return run with { Status = "failed", ErrorJson = errorJson, CompletedAt = completedAt };
     }
 
-    public AiRecommendationRecord CreateRecommendation(string tenantId, string recommendationType, string title, string summary, decimal confidenceScore, decimal urgencyScore, string impactJson, string reasonJson, string proposedActionJson, string riskLevel, string? sourceEventId = null, string? actorType = null, string? actorId = null, string status = "draft")
+    public AiRecommendationRecord CreateRecommendation(string tenantId, string recommendationType, string title, string summary, decimal confidenceScore, decimal urgencyScore, string impactJson, string reasonJson, string proposedActionJson, string riskLevel, string? sourceEventId = null, string? actorType = null, string? actorId = null, string status = "draft", string? moduleKey = null)
     {
         var createdAt = DateTimeOffset.UtcNow;
+        var effectiveModuleKey = string.IsNullOrWhiteSpace(moduleKey)
+            ? "fleet.foundation"
+            : moduleKey.Trim();
         var row = db.QuerySingleAsync(
             @"INSERT INTO ai_recommendations
-                (company_id, tenant_id, recommendation_type, title, summary, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, source_event_id, actor_type, actor_id, created_at, correlation_id, causation_id)
+                (company_id, tenant_id, recommendation_type, module_key, title, summary, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, source_event_id, actor_type, actor_id, created_at, correlation_id, causation_id)
               VALUES
-                (@tenantId::bigint, @tenantId, @recommendationType, @title, @summary, @confidenceScore, @urgencyScore, COALESCE(@impact::jsonb, '{}'::jsonb), COALESCE(@reason::jsonb, '{}'::jsonb), COALESCE(@proposal::jsonb, '{}'::jsonb), @riskLevel, @status, @sourceEventId, @actorType, @actorId, @createdAt, @correlationId, @causationId)
+                (@tenantId::bigint, @tenantId, @recommendationType, @moduleKey, @title, @summary, @confidenceScore, @urgencyScore, COALESCE(@impact::jsonb, '{}'::jsonb), COALESCE(@reason::jsonb, '{}'::jsonb), COALESCE(@proposal::jsonb, '{}'::jsonb), @riskLevel, @status, @sourceEventId, @actorType, @actorId, @createdAt, @correlationId, @causationId)
               RETURNING id",
             c =>
             {
                 c.Parameters.AddWithValue("@tenantId", FoundationPersistenceHelpers.RequireTenantId(tenantId));
                 c.Parameters.AddWithValue("@recommendationType", recommendationType);
+                c.Parameters.AddWithValue("@moduleKey", effectiveModuleKey);
                 c.Parameters.AddWithValue("@title", title);
                 c.Parameters.AddWithValue("@summary", summary);
                 c.Parameters.AddWithValue("@confidenceScore", confidenceScore);

@@ -1,4 +1,6 @@
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Opstrax.Api.Data;
 using Opstrax.Api.Services;
@@ -94,7 +96,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                 // attribution comes only from the one effective-dated installation valid at
                 // the provider event time. A missing/ambiguous mapping retains unbound history;
                 // an ended historical installation retains lineage but cannot update live state.
-                var deviceId = await EnsureDiscoveredDeviceAsync(db, companyId, r.VehicleId, r.EventTime, ct);
+                var deviceId = await EnsureDiscoveredDeviceAsync(db, operation, r.VehicleId, r.EventTime, ct);
                 var identity = deviceId is { } did
                     ? await TelemetryIdentityResolver.ResolveAsync(
                         db, companyId, did, new DateTimeOffset(DateTime.SpecifyKind(r.EventTime, DateTimeKind.Utc)), ct)
@@ -131,7 +133,8 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                         c.Parameters.AddWithValue("@hdg", r.Heading is { } hdg ? (object)(short)hdg : DBNull.Value);
                         c.Parameters.AddWithValue("@eng", (object?)r.EngineState ?? DBNull.Value);
                         c.Parameters.AddWithValue("@odo", (object?)(r.OdometerMiles is { } o ? (decimal)o : (object?)null) ?? DBNull.Value);
-                        c.Parameters.AddWithValue("@idem", $"samsara:{r.VehicleId}:{r.EventTime.Ticks}");
+                        c.Parameters.AddWithValue("@idem", EventIdempotencyKey(
+                            operation.ProviderAccountReference!, r.VehicleId, r.EventTime));
                         c.Parameters.AddWithValue("@etime", r.EventTime);
                     }, ct);
 
@@ -284,16 +287,24 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
     {
         var vehicleId = identity.VehicleId;
         var speedThreshold = await db.ScalarDecimalAsync(
-            "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 65m;
-        if (reading.SpeedMph is { } observedSpeed && (decimal)observedSpeed > speedThreshold)
+            @"SELECT threshold_value FROM telemetry_rules
+              WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE
+                AND policy_origin='user_workflow' AND approval_status='approved'
+                AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+              LIMIT 1",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        if (speedThreshold is { } approvedSpeedThreshold && reading.SpeedMph is { } observedSpeed && (decimal)observedSpeed > approvedSpeedThreshold)
         {
             await db.ExecuteAsync(
                 @"INSERT INTO telemetry_alerts
                     (company_id,vehicle_id,device_id,installation_id,assignment_id,trip_id,driver_id,
                      alert_type,severity,message,source_event_id,status,source_channel,created_at)
                   SELECT @cid,@vid,@did,@installationId,@assignmentId,@tripId,@driverId,'speeding',
-                         COALESCE((SELECT severity FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1),'High'),
+                         (SELECT severity FROM telemetry_rules
+                           WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE
+                             AND policy_origin='user_workflow' AND approval_status='approved'
+                             AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+                           LIMIT 1),
                          @msg,@eventId,'Open','samsara-api',NOW()
                   WHERE NOT EXISTS (
                     SELECT 1 FROM telemetry_alerts
@@ -307,7 +318,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                     c.Parameters.AddWithValue("@assignmentId", (object?)identity.AssignmentId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@tripId", (object?)identity.TripId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@driverId", (object?)identity.DriverId ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@msg", $"Vehicle {reading.SpeedMph:F0} mph exceeds {speedThreshold:F0} mph threshold");
+                    c.Parameters.AddWithValue("@msg", $"Vehicle {reading.SpeedMph:F0} mph exceeds {approvedSpeedThreshold:F0} mph threshold");
                     c.Parameters.AddWithValue("@eventId", sourceEventId);
                 }, ct);
         }
@@ -386,12 +397,19 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
     // governed installation independently at the provider event time.
     internal static async Task<long?> EnsureDiscoveredDeviceAsync(
         Database db,
-        long companyId,
+        ConnectorOperationContext operation,
         string providerVehicleId,
         DateTime eventTime,
         CancellationToken ct)
     {
-        var serial = $"samsara-{providerVehicleId}";
+        if (!SamsaraConnector.IsOrganizationReference(operation.ProviderAccountReference))
+            throw new InvalidDataException("Samsara asset discovery requires a verified provider organization identity.");
+        if (string.IsNullOrWhiteSpace(providerVehicleId) || providerVehicleId.Length > 160
+            || providerVehicleId.Any(character => char.IsControl(character) || char.IsWhiteSpace(character)))
+            throw new InvalidDataException("Samsara asset discovery requires a bounded provider asset identity.");
+        var companyId = operation.CompanyId;
+        var account = operation.ProviderAccountReference!;
+        var serial = DeviceSerial(companyId, account, providerVehicleId);
         // Serialize discovery on the normalized provider identity before checking or
         // inserting. The Stage80 ambiguity trigger runs BEFORE ON CONFLICT handling;
         // attempting a duplicate INSERT would therefore quarantine the legitimate
@@ -401,21 +419,35 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
             "SELECT pg_advisory_xact_lock(hashtextextended(@serial,0)) AS locked",
             c => c.Parameters.AddWithValue("@serial", serial), ct);
         var existing = await db.QuerySingleAsync(
-            "SELECT id,company_id FROM eld_devices WHERE device_serial=@serial LIMIT 1",
-            c => c.Parameters.AddWithValue("@serial", serial), ct);
-        if (existing is not null && Convert.ToInt64(existing["companyId"]) != companyId)
-            return null;
+            @"SELECT id FROM eld_devices
+              WHERE company_id=@companyId AND LOWER(BTRIM(provider))='samsara'
+                AND provider_account_ref=@account AND provider_external_id=@external
+                AND deleted_at IS NULL
+              LIMIT 1",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@account", account);
+                c.Parameters.AddWithValue("@external", providerVehicleId);
+            }, ct);
 
         var deviceId = existing is null
             ? await db.InsertAsync(
-                @"INSERT INTO eld_devices (company_id,device_serial,provider,status,last_seen_at)
-                  SELECT @cid,@serial,'Samsara','Provisioning',@eventTime
-                  WHERE NOT EXISTS (SELECT 1 FROM eld_devices WHERE device_serial=@serial)
+                @"INSERT INTO eld_devices
+                    (company_id,device_serial,provider,provider_account_ref,provider_external_id,status,last_seen_at)
+                  SELECT @cid,@serial,'Samsara',@account,@external,'Provisioning',@eventTime
+                  WHERE NOT EXISTS (
+                    SELECT 1 FROM eld_devices
+                    WHERE company_id=@cid AND LOWER(BTRIM(provider))='samsara'
+                      AND provider_account_ref=@account AND provider_external_id=@external
+                      AND deleted_at IS NULL)
                   RETURNING id",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", companyId);
                     c.Parameters.AddWithValue("@serial", serial);
+                    c.Parameters.AddWithValue("@account", account);
+                    c.Parameters.AddWithValue("@external", providerVehicleId);
                     c.Parameters.AddWithValue("@eventTime", eventTime);
                 }, ct)
             : Convert.ToInt64(existing["id"]);
@@ -431,14 +463,35 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         await db.ExecuteAsync(
             @"UPDATE eld_devices
               SET last_seen_at=CASE WHEN last_seen_at IS NULL OR last_seen_at<@eventTime THEN @eventTime ELSE last_seen_at END
-              WHERE id=@id AND company_id=@companyId",
+              WHERE id=@id AND company_id=@companyId
+                AND LOWER(BTRIM(provider))='samsara'
+                AND provider_account_ref=@account AND provider_external_id=@external",
             c =>
             {
                 c.Parameters.AddWithValue("@id", deviceId);
                 c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@account", account);
+                c.Parameters.AddWithValue("@external", providerVehicleId);
                 c.Parameters.AddWithValue("@eventTime", eventTime);
             }, ct);
         return deviceId;
+    }
+
+    internal static string DeviceSerial(long companyId, string providerAccountReference, string providerVehicleId)
+    {
+        var identity = Encoding.UTF8.GetBytes($"{providerAccountReference}\u001f{providerVehicleId}");
+        var digest = Convert.ToHexString(SHA256.HashData(identity)).ToLowerInvariant();
+        return $"samsara-{companyId}-{digest[..32]}";
+    }
+
+    internal static string EventIdempotencyKey(
+        string providerAccountReference,
+        string providerVehicleId,
+        DateTime eventTime)
+    {
+        var identity = Encoding.UTF8.GetBytes(
+            $"{providerAccountReference}\u001f{providerVehicleId}\u001f{eventTime.ToUniversalTime().Ticks}");
+        return $"samsara:v2:{Convert.ToHexString(SHA256.HashData(identity)).ToLowerInvariant()}";
     }
 
     // Canonical /stats/feed uses data[].gps[] even for its initial last-known page.

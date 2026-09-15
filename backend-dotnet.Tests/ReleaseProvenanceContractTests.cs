@@ -27,10 +27,13 @@ public sealed class ReleaseProvenanceContractTests
             "2026_08_20_stage82_telematics_device_credential_constraint.sql",
         };
 
-        // The root (demo/compose) Dockerfile still packages migrations file by file.
+        // Render's existing production service builds the root Dockerfile. Keep its
+        // dependency graph and migration payload complete without a per-file allowlist.
         var rootDockerfile = Read("Dockerfile");
-        foreach (var migration in terminalPilotMigrations)
-            Assert.Contains(migration, rootDockerfile, StringComparison.Ordinal);
+        Assert.Contains("COPY telematics/src/Opstrax.Telematics.Contracts/Opstrax.Telematics.Contracts.csproj telematics/src/Opstrax.Telematics.Contracts/", rootDockerfile, StringComparison.Ordinal);
+        Assert.Contains("COPY telematics/src/Opstrax.Telematics.Contracts/ telematics/src/Opstrax.Telematics.Contracts/", rootDockerfile, StringComparison.Ordinal);
+        Assert.Contains("COPY database/migrations/ database/migrations/", rootDockerfile, StringComparison.Ordinal);
+        Assert.Contains("COPY --from=build /src/database/migrations ./Migrations", rootDockerfile, StringComparison.Ordinal);
 
         // The production API image switched to a whole-directory COPY at
         // RETEST-20260821-1035-R1: its per-file allowlist had drifted (it stopped at

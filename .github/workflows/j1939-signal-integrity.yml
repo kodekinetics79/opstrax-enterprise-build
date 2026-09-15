@@ -1,0 +1,111 @@
+name: J1939 signal integrity
+
+on:
+  pull_request:
+    paths:
+      - 'telematics/src/Opstrax.Telematics.Contracts/Signals/VssSignals.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Signals/SignalValue.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Diagnostics/**'
+      - 'telematics/src/Opstrax.Telematics.Contracts/CanonicalTelemetryEvent.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Provenance/Transport.cs'
+      - 'telematics/src/Opstrax.Telematics.Protocols.J1939/**'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939SignalPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939DiagnosticPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/CanonicalTelemetryPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/J1939/**'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Program.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Eventing/PostgresEventBackbone.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Opstrax.Telematics.Gateway.csproj'
+      - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/J1939*Tests.cs'
+      - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/Opstrax.Telematics.Protocols.Tests.csproj'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939SignalPublisherTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939CanHostTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/PostgresProductionDurabilityTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj'
+      - 'database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql'
+      - 'database/migrations/2026_09_08_stage130_canonical_diagnostic_evidence_identity.sql'
+      - 'backend-dotnet/Controllers/EndpointMappings.cs'
+      - 'backend-dotnet/Services/TelemetrySchemaService.cs'
+      - 'backend-dotnet.Tests/TelemetryClusterPaginationContractTests.cs'
+      - 'frontend/src/services/telematicsService.ts'
+      - 'frontend/src/pages/TelematicsCommandPage.tsx'
+      - 'frontend/scripts/test-j1939-signal-visibility-contract.mjs'
+      - 'frontend/package.json'
+      - 'tools/apply-neon-predeploy-migrations.sh'
+      - 'tools/test-predeploy-clean-chain.sh'
+      - 'docs/telematics/j1939-can-acquisition.md'
+      - 'docs/telematics/events/event-contracts.md'
+      - 'docs/commercialization/wave5/G5B_J1939_PT40_EXECUTION.md'
+      - '.github/workflows/j1939-signal-integrity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'telematics/src/Opstrax.Telematics.Contracts/Signals/VssSignals.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Signals/SignalValue.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Diagnostics/**'
+      - 'telematics/src/Opstrax.Telematics.Contracts/CanonicalTelemetryEvent.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Provenance/Transport.cs'
+      - 'telematics/src/Opstrax.Telematics.Protocols.J1939/**'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939SignalPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939DiagnosticPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/CanonicalTelemetryPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/J1939/**'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Program.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Eventing/PostgresEventBackbone.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Opstrax.Telematics.Gateway.csproj'
+      - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/J1939*Tests.cs'
+      - 'telematics/tests/Opstrax.Telematics.Protocols.Tests/Opstrax.Telematics.Protocols.Tests.csproj'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939SignalPublisherTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/J1939CanHostTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/PostgresProductionDurabilityTests.cs'
+      - 'telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj'
+      - 'database/migrations/2026_09_08_stage129_latest_device_signal_projection.sql'
+      - 'database/migrations/2026_09_08_stage130_canonical_diagnostic_evidence_identity.sql'
+      - 'backend-dotnet/Controllers/EndpointMappings.cs'
+      - 'backend-dotnet/Services/TelemetrySchemaService.cs'
+      - 'backend-dotnet.Tests/TelemetryClusterPaginationContractTests.cs'
+      - 'frontend/src/services/telematicsService.ts'
+      - 'frontend/src/pages/TelematicsCommandPage.tsx'
+      - 'frontend/scripts/test-j1939-signal-visibility-contract.mjs'
+      - 'frontend/package.json'
+      - 'tools/apply-neon-predeploy-migrations.sh'
+      - 'tools/test-predeploy-clean-chain.sh'
+      - 'docs/telematics/j1939-can-acquisition.md'
+      - 'docs/telematics/events/event-contracts.md'
+      - 'docs/commercialization/wave5/G5B_J1939_PT40_EXECUTION.md'
+      - '.github/workflows/j1939-signal-integrity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: j1939-signal-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  signal-catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: 8.0.x
+      - name: Run J1939 acquisition, transport, diagnostic and signal tests
+        run: >-
+          dotnet test telematics/tests/Opstrax.Telematics.Protocols.Tests/Opstrax.Telematics.Protocols.Tests.csproj
+          --filter "FullyQualifiedName~J1939"
+          --logger "console;verbosity=minimal"
+      - name: Run J1939 canonical publication tests
+        run: >-
+          dotnet test telematics/tests/Opstrax.Telematics.IntegrationTests/Opstrax.Telematics.IntegrationTests.csproj
+          --filter "FullyQualifiedName~J1939SignalPublisherTests|FullyQualifiedName~J1939CanHostTests"
+          --logger "console;verbosity=minimal"
+      - name: Run customer signal visibility contract
+        run: node frontend/scripts/test-j1939-signal-visibility-contract.mjs
+      - name: Run backend diagnostics visibility contract
+        run: >-
+          dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj
+          --filter "FullyQualifiedName~TelemetryClusterPaginationContractTests|FullyQualifiedName~DiagnosticsPilotContractTests"
+          --logger "console;verbosity=minimal"

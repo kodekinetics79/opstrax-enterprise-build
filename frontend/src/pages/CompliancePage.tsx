@@ -80,7 +80,7 @@ export function CompliancePage() {
   const hasPermission = useHasPermission();
   const canExport = hasPermission("compliance:export");
   const canUpdate = hasPermission("compliance:update");
-  const [tab, setTab] = useState<TabId>("overview");
+  const [tab, setTab] = useState<TabId>("violations");
   const [drawer, setDrawer] = useState<AnyRecord | null>(null);
 
   const summaryQ     = useComplianceSummary();
@@ -122,7 +122,7 @@ export function CompliancePage() {
   if (hasError) return <EmptyState title="Compliance unavailable" subtitle="Unable to load compliance records right now. Refresh to try again." />;
 
   return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto">
+    <div className="page-stack min-w-0">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -185,8 +185,9 @@ export function CompliancePage() {
       {tab === "overview" && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Compliance profiles */}
-          <div className="panel space-y-2">
+          <div className="panel space-y-2 p-3">
             <p className="section-title flex items-center gap-2"><Globe className="h-3.5 w-3.5 text-emerald-400" />Active Compliance Profiles</p>
+            {!((summary?.profiles as AnyRecord[] | undefined)?.length) && <p className="text-sm text-slate-500">No compliance profiles are configured for this scope.</p>}
             {(summary?.profiles as AnyRecord[] | undefined)?.map(p => (
               <div key={String(p.id)} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
                 <div>
@@ -202,8 +203,9 @@ export function CompliancePage() {
           </div>
 
           {/* Recent violations */}
-          <div className="panel space-y-2">
+          <div className="panel space-y-2 p-3">
             <p className="section-title flex items-center gap-2"><ShieldAlert className="h-3.5 w-3.5 text-red-400" />Recent Violations</p>
+            {!violations.length && <p className="text-sm text-slate-500">No violation records in the current scope.</p>}
             {violations.slice(0, 5).map(v => (
               <div key={String(v.id)} className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 cursor-pointer hover:bg-slate-100" onClick={() => setDrawer(v)}>
                 <SeverityBadge severity={String(v.severity)} />
@@ -397,7 +399,7 @@ export function CompliancePage() {
             <p className="section-title mb-3 flex items-center gap-2"><Globe className="h-3.5 w-3.5 text-sky-400" />Cross-Border Compliance Watch</p>
             <p className="text-xs text-slate-500 mb-4">Active violations and open items spanning multiple country compliance frameworks.</p>
             <div className="space-y-2">
-              {crossBorder.length === 0 && <p className="text-sm text-slate-500">No cross-border issues found.</p>}
+              {crossBorder.length === 0 && <p className="text-sm text-slate-500">No open cross-border violation records are available in the current scope.</p>}
               {crossBorder.map(v => (
                 <div key={String(v.id)} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
                   <SeverityBadge severity={String(v.severity)} />
@@ -420,8 +422,9 @@ export function CompliancePage() {
         <div className="space-y-3">
           <div className="panel">
             <p className="section-title mb-1 flex items-center gap-2"><Zap className="h-3.5 w-3.5 text-violet-400" />Compliance AI Advisor</p>
-            <p className="text-xs text-slate-500 mb-4">AI-generated compliance recommendations based on live fleet data. Not a substitute for legal counsel.</p>
+            <p className="text-xs text-slate-500 mb-4">Evidence-linked recommendations recorded for the current tenant scope. They do not certify regulatory compliance and are not a substitute for legal counsel.</p>
             <div className="space-y-3">
+              {aiRecs.length === 0 && <p className="text-sm text-slate-500">No grounded compliance recommendation records are available.</p>}
               {aiRecs.map((rec, i) => (
                 <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-1.5">
                   <div className="flex items-start justify-between gap-2">

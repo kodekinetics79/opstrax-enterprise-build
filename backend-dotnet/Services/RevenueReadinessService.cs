@@ -129,6 +129,39 @@ public sealed record InvoicePaymentRecord(
     string? CausationId,
     DateTimeOffset CreatedAt);
 
+public sealed record InvoicePaymentViewRecord(
+    long Id,
+    long CompanyId,
+    Guid IssuedInvoiceId,
+    string InvoiceNumber,
+    long CustomerId,
+    string CustomerName,
+    string PaymentReference,
+    string PaymentMethod,
+    string Currency,
+    decimal Amount,
+    DateTimeOffset ReceivedAt,
+    string RecordStatus,
+    bool ProviderSettlementClaim,
+    DateTimeOffset CreatedAt);
+
+public sealed record ProfitabilityEvidenceRecord(
+    string Id,
+    string EntityType,
+    long EntityId,
+    string EntityName,
+    decimal RevenueEstimate,
+    decimal TotalCost,
+    decimal? GrossMargin,
+    decimal? GrossMarginPercent,
+    string Currency,
+    long InvoiceCount,
+    long CostRecordCount,
+    string Status,
+    string DataOrigin);
+
+public sealed class InvoicePaymentValidationException(string message) : InvalidOperationException(message);
+
 public sealed record AccountsReceivableSummaryRecord(
     long CompanyId,
     long IssuedInvoiceCount,
@@ -217,9 +250,12 @@ public sealed record RevenueLeakageSignalRecord(
     string EntityType,
     long EntityId,
     decimal DetectedAmount,
+    string? Currency,
+    string AmountEvidenceStatus,
     string Severity,
     string Status,
-    string Title);
+    string Title,
+    string DataOrigin);
 
 public sealed record RevenueLeakageDetectionOutcome(
     long CompanyId,
@@ -358,6 +394,12 @@ public sealed class RevenueReadinessService(
             return new InvoiceDraftActionOutcome(false, "Job has no charges to draft");
         }
 
+        var chargeCurrencies = charges.Select(charge => charge.Currency?.Trim().ToUpperInvariant() ?? string.Empty).Distinct(StringComparer.Ordinal).ToArray();
+        if (chargeCurrencies.Length != 1 || chargeCurrencies[0].Length != 3 || chargeCurrencies[0].Any(ch => ch is < 'A' or > 'Z'))
+            return new InvoiceDraftActionOutcome(false, "Invoice drafting requires all charges to use one valid currency; correct pricing before drafting");
+        if (charges.Any(charge => charge.Amount <= 0 || charge.Quantity <= 0 || charge.UnitRate < 0))
+            return new InvoiceDraftActionOutcome(false, "Invoice drafting requires positive charge amounts and quantities with nonnegative unit rates");
+
         var requestHash = FoundationPersistenceHelpers.ComputeHash($"{companyId}:{jobId}:{idempotencyKey ?? string.Empty}:{charges.Count}:{charges.Sum(c => c.Amount):0.00}");
         if (!string.IsNullOrWhiteSpace(idempotencyKey))
         {
@@ -419,7 +461,7 @@ public sealed class RevenueReadinessService(
 
         var draftId = Guid.NewGuid();
         var invoiceDraftNo = BuildInvoiceDraftNumber(companyId, jobId);
-        var currency = charges.Select(charge => charge.Currency).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "USD";
+        var currency = chargeCurrencies[0];
         var subtotal = charges.Sum(charge => charge.Amount);
         var now = DateTimeOffset.UtcNow;
         var metadataJson = JsonSerializer.Serialize(new
@@ -561,7 +603,7 @@ public sealed class RevenueReadinessService(
         return MapInvoiceDraft(draftRow, lines.Select(MapInvoiceDraftLine).ToList());
     }
 
-    public async Task<InvoiceDraftActionOutcome> UpdateInvoiceDraftAsync(long companyId, Guid draftId, string? status = null, string? metadataJson = null, CancellationToken ct = default)
+    public async Task<InvoiceDraftActionOutcome> UpdateInvoiceDraftAsync(long companyId, Guid draftId, string? status = null, string? metadataJson = null, CancellationToken ct = default, string? requesterActorId = null)
     {
         var current = await GetInvoiceDraftAsync(companyId, draftId, ct);
         if (current is null)
@@ -573,13 +615,16 @@ public sealed class RevenueReadinessService(
         {
             if (current.ApprovalRequestId is not null)
             {
-                return new InvoiceDraftActionOutcome(false, "Invoice draft approval already requested", true, current.ApprovalRequestId);
+                var replacement = await ReplaceUnattributedPendingApprovalAsync(companyId, current, requesterActorId, ct);
+                return replacement.HasValue
+                    ? new InvoiceDraftActionOutcome(false, "Unattributed approval was safely superseded; review the new attributed request", true, replacement)
+                    : new InvoiceDraftActionOutcome(false, "Invoice draft approval already requested", true, current.ApprovalRequestId);
             }
 
             var approvalRequest = approval.CreateRequest(
                 companyId.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.TenantUser,
-                correlation.ActorId,
+                requesterActorId ?? correlation.ActorId,
                 "finance.invoice.issue",
                 "invoice_draft",
                 draftId.ToString(),
@@ -622,7 +667,7 @@ public sealed class RevenueReadinessService(
         return new InvoiceDraftActionOutcome(true, "Invoice draft updated", Draft: updated ?? current);
     }
 
-    public async Task<InvoiceIssueOutcome> IssueInvoiceFromDraftAsync(long companyId, Guid draftId, string? idempotencyKey = null, CancellationToken ct = default)
+    public async Task<InvoiceIssueOutcome> IssueInvoiceFromDraftAsync(long companyId, Guid draftId, string? idempotencyKey = null, CancellationToken ct = default, string? requesterActorId = null)
     {
         var draft = await GetInvoiceDraftAsync(companyId, draftId, ct);
         if (draft is null)
@@ -652,7 +697,7 @@ public sealed class RevenueReadinessService(
             var approvalRequest = approval.CreateRequest(
                 companyId.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.TenantUser,
-                correlation.ActorId,
+                requesterActorId ?? correlation.ActorId,
                 "finance.invoice.issue",
                 "invoice_draft",
                 draftId.ToString(),
@@ -682,6 +727,9 @@ public sealed class RevenueReadinessService(
             return new InvoiceIssueOutcome(false, "Invoice issue requires approval", true, approvalRequest.Id);
         }
 
+        var replacementApprovalId = await ReplaceUnattributedPendingApprovalAsync(companyId, draft, requesterActorId, ct);
+        if (replacementApprovalId.HasValue)
+            return new InvoiceIssueOutcome(false, "Unattributed approval was safely superseded; review the new attributed request", true, replacementApprovalId);
         var approvalStatus = await GetApprovalRequestStatusAsync(companyId, draft.ApprovalRequestId.Value, ct);
         if (!string.Equals(approvalStatus, "approved", StringComparison.OrdinalIgnoreCase))
         {
@@ -982,6 +1030,16 @@ public sealed class RevenueReadinessService(
         string? metadataJson = null,
         CancellationToken ct = default)
     {
+        var normalizedCurrency = currency.Trim().ToUpperInvariant();
+        var normalizedReference = paymentReference.Trim();
+        var normalizedMethod = paymentMethod.Trim();
+        if (amount <= 0)
+            throw new InvoicePaymentValidationException("Payment amount must be greater than zero");
+        if (string.IsNullOrWhiteSpace(normalizedReference) || normalizedReference.Length > 120)
+            throw new InvoicePaymentValidationException("Payment reference is required and must be 120 characters or fewer");
+        if (string.IsNullOrWhiteSpace(normalizedMethod) || normalizedMethod.Length > 40)
+            throw new InvoicePaymentValidationException("Payment method is required and must be 40 characters or fewer");
+
         var payment = await db.WithTransactionAsync(async (conn, tx) =>
         {
             var invoice = await LoadIssuedInvoiceByIdAsync(conn, tx, companyId, invoiceId, ct);
@@ -990,8 +1048,27 @@ public sealed class RevenueReadinessService(
                 return null;
             }
 
+            if (!string.Equals(invoice.Currency, normalizedCurrency, StringComparison.OrdinalIgnoreCase))
+                throw new InvoicePaymentValidationException($"Payment currency must match invoice currency {invoice.Currency}");
+            if (invoice.BalanceDue <= 0 || string.Equals(invoice.PaymentStatus, "paid", StringComparison.OrdinalIgnoreCase))
+                throw new InvoicePaymentValidationException("Invoice has no outstanding balance");
+            if (amount > invoice.BalanceDue)
+                throw new InvoicePaymentValidationException("Payment cannot exceed the outstanding invoice balance");
+
+            await using (var duplicate = new Npgsql.NpgsqlCommand(
+                @"SELECT COUNT(*) FROM invoice_payments
+                  WHERE company_id=@companyId AND issued_invoice_id=@invoiceId AND payment_reference=@paymentReference",
+                conn, tx))
+            {
+                duplicate.Parameters.AddWithValue("@companyId", companyId);
+                duplicate.Parameters.AddWithValue("@invoiceId", invoiceId);
+                duplicate.Parameters.AddWithValue("@paymentReference", normalizedReference);
+                if (Convert.ToInt64(await duplicate.ExecuteScalarAsync(ct) ?? 0L) > 0)
+                    throw new InvoicePaymentValidationException("Payment reference is already recorded for this invoice");
+            }
+
             var receivedAt = DateTimeOffset.UtcNow;
-            var paymentRow = await InsertInvoicePaymentAsync(conn, tx, companyId, invoiceId, amount, currency, paymentReference, paymentMethod, metadataJson, correlation.CorrelationId, correlation.CausationId, receivedAt, ct);
+            var paymentRow = await InsertInvoicePaymentAsync(conn, tx, companyId, invoiceId, amount, normalizedCurrency, normalizedReference, normalizedMethod, metadataJson, correlation.CorrelationId, correlation.CausationId, receivedAt, ct);
 
             var newAmountPaid = invoice.AmountPaid + amount;
             // Balance derives from total - paid - CREDITED. Without subtracting credit_total, recording
@@ -1051,9 +1128,110 @@ public sealed class RevenueReadinessService(
             }),
             correlation.CorrelationId,
             correlation.CausationId,
-            paymentReference);
+            normalizedReference);
 
         return payment;
+    }
+
+    public async Task<IReadOnlyList<InvoicePaymentViewRecord>> ListInvoicePaymentsAsync(long companyId, CancellationToken ct = default)
+    {
+        var rows = await db.QueryAsync(
+            @"SELECT p.id, p.company_id, p.issued_invoice_id, i.invoice_number,
+                     i.customer_id, c.name AS customer_name, p.payment_reference,
+                     p.payment_method, p.currency, p.amount, p.received_at, p.created_at
+              FROM invoice_payments p
+              JOIN issued_invoices i
+                ON i.id=p.issued_invoice_id AND i.company_id=p.company_id
+              JOIN customers c
+                ON c.id=i.customer_id AND c.company_id=i.company_id AND c.deleted_at IS NULL
+              WHERE p.company_id=@companyId AND LOWER(p.status)='posted'
+              ORDER BY p.received_at DESC, p.id DESC
+              LIMIT 250",
+            c => c.Parameters.AddWithValue("@companyId", companyId),
+            ct);
+
+        return rows.Select(row => new InvoicePaymentViewRecord(
+            L(row, "id"),
+            L(row, "companyId"),
+            G(row, "issuedInvoiceId"),
+            S(row, "invoiceNumber") ?? string.Empty,
+            L(row, "customerId"),
+            S(row, "customerName") ?? string.Empty,
+            S(row, "paymentReference") ?? string.Empty,
+            S(row, "paymentMethod") ?? string.Empty,
+            S(row, "currency") ?? string.Empty,
+            Dec(row, "amount"),
+            Dto(row, "receivedAt"),
+            "Recorded",
+            false,
+            Dto(row, "createdAt"))).ToList();
+    }
+
+    public async Task<IReadOnlyList<ProfitabilityEvidenceRecord>> ListProfitabilityEvidenceAsync(long companyId, CancellationToken ct = default)
+    {
+        var rows = await db.QueryAsync(
+            @"WITH invoice_revenue AS (
+                  SELECT i.company_id, i.customer_id, UPPER(i.currency) currency,
+                         COUNT(*) invoice_count,
+                         SUM(GREATEST(i.total - COALESCE(i.credit_total, 0), 0)) revenue_total
+                  FROM issued_invoices i
+                  WHERE i.company_id=@companyId
+                    AND LOWER(i.status) NOT IN ('cancelled','void')
+                    AND COALESCE(i.document_type, 'invoice')='invoice'
+                  GROUP BY i.company_id, i.customer_id, UPPER(i.currency)
+              ), approved_costs AS (
+                  SELECT e.company_id, e.customer_id, UPPER(e.currency) currency,
+                         COUNT(*) cost_record_count, SUM(e.amount) cost_total
+                  FROM expenses e
+                  WHERE e.company_id=@companyId AND e.customer_id IS NOT NULL
+                    AND e.deleted_at IS NULL AND LOWER(e.approval_status)='approved'
+                    AND (e.expense_number IS NULL OR e.expense_number NOT LIKE 'EXP-B5-%')
+                  GROUP BY e.company_id, e.customer_id, UPPER(e.currency)
+              ), evidence AS (
+                  SELECT COALESCE(r.company_id, x.company_id) company_id,
+                         COALESCE(r.customer_id, x.customer_id) customer_id,
+                         COALESCE(r.currency, x.currency) currency,
+                         COALESCE(r.invoice_count, 0) invoice_count,
+                         COALESCE(r.revenue_total, 0) revenue_total,
+                         COALESCE(x.cost_record_count, 0) cost_record_count,
+                         COALESCE(x.cost_total, 0) cost_total
+                  FROM invoice_revenue r
+                  FULL OUTER JOIN approved_costs x
+                    ON x.company_id=r.company_id AND x.customer_id=r.customer_id AND x.currency=r.currency
+              )
+              SELECT 'customer:' || e.customer_id || ':' || e.currency id,
+                     'customer' entity_type, e.customer_id entity_id,
+                     c.name entity_name, e.revenue_total revenue_estimate,
+                     e.cost_total total_cost,
+                     CASE WHEN e.invoice_count > 0 AND e.cost_record_count > 0
+                          THEN e.revenue_total-e.cost_total END gross_margin,
+                     CASE WHEN e.invoice_count > 0 AND e.cost_record_count > 0 AND e.revenue_total <> 0
+                          THEN ROUND(((e.revenue_total-e.cost_total)/e.revenue_total)*100, 2) END gross_margin_percent,
+                     e.currency, e.invoice_count, e.cost_record_count,
+                     CASE WHEN e.invoice_count=0 THEN 'Issued revenue unavailable'
+                          WHEN e.cost_record_count=0 THEN 'Cost evidence unavailable'
+                          ELSE 'Calculated' END status,
+                     'issued_invoices+approved_expenses' data_origin
+              FROM evidence e
+              JOIN customers c ON c.id=e.customer_id AND c.company_id=e.company_id AND c.deleted_at IS NULL
+              ORDER BY e.revenue_total DESC, c.name LIMIT 100",
+            c => c.Parameters.AddWithValue("@companyId", companyId),
+            ct);
+
+        return rows.Select(row => new ProfitabilityEvidenceRecord(
+            S(row, "id") ?? string.Empty,
+            S(row, "entityType") ?? "customer",
+            L(row, "entityId"),
+            S(row, "entityName") ?? string.Empty,
+            Dec(row, "revenueEstimate"),
+            Dec(row, "totalCost"),
+            DecN(row, "grossMargin"),
+            DecN(row, "grossMarginPercent"),
+            S(row, "currency") ?? string.Empty,
+            L(row, "invoiceCount"),
+            L(row, "costRecordCount"),
+            S(row, "status") ?? "Cost evidence unavailable",
+            S(row, "dataOrigin") ?? "issued_invoices+approved_expenses")).ToList();
     }
 
     public async Task<AccountsReceivableSummaryRecord> GetAccountsReceivableSummaryAsync(long companyId, CancellationToken ct = default)
@@ -1347,7 +1525,8 @@ public sealed class RevenueReadinessService(
             @"SELECT id
               FROM ai_recommendations
               WHERE tenant_id=@tenantId AND recommendation_type=@recommendationType AND source_event_id=@sourceEventId
-              LIMIT 1",
+              LIMIT 1
+              FOR UPDATE",
             c =>
             {
                 c.Parameters.AddWithValue("@tenantId", companyId);
@@ -1374,7 +1553,8 @@ public sealed class RevenueReadinessService(
             sourceEventId,
             ActorTypes.System,
             "revenue-readiness",
-            status: "active");
+            status: "active",
+            moduleKey: "cost-leakage");
 
         _ = ai.CreateActionRequest(
             companyId.ToString(CultureInfo.InvariantCulture),
@@ -1478,18 +1658,22 @@ public sealed class RevenueReadinessService(
     // Tenant opt-in to POD-gated issuance (feature_flags). Default OFF (no row -> false).
     private async Task<bool> IsPodRequiredToIssueAsync(long companyId, CancellationToken ct)
     {
-        try
-        {
-            var n = await db.ScalarLongAsync(
-                @"SELECT CASE WHEN EXISTS (SELECT 1 FROM feature_flags
-                    WHERE company_id=@cid AND flag_key='billing.require_pod_to_issue' AND enabled) THEN 1 ELSE 0 END",
-                c => c.Parameters.AddWithValue("@cid", companyId), ct);
-            return n == 1;
-        }
-        catch { return false; } // feature_flags absent (pre-migration) -> flag off, unchanged behavior
+        // Do not probe a possibly absent table by catching 42P01. This service can
+        // run inside a larger PostgreSQL transaction, where any failed statement
+        // aborts the transaction even if the .NET exception is caught.
+        var featureFlagsAvailable = await db.ScalarLongAsync(
+            "SELECT CASE WHEN to_regclass('public.feature_flags') IS NULL THEN 0 ELSE 1 END", ct: ct);
+        if (featureFlagsAvailable == 0) return false;
+
+        var n = await db.ScalarLongAsync(
+            @"SELECT CASE WHEN EXISTS (SELECT 1 FROM feature_flags
+                WHERE company_id=@cid AND flag_key='billing.require_pod_to_issue' AND enabled) THEN 1 ELSE 0 END",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        return n == 1;
     }
 
-    // A job "has POD" if EITHER store shows it: proof_of_delivery.status='Captured' (ops/job path)
+    // A job "has POD" if EITHER store shows it: a non-placeholder
+    // proof_of_delivery.status='Captured' (ops/job path)
     // OR dispatch_proofs.proof_type='delivery' (driver/dispatch path). Neither alone is authoritative
     // because the two capture surfaces write different tables; jobs.proof_status is not trustworthy
     // (driver PODs never set it). Both sides are double-scoped by company_id.
@@ -1498,7 +1682,11 @@ public sealed class RevenueReadinessService(
         var n = await db.ScalarLongAsync(
             @"SELECT CASE WHEN
                 EXISTS (SELECT 1 FROM proof_of_delivery
-                        WHERE company_id=@cid AND job_id=@jid AND status='Captured')
+                        WHERE company_id=@cid AND job_id=@jid AND status='Captured'
+                          AND NOT (
+                            LOWER(COALESCE(proof_type,''))='placeholder'
+                            OR COALESCE(notes,'')='Batch 2 proof placeholder.'
+                          ))
                 OR EXISTS (SELECT 1 FROM dispatch_proofs dp
                         JOIN dispatch_assignments da ON da.id=dp.assignment_id AND da.company_id=@cid
                         WHERE dp.company_id=@cid AND da.job_id=@jid AND dp.proof_type='delivery')
@@ -1550,6 +1738,34 @@ public sealed class RevenueReadinessService(
         await reader.DisposeAsync();
         var lines = await LoadIssuedInvoiceLinesAsync(conn, tx, companyId, invoiceId, ct);
         return MapIssuedInvoice(row, lines);
+    }
+
+    private Task<long?> ReplaceUnattributedPendingApprovalAsync(long companyId, InvoiceDraftRecord draft, string? requesterActorId, CancellationToken ct)
+    {
+        if (draft.ApprovalRequestId is null || string.IsNullOrWhiteSpace(requesterActorId)) return Task.FromResult<long?>(null);
+        return db.WithTransactionAsync<long?>(async (conn, tx) =>
+        {
+            await using var lockCmd = new NpgsqlCommand("SELECT requested_by_actor_id,status FROM approval_requests WHERE tenant_id=@company AND id=@id FOR UPDATE", conn, tx);
+            lockCmd.Parameters.AddWithValue("company", companyId); lockCmd.Parameters.AddWithValue("id", draft.ApprovalRequestId.Value);
+            await using var reader = await lockCmd.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct)) return null;
+            var requester = reader.IsDBNull(0) ? null : reader.GetString(0); var status = reader.GetString(1); await reader.DisposeAsync();
+            if (!string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrWhiteSpace(requester)) return null;
+            await using var supersede = new NpgsqlCommand("UPDATE approval_requests SET status='superseded' WHERE tenant_id=@company AND id=@id AND status='pending' AND requested_by_actor_id IS NULL", conn, tx);
+            supersede.Parameters.AddWithValue("company", companyId); supersede.Parameters.AddWithValue("id", draft.ApprovalRequestId.Value);
+            if (await supersede.ExecuteNonQueryAsync(ct) != 1) return null;
+            await using var insert = new NpgsqlCommand(@"INSERT INTO approval_requests(tenant_id,requested_by_actor_type,requested_by_actor_id,action_key,resource_type,resource_id,payload_json,risk_level,status,requested_at,correlation_id)
+                VALUES(@company,@actorType,@actor,'finance.invoice.issue','invoice_draft',@resource,@payload::jsonb,'high','pending',NOW(),@correlation) RETURNING id", conn, tx);
+            insert.Parameters.AddWithValue("company", companyId); insert.Parameters.AddWithValue("actorType", ActorTypes.TenantUser);
+            insert.Parameters.AddWithValue("actor", requesterActorId); insert.Parameters.AddWithValue("resource", draft.Id.ToString());
+            insert.Parameters.AddWithValue("payload", JsonSerializer.Serialize(new { invoiceDraftId=draft.Id,invoiceDraftNo=draft.InvoiceDraftNo,total=draft.Total,currency=draft.Currency,supersedesApprovalRequestId=draft.ApprovalRequestId }));
+            insert.Parameters.AddWithValue("correlation", (object?)correlation.CorrelationId ?? DBNull.Value);
+            var replacement = Convert.ToInt64(await insert.ExecuteScalarAsync(ct));
+            await using var updateDraft = new NpgsqlCommand("UPDATE invoice_drafts SET approval_request_id=@replacement,updated_at=NOW() WHERE company_id=@company AND id=@draft AND approval_request_id=@old", conn, tx);
+            updateDraft.Parameters.AddWithValue("replacement", replacement); updateDraft.Parameters.AddWithValue("company", companyId); updateDraft.Parameters.AddWithValue("draft", draft.Id); updateDraft.Parameters.AddWithValue("old", draft.ApprovalRequestId.Value);
+            if (await updateDraft.ExecuteNonQueryAsync(ct) != 1) throw new InvalidOperationException("Invoice draft approval changed concurrently");
+            return replacement;
+        });
     }
 
     private async Task<string?> GetApprovalRequestStatusAsync(long companyId, long approvalRequestId, CancellationToken ct)
@@ -1852,11 +2068,23 @@ public sealed class RevenueReadinessService(
     // per (entity, signal_type).
     public async Task<RevenueLeakageDetectionOutcome> DetectRevenueLeakageAsync(long companyId, int stalenessDays = 7, CancellationToken ct = default)
     {
-        var candidates = new List<(string SignalType, string EntityType, long EntityId, decimal Amount, string Severity, string Title, string Description)>();
+        return await db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+            await db.ExecuteAsync(
+                "SELECT pg_advisory_xact_lock(hashtextextended('revenue-leakage:' || CAST(@companyId AS text), 0))",
+                c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+            return await DetectRevenueLeakageCoreAsync(companyId, stalenessDays, ct);
+        }, ct);
+    }
+
+    private async Task<RevenueLeakageDetectionOutcome> DetectRevenueLeakageCoreAsync(long companyId, int stalenessDays, CancellationToken ct)
+    {
+        var candidates = new List<(string SignalType, string EntityType, long EntityId, decimal Amount, string? Currency, string Severity, string Title, string Description)>();
 
         // Signal 1 — completed/delivered job with NO charge (uncaptured revenue).
         var noCharge = await db.QueryAsync(
-            @"SELECT j.id, j.job_code, COALESCE(rc.minimum_charge, 0) AS expected
+            @"SELECT j.id, j.job_code, COALESCE(rc.minimum_charge, 0) AS expected,
+                     UPPER(rc.currency) currency
               FROM jobs j
               LEFT JOIN rate_cards rc ON rc.id = j.rate_card_id AND rc.company_id = j.company_id
               WHERE j.company_id=@companyId
@@ -1866,7 +2094,7 @@ public sealed class RevenueReadinessService(
         foreach (var r in noCharge)
         {
             var amt = Dec(r, "expected");
-            candidates.Add(("completed_job_no_charge", "job", L(r, "id"), amt,
+            candidates.Add(("completed_job_no_charge", "job", L(r, "id"), amt, S(r, "currency"),
                 amt >= 500m ? "High" : "Medium",
                 $"Completed job {S(r, "jobCode")} has no billable charge",
                 "Job is completed/delivered but no job_charge exists — revenue is uncaptured."));
@@ -1874,7 +2102,7 @@ public sealed class RevenueReadinessService(
 
         // Signal 2 — charge stuck in 'draft' past the staleness threshold.
         var stale = await db.QueryAsync(
-            @"SELECT jc.id, jc.charge_code, jc.job_id, jc.amount
+            @"SELECT jc.id, jc.charge_code, jc.job_id, jc.amount, UPPER(jc.currency) currency
               FROM job_charges jc
               WHERE jc.company_id=@companyId
                 AND LOWER(jc.status) = 'draft'
@@ -1887,7 +2115,7 @@ public sealed class RevenueReadinessService(
         foreach (var r in stale)
         {
             var amt = Dec(r, "amount");
-            candidates.Add(("stale_draft_charge", "charge", L(r, "id"), amt,
+            candidates.Add(("stale_draft_charge", "charge", L(r, "id"), amt, S(r, "currency"),
                 amt >= 500m ? "High" : "Medium",
                 $"Draft charge {S(r, "chargeCode")} uninvoiced for over {stalenessDays} days",
                 "Charge has been in draft beyond the staleness threshold — revenue at risk of never being billed."));
@@ -1895,20 +2123,22 @@ public sealed class RevenueReadinessService(
 
         // Signal 3 — completed job billed BELOW the contract minimum charge (has charges but short).
         var below = await db.QueryAsync(
-            @"SELECT j.id, j.job_code, rc.minimum_charge, COALESCE(SUM(jc.amount), 0) AS charged
+            @"SELECT j.id, j.job_code, rc.minimum_charge, UPPER(rc.currency) currency,
+                     COALESCE(SUM(jc.amount), 0) AS charged
               FROM jobs j
               JOIN rate_cards rc ON rc.id = j.rate_card_id AND rc.company_id = j.company_id
               JOIN job_charges jc ON jc.company_id = j.company_id AND jc.job_id = j.id
+                 AND UPPER(jc.currency)=UPPER(rc.currency)
               WHERE j.company_id=@companyId
                 AND LOWER(j.status) IN ('completed','delivered','ready_to_bill')
                 AND rc.minimum_charge > 0
-              GROUP BY j.id, j.job_code, rc.minimum_charge
+              GROUP BY j.id, j.job_code, rc.minimum_charge, UPPER(rc.currency)
               HAVING COALESCE(SUM(jc.amount), 0) < rc.minimum_charge",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct);
         foreach (var r in below)
         {
             var shortfall = Dec(r, "minimumCharge") - Dec(r, "charged");
-            candidates.Add(("below_contract_rate", "job", L(r, "id"), shortfall,
+            candidates.Add(("below_contract_rate", "job", L(r, "id"), shortfall, S(r, "currency"),
                 shortfall >= 200m ? "High" : "Medium",
                 $"Job {S(r, "jobCode")} billed below contract minimum",
                 "Sum of job charges is below the rate card minimum_charge for this job."));
@@ -1919,10 +2149,12 @@ public sealed class RevenueReadinessService(
         var alreadyOpen = 0;
         foreach (var cand in candidates)
         {
-            var existingId = await db.ScalarLongAsync(
-                @"SELECT COALESCE(MAX(id), 0) FROM cost_leakage_items
+            var existing = await db.QuerySingleAsync(
+                @"SELECT id, status FROM cost_leakage_items
                   WHERE company_id=@companyId AND entity_type=@et AND entity_id=@eid AND category=@cat
-                    AND status IN ('open','reviewed') AND deleted_at IS NULL",
+                    AND LOWER(status) IN ('open','reviewed','acknowledged','in progress') AND deleted_at IS NULL
+                  ORDER BY id DESC
+                  LIMIT 1",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
@@ -1932,17 +2164,39 @@ public sealed class RevenueReadinessService(
                 }, ct);
 
             var leakageNumber = $"RLK-{cand.SignalType}-{cand.EntityId}";
-            if (existingId > 0)
+            if (existing is not null)
             {
+                var existingId = L(existing, "id");
+                var existingStatus = S(existing, "status") ?? "Open";
+                await db.ExecuteAsync(
+                    @"UPDATE cost_leakage_items
+                         SET currency=COALESCE(currency, @currency),
+                             data_origin='runtime_detector',
+                             amount_evidence_status=COALESCE(amount_evidence_status, @amountStatus),
+                             updated_at=NOW()
+                       WHERE id=@id AND company_id=@companyId",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@currency", (object?)cand.Currency ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@amountStatus", cand.Amount > 0 ? "Recorded" : "Unavailable");
+                        c.Parameters.AddWithValue("@id", existingId);
+                        c.Parameters.AddWithValue("@companyId", companyId);
+                    }, ct);
                 alreadyOpen++;
-                signals.Add(new RevenueLeakageSignalRecord(existingId, leakageNumber, cand.SignalType, cand.EntityType, cand.EntityId, cand.Amount, cand.Severity, "open", cand.Title));
+                signals.Add(new RevenueLeakageSignalRecord(existingId, leakageNumber, cand.SignalType, cand.EntityType,
+                    cand.EntityId, cand.Amount, cand.Currency, cand.Amount > 0 ? "Recorded" : "Unavailable",
+                    cand.Severity, existingStatus, cand.Title, "runtime_detector"));
                 continue;
             }
 
             var id = await db.InsertAsync(
                 @"INSERT INTO cost_leakage_items
-                    (company_id, leakage_number, category, entity_type, entity_id, title, description, estimated_loss, severity, status, risk_score, recommended_action, owner_role)
-                  VALUES (@companyId, @num, @cat, @et, @eid, @title, @desc, @amount, @sev, 'open', @risk, @action, 'Finance')",
+                    (company_id, leakage_number, category, entity_type, entity_id, title, description,
+                     estimated_loss, currency, data_origin, amount_evidence_status, severity, status,
+                     risk_score, recommended_action, owner_role)
+                  VALUES (@companyId, @num, @cat, @et, @eid, @title, @desc,
+                          @amount, @currency, 'runtime_detector', @amountStatus, @sev, 'Open',
+                          @risk, @action, 'Finance')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
@@ -1953,12 +2207,16 @@ public sealed class RevenueReadinessService(
                     c.Parameters.AddWithValue("@title", cand.Title);
                     c.Parameters.AddWithValue("@desc", cand.Description);
                     c.Parameters.AddWithValue("@amount", cand.Amount);
+                    c.Parameters.AddWithValue("@currency", (object?)cand.Currency ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@amountStatus", cand.Amount > 0 ? "Recorded" : "Unavailable");
                     c.Parameters.AddWithValue("@sev", cand.Severity);
                     c.Parameters.AddWithValue("@risk", cand.Severity == "High" ? 80m : 50m);
                     c.Parameters.AddWithValue("@action", "Review and bill the uncaptured or underbilled revenue.");
                 }, ct);
             created++;
-            signals.Add(new RevenueLeakageSignalRecord(id, leakageNumber, cand.SignalType, cand.EntityType, cand.EntityId, cand.Amount, cand.Severity, "open", cand.Title));
+            signals.Add(new RevenueLeakageSignalRecord(id, leakageNumber, cand.SignalType, cand.EntityType,
+                cand.EntityId, cand.Amount, cand.Currency, cand.Amount > 0 ? "Recorded" : "Unavailable",
+                cand.Severity, "Open", cand.Title, "runtime_detector"));
         }
 
         return new RevenueLeakageDetectionOutcome(companyId, created, alreadyOpen, signals);

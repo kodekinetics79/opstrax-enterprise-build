@@ -31,8 +31,11 @@ public sealed class ActiveShipmentsContractTests
     public void ActiveShipmentsUsesCanonicalJobsLifecycleAndFunctionalDeepLinks()
     {
         var page = ReadSource("frontend", "src", "pages", "ActiveShipmentsPage.tsx");
+        var commandCenter = ReadSource("frontend", "src", "pages", "CommandCenterPage.tsx");
+        var client = ReadSource("frontend", "src", "services", "activeShipmentsApi.ts");
         var jobsPage = ReadSource("frontend", "src", "pages", "JobsPage.tsx");
         var endpoint = ReadSource("backend-dotnet", "Controllers", "ActiveShipmentsEndpoints.cs");
+        var endpointMappings = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
         var migration = ReadSource("database", "migrations", "2026_08_01_stage64_shipments_pilot.sql");
         var schema = ReadSource("backend-dotnet", "Services", "Stage9SchemaService.cs");
 
@@ -44,6 +47,24 @@ public sealed class ActiveShipmentsContractTests
         Assert.Contains("billing_confidence_records", endpoint, StringComparison.Ordinal);
         Assert.Contains("shipments:export", endpoint, StringComparison.Ordinal);
         Assert.Contains("\"@offset\", ((long)page - 1) * pageSize", endpoint, StringComparison.Ordinal);
+        Assert.Contains("if (!long.TryParse(rawJobId, out var exactJobId) || exactJobId <= 0)", endpoint, StringComparison.Ordinal);
+        Assert.Contains("clauses.Add(\"id=@jobId\")", endpoint, StringComparison.Ordinal);
+        Assert.Contains("command.Parameters.AddWithValue(\"@jobId\", parsedJobId.Value)", endpoint, StringComparison.Ordinal);
+        Assert.Contains("string? search = null, string? jobId = null", endpoint, StringComparison.Ordinal);
+        Assert.Contains("j.id job_id, COALESCE(j.job_number,j.job_code) shipment_number", endpointMappings, StringComparison.Ordinal);
+        Assert.Contains("jobId       = r.GetValueOrDefault(\"jobId\")", endpointMappings, StringComparison.Ordinal);
+        Assert.Contains("shipmentNumber = r.GetValueOrDefault(\"shipmentNumber\")", endpointMappings, StringComparison.Ordinal);
+        Assert.Contains("navigate(exceptionActionRoute(exc))", commandCenter, StringComparison.Ordinal);
+        Assert.Contains("?jobId=${encodeURIComponent(jobId)}", commandCenter, StringComparison.Ordinal);
+        Assert.True(
+            commandCenter.IndexOf("if (jobId)", StringComparison.Ordinal) < commandCenter.IndexOf("exception.shipmentNumber", StringComparison.Ordinal),
+            "Command Center must prefer the canonical job ID before its text-search fallback.");
+        Assert.Contains("jobId?: string", client, StringComparison.Ordinal);
+        Assert.Contains("params: params(input)", client, StringComparison.Ordinal);
+        Assert.Contains("new URLSearchParams(params(filters)", client, StringComparison.Ordinal);
+        Assert.Contains("searchParams.get('jobId')", page, StringComparison.Ordinal);
+        Assert.Contains("jobId: requestedJobId || undefined", page, StringComparison.Ordinal);
+        Assert.Contains("next.delete('jobId')", page, StringComparison.Ordinal);
         Assert.Contains("/shipments?jobId=", page, StringComparison.Ordinal);
         Assert.Contains("/proof-of-delivery?jobId=", page, StringComparison.Ordinal);
         Assert.DoesNotContain("shipmentId=", page, StringComparison.Ordinal);
@@ -159,8 +180,9 @@ public sealed class ActiveShipmentsPostgresRegressionTests
             var foreignDriver = await Driver(db, company, otherBranch, $"ODRV-{suffix}", "Other Branch Driver");
             var foreignVehicle = await Vehicle(db, company, otherBranch, $"OVEH-{suffix}");
 
-            await InsertJob(db, company, branch, atRisk, "Assigned", customer, driver, vehicle,
+            var atRiskId = await InsertJob(db, company, branch, atRisk, "Assigned", customer, driver, vehicle,
                 etaSql: "NOW()+INTERVAL '3 hours'", commitmentSql: "NOW()+INTERVAL '2 hours'");
+            await db.ExecuteAsync("UPDATE jobs SET sla_status='At Risk' WHERE id=@j", c => c.Parameters.AddWithValue("@j", atRiskId));
             var breachedId = await InsertJob(db, company, branch, breached, "In Progress", customer, driver, vehicle,
                 etaSql: "NOW()+INTERVAL '1 hour'", commitmentSql: "NOW()-INTERVAL '10 minutes'");
             await db.ExecuteAsync("INSERT INTO location_events(company_id,vehicle_id,lat,lng,event_time) VALUES (@c,@v,43.6532,-79.3832,NOW()-INTERVAL '2 minutes')",
@@ -185,10 +207,17 @@ public sealed class ActiveShipmentsPostgresRegressionTests
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@j", completedId); c.Parameters.AddWithValue("@p", mismatchedPackage); });
             await InsertJob(db, company, branch, delivered, "Delivered", customer);
             await InsertJob(db, company, branch, cancelled, "cancelled", customer);
-            await InsertJob(db, company, otherBranch, otherBranchNumber, "Assigned", customer);
-            await InsertJob(db, otherCompany, otherCompany + 10, otherTenantNumber, "Assigned");
+            var otherBranchId = await InsertJob(db, company, otherBranch, otherBranchNumber, "Assigned", customer);
+            var otherTenantId = await InsertJob(db, otherCompany, otherCompany + 10, otherTenantNumber, "Assigned");
             await db.ExecuteAsync("INSERT INTO fleet_tms_shipments(company_id,branch_id,shipment_number,status,customer_name) VALUES (@c,@b,@n,'InTransit','Fleet-only')",
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@n", fleetOnly); });
+
+            var commandCenter = Payload(await Invoke("CommandCenterSummary", Principal(company, branch), db, CancellationToken.None))
+                .GetProperty("data");
+            var focusedException = Assert.Single(commandCenter.GetProperty("exceptions").EnumerateArray(),
+                item => item.GetProperty("shipmentNumber").GetString() == atRisk);
+            Assert.Equal(atRiskId, focusedException.GetProperty("jobId").GetInt64());
+            Assert.Equal("/active-shipments", focusedException.GetProperty("actionRoute").GetString());
 
             app = await StartApp(db, company, branch);
             using var client = Client(app);
@@ -220,6 +249,17 @@ public sealed class ActiveShipmentsPostgresRegressionTests
 
             await AssertSingle(client, "/api/fleet-tms/active-shipments?risk=Breached", breached);
             await AssertSingle(client, "/api/fleet-tms/active-shipments?lifecycle=Completed", completed);
+            await AssertSingle(client, $"/api/fleet-tms/active-shipments?jobId={breachedId}", breached);
+            await AssertEmpty(client, $"/api/fleet-tms/active-shipments?jobId={breachedId}&search={Uri.EscapeDataString(atRisk)}");
+            await AssertEmpty(client, $"/api/fleet-tms/active-shipments?jobId={otherBranchId}");
+            await AssertEmpty(client, $"/api/fleet-tms/active-shipments?jobId={otherTenantId}");
+            foreach (var invalidJobId in new[] { "0", "-1", "not-a-number", "9223372036854775808" })
+            {
+                Assert.Equal(HttpStatusCode.BadRequest,
+                    (await Send(client, $"/api/fleet-tms/active-shipments?jobId={invalidJobId}", "shipments:view")).StatusCode);
+                Assert.Equal(HttpStatusCode.BadRequest,
+                    (await Send(client, $"/api/fleet-tms/active-shipments/export?jobId={invalidJobId}", "shipments:export")).StatusCode);
+            }
             using (var response = await Send(client, "/api/fleet-tms/active-shipments?page=1&pageSize=1", "shipments.view"))
             {
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -234,6 +274,15 @@ public sealed class ActiveShipmentsPostgresRegressionTests
                 Assert.Contains(atRisk, csv, StringComparison.Ordinal);
                 Assert.Contains("\"'=SUM(1,1)\"", csv, StringComparison.Ordinal);
                 Assert.DoesNotContain(otherBranchNumber, csv, StringComparison.Ordinal);
+            }
+            using (var response = await Send(client, $"/api/fleet-tms/active-shipments/export?jobId={breachedId}", "shipments.export"))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var csv = await response.Content.ReadAsStringAsync();
+                Assert.Contains(breached, csv, StringComparison.Ordinal);
+                Assert.DoesNotContain(atRisk, csv, StringComparison.Ordinal);
+                Assert.DoesNotContain(otherBranchNumber, csv, StringComparison.Ordinal);
+                Assert.DoesNotContain(otherTenantNumber, csv, StringComparison.Ordinal);
             }
         }
         finally
@@ -259,8 +308,15 @@ public sealed class ActiveShipmentsPostgresRegressionTests
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@code", $"CUS-{company}"); });
             var driver = await Driver(db, company, branch, $"DRV-{company}", "Lifecycle Driver");
             var vehicle = await Vehicle(db, company, branch, $"VEH-{company}");
-            await db.ExecuteAsync("INSERT INTO hos_records(company_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,hos_status) VALUES (@c,@d,CURRENT_DATE,8,8,'On Duty')",
-                c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@d", driver); });
+            await db.ExecuteAsync(
+                @"INSERT INTO hos_clocks(company_id,branch_id,driver_id,drive_time_remaining_minutes,shift_time_remaining_minutes,
+                    cycle_time_remaining_minutes,status,clock_source,source_event_id,source_observed_at,source_authority,source_quality,updated_at)
+                  VALUES (@c,@b,@d,480,660,3600,'OK','active-shipments-fixture',@event,NOW(),'Authoritative','Verified',NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch);
+                    c.Parameters.AddWithValue("@d", driver); c.Parameters.AddWithValue("@event", $"active-shipments-{company}");
+                });
             var http = Principal(company, branch);
             var code = $"FLOW-{company}";
             var created = await Invoke("CreateJob", http, new Dictionary<string, object?>
@@ -388,6 +444,16 @@ public sealed class ActiveShipmentsPostgresRegressionTests
         Assert.Equal(number, json.RootElement.GetProperty("data").GetProperty("items")[0].GetProperty("shipmentNumber").GetString());
     }
 
+    private static async Task AssertEmpty(HttpClient client, string path)
+    {
+        using var response = await Send(client, path, "shipments:view");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var data = json.RootElement.GetProperty("data");
+        Assert.Equal(0, data.GetProperty("total").GetInt64());
+        Assert.Empty(data.GetProperty("items").EnumerateArray());
+    }
+
     private static async Task<JsonElement> SingleItem(HttpClient client, string number)
     {
         using var response = await Send(client, $"/api/fleet-tms/active-shipments?search={Uri.EscapeDataString(number)}", "shipments:view");
@@ -434,8 +500,14 @@ public sealed class ActiveShipmentsPostgresRegressionTests
         http.Items[EndpointMappings.AuthBranchIdItemKey] = branch;
         http.Items[EndpointMappings.AuthUserIdItemKey] = userId;
         http.Items[EndpointMappings.AuthRoleItemKey] = "Tenant Admin";
-        http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "shipments:view", "shipments:export", "shipments:create", "shipments:update", "dispatch:manage", "dispatch:assign", "dispatch:override", "operations.proof.validate" };
+        http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "dashboard:view", "shipments:view", "shipments:export", "shipments:create", "shipments:update", "dispatch:manage", "dispatch:assign", "dispatch:override", "operations.proof.validate" };
         return http;
+    }
+
+    private static JsonElement Payload(IResult result)
+    {
+        var value = Assert.IsAssignableFrom<IValueHttpResult>(result).Value;
+        return JsonDocument.Parse(JsonSerializer.Serialize(value, new JsonSerializerOptions(JsonSerializerDefaults.Web))).RootElement.Clone();
     }
 
     private static int? Status(IResult result) => Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode;
@@ -470,7 +542,7 @@ public sealed class ActiveShipmentsPostgresRegressionTests
             "DELETE FROM dispatch_assignments WHERE company_id=@c", "DELETE FROM job_status_events WHERE company_id=@c",
             "DELETE FROM entity_timeline_events WHERE company_id=@c", "DELETE FROM audit_logs WHERE company_id=@c",
             "DELETE FROM documents WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c",
-            "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM location_events WHERE company_id=@c",
+            "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM location_events WHERE company_id=@c",
             "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c",
             "DELETE FROM customers WHERE company_id=@c", "DELETE FROM branches WHERE company_id=@c", "DELETE FROM companies WHERE id=@c"
         })

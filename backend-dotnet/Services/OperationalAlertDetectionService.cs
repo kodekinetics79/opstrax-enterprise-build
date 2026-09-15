@@ -174,29 +174,33 @@ public sealed class OperationalAlertDetectionService(
 
     // Fuel-level drop across the last 45 minutes of live telemetry. max→last is
     // refuel-safe (a refill raises the level, producing a zero/negative drop);
-    // threshold in percentage points via the 'fuel_drop_pct' rule (default 20).
+    // threshold in percentage points via an explicitly approved 'fuel_drop_pct' rule.
     private const string FuelAnomalySql = """
         WITH win AS (
           SELECT le.company_id, le.vehicle_id,
                  MAX(le.fuel_level) AS max_level,
                  (ARRAY_AGG(le.fuel_level ORDER BY le.event_time DESC))[1] AS last_level,
-                 COUNT(*) AS fixes
+                 COUNT(*) AS fixes,
+                 tr.threshold_value,
+                 tr.severity
           FROM location_events le
+          JOIN telemetry_rules tr
+            ON tr.company_id=le.company_id AND tr.rule_type='fuel_drop_pct' AND tr.enabled=TRUE
+           AND tr.policy_origin='user_workflow' AND tr.approval_status='approved'
+           AND tr.approved_by IS NOT NULL AND tr.approved_by>0 AND tr.approved_at IS NOT NULL
           WHERE le.event_time > NOW() - INTERVAL '45 minutes'
             AND le.fuel_level IS NOT NULL AND le.vehicle_id IS NOT NULL
-          GROUP BY le.company_id, le.vehicle_id
+            AND le.source_channel IN ('native-hmac','trusted-gateway','samsara-api')
+          GROUP BY le.company_id, le.vehicle_id, tr.threshold_value, tr.severity
         )
         INSERT INTO telemetry_alerts (company_id, vehicle_id, alert_type, severity, message, status, source_channel)
         SELECT w.company_id, w.vehicle_id, 'fuel_anomaly',
-               COALESCE((SELECT tr.severity FROM telemetry_rules tr
-                         WHERE tr.company_id = w.company_id AND tr.rule_type = 'fuel_drop_pct' AND tr.enabled = TRUE LIMIT 1), 'High'),
+               w.severity,
                'Fuel anomaly: level dropped ' || ROUND(w.max_level - w.last_level)::int || '% within 45 minutes',
-               'Open', 'detector'
+               'Open', 'approved-policy-detector'
         FROM win w
         WHERE w.fixes >= 3
-          AND w.max_level - w.last_level >=
-              COALESCE((SELECT tr.threshold_value FROM telemetry_rules tr
-                        WHERE tr.company_id = w.company_id AND tr.rule_type = 'fuel_drop_pct' AND tr.enabled = TRUE LIMIT 1), 20)
+          AND w.max_level - w.last_level >= w.threshold_value
           AND NOT EXISTS (SELECT 1 FROM telemetry_alerts ta
                           WHERE ta.company_id = w.company_id AND ta.vehicle_id = w.vehicle_id
                             AND ta.alert_type = 'fuel_anomaly'
@@ -211,7 +215,7 @@ public sealed class OperationalAlertDetectionService(
     private const string IdlingSql = """
         WITH win AS (
           SELECT le.company_id, le.vehicle_id,
-                 COALESCE(MAX(t.threshold_value), 15) AS threshold_minutes,
+                 MAX(t.threshold_value) AS threshold_minutes,
                  COUNT(*) AS fixes,
                  COUNT(CASE WHEN le.speed_mph >= 0 AND le.speed_mph < 1
                    AND LOWER(TRIM(COALESCE(le.engine_status,''))) IN ('on','idle') THEN 1 END) AS affirmative_fixes,
@@ -220,19 +224,25 @@ public sealed class OperationalAlertDetectionService(
                  MAX(le.event_time) AS last_seen,
                  (ARRAY_AGG(le.engine_status ORDER BY le.event_time DESC))[1] AS last_engine
           FROM location_events le
-          LEFT JOIN telemetry_rules t
+          JOIN telemetry_rules t
             ON t.company_id = le.company_id AND t.rule_type = 'idling' AND t.enabled = TRUE
+           AND t.policy_origin='user_workflow' AND t.approval_status='approved'
+           AND t.approved_by IS NOT NULL AND t.approved_by>0 AND t.approved_at IS NOT NULL
           WHERE le.vehicle_id IS NOT NULL
-            AND le.event_time > NOW() - (COALESCE(t.threshold_value, 15) * INTERVAL '1 minute')
+            AND le.source_channel IN ('native-hmac','trusted-gateway','samsara-api')
+            AND le.event_time > NOW() - (t.threshold_value * INTERVAL '1 minute')
           GROUP BY le.company_id, le.vehicle_id
         )
         INSERT INTO telemetry_alerts (company_id, vehicle_id, alert_type, severity, message, status, source_channel)
         SELECT w.company_id, w.vehicle_id, 'idling',
-               COALESCE((SELECT tr.severity FROM telemetry_rules tr
-                         WHERE tr.company_id = w.company_id AND tr.rule_type = 'idling' AND tr.enabled = TRUE LIMIT 1), 'Warning'),
+               (SELECT tr.severity FROM telemetry_rules tr
+                 WHERE tr.company_id=w.company_id AND tr.rule_type='idling' AND tr.enabled=TRUE
+                   AND tr.policy_origin='user_workflow' AND tr.approval_status='approved'
+                   AND tr.approved_by IS NOT NULL AND tr.approved_by>0 AND tr.approved_at IS NOT NULL
+                 LIMIT 1),
                'Possible idling: low-speed engine-on samples observed over ' ||
                GREATEST(1, ROUND(EXTRACT(EPOCH FROM (w.last_seen - w.first_seen)) / 60))::int || ' min; continuous idling not established',
-               'Open', 'detector'
+               'Open', 'approved-policy-detector'
         FROM win w
         WHERE w.fixes >= 3
           AND w.affirmative_fixes = w.fixes

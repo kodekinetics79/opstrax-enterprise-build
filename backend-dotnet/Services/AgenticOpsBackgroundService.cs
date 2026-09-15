@@ -231,7 +231,8 @@ public sealed class AgenticOpsBackgroundService(
                 sourceEventId: sourceEventId,
                 actorType: "agent",
                 actorId: "dispatch-copilot",
-                status: "proposed");
+                status: "proposed",
+                moduleKey: "control-tower");
 
             logger.LogInformation("{Svc} proposed {Action} for exception {Id} (tenant {Tenant}, conf {Conf:P0})",
                 SvcName, actionType, exceptionId, tenantId, confidence);

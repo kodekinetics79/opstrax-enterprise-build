@@ -24,6 +24,13 @@ function day(value: unknown) {
   return raw || "—";
 }
 
+function responseStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("response" in error)) return undefined;
+  const response = error.response;
+  if (typeof response !== "object" || response === null || !("status" in response)) return undefined;
+  return typeof response.status === "number" ? response.status : undefined;
+}
+
 function ErrorPanel({ message }: { message?: string }) {
   return (
     <div className="panel flex items-center gap-3 border-l-2 border-red-400 p-5">
@@ -73,20 +80,43 @@ export function CustomerPortalPage() {
     () => invoices.filter((i) => String(i.arStatus ?? "").startsWith("Overdue")).length,
     [invoices],
   );
+  const activeShipmentCount = jobs.filter((j) => !/delivered|completed|cancelled/i.test(String(j.status ?? ""))).length;
+  const portalDataUnavailable = invoicesQ.isError || jobsQ.isError;
+  const invoiceAccessDenied = responseStatus(invoicesQ.error) === 403;
+  const shipmentAccessDenied = responseStatus(jobsQ.error) === 403;
+  const portalAccessDeniedOnly = portalDataUnavailable
+    && (!invoicesQ.isError || invoiceAccessDenied)
+    && (!jobsQ.isError || shipmentAccessDenied);
+  const invoiceSummaryValue = (value: string | number) => invoicesQ.isError ? "Unavailable" : invoicesQ.isLoading ? "—" : value;
+  const shipmentSummaryValue = jobsQ.isError ? "Unavailable" : jobsQ.isLoading ? "—" : activeShipmentCount;
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="page-stack min-w-0">
       <PageHeader
         eyebrow="Your account"
         title="Customer Portal"
-        description="Your shipments, delivery proof, and invoices — always up to date. Everything here is scoped to your account only."
+        description="Customer-linked shipments, delivery proof, and invoices in your authorized account scope."
       />
 
+      {portalDataUnavailable && (
+        <div className="panel flex items-start gap-3 border-l-2 border-amber-400 p-4" role="alert">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <div>
+            <p className="font-semibold text-slate-900">Customer-linked portal data is unavailable</p>
+            <p className="mt-0.5 text-sm text-slate-600">
+              {portalAccessDeniedOnly
+                ? "Invoices and shipments require a login linked to a customer account. This session is not authorized for one or more portal data sets, so no zero balance or zero activity is inferred."
+                : "One or more portal data sets could not be loaded. Retry shortly; no zero balance or zero activity is inferred from this failure."}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* KPI summary — computed from your live data only. */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <KpiCard label="Outstanding Balance" value={money(outstanding)} status={overdueCount > 0 ? "overdue" : undefined} icon={<FileText className="h-5 w-5" />} />
-        <KpiCard label="Overdue Invoices" value={overdueCount} status={overdueCount > 0 ? "overdue" : undefined} />
-        <KpiCard label="Active Shipments" value={jobs.filter((j) => !/delivered|completed|cancelled/i.test(String(j.status ?? ""))).length} icon={<Truck className="h-5 w-5" />} />
+      <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Customer portal summary" aria-busy={invoicesQ.isLoading || jobsQ.isLoading}>
+        <KpiCard compact label="Outstanding Balance" value={invoiceSummaryValue(money(outstanding))} status={invoicesQ.isError ? invoiceAccessDenied ? "Requires customer-linked account" : "Load failed" : overdueCount > 0 ? "overdue" : undefined} icon={<FileText className="h-5 w-5" />} />
+        <KpiCard compact label="Overdue Invoices" value={invoiceSummaryValue(overdueCount)} status={invoicesQ.isError ? invoiceAccessDenied ? "Requires customer-linked account" : "Load failed" : overdueCount > 0 ? "overdue" : undefined} />
+        <KpiCard compact label="Active Shipments" value={shipmentSummaryValue} status={jobsQ.isError ? shipmentAccessDenied ? "Requires customer-linked account" : "Load failed" : undefined} icon={<Truck className="h-5 w-5" />} />
       </div>
 
       {/* ── Invoices ── */}

@@ -102,9 +102,9 @@ public sealed class SafetyIncidentsPilotRegressionTests
             Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM insurance_reports WHERE incident_id=@id", c => c.Parameters.AddWithValue("@id", incidentId)));
             Assert.Equal(7, await db.ScalarLongAsync("SELECT row_version FROM incidents WHERE id=@id", c => c.Parameters.AddWithValue("@id", incidentId)));
 
-            await db.ExecuteAsync(@"INSERT INTO ai_recommendations(company_id,tenant_id,recommendation_type,module_key,title,summary,body,score,status)
-                                    VALUES(@c,@c,'incidents','incidents','Tenant-wide legal narrative','Sensitive cross-branch narrative','Sensitive cross-branch narrative',99,'Recommended')",
-                c => c.Parameters.AddWithValue("@c", companyA));
+            await db.ExecuteAsync(@"INSERT INTO ai_recommendations(company_id,tenant_id,recommendation_type,module_key,title,summary,body,score,status,source_event_id,actor_type,actor_id)
+                                    VALUES(@c,@c,'incidents','incidents','Tenant-wide legal narrative','Sensitive cross-branch narrative','Sensitive cross-branch narrative',99,'Recommended',@source,'system','incident-test')",
+                c => { c.Parameters.AddWithValue("@c", companyA); c.Parameters.AddWithValue("@source", $"incident:test:{incidentId}"); });
             var branchRecommendations = Assert.IsAssignableFrom<IValueHttpResult>(await Invoke("IncidentRecommendations", Principal(companyA, branchA), incidentId, db, CancellationToken.None));
             Assert.DoesNotContain("Sensitive cross-branch narrative", System.Text.Json.JsonSerializer.Serialize(branchRecommendations.Value));
             var tenantRecommendations = Assert.IsAssignableFrom<IValueHttpResult>(await Invoke("IncidentRecommendations", tenantWideAdmin, incidentId, db, CancellationToken.None));

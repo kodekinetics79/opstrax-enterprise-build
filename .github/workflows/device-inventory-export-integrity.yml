@@ -1,0 +1,70 @@
+name: DeviceOps inventory export integrity
+
+on:
+  pull_request:
+    paths: &paths
+      - 'backend-dotnet/Controllers/EndpointMappings.cs'
+      - 'backend-dotnet.Tests/DeviceInventoryExportIntegrityPostgresTests.cs'
+      - 'backend-dotnet.Tests/LargeFleetPaginationContractTests.cs'
+      - 'backend-dotnet.Tests/Fixtures/device_retirement_test_prerequisites.sql'
+      - 'backend-dotnet.Tests/Fixtures/device_inventory_export_prerequisites.sql'
+      - 'database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql'
+      - 'database/migrations/2026_09_07_stage118_device_rma_replacement.sql'
+      - 'database/migrations/2026_09_07_stage125_device_spare_pool.sql'
+      - 'database/migrations/2026_09_07_stage126_device_support_tier_history.sql'
+      - 'database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql'
+      - '.github/workflows/device-inventory-export-integrity.yml'
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: device-inventory-export-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  one-thousand-device-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17@sha256:a426e44bac0b759c95894d68e1a0ac03ecc20b619f498a91aae373bf06d8508d
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: opstrax_deviceops_stage127
+        ports:
+          - 55453:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d opstrax_deviceops_stage127"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      OPSTRAX_DEVICEOPS_STAGE127_DB: Host=127.0.0.1;Port=55453;Database=opstrax_deviceops_stage127;Username=postgres;Password=postgres
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: 8.0.x
+      - name: Build dedicated export database
+        run: |
+          psql -h 127.0.0.1 -p 55453 -U postgres -d opstrax_deviceops_stage127 -v ON_ERROR_STOP=1 -f database/init/001_schema.sql
+          psql -h 127.0.0.1 -p 55453 -U postgres -d opstrax_deviceops_stage127 -v ON_ERROR_STOP=1 -f database/migrations/2026_07_02_stage23_schema_migration_ledger.sql
+          psql -h 127.0.0.1 -p 55453 -U postgres -d opstrax_deviceops_stage127 -v ON_ERROR_STOP=1 -f backend-dotnet.Tests/Fixtures/device_retirement_test_prerequisites.sql
+          psql -h 127.0.0.1 -p 55453 -U postgres -d opstrax_deviceops_stage127 -v ON_ERROR_STOP=1 -f backend-dotnet.Tests/Fixtures/device_inventory_export_prerequisites.sql
+          psql -h 127.0.0.1 -p 55453 -U postgres -d opstrax_deviceops_stage127 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql
+          psql -h 127.0.0.1 -p 55453 -U postgres -d opstrax_deviceops_stage127 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage118_device_rma_replacement.sql
+          psql -h 127.0.0.1 -p 55453 -U postgres -d opstrax_deviceops_stage127 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage125_device_spare_pool.sql
+          psql -h 127.0.0.1 -p 55453 -U postgres -d opstrax_deviceops_stage127 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage126_device_support_tier_history.sql
+          psql -h 127.0.0.1 -p 55453 -U postgres -d opstrax_deviceops_stage127 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql
+      - name: Run stable-schema, truth, scope, and 1K completeness tests
+        run: >-
+          dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj
+          --filter "FullyQualifiedName~DeviceInventoryExportIntegrityPostgresTests|FullyQualifiedName~LargeFleetPaginationContractTests"
+          --logger "console;verbosity=minimal"

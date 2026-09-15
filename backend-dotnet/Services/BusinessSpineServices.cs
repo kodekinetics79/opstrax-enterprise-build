@@ -73,6 +73,9 @@ public sealed record JobChargeRecord(
     DateTimeOffset CreatedAt,
     DateTimeOffset? UpdatedAt);
 
+public sealed class JobChargeValidationException(string message) : Exception(message);
+public sealed class JobChargeResourceNotFoundException(string message) : Exception(message);
+
 public sealed class BusinessSpineService(Database db)
 {
     public async Task<BusinessSurfaceProfileRecord> GetOrCreateProfileAsync(long companyId, CancellationToken ct = default)
@@ -481,9 +484,9 @@ public sealed class BusinessSpineService(Database db)
         return affected > 0 ? await LoadRateCardByIdAsync(companyId, id, ct) : null;
     }
 
-    public async Task<IReadOnlyList<JobChargeRecord>> ListJobChargesAsync(long companyId, long? jobId = null, CancellationToken ct = default)
+    public async Task<IReadOnlyList<JobChargeRecord>> ListJobChargesAsync(long companyId, long? jobId = null, CancellationToken ct = default, long? branchId = null)
     {
-        var sql = @"SELECT * FROM job_charges WHERE company_id=@companyId";
+        var sql = @"SELECT * FROM job_charges WHERE company_id=@companyId AND EXISTS (SELECT 1 FROM jobs j WHERE j.id=job_charges.job_id AND j.company_id=job_charges.company_id AND j.deleted_at IS NULL AND (@branch::BIGINT IS NULL OR j.branch_id=@branch))";
         if (jobId.HasValue)
         {
             sql += " AND job_id=@jobId";
@@ -493,6 +496,7 @@ public sealed class BusinessSpineService(Database db)
         return (await db.QueryAsync(sql, c =>
         {
             c.Parameters.AddWithValue("@companyId", companyId);
+            c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
             if (jobId.HasValue)
             {
                 c.Parameters.AddWithValue("@jobId", jobId.Value);
@@ -518,8 +522,11 @@ public sealed class BusinessSpineService(Database db)
         string? causationId = null,
         long? approvedByUserId = null,
         DateTimeOffset? approvedAt = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        long? branchId = null)
     {
+        currency = ValidateChargeValues(quantity, unitRate, amount, currency ?? "USD");
+        await ValidateChargeResourcesAsync(companyId, jobId, tripId, rateCardId, branchId, ct);
         var createdAt = DateTimeOffset.UtcNow;
         var id = await db.InsertAsync(
             @"INSERT INTO job_charges
@@ -577,8 +584,17 @@ public sealed class BusinessSpineService(Database db)
         string? causationId = null,
         long? approvedByUserId = null,
         DateTimeOffset? approvedAt = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        long? branchId = null)
     {
+        var current = await LoadJobChargeByIdAsync(companyId, id, ct);
+        if (current is null) return null;
+        // Validate the existing owner as well as a requested replacement, so a branch
+        // actor cannot move an inaccessible charge into their own branch.
+        await ValidateChargeResourcesAsync(companyId, current.JobId, current.TripId, current.RateCardId, branchId, ct);
+        await ValidateChargeResourcesAsync(companyId, jobId ?? current.JobId, tripId ?? current.TripId, rateCardId ?? current.RateCardId, branchId, ct);
+        var normalizedCurrency = ValidateChargeValues(quantity ?? current.Quantity, unitRate ?? current.UnitRate, amount ?? current.Amount, currency ?? current.Currency);
+        if (currency is not null) currency = normalizedCurrency;
         var affected = await db.ExecuteAsync(
             @"UPDATE job_charges SET
                 job_id=COALESCE(@jobId, job_id),
@@ -622,6 +638,38 @@ public sealed class BusinessSpineService(Database db)
             }, ct);
 
         return affected > 0 ? await LoadJobChargeByIdAsync(companyId, id, ct) : null;
+    }
+
+    internal static string ValidateChargeValues(decimal quantity, decimal unitRate, decimal amount, string currency)
+    {
+        if (quantity <= 0) throw new JobChargeValidationException("Charge quantity must be greater than zero");
+        if (unitRate < 0) throw new JobChargeValidationException("Charge unit rate cannot be negative");
+        if (amount <= 0) throw new JobChargeValidationException("Charge amount must be greater than zero; use the credit workflow for credits");
+        if (quantity > 999999999.999m || decimal.Round(quantity, 3) != quantity)
+            throw new JobChargeValidationException("Charge quantity exceeds supported precision or range");
+        if (unitRate > 99999999.9999m || decimal.Round(unitRate, 4) != unitRate)
+            throw new JobChargeValidationException("Charge unit rate exceeds supported precision or range");
+        if (amount > 9999999999.99m || decimal.Round(amount, 2) != amount)
+            throw new JobChargeValidationException("Charge amount must fit the supported range and two decimal places");
+        var normalized = currency.Trim().ToUpperInvariant();
+        if (normalized.Length != 3 || normalized.Any(ch => ch is < 'A' or > 'Z'))
+            throw new JobChargeValidationException("Charge currency must be a three-letter code");
+        return normalized;
+    }
+
+    private async Task ValidateChargeResourcesAsync(long companyId, long jobId, long? tripId, long? rateCardId, long? branchId, CancellationToken ct)
+    {
+        var job = await db.QuerySingleAsync("SELECT id,customer_id,contract_id FROM jobs WHERE id=@job AND company_id=@company AND deleted_at IS NULL AND (@branch::BIGINT IS NULL OR branch_id=@branch)", c =>
+        {
+            c.Parameters.AddWithValue("job", jobId); c.Parameters.AddWithValue("company", companyId); c.Parameters.AddWithValue("branch", (object?)branchId ?? DBNull.Value);
+        }, ct);
+        if (job is null) throw new JobChargeResourceNotFoundException("Job not found in the authorized company and branch");
+        if (tripId.HasValue && await db.QuerySingleAsync("SELECT id FROM trips WHERE id=@trip AND company_id=@company AND job_id=@job", c =>
+        {
+            c.Parameters.AddWithValue("trip", tripId.Value); c.Parameters.AddWithValue("company", companyId); c.Parameters.AddWithValue("job", jobId);
+        }, ct) is null) throw new JobChargeResourceNotFoundException("Trip not found for this job in the authorized company");
+        if (rateCardId.HasValue && await LoadRateCardByIdAsync(companyId, rateCardId.Value, ct) is null)
+            throw new JobChargeResourceNotFoundException("Rate card not found in the authorized company");
     }
 
     private async Task<BusinessSurfaceProfileRecord?> LoadProfileAsync(long companyId, CancellationToken ct)

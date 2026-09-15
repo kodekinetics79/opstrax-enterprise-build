@@ -101,7 +101,7 @@ export function DvirInspectionsPage() {
 
   const summary = (summaryQ.data ?? {}) as AnyRecord;
   return (
-    <div className="fleet-console flex h-full flex-col gap-4 overflow-y-auto">
+    <div className="fleet-console page-stack min-w-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-700">Safety &amp; Compliance</p>

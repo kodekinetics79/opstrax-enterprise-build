@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import {
@@ -114,72 +113,70 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
   const oos       = num(summary.oosVehicles);
   const blockers  = num(summary.criticalDefectVehicles);
   const avgSafety = optional(summary.avgSafetyScore);
+  const readinessCoverage = optional(summary.readinessEvidenceCoverage);
+  const driverCoverage = optional(summary.driverScoreCoverage);
+  const hasVehicleScope = total > 0;
+  const evidenceReady = score != null && hasVehicleScope;
+  const metrics = [
+    {
+      label: "Fleet health",
+      value: score == null ? "—" : `${score}%`,
+      detail: score == null ? "Not measured" : score >= 85 ? "Good standing" : score >= 65 ? "Needs attention" : "Action required",
+      tone: score == null ? "text-slate-400" : scoreColor(score),
+    },
+    {
+      label: "No recorded block",
+      value: hasVehicleScope ? `${ready}/${total}` : "—",
+      detail: hasVehicleScope ? "vehicles in recorded state" : "Coverage unavailable",
+      tone: hasVehicleScope ? "text-emerald-600" : "text-slate-400",
+    },
+    {
+      label: "Out of service",
+      value: hasVehicleScope ? String(oos) : "—",
+      detail: hasVehicleScope ? "vehicles" : "Coverage unavailable",
+      tone: hasVehicleScope && oos > 0 ? "text-red-600" : "text-slate-500",
+    },
+    {
+      label: "Dispatch blockers",
+      value: hasVehicleScope ? String(blockers) : "—",
+      detail: hasVehicleScope ? "critical defects" : "Coverage unavailable",
+      tone: hasVehicleScope && blockers > 0 ? "text-red-600" : "text-slate-500",
+    },
+    {
+      label: "Safety score",
+      value: avgSafety == null ? "—" : `${avgSafety}%`,
+      detail: avgSafety == null ? "Not measured" : "fleet average",
+      tone: avgSafety == null ? "text-slate-400" : scoreColor(avgSafety),
+    },
+    {
+      label: "Overdue PM",
+      value: hasVehicleScope ? String(num(summary.overduePmVehicles)) : "—",
+      detail: hasVehicleScope ? "vehicles" : "Coverage unavailable",
+      tone: hasVehicleScope && num(summary.overduePmVehicles) > 0 ? "text-amber-600" : "text-slate-500",
+    },
+  ];
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap gap-6 items-center shadow-sm">
-      {/* Fleet health score */}
-      <div className="flex items-center gap-4 pr-6 border-r border-slate-200">
-        <div className="relative h-16 w-16 shrink-0">
-          <svg viewBox="0 0 36 36" className="h-16 w-16 -rotate-90">
-            <circle cx="18" cy="18" r="14" fill="none" stroke={tokens.border} strokeWidth="3" />
-            <circle
-              cx="18" cy="18" r="14" fill="none"
-              stroke={score == null ? tokens.border : score >= 80 ? chart.emerald500 : score >= 60 ? chart.amber500 : chart.red500}
-              strokeWidth="3"
-              strokeDasharray={`${((score ?? 0) / 100) * 87.96} 87.96`}
-              strokeLinecap="round"
-            />
-          </svg>
-          <span className={`absolute inset-0 flex items-center justify-center text-sm font-bold ${score == null ? "text-slate-400" : scoreColor(score)}`}>
-            {score == null ? "—" : `${score}%`}
-          </span>
+    <section className="panel flex flex-wrap items-center gap-x-5 gap-y-2 px-3 py-2" aria-label="Fleet health evidence summary">
+      {metrics.map((metric) => (
+        <div key={metric.label} className="min-w-[105px]">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">{metric.label}</p>
+          <p className={`text-sm font-black leading-tight tabular-nums ${metric.tone}`}>{metric.value} <span className="text-[10px] font-medium text-slate-400">{metric.detail}</span></p>
         </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Fleet Health</p>
-          <p className={`text-2xl font-bold ${score == null ? "text-slate-400" : scoreColor(score)}`}>
-            {score == null ? "—" : `${score}%`}
-          </p>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {score == null
-              ? "Not yet measured"
-              : score >= 85 ? "Good standing" : score >= 65 ? "Needs attention" : "Action required"}
-          </p>
-        </div>
-      </div>
-
-      {/* KPIs */}
-      <div className="flex flex-wrap gap-8">
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Dispatch Ready</p>
-          <p className="text-xl font-bold text-emerald-600">{ready}<span className="text-slate-400 font-normal text-sm">/{total}</span></p>
-          <p className="text-xs text-slate-500">vehicles</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Out of Service</p>
-          <p className={`text-xl font-bold ${oos > 0 ? "text-red-600" : "text-slate-400"}`}>{oos}</p>
-          <p className="text-xs text-slate-500">vehicles</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Dispatch Blockers</p>
-          <p className={`text-xl font-bold ${blockers > 0 ? "text-red-600" : "text-slate-400"}`}>{blockers}</p>
-          <p className="text-xs text-slate-500">critical defects</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Safety Score</p>
-          <p className={`text-xl font-bold ${avgSafety == null ? "text-slate-400" : scoreColor(avgSafety)}`}>
-            {avgSafety == null ? "—" : `${avgSafety}%`}
-          </p>
-          <p className="text-xs text-slate-500">fleet avg</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Overdue PM</p>
-          <p className={`text-xl font-bold ${num(summary.overduePmVehicles) > 0 ? "text-amber-500" : "text-slate-400"}`}>
-            {num(summary.overduePmVehicles)}
-          </p>
-          <p className="text-xs text-slate-500">vehicles</p>
-        </div>
-      </div>
-    </div>
+      ))}
+      <span className={`ml-auto rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] ${evidenceReady ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+        {evidenceReady ? "Coverage ready" : "Coverage incomplete"}
+      </span>
+      {!evidenceReady && (
+        <details className="relative text-xs text-amber-800">
+          <summary className="cursor-pointer font-semibold">Coverage details</summary>
+          <div className="absolute right-0 z-20 mt-2 w-80 max-w-[80vw] rounded-lg border border-amber-200 bg-amber-50 p-3 shadow-lg">
+            <p className="font-semibold">Fleet health score unavailable until qualified evidence covers the current fleet.</p>
+            <p className="mt-1">Vehicle readiness: {readinessCoverage == null ? "unavailable" : `${readinessCoverage}%`} · Driver scores: {driverCoverage == null ? "unavailable" : `${driverCoverage}%`}</p>
+          </div>
+        </details>
+      )}
+    </section>
   );
 }
 
@@ -195,7 +192,7 @@ function InsightPanel({ insights }: { insights: AnyRecord[] }) {
           System Fleet Insight
         </span>
         <span className="ml-auto text-[10px] text-slate-400 font-medium">
-          Rule-based · Real data
+          Rule-based · Persisted records
         </span>
       </div>
       <ul className="divide-y divide-slate-100">
@@ -226,15 +223,17 @@ function VehicleMetricsStrip({ metrics }: { metrics: AnyRecord }) {
       {num(metrics.activeFaultCodes) > 0 && <span className="text-orange-600">{num(metrics.activeFaultCodes)} fault code{num(metrics.activeFaultCodes) > 1 ? "s" : ""}</span>}
       {num(metrics.overduePm) > 0 && <span className="text-amber-600">{num(metrics.overduePm)} PM overdue</span>}
       {num(metrics.openWorkOrders) > 0 && <span className="text-slate-600">{num(metrics.openWorkOrders)} open WO{num(metrics.openWorkOrders) > 1 ? "s" : ""}</span>}
-      {Boolean(metrics.deviceOffline) && <span className="text-slate-500">Device offline</span>}
     </div>
   );
 }
 
 function DriverMetricsStrip({ metrics }: { metrics: AnyRecord }) {
+  const safetyScore = optional(metrics.safetyScore);
   return (
     <div className="flex gap-4 px-4 py-2 bg-slate-50/70 text-xs text-slate-600 flex-wrap">
-      <span className={scoreColor(num(metrics.safetyScore, 100))}>Safety {num(metrics.safetyScore, 100)}%</span>
+      <span className={safetyScore == null ? "text-slate-400" : scoreColor(safetyScore)}>
+        {safetyScore == null ? "Safety score unavailable" : `Safety ${safetyScore}%`}
+      </span>
       {num(metrics.openSafetyEvents) > 0 && <span className="text-red-600">{num(metrics.openSafetyEvents)} open event{num(metrics.openSafetyEvents) > 1 ? "s" : ""}</span>}
       {num(metrics.overdueCoaching) > 0 && <span className="text-orange-600">{num(metrics.overdueCoaching)} coaching overdue</span>}
       {num(metrics.openCoachingTasks) > num(metrics.overdueCoaching) && (
@@ -271,6 +270,7 @@ function RiskCard({
   const metrics   = (item.metrics as AnyRecord) ?? {} as AnyRecord;
   const score     = num(item.priorityScore);
   const blocking  = Boolean(item.blockingDispatch);
+  const driverSafetyScore = optional(metrics.safetyScore);
 
 
   const body = (
@@ -316,8 +316,9 @@ function RiskCard({
         {isVehicle && num(metrics.activeFaultCodes) > 0 && <span className="text-orange-600">{num(metrics.activeFaultCodes)} fault code{num(metrics.activeFaultCodes) > 1 ? "s" : ""}</span>}
         {isVehicle && num(metrics.overduePm) > 0 && <span className="text-amber-600">{num(metrics.overduePm)} PM overdue</span>}
         {isVehicle && num(metrics.openWorkOrders) > 0 && <span className="text-slate-600">{num(metrics.openWorkOrders)} open WO{num(metrics.openWorkOrders) > 1 ? "s" : ""}</span>}
-        {isVehicle && Boolean(metrics.deviceOffline) && <span className="text-slate-500">Device offline</span>}
-        {isDriver && <span className={scoreColor(num(metrics.safetyScore, 100))}>Safety {num(metrics.safetyScore, 100)}%</span>}
+        {isDriver && <span className={driverSafetyScore == null ? "text-slate-400" : scoreColor(driverSafetyScore)}>
+          {driverSafetyScore == null ? "Safety score unavailable" : `Safety ${driverSafetyScore}%`}
+        </span>}
         {isDriver && num(metrics.openSafetyEvents) > 0 && <span className="text-red-600">{num(metrics.openSafetyEvents)} open event{num(metrics.openSafetyEvents) > 1 ? "s" : ""}</span>}
         {isDriver && num(metrics.overdueCoaching) > 0 && <span className="text-orange-600">{num(metrics.overdueCoaching)} coaching overdue</span>}
         {isDriver && num(metrics.openCoachingTasks) > num(metrics.overdueCoaching) && <span className="text-amber-600">{num(metrics.openCoachingTasks) - num(metrics.overdueCoaching)} pending coaching</span>}
@@ -680,12 +681,13 @@ function DriverDrawer({
   const coachingTasks = (data?.coachingTasks as AnyRecord[]) ?? [];
   const hos          = data?.hosStatus as AnyRecord | null;
   const assignment   = data?.currentAssignment as AnyRecord | null;
-  const safetyScore  = num(drv.safetyScore, 100);
+  const safetyScore  = optional(drv.safetyScore);
+  const riskScore    = optional(drv.riskScore);
   const driverInfoRows: [string, string][] = [
     ["Driver Code",   String(drv.driverCode ?? "—")],
     ["Status",        String(drv.status ?? "—")],
-    ["Safety Score",  `${safetyScore}%`],
-    ["Risk Score",    `${num(drv.riskScore)}%`],
+    ["Safety Score",  safetyScore == null ? "Unavailable" : `${safetyScore}%`],
+    ["Risk Score",    riskScore == null ? "Unavailable" : `${riskScore}%`],
     ["Vehicle",       String(drv.assignedVehicleCode ?? "Unassigned")],
     ["License",       String(drv.licenseNumber ?? "—")],
   ];
@@ -703,8 +705,8 @@ function DriverDrawer({
               {String(drv.fullName ?? `Driver #${driverId}`)}
             </h2>
           </div>
-          <div className={`text-sm font-bold ${scoreColor(safetyScore)} shrink-0`}>
-            Safety {safetyScore}%
+          <div className={`text-sm font-bold ${safetyScore == null ? "text-slate-400" : scoreColor(safetyScore)} shrink-0`}>
+            {safetyScore == null ? "Safety unavailable" : `Safety ${safetyScore}%`}
           </div>
           <button type="button" onClick={onClose} aria-label="Close driver detail" className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
             <X className="h-4 w-4" aria-hidden="true" />
@@ -725,7 +727,7 @@ function DriverDrawer({
               {driverInfoRows.map(([label, value]) => (
                 <div key={label} className="bg-slate-50 rounded-lg px-3 py-2">
                   <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">{label}</p>
-                  <p className={`text-sm font-semibold mt-0.5 ${label === "Safety Score" ? scoreColor(safetyScore) : "text-slate-800"}`}>
+                  <p className={`text-sm font-semibold mt-0.5 ${label === "Safety Score" && safetyScore != null ? scoreColor(safetyScore) : "text-slate-800"}`}>
                     {value}
                   </p>
                 </div>
@@ -894,30 +896,26 @@ function FilterBar({
     { label: "Medium", value: "medium" },
   ];
 
-  const chipBase = "px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer";
-  // teal, not slate-900: a global "legacy dark surfaces -> white" CSS rule forces any
-  // bg-slate-900 element's background to white, which left this active chip's white
-  // text on a white background (invisible). teal-600 isn't caught by that rule and
-  // matches the active-tab color used elsewhere in the app.
-  const chipActive = "bg-teal-600 text-white border-teal-600 shadow-sm";
-  const chipInactive = "bg-white text-slate-600 border-slate-200 hover:border-slate-400";
+  const chipBase = "btn-compact whitespace-nowrap";
 
   return (
-    <div className="flex flex-wrap gap-4 items-center">
-      <div className="flex gap-1.5">
+    <div className="panel flex flex-wrap items-center gap-x-4 gap-y-2 p-3" aria-label="Fleet health filters">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Entity</span>
         {catOpts.map((o) => (
-          <button key={o.value} type="button"
-            className={`${chipBase} ${category === o.value ? chipActive : chipInactive}`}
+          <button key={o.value} type="button" aria-pressed={category === o.value}
+            className={`${category === o.value ? "btn-primary" : "btn-ghost"} ${chipBase}`}
             onClick={() => onCategory(o.value)}>
             {o.label}
           </button>
         ))}
       </div>
-      <div className="h-4 w-px bg-slate-200" />
-      <div className="flex gap-1.5">
+      <div className="hidden h-5 w-px bg-slate-200 sm:block" />
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Severity</span>
         {sevOpts.map((o) => (
-          <button key={o.value} type="button"
-            className={`${chipBase} ${severity === o.value ? chipActive : chipInactive}`}
+          <button key={o.value} type="button" aria-pressed={severity === o.value}
+            className={`${severity === o.value ? "btn-primary" : "btn-ghost"} ${chipBase}`}
             onClick={() => onSeverity(o.value)}>
             {o.label}
           </button>
@@ -996,6 +994,7 @@ export function FleetHealthPage() {
 
   const summaryData = summary.data ?? {};
   const insights    = (summaryData.systemInsights as AnyRecord[]) ?? [];
+  const hasCompleteEvidence = summaryData.evidenceStatus === "calculated_from_complete_qualified_coverage";
 
   if (summary.isLoading) return <LoadingState />;
 
@@ -1009,7 +1008,7 @@ export function FleetHealthPage() {
   }
 
   return (
-    <div className="control-tower space-y-6">
+    <div className="control-tower space-y-3">
       {/* Drawers */}
       <VehicleDrawer
         vehicleId={vehicleDrawerId}
@@ -1023,12 +1022,12 @@ export function FleetHealthPage() {
         onActionTaken={() => qc.invalidateQueries({ queryKey: ["fleet-health"] })}
       />
 
-      <div className="space-y-6">
+      <div className="space-y-3">
         {/* Page header */}
         <PageHeader
           eyebrow="Operations"
           title="Fleet Health & Safety"
-          description="Dispatch readiness · Maintenance risk · Driver safety — unified operating view"
+          description="Recorded dispatch blocks · Maintenance risk · Driver safety — persisted operating view"
           actions={
             <button
               type="button"
@@ -1049,20 +1048,21 @@ export function FleetHealthPage() {
 
         {/* Urgent actions — top critical/high risks */}
         {topUrgent.length > 0 && (
-          <div className="bg-red-50 border border-red-200 rounded-xl overflow-hidden">
-            <div className="flex items-center gap-2 px-5 py-3 border-b border-red-200">
+          <details className="rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+            <summary className="flex cursor-pointer list-none items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-red-600" />
               <span className="text-xs font-bold uppercase tracking-widest text-red-700">
                 Urgent Actions Required
               </span>
-              <span className="ml-auto text-xs text-red-500">{topUrgent.length} item{topUrgent.length > 1 ? "s" : ""}</span>
-            </div>
-            <div className="px-5 py-3 space-y-2">
+              <span className="min-w-0 flex-1 truncate text-xs text-red-700">{String(topUrgent[0]?.displayName ?? "")} · {((topUrgent[0]?.reasons as string[]) ?? []).slice(0, 1).join("")}</span>
+              <span className="text-xs font-semibold text-red-600">{topUrgent.length} item{topUrgent.length > 1 ? "s" : ""}</span>
+            </summary>
+            <div className="mt-2 space-y-2 border-t border-red-200 pt-2">
               {topUrgent.map((item, i) => {
                 const isVehicle = item.entityType === "vehicle";
                 const id        = num(item.entityId);
                 return (
-                  <div key={i} className="flex items-center gap-3 bg-white border border-red-200 rounded-lg px-4 py-2.5">
+                  <div key={i} className="flex items-center gap-3 rounded-lg border border-red-200 bg-white px-3 py-2">
                     <span className={`h-2 w-2 rounded-full shrink-0 ${sevDot(String(item.severity))}`} />
                     {isVehicle
                       ? <Truck className="h-4 w-4 text-slate-400 shrink-0" />
@@ -1087,7 +1087,7 @@ export function FleetHealthPage() {
                 );
               })}
             </div>
-          </div>
+          </details>
         )}
 
         {/* Filters */}
@@ -1109,17 +1109,21 @@ export function FleetHealthPage() {
             <p className="text-sm text-red-600">Failed to load risk data. Check backend connectivity.</p>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
-            <CheckCircle className="h-10 w-10 text-emerald-400 mx-auto mb-3" />
+          <div className="panel p-8 text-center">
+            {hasCompleteEvidence
+              ? <CheckCircle className="h-10 w-10 text-emerald-400 mx-auto mb-3" />
+              : <AlertTriangle className="h-10 w-10 text-amber-400 mx-auto mb-3" />}
             <p className="text-base font-semibold text-slate-700 mb-1">No risk items match the current filter</p>
             <p className="text-sm text-slate-500">
               {allRisks.length === 0
-                ? "All vehicles and drivers are currently within acceptable operational parameters."
+                ? hasCompleteEvidence
+                  ? "No open risk was found in the evidence-qualified records for the current scope."
+                  : "Current evidence coverage is incomplete, so an empty risk list does not confirm that vehicles and drivers are within acceptable parameters."
                 : "Try adjusting the severity or category filters."}
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             {/* Vehicle risks */}
             {(categoryFilter === "all" || categoryFilter === "vehicle") && vehicleRisks.length > 0 && (
               <div className="space-y-3">
@@ -1181,8 +1185,8 @@ export function FleetHealthPage() {
                 </div>
                 <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
                   <CheckCircle className="h-8 w-8 text-emerald-400 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-600 mb-1">All drivers within normal parameters</p>
-                  <p className="text-xs text-slate-400">No drivers currently exceed the risk threshold.</p>
+                  <p className="text-sm font-semibold text-slate-600 mb-1">No driver risk records in this result</p>
+                  <p className="text-xs text-slate-400">Missing or unmeasured safety evidence is not treated as a normal result.</p>
                 </div>
               </div>
             )}
@@ -1194,8 +1198,8 @@ export function FleetHealthPage() {
                 </div>
                 <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
                   <CheckCircle className="h-8 w-8 text-emerald-400 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-600 mb-1">All vehicles within normal parameters</p>
-                  <p className="text-xs text-slate-400">No vehicles currently exceed the risk threshold.</p>
+                  <p className="text-sm font-semibold text-slate-600 mb-1">No vehicle risk records in this result</p>
+                  <p className="text-xs text-slate-400">Only persisted defects, verified faults, maintenance, and out-of-service records create cards.</p>
                 </div>
               </div>
             )}
@@ -1245,7 +1249,7 @@ export function FleetHealthPage() {
 
         {/* Footer note */}
         <p className="text-xs text-slate-400 text-center pb-4">
-          System Fleet Insight — rule-based guidance from live operational data.
+          System Fleet Insight — rule-based guidance from evidence-qualified operational records.
           Not AI-generated. Updated every 60 seconds.
         </p>
       </div>

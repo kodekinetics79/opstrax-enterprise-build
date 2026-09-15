@@ -61,6 +61,7 @@ public sealed class TelemetryBranchAuthorizationTests
             Assert.Equal(deviceA, Convert.ToInt64(Assert.Single(await telemetry.ListDevicesAsync(company, branchA))["id"]));
 
             var summary = await telemetry.BuildSummaryAsync(company, branchA);
+            Assert.False(summary.ContainsKey("error"), summary.GetValueOrDefault("errorDetail")?.ToString());
             var alerts = Assert.IsAssignableFrom<IReadOnlyList<Dictionary<string, object?>>>(summary["alerts"]);
             Assert.Contains(alerts, row => row["message"]?.ToString() == "branch-a-alert");
             Assert.DoesNotContain(alerts, row => row["message"]?.ToString() == "branch-b-alert");

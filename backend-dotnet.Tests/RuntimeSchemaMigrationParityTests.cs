@@ -322,7 +322,8 @@ public sealed class RuntimeSchemaMigrationParityTests
     //   database/init/001_schema.sql + 002_seed.sql + 004_jobs_execution.sql,
     //   the two RLS preflight files the runner hard-requires,
     //   every entry of the runner's MIGRATIONS array (telematics/* included),
-    //   the terminal cutover files the runner applies with -f after the array.
+    //   the terminal cutover files the runner applies directly or through its bounded
+    //   lock-retry helper after the array.
     // Everything else in database/migrations/ is applied by nothing — see
     // MigrationRunnerEnrollmentParityTests.UnenrolledOrphans.
     private static SchemaIndex EnrolledMigrationIndex()
@@ -353,7 +354,9 @@ public sealed class RuntimeSchemaMigrationParityTests
                 ? Path.Combine(root, "database", entry[3..].Replace('/', Path.DirectorySeparatorChar) + ".sql")
                 : Path.Combine(root, "database", "migrations", entry.Replace('/', Path.DirectorySeparatorChar) + ".sql"));
 
-        foreach (Match m in Regex.Matches(runner, @"-f (database/migrations/[A-Za-z0-9_./]+\.sql)"))
+        foreach (Match m in Regex.Matches(
+                     runner,
+                     @"(?:-f|apply_migration_file)\s+(database/migrations/[A-Za-z0-9_./]+\.sql)"))
             files.Add(Path.Combine(root, m.Groups[1].Value.Replace('/', Path.DirectorySeparatorChar)));
 
         var pairs = new HashSet<(string, string)>();

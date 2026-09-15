@@ -2,10 +2,11 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import { MessageSquare, Send, Star, Truck } from "lucide-react";
-import { AiInsightCard, KpiCard, LoadingState, RiskBadge, StatusBadge, exportCsv } from "@/components/ui";
+import { AiInsightCard, EmptyState, ErrorState, KpiCard, LoadingState, RiskBadge, StatusBadge, exportCsv } from "@/components/ui";
 import { useCustomerEtaRecommendations, useCustomerEtaSummary, useCustomerTracking } from "@/hooks/useBatch2";
 import { customerEtaApi } from "@/services/customerEtaApi";
 import { apiClient, unwrap } from "@/services/apiClient";
+import { formatDateTime } from "@/utils/formatters";
 import type { AnyRecord } from "@/types";
 
 // ── Job row ───────────────────────────────────────────────────────────────────
@@ -19,9 +20,10 @@ function JobRow({
   onSend: (id: string | number) => void;
   sending: boolean;
 }) {
-  const sla = String(job.slaStatus ?? job.sla_status ?? "On Track");
-  const confidence = String(job.etaConfidenceLevel ?? job.eta_confidence_level ?? "High");
-  const needsUpdate = String(job.customerUpdateStatus ?? job.customer_update_status ?? "") !== "Sent";
+  const sla = String(job.slaStatus ?? job.sla_status ?? "Unknown");
+  const confidence = String(job.etaConfidenceLevel ?? job.eta_confidence_level ?? "Unavailable");
+  const updateStatus = String(job.customerUpdateStatus ?? job.customer_update_status ?? "Unrecorded");
+  const hasEta = job.eta != null && String(job.eta).trim() !== "";
   const isAtRisk = sla === "At Risk" || sla === "Delayed";
 
   return (
@@ -46,33 +48,38 @@ function JobRow({
       </td>
       <td className="px-4 py-3 text-sm text-slate-700">{String(job.customerName ?? job.customer_name ?? "--")}</td>
       <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
-      <td className="px-4 py-3 text-sm text-slate-700">{String(job.eta ?? "--")}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-700">{hasEta ? formatDateTime(String(job.eta)) : "—"}</td>
       <td className="px-4 py-3"><RiskBadge risk={sla} /></td>
       <td className="px-4 py-3">
         <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
-          confidence === "High" || confidence === "At Risk"
-            ? confidence === "At Risk" ? "bg-red-50 border-red-200 text-red-700" : "bg-teal-50 border-teal-200 text-teal-700"
-            : "bg-amber-50 border-amber-200 text-amber-700"
+          confidence === "High"
+            ? "bg-teal-50 border-teal-200 text-teal-700"
+            : confidence === "Medium" || confidence === "Low"
+              ? "bg-amber-50 border-amber-200 text-amber-700"
+              : "bg-slate-50 border-slate-200 text-slate-500"
         }`}>
           {confidence}
         </span>
       </td>
       <td className="px-4 py-3">
-        {needsUpdate ? (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-medium">Needed</span>
+        {updateStatus === "Sent" ? (
+          <span className="text-xs text-slate-500">Recorded in-app</span>
+        ) : updateStatus === "Queued" ? (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700 font-medium">Queued for provider</span>
         ) : (
-          <span className="text-xs text-slate-400">Sent</span>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-medium">Needed</span>
         )}
       </td>
       <td className="px-4 py-3 text-sm text-slate-500">{String(job.driverName ?? job.driver_name ?? "--")}</td>
-      <td className="px-4 py-3 text-right">
+      <td className="sticky right-0 bg-inherit px-4 py-3 text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,.35)]">
         <button
           type="button"
-          disabled={sending}
+          disabled={sending || !hasEta}
           onClick={() => onSend(job.id as string | number)}
+          title={!hasEta ? "A persisted ETA is required before an update can be queued." : "Queue an ETA update and create a secure tracking link."}
           className="text-xs px-3 py-1 rounded-md bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 transition-colors disabled:opacity-50"
         >
-          {sending ? "Sending…" : "Send Update"}
+          {sending ? "Queuing…" : hasEta ? "Queue Update" : "ETA unavailable"}
         </button>
       </td>
     </tr>
@@ -98,7 +105,7 @@ function CommRow({ comm }: { comm: AnyRecord }) {
       <td className="px-4 py-3 text-xs text-slate-500 max-w-60 truncate">{String(comm.message ?? "--")}</td>
       <td className="px-4 py-3"><StatusBadge status={comm.status} /></td>
       <td className="px-4 py-3 text-xs text-slate-400">
-        {comm.sentAt ? new Date(String(comm.sentAt)).toLocaleString() : "--"}
+        {comm.sentAt ? formatDateTime(String(comm.sentAt)) : "—"}
       </td>
     </tr>
   );
@@ -122,25 +129,29 @@ export function CustomerEtaPage() {
     onSuccess: (data, jobId) => {
       qc.invalidateQueries({ queryKey: ["customer-eta"] });
       setSendingId(null);
-      const token = (data as AnyRecord | undefined)?.trackingToken;
+      const result = data as AnyRecord | undefined;
+      const token = result?.trackingToken;
+      const deliveryStatus = String(result?.deliveryStatus ?? "Queued");
       if (token) {
         const url = `${window.location.origin}/eta/${String(token)}`;
         void navigator.clipboard?.writeText(url);
-        showToast(`ETA sent for job ${String(jobId)} — secure tracking link copied`);
+        showToast(deliveryStatus === "Sent"
+          ? `ETA recorded in-app for job ${String(jobId)} — secure tracking link copied`
+          : `ETA queued for provider delivery for job ${String(jobId)} — secure tracking link copied`);
       } else {
-        showToast(`ETA update sent for job ${String(jobId)}`);
+        showToast(`ETA processing completed for job ${String(jobId)} with status ${deliveryStatus}`);
       }
     },
-    onError: () => setSendingId(null),
+    onError: () => { setSendingId(null); showToast("ETA update could not be queued. No delivery is claimed."); },
   });
 
   const bulkSend = useMutation({
     mutationFn: () => unwrap<AnyRecord>(apiClient.post("/api/dispatch/send-eta-updates", {})),
-    onSuccess: () => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["customer-eta"] });
-      showToast("ETA updates sent to all at-risk jobs");
+      showToast(`Bulk processing completed: ${String(result.queued ?? 0)} queued, ${String(result.failed ?? 0)} failed. Provider delivery is not yet confirmed.`);
     },
-    onError: () => showToast("Failed to send bulk ETA updates — please try again"),
+    onError: () => showToast("Bulk ETA processing failed. No provider delivery is claimed."),
   });
 
   function showToast(msg: string) {
@@ -154,6 +165,7 @@ export function CustomerEtaPage() {
   }
 
   if (summary.isLoading) return <LoadingState />;
+  if (summary.isError) return <ErrorState message="Customer ETA records could not be loaded. No operational status has been inferred." />;
 
   const data = (summary.data ?? {}) as AnyRecord;
   const s = (data.summary as AnyRecord) ?? data;
@@ -167,9 +179,10 @@ export function CustomerEtaPage() {
     );
   });
   const comms = (commsQ.data ?? []) as AnyRecord[];
+  const recommendationRows = ((recommendations.data as AnyRecord[]) ?? []).slice(0, 4);
 
   return (
-    <div className="flex flex-col gap-6 py-6">
+    <div className="page-stack">
       {toast && (
         <div className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">{toast}</div>
       )}
@@ -177,7 +190,7 @@ export function CustomerEtaPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Customer ETA Portal</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Real-time delivery visibility, proactive communication and customer experience management</p>
+          <p className="text-sm text-slate-500 mt-0.5">Recorded delivery visibility, persisted communications and customer experience records</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -194,44 +207,36 @@ export function CustomerEtaPage() {
             onClick={() => bulkSend.mutate()}
           >
             <Send className="w-4 h-4" />
-            {bulkSend.isPending ? "Sending…" : "Bulk Send Updates"}
+            {bulkSend.isPending ? "Queuing…" : "Bulk Queue Updates"}
           </button>
         </div>
       </div>
 
       {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
+      <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Customer ETA summary">
         {[
           { label: "Tracked Jobs",        val: s.totalTracked ?? s.total_tracked ?? jobs.length },
-          { label: "ETA Risk",            val: s.etaRisk ?? s.eta_risk ?? 0,           accent: "text-red-600" },
-          { label: "Updates Needed",      val: s.updatesNeeded ?? s.updates_needed ?? 0, accent: "text-amber-600" },
-          { label: "Communications Sent", val: s.communicationsSent ?? s.communications_sent ?? 0, accent: "text-teal-600" },
-          { label: "Pending Comms",       val: s.pendingCommunications ?? s.pending_communications ?? 0, accent: "text-amber-600" },
-          { label: "Experience Score",    val: s.customerExperienceScore ?? s.customer_experience_score ?? "--", accent: "text-violet-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-30">
-            <span className={`text-2xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
+          { label: "ETA Risk Records",    val: s.etaRisk ?? s.eta_risk ?? "—" },
+          { label: "Updates Needed",      val: s.updatesNeeded ?? s.updates_needed ?? "—" },
+          { label: "Recorded In-App",     val: s.communicationsSent ?? s.communications_sent ?? "—" },
+          { label: "Queued for Provider", val: s.pendingCommunications ?? s.pending_communications ?? "—" },
+          { label: "Feedback Rating",     val: s.averageFeedbackRating ?? s.average_feedback_rating ?? "—" },
+        ].map(({ label, val }) => <KpiCard compact key={label} label={label} value={String(val)} />)}
       </div>
 
-      {/* ETA Wow Signals */}
-      <div className="panel flex flex-wrap gap-2 items-center p-4">
-        <span className="text-xs font-semibold text-slate-600 mr-2">ETA differentiators:</span>
-        {["Branded tracking link", "ETA confidence level", "SLA risk explanation", "Real-time driver location", "POD preview", "Customer satisfaction rating"].map((x) => (
-          <span key={x} className="text-xs px-2.5 py-1 rounded-full bg-teal-50 border border-teal-200 text-teal-700 font-medium">{x}</span>
-        ))}
+      <div className="panel p-4 text-sm text-slate-600">
+        Counts come from persisted jobs, communication records and customer feedback in the current tenant and branch scope. Queued messages are not presented as provider-delivered.
       </div>
 
       {/* Tab bar + search */}
-      <div className="panel flex gap-2 items-center">
+      <div className="panel flex flex-wrap items-center gap-2 p-3">
         {([["jobs", "At-Risk Jobs"], ["comms", "Communication Log"]] as const).map(([key, label]) => (
           <button
             key={key}
             type="button"
+            aria-pressed={tab === key}
             onClick={() => setTab(key)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+            className={`min-h-11 whitespace-nowrap rounded-lg border px-4 py-1.5 text-sm font-medium transition-colors sm:min-h-9 ${
               tab === key ? "bg-teal-50 border-teal-300 text-teal-700" : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
             }`}
           >
@@ -244,30 +249,31 @@ export function CustomerEtaPage() {
         {tab === "jobs" && (
           <input
             type="search"
+            aria-label="Search ETA jobs"
             placeholder="Search jobs, customers…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-52"
+            className="min-h-11 min-w-52 flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 sm:ml-auto sm:min-h-9 sm:max-w-72"
           />
         )}
       </div>
 
       {/* Jobs table */}
       {tab === "jobs" && (
-        <div className="grid gap-6 xl:grid-cols-[1fr_300px]">
+        <div className={recommendations.isError || recommendationRows.length > 0 ? "grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_280px]" : "min-w-0"}>
           <div className="panel overflow-hidden p-0">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[1040px] text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50">
-                    {["Job", "Customer", "Status", "ETA", "SLA", "Confidence", "Update", "Driver", ""].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
+                    {["Job", "Customer", "Status", "ETA", "SLA", "Confidence", "Update", "Driver", ""].map((h, index) => (
+                      <th key={h || "actions"} className={`${index === 8 ? "sticky right-0 bg-slate-50 shadow-[-8px_0_12px_-12px_rgba(15,23,42,.35)]" : ""} whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {jobs.length === 0 ? (
-                    <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400 text-sm">No at-risk jobs right now</td></tr>
+                    <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400 text-sm">No ETA action records in the current result.</td></tr>
                   ) : (
                     jobs.map((job, i) => (
                       <JobRow
@@ -284,12 +290,12 @@ export function CustomerEtaPage() {
           </div>
 
           {/* AI recommendations */}
-          <div className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold text-slate-700">AI recommendations</h2>
-            {((recommendations.data as AnyRecord[]) ?? []).slice(0, 4).map((x) => (
-              <AiInsightCard key={String(x.id)} insight={x} />
-            ))}
-          </div>
+          {(recommendations.isError || recommendationRows.length > 0) && <aside className="flex flex-col gap-3">
+            <h2 className="text-sm font-semibold text-slate-700">Grounded recommendations</h2>
+            {recommendations.isError ? (
+              <ErrorState message="Recommendation records could not be loaded." />
+            ) : recommendationRows.map((x) => <AiInsightCard key={String(x.id)} insight={x} />)}
+          </aside>}
         </div>
       )}
 
@@ -306,7 +312,9 @@ export function CustomerEtaPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {comms.length === 0 ? (
+                {commsQ.isError ? (
+                  <tr><td colSpan={7} className="px-4 py-8"><ErrorState message="Communication records could not be loaded." /></td></tr>
+                ) : comms.length === 0 ? (
                   <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400 text-sm">No communications yet</td></tr>
                 ) : (
                   comms.map((comm, i) => (
@@ -330,8 +338,7 @@ export function PublicEtaTrackingPage() {
   const tracking = useCustomerTracking(params.trackingCode);
   const feedback = useMutation({
     mutationFn: () =>
-      customerEtaApi.feedback(String((tracking.data?.tracking as AnyRecord)?.id), {
-        trackingCode: params.trackingCode,
+      customerEtaApi.publicFeedback(String(params.trackingCode), {
         rating,
         sentiment: rating >= 4 ? "Positive" : rating >= 3 ? "Neutral" : "Negative",
         comments: "",
@@ -348,7 +355,7 @@ export function PublicEtaTrackingPage() {
       <section className="mx-auto max-w-5xl px-6 py-10">
         <p className="text-xs font-bold uppercase tracking-[0.28em] text-teal-700">OpsTrax Transport Management Solution</p>
         <h1 className="mt-3 text-4xl font-semibold text-slate-950">Delivery tracking</h1>
-        <p className="mt-2 text-slate-600">Connected transport. Intelligent control. Enterprise execution.</p>
+        <p className="mt-2 text-slate-600">Status, ETA and proof fields below reflect the latest persisted shipment record available to this tracking link.</p>
         <div className="mt-8 grid gap-5 lg:grid-cols-[1fr_340px]">
           <div className="panel p-6">
             <div className="flex items-start justify-between gap-4">
@@ -359,8 +366,8 @@ export function PublicEtaTrackingPage() {
               <StatusBadge status={row.status} />
             </div>
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <KpiCard label="Current ETA" value={String(row.eta || "Pending")} icon={<Truck />} status={String(row.etaConfidenceLevel ?? row.eta_confidence_level ?? "Medium")} />
-              <KpiCard label="ETA Confidence" value={String(row.etaConfidenceLevel ?? row.eta_confidence_level)} icon={<Star />} status={String(row.etaConfidenceLevel ?? "Medium")} />
+              <KpiCard label="Recorded ETA" value={row.eta ? formatDateTime(String(row.eta)) : "Unavailable"} icon={<Truck />} status={String(row.etaConfidenceLevel ?? row.eta_confidence_level ?? "Unknown")} />
+              <KpiCard label="Recorded ETA Confidence" value={String(row.etaConfidenceLevel ?? row.eta_confidence_level ?? "Unavailable")} icon={<Star />} status={String(row.etaConfidenceLevel ?? row.eta_confidence_level ?? "Unknown")} />
             </div>
             <div className="mt-8 grid gap-3 sm:grid-cols-5">
               {timeline.map((item) => (
@@ -371,19 +378,21 @@ export function PublicEtaTrackingPage() {
             </div>
             <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <h3 className="text-sm font-semibold text-slate-700">Proof of Delivery Preview</h3>
-              <p className="mt-3 text-sm text-slate-700">Proof status: {String(row.proofStatus ?? row.proof_status ?? "Pending")}</p>
+              <p className="mt-3 text-sm text-slate-700">Proof status: {String(row.proofStatus ?? row.proof_status ?? "Unavailable")}</p>
               <p className="mt-1 text-sm text-slate-500">Signature/photo links available once proof is captured.</p>
             </div>
           </div>
           <aside className="panel p-6">
             <h2 className="text-sm font-semibold text-slate-700">Customer Message</h2>
-            <p className="mt-3 text-slate-700">{String(data?.customerMessage ?? "")}</p>
+            <p className="mt-3 text-slate-700">{String(data?.customerMessage ?? "No customer message recorded.")}</p>
             <div className="mt-6">
               <RiskBadge risk={row.slaStatus ?? row.sla_status} />
               <p className="mt-3 text-sm text-slate-600">
                 {(row.slaStatus ?? row.sla_status) === "At Risk"
                   ? "This service is being actively monitored due to ETA variance."
-                  : "This service is tracking within the expected SLA window."}
+                  : (row.slaStatus ?? row.sla_status) === "On Track"
+                    ? "The persisted shipment record reports this service within its expected SLA window."
+                    : "No SLA assessment is available for this shipment record."}
               </p>
             </div>
             <div className="mt-6">
@@ -400,11 +409,13 @@ export function PublicEtaTrackingPage() {
               <button
                 type="button"
                 className="btn-primary mt-3 flex items-center gap-2"
+                disabled={feedback.isPending || feedback.isSuccess}
                 onClick={() => feedback.mutate()}
               >
                 <MessageSquare className="w-4 h-4" />
-                Submit Feedback
+                {feedback.isPending ? "Submitting…" : feedback.isSuccess ? "Feedback received" : "Submit Feedback"}
               </button>
+              {feedback.isError && <p className="mt-2 text-sm text-red-700">Feedback could not be submitted. Please try again.</p>}
             </div>
           </aside>
         </div>

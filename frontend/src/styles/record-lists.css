@@ -1,0 +1,95 @@
+/* Dense back-office records. Forms and portal touch targets keep their sizing. */
+.tenant-workspace .page-header { padding: 10px 14px; }
+.tenant-workspace .page-header__layout { gap: 8px 14px; }
+.tenant-workspace .page-header__eyebrow { padding: 2px 7px; font-size: 9px; }
+.tenant-workspace .page-header__eyebrow + .page-header__title { margin-top: 4px; }
+.tenant-workspace .page-header__title { font-size: clamp(20px, 1.4vw, 24px); }
+.tenant-workspace .page-header__description { margin-top: 3px; font-size: 12px; line-height: 1.4; }
+.tenant-workspace .page-stack { gap: 10px; }
+.tenant-workspace .kpi-card { padding: 8px 12px; }
+.tenant-workspace .kpi-card__value { font-size: 20px; }
+.tenant-workspace .kpi-card__value-row { margin-top: 3px; }
+.data-table { min-width: 0; padding: 0; }
+.data-table__scroll { min-width: 0; overflow: auto; max-height: clamp(240px, 60dvh, 760px); scrollbar-width: thin; scrollbar-color: #9ab9c9 #edf4f8; overscroll-behavior: contain; }
+.data-table__scroll:focus-visible { outline: 2px solid #0d9488; outline-offset: -2px; }
+.data-table__cell { padding: 6px 12px; line-height: 18px; }
+.data-table tbody tr:nth-child(even) { background: #f8fbfd; }
+.data-table tbody tr:hover { background: #edf9f7; }
+.data-table__actions-heading { padding: 6px 12px; font-size: 11px; color: #64748b; text-transform: uppercase; }
+.data-table__actions { width: 1%; white-space: nowrap; }
+.data-table__pager { background: #f8fbfd; padding: 6px 12px; }
+.data-table__pager select { width: auto; min-height: 30px; padding: 4px 8px; }
+.data-table__toolbar { padding: 6px 12px; }
+/* Native record tables follow the same density without touching nested dialogs. */
+@media (min-width: 640px) and (pointer: fine) {
+  .tenant-workspace table:not([role="presentation"]) :is(th, td)[class*="py-3"],
+  .tenant-workspace table:not([role="presentation"]) :is(th, td)[class*="py-4"] { padding-top: 6px; padding-bottom: 6px; }
+  .tenant-workspace .data-table__actions .btn-compact { min-height: 30px; padding: 4px 9px; }
+}
+@media (pointer: coarse), (max-width: 639px) {
+  .data-table__cell { padding-top: 8px; padding-bottom: 8px; }
+  .data-table :is(button, select) { min-height: 44px; }
+  .data-table__scroll { max-height: 65dvh; }
+  .data-table__pager { gap: 8px; }
+}
+.tenant-workspace .console-rail { padding: 10px 14px; }
+.tenant-workspace .console-stat { padding: 8px 12px; }
+.tenant-workspace .console-stat .fc-blob { width: 28px; height: 28px; }
+.tenant-workspace .console-stat > div:nth-child(2) { font-size: 20px; }
+.tenant-workspace .console-nav > div { display: flex; overflow-x: auto; }
+.tenant-workspace .console-nav button { flex: 1 0 auto; min-height: 36px; }
+.tenant-workspace .console-nav button > div:last-child:not(:first-child) { display: none; }
+@media (pointer: coarse), (max-width: 639px) {
+  .tenant-workspace .console-nav button { min-height: 44px; }
+}
+
+.tenant-workspace :is(section, div):has(> table) { min-width: 0; max-width: 100%; overflow: auto; max-height: 60dvh; scrollbar-width: thin; }
+.tenant-workspace table:has(tr > th:nth-child(6)) { min-width: 680px; }
+.tenant-workspace table:has(tr > th:nth-child(6)) thead { position: sticky; top: 0; z-index: 1; background: #f1f6fa; }
+
+/* Compact record drawers: one profile, with history available on demand. */
+.record-detail-drawer { width:100%; max-width:640px; height:100%; display:flex; flex-direction:column; background:#f8fafc; border-left:1px solid #d8e3ed; box-shadow:-12px 0 36px #0f172a22; }
+.record-detail-head { flex:none; padding:14px 16px; background:linear-gradient(135deg,#fff,#effaf9); border-bottom:1px solid #d8e3ed; }
+.record-detail-head .btn-primary,.record-detail-head .btn-ghost { min-height:32px; padding:5px 10px; font-size:12px; }
+.record-detail-body { flex:1; min-height:0; overflow:auto; padding:12px 16px; scrollbar-width:thin; }
+.record-detail-fields { margin:6px 0 14px; }
+.record-detail-fields > div { display:grid; grid-template-columns:minmax(110px,35%) 1fr; gap:12px; padding:6px 0; border-bottom:1px solid #e2e8f0; font-size:13px; }
+.record-detail-fields dt,.record-detail-scores dt { color:#64748b; }
+.record-detail-fields dd { margin:0; overflow-wrap:anywhere; color:#1e293b; }
+.record-detail-scores { display:flex; flex-wrap:wrap; gap:6px 16px; padding:10px 12px; margin-bottom:12px; border:1px solid #d8e3ed; border-radius:12px; background:linear-gradient(135deg,#fff,#eaf7f4); box-shadow:0 2px 4px #0f172a0b,inset 0 1px #fff; }
+.record-detail-scores dt { font-size:11px; }.record-detail-scores dd { margin:0; font-size:18px; font-weight:700; color:#0f172a; }
+.record-detail-devices { padding:10px 12px; margin-bottom:12px; border:1px solid #cde7e3; border-radius:12px; background:#fff; box-shadow:0 2px 4px #0f172a0b; }
+.record-detail-section { padding:10px 12px; margin:6px 0; border:1px solid #d8e3ed; border-radius:10px; background:#fff; }
+.record-detail-section > summary { cursor:pointer; font-size:13px; font-weight:600; color:#1e293b; }.record-detail-section > summary span { float:right; color:#64748b; font-size:12px; }
+.record-detail-section table { font-size:12px; }.record-detail-section > div { max-height:320px; overflow:auto; }
+@media (pointer:coarse) { .record-detail-head .btn-primary,.record-detail-head .btn-ghost { min-height:44px; } }
+
+/* Selected vehicle: evidence remains readable without decorative field buttons. */
+.vehicle-property-list { display: grid; grid-template-columns: minmax(105px, .85fr) minmax(0, 1.5fr); gap: 0; font-size: 12px; }
+.vehicle-property-list dt, .vehicle-property-list dd { margin: 0; padding: 6px 0; border-bottom: 1px solid #eef2f6; overflow-wrap: anywhere; }
+.vehicle-property-list dt { color: #64748b; padding-right: 12px; }
+.vehicle-property-list dd { color: #0f172a; font-weight: 500; }
+.vehicle-summary-strip > div { border: 0; background: transparent; padding: 6px 10px; }
+.vehicle-summary-strip .deck-track { display: none; }
+@media (pointer: coarse) { .vehicle-workspace button, .vehicle-workspace summary { min-height: 44px; } }
+.vehicle-workspace .record-detail-section > summary span { float: none; }
+.vehicle-module > .page-stack { flex: 1; min-height: 0; }
+
+/* Roster chrome stays small; the contained list owns the available height. */
+.tenant-workspace .vehicle-roster-shell,
+.tenant-workspace .vehicle-roster-shell > .page-stack { gap: 6px; }
+.vehicle-roster-shell > .page-header { padding: 6px 12px; }
+.vehicle-roster-shell > nav { padding: 2px; }
+.vehicle-roster-shell .vehicle-summary-strip > div { display: flex; align-items: center; gap: 8px; padding: 4px 8px; }
+.vehicle-roster-shell .vehicle-summary-strip dd { margin-top: 0; }
+.vehicle-roster-shell .vehicle-summary-strip dd > span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.vehicle-roster-shell .vehicle-summary-strip dt { min-width: 0; }
+.vehicle-roster-shell .vehicle-summary-strip dt span { overflow-wrap: anywhere; }
+@media (min-width: 1024px) {
+  .vehicle-roster-shell > .page-header .page-header__layout > div:first-child { display: flex; align-items: baseline; gap: 12px; flex-basis: auto; }
+  .vehicle-roster-shell > .page-header .page-header__description { margin-top: 0; }
+}
+@media (min-width: 640px) and (pointer: fine) {
+  .vehicle-roster-shell > nav button,
+  .vehicle-roster-shell > .page-header button { min-height: 30px; padding-top: 4px; padding-bottom: 4px; }
+}

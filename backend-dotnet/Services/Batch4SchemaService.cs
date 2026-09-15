@@ -60,6 +60,8 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
         new("safety_events", "deleted_at",     "TIMESTAMPTZ NULL"),
         new("safety_events", "branch_id",      "BIGINT NULL"),
         new("safety_events", "row_version",    "BIGINT NOT NULL DEFAULT 0"),
+        new("safety_events", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("safety_events", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
 
         new("dashcam_events", "event_number", "VARCHAR(80) NULL"),
         new("dashcam_events", "event_type", "VARCHAR(120) NULL"),
@@ -109,6 +111,8 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
         new("coaching_tasks", "effectiveness_formula_version", "VARCHAR(40) NULL"),
         new("coaching_tasks", "effectiveness_evaluated_at", "TIMESTAMPTZ NULL"),
         new("coaching_tasks", "effectiveness_observation_json", "JSONB NULL"),
+        new("coaching_tasks", "data_origin", "VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("coaching_tasks", "verification_status", "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
         new("coaching_notes", "branch_id", "BIGINT NULL"),
         new("driver_safety_scorecards", "branch_id", "BIGINT NULL"),
         new("vehicle_safety_scorecards", "branch_id", "BIGINT NULL"),
@@ -147,7 +151,8 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
             title VARCHAR(220) NOT NULL, description TEXT NULL, ai_script TEXT NULL, driver_acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
             acknowledged_at TIMESTAMPTZ NULL, completed_at TIMESTAMPTZ NULL, before_safety_score DECIMAL(6,2) NULL, after_safety_score DECIMAL(6,2) NULL,
             effectiveness_score DECIMAL(6,2) NULL, due_at TIMESTAMPTZ NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL)",
+            updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL,
+            data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified', verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified')",
         @"CREATE TABLE IF NOT EXISTS coaching_notes (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, coaching_task_id BIGINT NOT NULL,
             note_type VARCHAR(80) NOT NULL DEFAULT 'Manager Note', note_text TEXT NOT NULL, created_by_user_id BIGINT NULL,
@@ -165,13 +170,13 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
             evidence_type VARCHAR(120) NOT NULL, evidence_title VARCHAR(220) NOT NULL, evidence_url VARCHAR(400) NULL, content_hash VARCHAR(64) NULL, evidence_json JSONB NULL,
             source_entity_type VARCHAR(100) NULL, source_entity_id BIGINT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
         @"CREATE TABLE IF NOT EXISTS evidence_packages (
-            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, package_number VARCHAR(80) NOT NULL,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, branch_id BIGINT NULL, package_number VARCHAR(80) NOT NULL,
             incident_id BIGINT NULL, safety_event_id BIGINT NULL, dashcam_event_id BIGINT NULL, driver_id BIGINT NULL, vehicle_id BIGINT NULL, job_id BIGINT NULL,
             package_type VARCHAR(120) NOT NULL DEFAULT 'Insurance Evidence', status VARCHAR(80) NOT NULL DEFAULT 'Draft', locked BOOLEAN NOT NULL DEFAULT FALSE,
             export_url VARCHAR(400) NULL, summary TEXT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL)",
         @"CREATE TABLE IF NOT EXISTS evidence_package_items (
-            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, evidence_package_id BIGINT NOT NULL,
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, branch_id BIGINT NULL, evidence_package_id BIGINT NOT NULL,
             item_type VARCHAR(120) NOT NULL, item_title VARCHAR(220) NOT NULL, item_url VARCHAR(400) NULL, item_json JSONB NULL,
             source_entity_type VARCHAR(100) NULL, source_entity_id BIGINT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
         @"CREATE TABLE IF NOT EXISTS insurance_reports (
@@ -202,6 +207,8 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
         "CREATE INDEX IF NOT EXISTS ix_b4_dashcam_events ON dashcam_events(company_id, severity, review_status, occurred_at)",
         "CREATE INDEX IF NOT EXISTS ix_b4_coaching_tasks ON coaching_tasks(company_id, driver_id, status, priority)",
         "CREATE INDEX IF NOT EXISTS ix_b4_incidents ON incidents(company_id, status, severity, incident_number)",
+        "ALTER TABLE evidence_packages ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL",
+        "ALTER TABLE evidence_package_items ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL",
         "CREATE INDEX IF NOT EXISTS ix_b4_evidence_packages ON evidence_packages(company_id, status, package_number)",
         "CREATE INDEX IF NOT EXISTS ix_b4_insurance_reports ON insurance_reports(company_id, report_number, status)"
         ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_company_idempotency ON incidents(company_id,idempotency_key) WHERE idempotency_key IS NOT NULL"

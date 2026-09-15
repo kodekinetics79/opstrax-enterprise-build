@@ -26,6 +26,39 @@ public sealed class NotificationService(Database db)
         TimeSpan? suppressionWindow = null,
         IReadOnlyCollection<long>? targetUserIds = null)
     {
+        // Recipient rows are private and the app identity cannot mint records owned by
+        // another user. Resolve and persist delivery envelopes through the separately
+        // authenticated system lane. This is also used for driver-originated events,
+        // where the sender correctly has no tenant-administration permission.
+        if (db.RlsEnforced)
+            return await db.RunInSystemTransactionAsync(
+                () => CreateCoreAsync(companyId, eventType, sourceType, sourceId, severity,
+                    title, message, audienceType, ct, targetDriverId, targetUserId, channel,
+                    priority, dedupeKey, suppressionWindow, targetUserIds), ct);
+
+        return await CreateCoreAsync(companyId, eventType, sourceType, sourceId, severity,
+            title, message, audienceType, ct, targetDriverId, targetUserId, channel,
+            priority, dedupeKey, suppressionWindow, targetUserIds);
+    }
+
+    private async Task<long> CreateCoreAsync(
+        long companyId,
+        string eventType,
+        string sourceType,
+        long? sourceId,
+        string severity,
+        string title,
+        string message,
+        string audienceType,
+        CancellationToken ct,
+        long? targetDriverId,
+        long? targetUserId,
+        string channel,
+        int priority,
+        string? dedupeKey,
+        TimeSpan? suppressionWindow,
+        IReadOnlyCollection<long>? targetUserIds)
+    {
         // Deduplication check
         if (!string.IsNullOrWhiteSpace(dedupeKey))
         {
@@ -141,7 +174,7 @@ public sealed class NotificationService(Database db)
     private async Task InsertRecipientAsync(long notifId, long companyId, long userId,
         long? driverId, string? roleTarget, string channel, CancellationToken ct)
     {
-        await db.InsertAsync(
+        var recipientId = await db.InsertAsync(
             @"INSERT INTO notification_recipients
                 (notification_id, company_id, user_id, driver_id, role_target, status, channel, delivered_at)
               VALUES (@nid, @cid, @uid, @did, @role, 'unread', @chan,
@@ -154,6 +187,32 @@ public sealed class NotificationService(Database db)
                 c.Parameters.AddWithValue("@did",  driverId.HasValue ? driverId.Value : DBNull.Value);
                 c.Parameters.AddWithValue("@role", roleTarget ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@chan", channel);
+            }, ct);
+
+        if (channel == "in_app" && recipientId > 0)
+            await QueueMobilePushAsync(companyId, recipientId, ct);
+    }
+
+    private async Task QueueMobilePushAsync(long companyId, long recipientId, CancellationToken ct)
+    {
+        var aggregateId = recipientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var idempotencyKey = $"mobile.push.notification.recipient.{aggregateId}";
+        await db.ExecuteAsync(
+            @"INSERT INTO outbox_messages
+                (tenant_id,event_type,aggregate_type,aggregate_id,payload_json,idempotency_key,status,retry_count)
+              SELECT @cid,@event,'notification_recipient',@agg,
+                     jsonb_build_object('notificationRecipientId',@rid),@idem,'pending',0
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM outbox_messages
+                  WHERE tenant_id=@cid AND event_type=@event AND aggregate_id=@agg
+               )",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@event", MobilePushNotificationHandler.RequestedEventType);
+                c.Parameters.AddWithValue("@agg", aggregateId);
+                c.Parameters.AddWithValue("@rid", recipientId);
+                c.Parameters.AddWithValue("@idem", idempotencyKey);
             }, ct);
     }
 

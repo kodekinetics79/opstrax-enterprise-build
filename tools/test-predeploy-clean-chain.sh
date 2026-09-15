@@ -60,63 +60,15 @@ log_dir=$(mktemp -d /tmp/opstrax-predeploy-clean.XXXXXX)
 export NEON_PG_URI="postgresql://${OPSTRAX_TEST_DB_USER}:${OPSTRAX_TEST_DB_PASSWORD}@${OPSTRAX_TEST_DB_HOST}:${OPSTRAX_TEST_DB_PORT}/${audit_db}?sslmode=disable"
 ./tools/apply-neon-predeploy-migrations.sh >"$log_dir/pass1.log" 2>&1
 ./tools/apply-neon-predeploy-migrations.sh >"$log_dir/pass2.log" 2>&1
-# Stage66 is advertised as additive/idempotent and may be rerun during a credential
-# cutover repair. Exercise its SQL directly instead of only testing the ledger skip.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage66_telematics_pilot.sql
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
-# Simulate a ledgered but weakened Stage68 commercial boundary.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
-ALTER TABLE companies ALTER COLUMN entitlement_policy_mode DROP NOT NULL;
-ALTER TABLE companies ALTER COLUMN entitlement_policy_mode DROP DEFAULT;
-ALTER TABLE companies DROP CONSTRAINT ck_companies_entitlement_policy_mode;
-ALTER TABLE companies ADD CONSTRAINT ck_companies_entitlement_policy_mode
-  CHECK (entitlement_policy_mode IN ('legacy_allow','package_allowlist','open')) NOT VALID;
-SQL
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage68_entitlement_policy_mode.sql
-# Simulate a ledgered but weakened Stage69 catalog. The repair replay must not
-# trust the constraint name and must restore nullability/default/enforcement.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
-ALTER TABLE tenant_market_packs ALTER COLUMN status DROP NOT NULL;
-ALTER TABLE tenant_market_packs ALTER COLUMN status DROP DEFAULT;
-ALTER TABLE tenant_market_packs DROP CONSTRAINT ck_tenant_market_packs_status;
-ALTER TABLE tenant_market_packs ADD CONSTRAINT ck_tenant_market_packs_status
-  CHECK (status IN ('active','disabled','trial')) NOT VALID;
-SQL
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage69_market_pack_control_hardening.sql
-# Simulate post-ledger HOS column drift on the disposable database, then prove
-# Stage70's recovery replay is additive and complete.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
-ALTER TABLE hos_logs DROP COLUMN notes;
-ALTER TABLE hos_clocks DROP COLUMN break_needed_at;
-ALTER TABLE hos_clocks DROP COLUMN reset_at;
-ALTER TABLE hos_clocks DROP COLUMN updated_at;
-SQL
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage70_hos_pilot_schema_reconciliation.sql
-# Production skips runtime schema initialization. Prove the owner repair
-# migration restores the driver acknowledgement evidence field after drift.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'ALTER TABLE coaching_tasks DROP COLUMN acknowledged_note'
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage71_coaching_evidence_reconciliation.sql
-# Reapply the HOS immutability/offboarding guard as a drift repair. Its function
-# bodies are owner-managed security contract, not runtime application state.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage72_hos_offboarding_immutability_reconciliation.sql
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage73_hos_offboarding_null_fail_closed.sql
-# Prove the Production retention ledger is owner-repairable after schema drift.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE data_retention_policies'
-# Simulate a ledgered Stage42 schema loss too. The owner runner must recreate the credential
-# registry before terminal Stage58/76 restore its policies and secret-column boundary.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE telemetry_gateways'
-# Simulate a ledgered Stage79 tenant-provisioning schema loss. The repair migration
-# must restore all write-path dependencies before terminal Stage58 restores exact
-# non-forgeable policies and least-privilege grants.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
-ALTER TABLE companies DROP COLUMN legal_name;
-ALTER TABLE tenant_subscriptions DROP COLUMN billing_cycle;
-DROP TABLE feature_flags;
-DROP TABLE password_reset_tokens;
-SQL
-# Use the real runner so Stage42/74 recreate their tables and the terminal Stage58
-# reconciliation restores FORCE-RLS policies and restricted-role grants.
-./tools/apply-neon-predeploy-migrations.sh >"$log_dir/pass3.log" 2>&1
+# The second pass represents the live production path. Ledgered migrations are
+# immutable history and must proceed directly to the guarded schema, RLS, grant,
+# ownership and readiness checks. Drift fails closed instead of replaying broad
+# historical DDL against active tables.
+grep -q "already applied (ledger) — verifying without replay" "$log_dir/pass2.log"
+if grep -q "ledgered reconciliation — reapplying to repair drift" "$log_dir/pass2.log"; then
+  echo "Ledgered migration was replayed during the verification-only pass" >&2
+  exit 1
+fi
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
 SET ROLE opstrax_system;
 INSERT INTO telemetry_stream_ticket_nonces
@@ -223,8 +175,6 @@ grep -q "applying 2026_07_16_stage42_telemetry_gateways" "$log_dir/pass1.log"
 grep -q "Tenant RLS coverage: .* in-scope tables verified" "$log_dir/pass1.log"
 grep -q "Existing Stage58/59/67/76 deployment reconciled with Stage76 terminal" "$log_dir/pass2.log"
 grep -q "Applying terminal Stage76 telemetry" "$log_dir/pass2.log"
-grep -q "Existing Stage58/59/67/76 deployment reconciled with Stage76 terminal" "$log_dir/pass3.log"
-grep -q "Applying terminal Stage76 telemetry" "$log_dir/pass3.log"
 
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $clean_chain$
@@ -284,7 +234,16 @@ BEGIN
       ('2026_08_12_stage77_protected_role_bootstrap'),
       ('2026_08_13_stage78_country_profiles_runtime_contract'),
       ('2026_08_13_stage79_tenant_provisioning_runtime_contract'),
-      ('2026_08_11_stage76_telematics_security_hardening')) required(version)
+      ('2026_08_11_stage76_telematics_security_hardening'),
+      ('2026_09_07_stage124_rma_support_ownership'),
+      ('2026_09_07_stage125_device_spare_pool'),
+      ('2026_09_07_stage126_device_support_tier_history'),
+      ('2026_09_08_stage128_device_compatibility_capability_catalog'),
+      ('2026_09_08_stage129_latest_device_signal_projection'),
+      ('2026_09_08_stage130_canonical_diagnostic_evidence_identity'),
+      ('2026_09_08_stage131_alert_source_truth'),
+      ('2026_09_11_stage138_evidence_package_truth_boundary'),
+      ('2026_09_11_stage139_telemetry_ledger_backfill_reconciliation')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
     RAISE EXCEPTION 'Clean-chain target ledgers are missing or duplicated';
@@ -744,12 +703,12 @@ BEGIN
     ('warehouse_handovers'),('proof_packages'),('proof_artifacts'),
     ('billing_confidence_records'),
     ('incidents'),('incident_evidence'),('insurance_reports'),
-    ('coaching_tasks'),('coaching_notes'),('driver_safety_scorecards'),
+    ('coaching_tasks'),('driver_safety_scorecards'),
     ('dvir_reports'),('dvir_defects'),('hos_logs'),('hos_clocks'),
     ('compliance_violations'),('eld_devices'),('eld_malfunction_history'),
     ('hos_certifications'),('fault_codes'),('fault_occurrences'),('device_state_transitions'),
     ('device_installations'),('device_installation_evidence'),
-    ('device_channel_health'),('telematics_device_commands'),
+    ('device_channel_health'),
     ('telemetry_privacy_policies'),('demo_fixture_versions')) required(table_name)
   JOIN pg_class c ON c.oid=to_regclass('public.'||required.table_name)
   WHERE NOT c.relrowsecurity OR NOT c.relforcerowsecurity
@@ -768,6 +727,264 @@ BEGIN
     RAISE EXCEPTION 'Clean-chain pilot policy reconciliation failed: %',bad_tables;
   END IF;
 
+  IF to_regclass('public.device_command_capabilities') IS NULL
+     OR to_regclass('public.telematics_device_commands') IS NULL
+     OR EXISTS (
+    SELECT 1 FROM (VALUES ('device_command_capabilities'),('telematics_device_commands')) governed(table_name)
+    JOIN pg_class c ON c.oid=to_regclass('public.'||governed.table_name)
+    WHERE NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+       OR NOT has_table_privilege('opstrax_app',table_name,'SELECT')
+       OR has_table_privilege('opstrax_app',table_name,'INSERT,UPDATE,DELETE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'UPDATE')
+       OR has_table_privilege('opstrax_system',table_name,'DELETE')
+       OR (SELECT count(*) FROM pg_policies p
+             WHERE p.schemaname='public' AND p.tablename=governed.table_name
+               AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+  ) OR to_regprocedure('stage119_guard_device_command()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.telematics_device_commands')
+          AND tgname='trg_stage119_guard_device_command' AND NOT tgisinternal AND tgenabled<>'D') THEN
+    RAISE EXCEPTION 'Clean-chain Stage119 command control-plane boundary failed';
+  END IF;
+
+  IF to_regclass('public.device_connectivity_observations') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_connectivity_observations')),false)
+     OR NOT has_column_privilege('opstrax_app','device_connectivity_observations','subscription_status','SELECT')
+     OR has_table_privilege('opstrax_app','device_connectivity_observations','INSERT,UPDATE,DELETE')
+     OR has_column_privilege('opstrax_app','device_connectivity_observations','source_account_bidx','SELECT')
+     OR has_column_privilege('opstrax_app','device_connectivity_observations','source_observation_bidx','SELECT')
+     OR has_column_privilege('opstrax_app','device_connectivity_observations','payload_sha256','SELECT')
+     OR NOT has_table_privilege('opstrax_system','device_connectivity_observations','SELECT')
+     OR NOT has_table_privilege('opstrax_system','device_connectivity_observations','INSERT')
+     OR has_table_privilege('opstrax_system','device_connectivity_observations','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p
+           WHERE p.schemaname='public' AND p.tablename='device_connectivity_observations'
+             AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR to_regprocedure('stage120_guard_connectivity_observation()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_connectivity_observations')
+          AND tgname='trg_stage120_guard_connectivity_observation' AND NOT tgisinternal AND tgenabled<>'D') THEN
+    RAISE EXCEPTION 'Clean-chain Stage120 connectivity observation boundary failed';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM (VALUES
+      ('device_installation_work_packages'),
+      ('device_installation_checklist_observations'),
+      ('device_installation_artifact_references')
+    ) governed(table_name)
+    LEFT JOIN pg_class c ON c.oid=to_regclass('public.'||governed.table_name)
+    WHERE c.oid IS NULL OR NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+       OR NOT has_table_privilege('opstrax_app',governed.table_name,'SELECT,INSERT')
+       OR has_table_privilege('opstrax_app',governed.table_name,'UPDATE,DELETE')
+       OR NOT has_table_privilege('opstrax_system',governed.table_name,'SELECT,INSERT')
+       OR has_table_privilege('opstrax_system',governed.table_name,'UPDATE,DELETE')
+       OR (SELECT count(*) FROM pg_policies p
+             WHERE p.schemaname='public' AND p.tablename=governed.table_name
+               AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+  ) OR to_regprocedure('stage121_guard_work_package()') IS NULL
+     OR to_regprocedure('stage121_guard_work_evidence()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_installation_work_packages')
+          AND tgname='trg_stage121_guard_work_package' AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_installation_checklist_observations')
+          AND tgname='trg_stage121_guard_checklist' AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_installation_artifact_references')
+          AND tgname='trg_stage121_guard_artifact' AND NOT tgisinternal AND tgenabled<>'D') THEN
+    RAISE EXCEPTION 'Clean-chain Stage121 installation work-package boundary failed';
+  END IF;
+
+  IF to_regclass('public.device_installation_work_package_links') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_installation_work_package_links')),false)
+     OR NOT has_table_privilege('opstrax_app','device_installation_work_package_links','SELECT,INSERT')
+     OR has_table_privilege('opstrax_app','device_installation_work_package_links','UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_installation_work_package_links','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_installation_work_package_links','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p
+           WHERE p.schemaname='public' AND p.tablename='device_installation_work_package_links'
+             AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR to_regprocedure('stage122_guard_installation_work_link()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_installation_work_package_links')
+                        AND tgname='trg_stage122_guard_installation_work_link'
+                        AND NOT tgisinternal AND tgenabled<>'D') THEN
+    RAISE EXCEPTION 'Clean-chain Stage122 installation work-link boundary failed';
+  END IF;
+
+  IF to_regclass('public.device_retirement_records') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_retirement_records')),false)
+     OR NOT has_table_privilege('opstrax_app','device_retirement_records','SELECT')
+     OR has_table_privilege('opstrax_app','device_retirement_records','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_retirement_records','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_retirement_records','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p
+           WHERE p.schemaname='public' AND p.tablename='device_retirement_records'
+             AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR to_regprocedure('stage123_guard_device_retirement()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_retirement_records')
+                        AND tgname='trg_stage123_guard_device_retirement'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_retirement_records
+                 WHERE NOT credentials_revoked OR record_status<>'OperatorRecorded'
+                    OR physical_disposition_status<>'Unverified'
+                    OR physical_disposition_claim OR certification_claim) THEN
+    RAISE EXCEPTION 'Clean-chain Stage123 device-retirement boundary failed';
+  END IF;
+
+  IF to_regclass('public.device_rma_support_actions') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_rma_support_actions')),false)
+     OR NOT has_table_privilege('opstrax_app','device_rma_support_actions','SELECT')
+     OR has_table_privilege('opstrax_app','device_rma_support_actions','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_rma_support_actions','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_rma_support_actions','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p
+           WHERE p.schemaname='public' AND p.tablename='device_rma_support_actions'
+             AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR to_regprocedure('stage124_guard_rma_support_action()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_rma_support_actions')
+                        AND tgname='trg_stage124_guard_rma_support_action'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_rma_support_actions
+                 WHERE support_action_status<>'OperatorRecorded' OR support_response_claim
+                    OR physical_outcome_claim OR warranty_acceptance_claim) THEN
+    RAISE EXCEPTION 'Clean-chain Stage124 RMA support boundary failed';
+  END IF;
+
+  IF to_regclass('public.device_spare_pool_entries') IS NULL
+     OR to_regclass('public.device_spare_pool_events') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_spare_pool_entries')),false)
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_spare_pool_events')),false)
+     OR NOT has_table_privilege('opstrax_app','device_spare_pool_entries','SELECT')
+     OR NOT has_table_privilege('opstrax_app','device_spare_pool_events','SELECT')
+     OR has_table_privilege('opstrax_app','device_spare_pool_entries','INSERT,UPDATE,DELETE')
+     OR has_table_privilege('opstrax_app','device_spare_pool_events','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_spare_pool_entries','SELECT,INSERT')
+     OR NOT has_table_privilege('opstrax_system','device_spare_pool_events','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_spare_pool_entries','UPDATE,DELETE')
+     OR has_table_privilege('opstrax_system','device_spare_pool_events','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p WHERE p.schemaname='public'
+           AND p.tablename IN ('device_spare_pool_entries','device_spare_pool_events')
+           AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>4
+     OR to_regprocedure('stage125_guard_spare_pool_entry()') IS NULL
+     OR to_regprocedure('stage125_guard_spare_pool_event()') IS NULL
+     OR to_regprocedure('stage125_guard_device_pool_terminal_transition()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_spare_pool_entries')
+                        AND tgname='trg_stage125_guard_spare_pool_entry' AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_spare_pool_events')
+                        AND tgname='trg_stage125_guard_spare_pool_event' AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.eld_devices')
+                        AND tgname='trg_stage125_guard_device_pool_terminal' AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_spare_pool_entries
+                  WHERE inventory_assurance_status<>'OperatorRecordedUnverified'
+                     OR physical_possession_claim OR condition_verified_claim OR certification_claim)
+     OR EXISTS (SELECT 1 FROM device_spare_pool_events
+                  WHERE event_status<>'OperatorRecorded' OR physical_possession_claim
+                     OR condition_verified_claim OR compatibility_claim OR certification_claim) THEN
+    RAISE EXCEPTION 'Clean-chain Stage125 spare-pool boundary failed';
+  END IF;
+
+  IF to_regclass('public.device_support_tier_events') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_support_tier_events')),false)
+     OR NOT has_table_privilege('opstrax_app','device_support_tier_events','SELECT')
+     OR has_table_privilege('opstrax_app','device_support_tier_events','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_support_tier_events','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_support_tier_events','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p WHERE p.schemaname='public'
+           AND p.tablename='device_support_tier_events'
+           AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR to_regprocedure('stage126_guard_device_support_tier_event()') IS NULL
+     OR to_regprocedure('stage126_guard_device_support_terminal_transition()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_support_tier_events')
+                        AND tgname='trg_stage126_guard_device_support_tier_event'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.eld_devices')
+                        AND tgname='trg_stage126_guard_device_support_terminal'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_support_tier_events
+                  WHERE record_status<>'OperatorRecordedUnverified'
+                     OR commercial_entitlement_verified_claim OR provider_support_claim
+                     OR hardware_supportability_claim OR certification_claim) THEN
+    RAISE EXCEPTION 'Clean-chain Stage126 support-tier boundary failed';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='device_compatibility_candidates'
+                     AND column_name='capability_declaration_status')
+     OR to_regprocedure('stage128_valid_capability_list(text[],integer)') IS NULL
+     OR to_regprocedure('stage128_protect_capability_declaration()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_compatibility_candidates')
+                        AND tgname='trg_stage128_protect_capability_declaration'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_compatibility_candidates
+                  WHERE catalog_support_tier<>'Unverified'
+                     OR certification_reference IS NOT NULL OR certification_date IS NOT NULL
+                     OR physical_evidence_claim OR provider_evidence_claim OR certification_claim
+                     OR capability_declaration_status NOT IN ('NotRecorded','EngineeringDeclaredUnverified')) THEN
+    RAISE EXCEPTION 'Clean-chain Stage128 compatibility capability boundary failed';
+  END IF;
+
+  IF to_regclass('public.latest_device_signals') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.latest_device_signals')),false)
+     OR NOT has_table_privilege('opstrax_app','latest_device_signals','SELECT')
+     OR has_table_privilege('opstrax_app','latest_device_signals','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','latest_device_signals','SELECT,INSERT,UPDATE')
+     OR has_table_privilege('opstrax_system','latest_device_signals','DELETE')
+     OR (SELECT count(*) FROM pg_policies p WHERE p.schemaname='public'
+           AND p.tablename='latest_device_signals'
+           AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR EXISTS (SELECT 1 FROM latest_device_signals WHERE certification_claim) THEN
+    RAISE EXCEPTION 'Clean-chain Stage129 latest device signal projection boundary failed';
+  END IF;
+
+  IF to_regclass('public.idx_stage130_canonical_diagnostic_identity') IS NULL THEN
+    RAISE EXCEPTION 'Clean-chain Stage130 canonical diagnostic identity index failed';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='alert_follow_up_tasks'
+      AND column_name='source_type'
+  ) OR to_regclass('public.idx_alert_tasks_source_alert') IS NULL THEN
+    RAISE EXCEPTION 'Clean-chain Stage131 alert source identity boundary failed';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='fleet_health_snapshots'
+                     AND column_name='data_origin' AND is_nullable='NO')
+     OR NOT EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='fleet_health_snapshots'
+                        AND column_name='verification_status' AND is_nullable='NO')
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint
+                      WHERE conrelid='public.fleet_health_snapshots'::regclass
+                        AND conname='ck_fleet_health_snapshot_evidence')
+     OR to_regclass('public.idx_fhs_company_evidence_date') IS NULL THEN
+    RAISE EXCEPTION 'Clean-chain fleet-health evidence boundary failed';
+  END IF;
+
+  -- Stage132 deliberately replaces coaching_notes' generic tenant-wide policy
+  -- with principal-scoped SELECT/INSERT policies. Its complete fingerprint and
+  -- ACL allow-list are the authoritative clean-chain assertion for that table.
+  IF to_regprocedure('opstrax_security.private_policy_contract_valid()') IS NULL
+     OR NOT opstrax_security.private_policy_contract_valid() THEN
+    RAISE EXCEPTION 'Clean-chain Stage132 private-user authority boundary failed';
+  END IF;
+
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])
      OR EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
         AND (COALESCE(qual,'') LIKE '%app.current_tenant_id%'
@@ -778,4 +995,4 @@ END
 $clean_chain$;
 SQL
 
-echo "Predeploy clean-chain regression passed (fresh Stage19/20/22 baseline + Stage76-terminal runner replays + policy/ACL checks)."
+echo "Predeploy clean-chain regression passed (fresh Stage19/20/22 baseline + verification-only ledger rerun + Stage76 terminal policy/ACL checks)."

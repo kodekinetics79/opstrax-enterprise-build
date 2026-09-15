@@ -1,4 +1,6 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
+import { contextualMapEntity, includeContextualMapEntity, mapContextHasPosition, mapContextReady, mapVehicleId } from "@/utils/liveMapVehicleContext";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle,
@@ -24,6 +26,7 @@ import { controlTowerApi } from "@/services/controlTowerApi";
 import { routesApi } from "@/services/routesApi";
 import { telemetryApi } from "@/services/telemetryApi";
 import { LiveMap } from "@/components/LiveMap";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
 import { AiInsightCard, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import type { AnyRecord } from "@/types";
@@ -180,6 +183,10 @@ function matchesSearch(entity: AnyRecord, q: string): boolean {
 }
 
 export function LiveMapPage() {
+  const [searchParams] = useSearchParams();
+  const requestedVehicle = searchParams.get("vehicleId");
+  const requestedVehicleId = mapVehicleId(requestedVehicle);
+  const consumedVehicleContext = useRef<string | null>(null);
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>("All");
@@ -241,6 +248,7 @@ export function LiveMapPage() {
     queryKey: ["live-map", "entity", selected?.vehicleId ?? selected?.id],
     queryFn: () => controlTowerApi.entity("vehicle", (selected?.vehicleId ?? selected?.id) as string | number),
     enabled: Boolean(selected?.vehicleId ?? selected?.id),
+    refetchInterval: selected != null ? 15_000 : false,
   });
 
   // Breadcrumb replay: fetch the chronological GPS trail for the replay vehicle over the
@@ -391,6 +399,31 @@ export function LiveMapPage() {
     });
   }, [baseEntities, telemetry.positions]);
 
+  const contextualVehicle = requestedVehicleId ? contextualMapEntity(liveEntities, requestedVehicleId) : null;
+  const mapSnapshotSettled = telemetry.lastUpdated != null || telemetry.error != null;
+  useEffect(() => {
+    if (requestedVehicle == null) {
+      consumedVehicleContext.current = null;
+      return;
+    }
+    if (!requestedVehicleId || isLoading || isError || !data || consumedVehicleContext.current === requestedVehicle) return;
+    if (!mapContextReady(contextualVehicle, mapSnapshotSettled)) return;
+    // Consume the request once after the authorized snapshot loads. Polling must
+    // not reopen a dismissed drawer or override the operator's next selection.
+    consumedVehicleContext.current = requestedVehicle;
+    if (!contextualVehicle) return;
+    setSelected(contextualVehicle);
+    setFocusId(mapContextHasPosition(contextualVehicle)
+      ? String(contextualVehicle.id ?? contextualVehicle.vehicleId ?? contextualVehicle.vehicle_id ?? "")
+      : null);
+  }, [requestedVehicle, requestedVehicleId, contextualVehicle, mapSnapshotSettled, isLoading, isError, data]);
+
+  // Derive refreshed measurements without changing selection state. A new GPS
+  // snapshot updates the open drawer but cannot reopen a dismissed drawer.
+  const selectedLiveEntity = selected
+    ? contextualMapEntity(liveEntities, String(selected.vehicleId ?? selected.vehicle_id ?? selected.id ?? "")) ?? selected
+    : null;
+
   const routeStops = (routeStopsQ.data as AnyRecord[]) ?? [];
   const routeTrail = useMemo<RouteTrail[]>(() => {
     const points = routeStops
@@ -493,16 +526,20 @@ export function LiveMapPage() {
 
   const kpis = (data.kpis as AnyRecord) ?? {};
   const geofences = layers.geofences ? ((data.geofences as AnyRecord[]) ?? []) : [];
-  const mapEntities = layers.vehicles ? visibleEntities : [];
+  const contextualFocusId = contextualVehicle ? String(contextualVehicle.id ?? contextualVehicle.vehicleId ?? contextualVehicle.vehicle_id ?? "") : null;
+  const mapEntities = layers.vehicles
+    ? includeContextualMapEntity(visibleEntities, focusId && focusId === contextualFocusId ? contextualVehicle : null)
+    : [];
   const recommendations = (data.recommendations as AnyRecord[]) ?? [];
   const openAlerts = alerts.data ?? [];
+  const openAlertCount = alerts.isSuccess ? String(openAlerts.length) : "--";
   const locatedEntityCount = liveEntities.filter(hasValidPosition).length;
   const recentFixCoverage = positionFreshness.located === 0
     ? null
     : Math.round((positionFreshness.recent / positionFreshness.located) * 1000) / 10;
 
   return (
-    <div className="control-tower live-map-workbench flex h-full min-w-0 max-w-full flex-col gap-4 overflow-x-hidden overflow-y-auto">
+    <div className="control-tower flex min-w-0 max-w-full flex-col gap-3 overflow-x-hidden">
       <PageHeader
         eyebrow="Operations"
         title="Fleet Position Map"
@@ -521,6 +558,15 @@ export function LiveMapPage() {
         }
       />
 
+      {requestedVehicle != null && (!requestedVehicleId || !contextualVehicle || !mapContextHasPosition(contextualVehicle)) ? (
+        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {!requestedVehicleId ? "This vehicle map link has an invalid vehicle ID." : !mapContextReady(contextualVehicle, mapSnapshotSettled)
+            ? "Checking the requested vehicle's latest position…" : !contextualVehicle
+            ? "The requested vehicle is not present in the authorized position snapshot. It may have no reported position or may be outside your permitted scope."
+            : `${String(contextualVehicle.label ?? contextualVehicle.vehicleCode ?? contextualVehicle.vehicle_code ?? "The requested vehicle")} has no valid GPS position in the authorized snapshot. Location will appear after a valid GPS fix is reported.`}
+        </div>
+      ) : null}
+
       {telemetry.error && (
         <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           <span>{telemetry.error}</span>
@@ -529,7 +575,7 @@ export function LiveMapPage() {
       )}
 
       {/* Status segmentation — the single primary metric row. */}
-      <div className="live-map-status-grid order-2 grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="live-map-status-grid order-1 grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-5">
         <StatusBoardCard label="All Units"     count={liveEntities.length} tone="slate"  meaning="Fleet scope"    active={activeFilter === "All"}     onClick={() => setActiveFilter("All")} />
         <StatusBoardCard label="Moving"        count={buckets.Moving}      tone="teal"   meaning="On the road"    active={activeFilter === "Moving"}  onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")} />
         <StatusBoardCard label="Idle / Parked" count={buckets.Idle}        tone="indigo" meaning="Stopped, recent" active={activeFilter === "Idle"}    onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")} />
@@ -537,9 +583,9 @@ export function LiveMapPage() {
         <StatusBoardCard label="Unknown"       count={buckets.Unknown}     tone="slate"  meaning="No trusted state" active={activeFilter === "Unknown"} onClick={() => setActiveFilter(activeFilter === "Unknown" ? "All" : "Unknown")} />
       </div>
 
-      <div className="live-map-primary order-1 grid min-w-0 items-stretch gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
+      <div className="live-map-primary order-2 grid min-w-0 items-start gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
         {/* Hero map */}
-        <section className="panel live-map-stage flex min-w-0 flex-col overflow-hidden p-3 sm:p-4">
+        <section className="panel flex min-w-0 flex-col overflow-hidden p-3 sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
             <h2 className="section-title">Fleet Position Map</h2>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-400">
@@ -552,75 +598,30 @@ export function LiveMapPage() {
               <MetaStat icon={<Satellite className="h-3.5 w-3.5 text-teal-500" />} value={String(kpis.registeredDevices ?? "--")} label="devices" />
               <MetaStat icon={<MapPin className="h-3.5 w-3.5 text-violet-500" />} value={String(positionFreshness.located)} label="positions" />
               <MetaStat icon={<Gauge className="h-3.5 w-3.5 text-blue-500" />} value={recentFixCoverage == null ? "--" : `${recentFixCoverage}%`} label="recent fixes" />
-              <MetaStat icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} value={String(kpis.openAlerts ?? "--")} label="open alerts" />
+              <MetaStat icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} value={openAlertCount} label="open alert records" />
             </div>
           </div>
 
-          <div className="mt-3 grid min-w-0 gap-2 lg:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Route intelligence</p>
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-slate-900">{String(selectedRoute?.routeCode ?? selectedRoute?.routeName ?? selectedRoute?.name ?? "No route selected")}</p>
-                  <p className="truncate text-xs text-slate-500">{routeTrail[0]?.summary ?? "No geocoded route trail yet"}</p>
-                </div>
-                <Route className="h-4 w-4 shrink-0 text-sky-500" />
-              </div>
-              <div className="mt-3 flex items-center gap-2">
-                <select
-                  className="field min-w-0 flex-1 py-2 text-sm"
-                  value={selectedRouteId ?? ""}
-                  onChange={(e) => setSelectedRouteId(e.target.value || null)}
-                >
-                  <option value="">Select a route</option>
-                  {routeRows.map((route) => (
-                    <option key={String(route.id)} value={String(route.id)}>
-                      {String(route.routeCode ?? route.routeName ?? route.name ?? `Route ${route.id}`)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Route optimization</p>
-              {routePreviewQ.data ? (
-                <>
-                  <p className="mt-2 text-2xl font-black text-slate-950">{String(routePreviewQ.data.efficiencyScore ?? "--")}%</p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Saves {String(routePreviewQ.data.estimatedSavingsMinutes ?? 0)} min · {String(routePreviewQ.data.costLeakageReduction ?? "--")} leakage reduction
-                  </p>
-                </>
-              ) : (
-                <p className="mt-2 text-sm text-slate-500">Select a route with stops to generate a geospatial optimization preview.</p>
-              )}
-            </div>
-
-            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Asset health</p>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 pt-2">
+            <label className="flex min-w-[220px] items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+              <Route className="h-3.5 w-3.5 text-sky-500" aria-hidden /> Route
+              <select className="field min-w-0 flex-1 py-1.5 text-xs normal-case tracking-normal" value={selectedRouteId ?? ""} onChange={(e) => setSelectedRouteId(e.target.value || null)}>
+                <option value="">Select a route</option>
+                {routeRows.map((route) => <option key={String(route.id)} value={String(route.id)}>{String(route.routeCode ?? route.routeName ?? route.name ?? `Route ${route.id}`)}</option>)}
+              </select>
+            </label>
+            <span className="max-w-72 truncate text-xs text-slate-500" title={routeTrail[0]?.summary ?? "No geocoded route trail yet"}>{routeTrail[0]?.summary ?? "No geocoded route trail yet"}</span>
+            {routePreviewQ.data ? <span className="text-xs font-semibold text-slate-700">Efficiency {String(routePreviewQ.data.efficiencyScore ?? "--")}% · saves {String(routePreviewQ.data.estimatedSavingsMinutes ?? 0)} min</span> : null}
+            <details className="relative ml-auto text-xs">
+              <summary className="cursor-pointer font-semibold text-teal-700">Health details</summary>
+              <div className="absolute right-0 z-20 mt-2 grid w-80 max-w-[80vw] grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
                 <MetricPill label="Geocoded" value={`${assetHealth.geocoded}/${assetHealth.total}`} />
-                <MetricPill label="Stale" value={String(assetHealth.stale)} tone="rose" />
                 <MetricPill label="At risk" value={String(assetHealth.highRisk)} tone="amber" />
-                <MetricPill label="Watch" value={String(assetHealth.watch)} tone="sky" />
-              </div>
-              <p className="mt-2 text-[11px] text-slate-500">
-                Avg receipt age {freshnessLabel(assetHealth.avgFreshness)} · authoritative fix freshness is reported separately
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Position currency</p>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                 <MetricPill label="Recent fixes" value={String(positionFreshness.recent)} tone="sky" />
                 <MetricPill label="Stale fixes" value={String(positionFreshness.stale)} tone="amber" />
-                <MetricPill label="Unknown age" value={String(positionFreshness.offline)} tone="rose" />
-                <MetricPill label="Located" value={String(positionFreshness.located)} />
+                <p className="col-span-2 text-[11px] text-slate-500">Avg receipt age {freshnessLabel(assetHealth.avgFreshness)} · {positionFreshness.located} located · {positionFreshness.offline} unknown age.</p>
               </div>
-              <p className="mt-2 text-[11px] text-slate-500">
-                Counts use authoritative fix freshness for coordinate-bearing positions in the current authorized stream snapshot
-              </p>
-            </div>
+            </details>
           </div>
 
           <div className="-mx-1 mt-3 overflow-x-auto px-1 pb-1">
@@ -662,7 +663,7 @@ export function LiveMapPage() {
             </span>
           </div>
 
-          <div className="map-surface live-map-canvas relative mt-2 min-h-[400px] flex-1 overflow-hidden sm:min-h-[500px] xl:min-h-[560px]">
+          <div className="map-surface relative mt-2 min-h-[320px] flex-1 overflow-hidden rounded-xl border border-slate-200 sm:min-h-[360px] xl:min-h-[400px]">
             <LiveMap
               entities={mapEntities}
               geofences={geofences}
@@ -673,7 +674,7 @@ export function LiveMapPage() {
               replayMarker={replayOpen ? replayMarker : null}
             />
             {locatedEntityCount === 0 ? (
-              <div className="pointer-events-none absolute inset-x-4 top-4 z-[500] rounded-2xl border border-amber-300 bg-amber-50/95 p-4 shadow-lg backdrop-blur">
+              <div className="pointer-events-none absolute inset-x-3 top-3 z-[500] rounded-xl border border-amber-300 bg-amber-50/95 px-3 py-2 shadow-sm backdrop-blur">
                 <div className="flex items-start gap-3">
                   <Satellite className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
                   <div>
@@ -714,7 +715,7 @@ export function LiveMapPage() {
         </section>
 
         {/* Unified right rail: roster (scrolls) over a pinned alerts strip. */}
-        <aside className="panel live-map-tactile-card flex min-w-0 max-h-[700px] flex-col overflow-hidden p-0">
+        <aside className="panel flex min-w-0 max-h-[560px] flex-col self-start overflow-hidden p-0">
           <div className="border-b border-slate-100 px-4 pb-3 pt-4">
             <div className="flex items-center justify-between">
               <h2 className="section-title">Geospatial Health</h2>
@@ -796,7 +797,7 @@ export function LiveMapPage() {
               ) : alerts.isLoading ? (
                 <p className="py-1 text-sm text-slate-500">Loading telemetry alerts…</p>
               ) : openAlerts.length === 0 ? (
-                <p className="flex items-center gap-2 py-1 text-sm text-slate-500"><CheckCircle className="h-4 w-4 text-teal-600" /> No open alerts.</p>
+                <p className="flex items-center gap-2 py-1 text-sm text-slate-500"><CheckCircle className="h-4 w-4 text-teal-600" /> No open alert records in the current result.</p>
               ) : (
                 openAlerts.slice(0, 6).map((alert) => (
                   <TelemetryAlertRow
@@ -818,7 +819,7 @@ export function LiveMapPage() {
         </div>
       )}
 
-      <VehicleDetailDrawer detail={detail.data} entity={selected} loading={detail.isLoading} onClose={() => { setSelected(null); setFocusId(null); }} />
+      <VehicleDetailDrawer detail={detail.data} entity={selectedLiveEntity} loading={detail.isLoading} onClose={() => { setSelected(null); setFocusId(null); }} />
     </div>
   );
 }
@@ -1051,18 +1052,17 @@ function StatusBoardCard({ label, count, tone, meaning, active, onClick }: { lab
       type="button"
       onClick={onClick}
       aria-pressed={active ? "true" : "false"}
-      className={`live-map-status-card flex items-center justify-between gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
+      aria-label={`${label}: ${count}. ${meaning}`}
+      className={`flex min-h-9 items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition ${
         active ? `${t.activeBorder} ${t.activeBg} shadow-sm` : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
       }`}
     >
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${t.dot} ${tone === "teal" ? "animate-pulse" : ""}`} />
-          <span className="truncate text-sm font-semibold text-slate-700">{label}</span>
-        </div>
-        <p className="mt-1 pl-[18px] text-[11px] font-medium text-slate-400">{meaning}</p>
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${t.dot} ${tone === "teal" ? "animate-pulse" : ""}`} />
+        <span className="truncate text-xs font-semibold text-slate-700">{label}</span>
+        <span className="hidden truncate text-[10px] font-medium text-slate-400 2xl:inline">{meaning}</span>
       </div>
-      <span className={`text-3xl font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
+      <span className={`text-base font-bold tabular-nums ${active ? t.text : "text-slate-900"}`}>{count}</span>
     </button>
   );
 }
@@ -1249,14 +1249,15 @@ function ProvRow({ label, value }: { label: string; value: string }) {
 
 function VehicleDetailDrawer({ detail, entity, loading, onClose }: { detail?: AnyRecord; entity?: AnyRecord | null; loading: boolean; onClose: () => void }) {
   const record = detail?.record as AnyRecord | undefined;
+  const dialogRef = useDialogFocus<HTMLElement>(Boolean(record), onClose);
   if (!record && !loading) return null;
   if (!record) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
-      <aside className="h-full w-full max-w-3xl overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <aside ref={dialogRef} className="h-full w-full max-w-3xl overflow-y-auto border-l border-slate-200 bg-white p-4 shadow-2xl sm:p-5" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="vehicle-position-detail-title">
         <button type="button" aria-label="Close" className="float-right icon-btn" onClick={onClose}><X className="h-5 w-5" /></button>
         <p className="section-title">Vehicle Position Detail</p>
-        <h2 className="mt-3 text-2xl font-semibold text-slate-900">{String(record.vehicleCode ?? record.vehicle_code)}</h2>
+        <h2 id="vehicle-position-detail-title" className="mt-2 text-2xl font-semibold text-slate-900">{String(record.vehicleCode ?? record.vehicle_code)}</h2>
         <div className="mt-4 flex flex-wrap gap-2">
           <StatusBadge status={record.status} />
           <RiskBadge risk={record.riskScore ?? record.risk_score} />

@@ -38,7 +38,7 @@ export function TaxAdminPage() {
         actions={<button onClick={() => void profilesQ.refetch()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"><RefreshCw className="h-4 w-4" /> Refresh</button>}
       />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
         {/* Profiles list + create */}
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Tax profiles</h2>
