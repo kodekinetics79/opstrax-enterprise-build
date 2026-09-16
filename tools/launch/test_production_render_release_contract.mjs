@@ -15,14 +15,34 @@ test("Render production cannot auto-deploy a merge ahead of its database", () =>
 
 test("production release applies owner migrations and Stage101 before exact-SHA deploy", () => {
   const workflow = read(".github", "workflows", "production-render-release.yml");
+  const detection = workflow.indexOf("Detect pending lock-sensitive Saudi fleet migration");
+  const suspend = workflow.indexOf("node tools/render-service-control.mjs suspend");
   const migration = workflow.indexOf("bash ./tools/apply-canada-ksa-compliance-predeploy.sh");
+  const resume = workflow.indexOf("node tools/render-service-control.mjs resume");
   const deploy = workflow.indexOf("node tools/render-deploy-exact.mjs");
+  assert.ok(detection >= 0, "lock-sensitive Stage141 detection is missing");
+  assert.ok(suspend > detection, "Render must be suspended after the drain decision");
+  assert.ok(migration > suspend, "owner migrations must run after the API session drain");
+  assert.ok(resume > migration, "Render must be resumed after the migration chain");
   assert.ok(migration >= 0, "Canada/KSA owner migration wrapper is missing");
-  assert.ok(deploy > migration, "Render deploy must follow the successful migration chain");
+  assert.ok(deploy > resume, "Render deploy must follow API resumption");
   assert.match(workflow, /environment:\s*production/);
   assert.match(workflow, /ref:\s*\$\{\{ inputs\.candidate_sha \}\}/);
   assert.match(workflow, /NEON_PRODUCTION_OWNER_URI/);
   assert.match(workflow, /RENDER_API_KEY/);
+  assert.match(workflow, /if: always\(\) && env\.RENDER_DRAIN_REQUIRED == 'true'/);
+  assert.match(workflow, /2026_09_15_stage141_saudi_fleet_operations/);
+});
+
+test("Render service drain uses authenticated suspend/resume endpoints and verifies state", () => {
+  const helper = read("tools", "render-service-control.mjs");
+
+  assert.match(helper, /new Set\(\["suspend", "resume"\]\)/);
+  assert.match(helper, /\/services\/\$\{serviceId\}\/\$\{action\}/);
+  assert.match(helper, /method: "POST"/);
+  assert.match(helper, /action === "suspend" \? "suspended" : "not_suspended"/);
+  assert.match(helper, /Authorization: `Bearer \$\{apiKey\}`/);
+  assert.match(helper, /Timed out waiting for Render service state/);
 });
 
 test("production release deploys the traceable frontend after the exact API and verifies parity", () => {
