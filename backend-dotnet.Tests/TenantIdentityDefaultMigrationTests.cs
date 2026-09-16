@@ -33,6 +33,7 @@ public sealed class TenantIdentityDefaultMigrationTests
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public async Task ShippedCatalogPass_RemovesLiteralFallbacksAndItsAssertionPasses()
     {
         await using var connection = new NpgsqlConnection(TestDb.ConnectionString);
