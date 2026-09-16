@@ -20,7 +20,7 @@ public sealed class MarketPackPlatformControlPostgresTests
 
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies (company_code,name,industry,status) VALUES (@code,@name,'Logistics','Active') RETURNING id",
+            "INSERT INTO companies (company_code,name,industry,status,country) VALUES (@code,@name,'Logistics','Active','CA') RETURNING id",
             c => { c.Parameters.AddWithValue("@code", $"MP-{suffix}"); c.Parameters.AddWithValue("@name", $"Market Pack Test {suffix}"); });
         var manager = await SeedAdminAsync(db, "finance_admin", $"mp-manager-{suffix}@opstrax.test");
         var viewer = await SeedAdminAsync(db, "readonly_executive", $"mp-viewer-{suffix}@opstrax.test");

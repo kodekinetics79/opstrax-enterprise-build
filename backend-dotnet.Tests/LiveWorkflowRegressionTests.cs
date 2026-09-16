@@ -9,8 +9,8 @@ public sealed class LiveWorkflowRegressionTests
         var endpoints = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
 
         Assert.Contains("value is JsonElement element ? element.ToString()", source, StringComparison.Ordinal);
-        Assert.Contains("element.TryGetInt64(out var parsed)", source, StringComparison.Ordinal);
-        Assert.Contains("element.TryGetDecimal(out var parsed)", source, StringComparison.Ordinal);
+        Assert.Contains("element.TryGetInt64(out value)", source, StringComparison.Ordinal);
+        Assert.Contains("element.TryGetDecimal(out value)", source, StringComparison.Ordinal);
         Assert.Contains("element.ValueKind is JsonValueKind.True or JsonValueKind.False", source, StringComparison.Ordinal);
         Assert.Contains("@elig::jsonb", endpoints, StringComparison.Ordinal);
         Assert.DoesNotContain("safetyOverridden ? 1 : 0", endpoints, StringComparison.Ordinal);

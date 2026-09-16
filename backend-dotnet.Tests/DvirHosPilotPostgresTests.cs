@@ -691,8 +691,9 @@ public sealed class DvirHosPilotPostgresTests
         var seed = await Seed(db);
         try
         {
-            await db.ExecuteAsync("UPDATE companies SET country='SA' WHERE id=@c",
-                c => c.Parameters.AddWithValue("@c", seed.CompanyId));
+            var market = await new CountryProfileService(db)
+                .ApplyToTenantAsync(seed.CompanyId, "SA", "dvir-market-isolation-test");
+            Assert.Equal("SA", market?.CountryCode);
             var mismatchedReport = new Dictionary<string, object?>
             {
                 ["driverId"] = seed.DriverA,
@@ -1346,6 +1347,9 @@ public sealed class DvirHosPilotPostgresTests
             "DELETE FROM vehicles WHERE company_id=@c",
             "DELETE FROM drivers WHERE company_id=@c",
             "DELETE FROM branches WHERE company_id=@c",
+            "DELETE FROM tenant_market_packs WHERE company_id=@c",
+            "DELETE FROM tenant_entitlements WHERE company_id=@c",
+            "DELETE FROM tenant_locale_settings WHERE tenant_id=@c",
             "DELETE FROM companies WHERE id=@c",
         }) await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));
     }

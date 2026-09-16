@@ -231,14 +231,14 @@ public sealed class AdminRoleDualStoreRehearsalPostgresTests
         private async Task Initialize()
         {
             CompanyId = await _owner.InsertAsync(
-                "INSERT INTO companies(company_code,name,industry,status) VALUES(@code,@name,'Logistics','Active')",
+                "INSERT INTO companies(company_code,name,industry,status,country) VALUES(@code,@name,'Logistics','Active','CA')",
                 command =>
                 {
                     command.Parameters.AddWithValue("code", $"A02-{_suffix[..16]}".ToUpperInvariant());
                     command.Parameters.AddWithValue("name", $"A-02 disposable rehearsal {_suffix[..8]}");
                 });
             _branchId = await _owner.InsertAsync(
-                "INSERT INTO branches(company_id,branch_code,name,status) VALUES(@company,@code,@name,'Active')",
+                "INSERT INTO branches(company_id,branch_code,name,status,country_code,timezone) VALUES(@company,@code,@name,'Active','CA','America/Toronto')",
                 command =>
                 {
                     command.Parameters.AddWithValue("company", CompanyId);
