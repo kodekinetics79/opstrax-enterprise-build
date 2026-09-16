@@ -58,6 +58,27 @@ jobs:
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
+      - name: Detect pending lock-sensitive Saudi fleet migration
+        env:
+          NEON_PG_URI: ${{ secrets.NEON_PRODUCTION_OWNER_URI }}
+        run: |
+          set -euo pipefail
+          : "${NEON_PG_URI:?Configure the production environment secret NEON_PRODUCTION_OWNER_URI}"
+          drain_required="$(python3 tools/psql-neon-env.py -At -v ON_ERROR_STOP=1 -c \
+            "SELECT CASE WHEN EXISTS (SELECT 1 FROM schema_migrations WHERE version='2026_09_15_stage141_saudi_fleet_operations') THEN 'false' ELSE 'true' END")"
+          if [[ "$drain_required" != "true" && "$drain_required" != "false" ]]; then
+            echo "Unable to determine whether the Render API drain is required." >&2
+            exit 1
+          fi
+          echo "RENDER_DRAIN_REQUIRED=$drain_required" >> "$GITHUB_ENV"
+
+      - name: Suspend Render API to drain production database sessions
+        if: env.RENDER_DRAIN_REQUIRED == 'true'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_PRODUCTION_SERVICE_ID }}
+        run: node tools/render-service-control.mjs suspend
+
       - name: Apply owner-only production migrations and Canada/KSA compliance baseline
         env:
           NEON_PG_URI: ${{ secrets.NEON_PRODUCTION_OWNER_URI }}
@@ -65,6 +86,13 @@ jobs:
           set -euo pipefail
           : "${NEON_PG_URI:?Configure the production environment secret NEON_PRODUCTION_OWNER_URI}"
           bash ./tools/apply-canada-ksa-compliance-predeploy.sh
+
+      - name: Resume Render API after production migrations
+        if: always() && env.RENDER_DRAIN_REQUIRED == 'true'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_PRODUCTION_SERVICE_ID }}
+        run: node tools/render-service-control.mjs resume
 
       - name: Trigger and verify the exact Render deployment
         env:
