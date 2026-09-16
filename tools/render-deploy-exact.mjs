@@ -31,12 +31,40 @@ const renderRequest = async (path, init = {}) => {
   return body;
 };
 
-const deployment = await renderRequest(`/services/${serviceId}/deploys`, {
+const triggeredAt = Date.now();
+let deployment = await renderRequest(`/services/${serviceId}/deploys`, {
   method: "POST",
   body: JSON.stringify({ clearCache: "do_not_clear", commitId: candidateSha }),
 });
+deployment = deployment?.deploy ?? deployment;
+
+// Render can accept a deploy asynchronously with HTTP 202 and an empty body.
+// In that case, discover the exact queued commit rather than guessing that the
+// newest service deploy belongs to this release.
+if (!/^dep-[a-z0-9]+$/.test(deployment?.id ?? "")) {
+  const createdAfter = new Date(triggeredAt - 60_000).toISOString();
+  const discoveryDeadline = Date.now() + 2 * 60 * 1000;
+  while (Date.now() < discoveryDeadline) {
+    const entries = await renderRequest(
+      `/services/${serviceId}/deploys?limit=20&createdAfter=${encodeURIComponent(createdAfter)}`,
+    );
+    const exactCandidate = (Array.isArray(entries) ? entries : [])
+      .map((entry) => entry?.deploy ?? entry)
+      .filter((deploy) => deploy?.commit?.id === candidateSha)
+      .sort((left, right) => Date.parse(right?.createdAt ?? 0) - Date.parse(left?.createdAt ?? 0))[0];
+    if (exactCandidate) {
+      deployment = exactCandidate;
+      break;
+    }
+    console.log(`Waiting for Render to register queued deployment for ${candidateSha}`);
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+}
+
 const deploymentId = deployment?.id;
-if (!/^dep-[a-z0-9]+$/.test(deploymentId ?? "")) throw new Error("Render did not return a deployment id");
+if (!/^dep-[a-z0-9]+$/.test(deploymentId ?? "")) {
+  throw new Error("Render accepted the deployment but its exact commit could not be discovered");
+}
 console.log(`Triggered Render deployment ${deploymentId} for ${candidateSha}`);
 
 const terminalFailures = new Set([

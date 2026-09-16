@@ -195,6 +195,10 @@ test("runtime manifest never receives the owner migration credential", () => {
 test("Render deploy helper verifies the exact healthy candidate", () => {
   const helper = read("tools", "render-deploy-exact.mjs");
   assert.match(helper, /commitId:\s*candidateSha/);
+  assert.match(helper, /createdAfter=\$\{encodeURIComponent\(createdAfter\)\}/);
+  assert.match(helper, /entry\?\.deploy \?\? entry/);
+  assert.match(helper, /deploy\?\.commit\?\.id === candidateSha/);
+  assert.match(helper, /exact commit could not be discovered/);
   assert.match(helper, /body\?\.status === "ready"/);
   assert.match(helper, /body\?\.version === candidateSha/);
   assert.match(helper, /pre_deploy_failed/);
