@@ -83,9 +83,9 @@ public sealed class LogisticsSeederPostgresRegressionTests
         var db = Db();
         await new FleetTmsLogisticsSchemaService(db, NullLogger<FleetTmsLogisticsSchemaService>.Instance).EnsureAsync();
         var suffix = Guid.NewGuid().ToString("N")[..10];
-        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry) VALUES (@code,'Logistics HTTP Regression','Transportation')",
+        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Logistics HTTP Regression','Transportation','US')",
             command => command.Parameters.AddWithValue("@code", $"LHR-{suffix}"));
-        var branch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@companyId,'MAIN','Main','Active')",
+        var branch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@companyId,'MAIN','Main','Active','US')",
             command => command.Parameters.AddWithValue("@companyId", company));
         var firstRoute = $"R1-{suffix}";
         var secondRoute = $"R2-{suffix}";
@@ -184,7 +184,7 @@ public sealed class LogisticsSeederPostgresRegressionTests
         }).Build());
         await new FleetTmsLogisticsSchemaService(db, NullLogger<FleetTmsLogisticsSchemaService>.Instance).EnsureAsync();
         var suffix = Guid.NewGuid().ToString("N")[..10];
-        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry) VALUES (@code,'Logistics Seeder Regression','Transportation')",
+        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Logistics Seeder Regression','Transportation','US')",
             command => command.Parameters.AddWithValue("@code", $"LSR-{suffix}"));
         try
         {
@@ -213,11 +213,11 @@ public sealed class LogisticsSeederPostgresRegressionTests
         var db = Db();
         await new FleetTmsLogisticsSchemaService(db, NullLogger<FleetTmsLogisticsSchemaService>.Instance).EnsureAsync();
         var suffix = Guid.NewGuid().ToString("N")[..10];
-        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry) VALUES (@code,'Logistics Workspace Paths','Transportation')",
+        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Logistics Workspace Paths','Transportation','US')",
             command => command.Parameters.AddWithValue("@code", $"LWP-{suffix}"));
-        var branch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@companyId,'MAIN','Main','Active')",
+        var branch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@companyId,'MAIN','Main','Active','US')",
             command => command.Parameters.AddWithValue("@companyId", company));
-        var otherBranch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@companyId,'OTHER','Other','Active')",
+        var otherBranch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@companyId,'OTHER','Other','Active','US')",
             command => command.Parameters.AddWithValue("@companyId", company));
         try
         {

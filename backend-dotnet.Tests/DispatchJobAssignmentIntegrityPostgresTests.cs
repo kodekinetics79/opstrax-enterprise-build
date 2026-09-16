@@ -333,7 +333,7 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests(ITestOutputHelpe
     {
         private readonly string prefix = "AHFS1-" + Guid.NewGuid().ToString("N");
         private readonly List<long> companies = [];
-        public long CompanyA, CompanyB, BranchA, BranchB;
+        public long CompanyA, CompanyB, BranchA, BranchB, UserId;
         public readonly Dictionary<string, long> Jobs = [];
         public readonly Dictionary<string, (long Driver, long Vehicle)> Pairs = [];
         public long? Branch(string key) => key switch { "A" or "A2" => BranchA, "B" => BranchB, _ => null };
@@ -379,7 +379,7 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests(ITestOutputHelpe
         {
             // A fresh runtime models an independent request/restart, not shared connection state.
             var db = new Database(config, new TenantScopeAccessor());
-            return await db.RunInTenantScopeAsync(CompanyA, async () =>
+            return await db.RunInTenantScopeAsync(CompanyA, UserId, async () =>
             {
                 var identity = await db.QuerySingleAsync("SELECT current_user AS role,opstrax_security.current_tenant_id() AS tenant,pg_backend_pid() AS backend_pid", ct: ct);
                 Assert.Equal("opstrax_app", identity!["role"]); Assert.Equal(CompanyA, Convert.ToInt64(identity["tenant"]));
@@ -393,7 +393,7 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests(ITestOutputHelpe
                 var http = new DefaultHttpContext();
                 http.Items[EndpointMappings.AuthCompanyIdItemKey] = CompanyA;
                 if (branch.HasValue) http.Items[EndpointMappings.AuthBranchIdItemKey] = branch.Value;
-                http.Items[EndpointMappings.AuthUserIdItemKey] = 0L;
+                http.Items[EndpointMappings.AuthUserIdItemKey] = UserId;
                 http.Items[EndpointMappings.AuthRoleItemKey] = actorRole ?? "Synthetic dispatch operator";
                 http.Items[EndpointMappings.AuthPermissionsItemKey] = allowed ? new[] { "dispatch:assign", "dispatch:view" } : new[] { "dispatch:view" };
                 var handler = Registered(path);
@@ -524,12 +524,13 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests(ITestOutputHelpe
             }
             async Task<long> Company(string suffix)
             {
-                var id = await Insert("INSERT INTO companies(company_code,name,industry) VALUES (@code,'Synthetic S1 dispatch fixture','Transportation')", ("code", prefix + suffix));
+                var id = await Insert("INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Synthetic S1 dispatch fixture','Transportation','CA')", ("code", prefix + suffix));
                 companies.Add(id); return id;
             }
             CompanyA = await Company("A"); CompanyB = await Company("B");
-            BranchA = await Insert("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'A','Synthetic S1 A','Active')", ("c", CompanyA));
-            BranchB = await Insert("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'B','Synthetic S1 B','Active')", ("c", CompanyA));
+            BranchA = await Insert("INSERT INTO branches(company_id,branch_code,name,status,country_code,timezone) VALUES (@c,'A','Synthetic S1 A','Active','CA','America/Toronto')", ("c", CompanyA));
+            BranchB = await Insert("INSERT INTO branches(company_id,branch_code,name,status,country_code,timezone) VALUES (@c,'B','Synthetic S1 B','Active','CA','America/Toronto')", ("c", CompanyA));
+            UserId = await Insert("INSERT INTO users(company_id,branch_id,full_name,email,role_name,status) VALUES (@c,@b,'Synthetic dispatch operator',@email,'Dispatcher','Active')", ("c", CompanyA), ("b", BranchA), ("email", $"{prefix.ToLowerInvariant()}@example.invalid"));
             foreach (var key in new[] { "A", "A2", "B", "NULL", "FOREIGN" })
             {
                 var company = key == "FOREIGN" ? CompanyB : CompanyA; var branch = Branch(key);
@@ -549,7 +550,7 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests(ITestOutputHelpe
         {
             await app.DisposeAsync(); if (companies.Count == 0) return;
             await using var connection = new NpgsqlConnection(owner); await connection.OpenAsync(); await using var transaction = await connection.BeginTransactionAsync();
-            foreach (var table in new[] { "job_status_events", "entity_timeline_events", "audit_logs", "dispatch_assignments", "jobs", "hos_clocks", "hos_records", "drivers", "vehicles", "branches" })
+            foreach (var table in new[] { "job_status_events", "entity_timeline_events", "audit_logs", "dispatch_assignments", "jobs", "hos_clocks", "hos_records", "drivers", "vehicles", "users", "branches" })
             {
                 await using var command = new NpgsqlCommand($"DELETE FROM {table} WHERE company_id=ANY(@ids) AND company_id IN (SELECT id FROM companies WHERE company_code LIKE @prefix)", connection, transaction);
                 command.Parameters.AddWithValue("ids", companies.ToArray()); command.Parameters.AddWithValue("prefix", prefix + "%"); await command.ExecuteNonQueryAsync();

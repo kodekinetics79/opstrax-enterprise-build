@@ -173,6 +173,8 @@ public sealed class AdminRolePermissionCatalogTests
                 "/api/reports/ai/recommendations",
                 "/api/predictions/driver-risk",
                 "/api/carbon-emissions",
+                "/api/carbon-emissions/trend",
+                "/api/owners",
             })
             {
                 using var response = await client.GetAsync(path);

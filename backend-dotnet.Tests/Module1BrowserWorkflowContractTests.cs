@@ -83,12 +83,13 @@ public sealed class Module1BrowserWorkflowContractTests
     public void LargeFleetListsPageAfterSortingAndExportTheFullServerDataset()
     {
         var domain = Read("frontend", "src", "services", "fleetDomainApi.ts");
-        var page = Read("frontend", "src", "pages", "EntityListPage.tsx");
+        var driverPage = Read("frontend", "src", "pages", "EntityListPage.tsx");
+        var vehiclePage = Read("frontend", "src", "pages", "VehiclesPage.tsx");
         var table = Read("frontend", "src", "components", "ui.tsx");
 
         Assert.Contains("limit: 2000", domain, StringComparison.Ordinal);
-        Assert.Contains("/api/drivers/export", page, StringComparison.Ordinal);
-        Assert.Contains("/api/vehicles/export", page, StringComparison.Ordinal);
+        Assert.Contains("/api/drivers/export", driverPage, StringComparison.Ordinal);
+        Assert.Contains("/api/vehicles/export", vehiclePage, StringComparison.Ordinal);
         Assert.Contains("const [pageSize, setPageSize] = useState(50)", table, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Records per page\"", table, StringComparison.Ordinal);
         Assert.Contains("<option value={25}>25 rows</option>", table, StringComparison.Ordinal);
@@ -106,7 +107,7 @@ public sealed class Module1BrowserWorkflowContractTests
         var module = Read("frontend", "src", "pages", "DriversModulePage.tsx");
         var messaging = Read("frontend", "src", "pages", "DriverMessagingPage.tsx");
 
-        Assert.Contains("(kind === \"vehicles\" || kind === \"drivers\") && statusFilter === \"Active\"", roster, StringComparison.Ordinal);
+        Assert.Contains("kind === \"drivers\" && statusFilter === \"Active\"", roster, StringComparison.Ordinal);
         Assert.Contains("kind === \"drivers\" && canCreate", roster, StringComparison.Ordinal);
         Assert.Contains("templateEndpoint: \"/api/drivers/import-template\"", roster, StringComparison.Ordinal);
         Assert.Contains("columns: [\"driverCode\", \"branchCode\"", roster, StringComparison.Ordinal);

@@ -369,7 +369,7 @@ public sealed class SafetyBackgroundService(
             }, ct);
         if (existing > 0) return;
 
-        _ = ai.CreateRecommendation(
+        _ = await ai.CreateRecommendationAsync(
             companyId.ToString(CultureInfo.InvariantCulture),
             "safety.telemetry.review",
             $"Review {alertType.Replace('_', ' ')} event",
@@ -384,7 +384,8 @@ public sealed class SafetyBackgroundService(
             ActorTypes.System,
             "SafetyBackgroundService",
             status: "active",
-            moduleKey: "safety");
+            moduleKey: "safety",
+            ct: ct);
     }
 
     private async Task CreateRepeatedSpeedingRecommendationAsync(long companyId, long? driverId, long count, decimal weight, CancellationToken ct)
@@ -404,7 +405,7 @@ public sealed class SafetyBackgroundService(
             }, ct);
         if (existing > 0) return;
 
-        _ = ai.CreateRecommendation(
+        _ = await ai.CreateRecommendationAsync(
             companyId.ToString(CultureInfo.InvariantCulture),
             "safety.repeated_speeding.review",
             "Repeated speeding review required",
@@ -419,7 +420,8 @@ public sealed class SafetyBackgroundService(
             ActorTypes.System,
             "SafetyBackgroundService",
             status: "active",
-            moduleKey: "safety");
+            moduleKey: "safety",
+            ct: ct);
     }
 
     // Returns (score, event_count, breakdown_json) for a driver in a given day window.

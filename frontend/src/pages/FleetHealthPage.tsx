@@ -13,6 +13,8 @@ import { coachingApi } from "@/services/coachingApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import { ErrorState, LoadingState, PageHeader } from "@/components/ui";
 import type { AnyRecord } from "@/types";
+import { useTenantCountry } from "@/hooks/useTenantRegion";
+import { formatTenantDistanceFromMiles } from "@/utils/tenantMeasurements";
 
 // ── Severity helpers ────────────────────────────────────────────────────────
 
@@ -405,6 +407,7 @@ function VehicleDrawer({
   canManageMaint: boolean;
 }) {
   const navigate = useNavigate();
+  const tenantCountry = useTenantCountry();
   const { data, isLoading, isError } = useQuery<AnyRecord>({
     queryKey: ["fleet-health", "vehicle", vehicleId],
     queryFn: () => fleetHealthApi.vehicleDetail(vehicleId!),
@@ -434,7 +437,7 @@ function VehicleDrawer({
     ["Readiness",       hasReadinessEvidence(veh) ? `${num(veh.readinessScore)}%` : "Unknown"],
     ["Device",          String(veh.deviceStatus ?? "—")],
     ["Assigned Driver", String(veh.assignedDriverName ?? "Unassigned")],
-    ["Odometer",        veh.odometerMiles ? `${num(veh.odometerMiles).toLocaleString()} mi` : "—"],
+    ["Odometer",        veh.odometerMiles ? formatTenantDistanceFromMiles(veh.odometerMiles, tenantCountry) : "—"],
   ];
 
   return (

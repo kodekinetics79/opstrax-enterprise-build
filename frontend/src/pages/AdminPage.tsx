@@ -2,7 +2,7 @@ import { DataTable } from "@/components/ui";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronUp, ClipboardCheck, Copy, Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Trash2, UserCog, Users, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, ClipboardCheck, Download, KeyRound, LayoutDashboard, Plus, Search, ShieldCheck, Trash2, UserCog, Users, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission, PermissionDenied } from "@/hooks/usePermission";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
@@ -30,203 +30,12 @@ import { branchesApi } from "@/services/branchesApi";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, PasswordInput, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
-
-type AdminTab = "dashboard" | "users" | "roles" | "permissions" | "access" | "settings" | "audit";
-
-type UserFormState = {
-  id?: number;
-  fullName: string;
-  email: string;
-  companyId: number;
-  roleId: string;
-  roleName: string;
-  /** DEF-027: customer-scope binding for portal roles ("" = no binding). */
-  customerId: string;
-  /** Empty means tenant-wide; otherwise the user's enforced branch ownership scope. */
-  branchId: string;
-  status: string;
-  password: string;
-};
-
-type RoleFormState = {
-  name: string;
-  permissions: string[];
-};
-
-type ActivationLink = { link: string; expiresAt?: string };
-
-type UserSortKey = "fullName" | "companyName" | "roleName" | "status" | "lastLoginAt";
-
-const USER_PAGE_SIZE = 25;
-
-const USER_COLUMNS: Array<{ label: string; sortKey?: UserSortKey }> = [
-  { label: "User", sortKey: "fullName" },
-  { label: "Company", sortKey: "companyName" },
-  { label: "Role", sortKey: "roleName" },
-  { label: "Security" },
-  { label: "Status", sortKey: "status" },
-  { label: "Last Login", sortKey: "lastLoginAt" },
-  { label: "Actions" },
-];
-
-const USER_SORT_ACCESSORS: Record<UserSortKey, (user: AnyRecord) => string | number> = {
-  fullName: (user) => String(user.fullName ?? user.full_name ?? "").toLowerCase(),
-  companyName: (user) => String(user.companyName ?? user.company_name ?? "").toLowerCase(),
-  roleName: (user) => String(user.roleName ?? user.role_name ?? "").toLowerCase(),
-  status: (user) => String(user.status ?? "").toLowerCase(),
-  lastLoginAt: (user) => {
-    const raw = user.lastLoginAt ?? user.last_login_at;
-    const time = raw ? new Date(String(raw)).getTime() : 0;
-    return Number.isFinite(time) ? time : 0;
-  },
-};
-
-const TAB_OPTIONS: Array<{ key: AdminTab; label: string }> = [
-  { key: "dashboard", label: "Dashboard" },
-  { key: "users", label: "Users" },
-  { key: "roles", label: "Roles" },
-  { key: "permissions", label: "Permissions" },
-  { key: "access", label: "Access Reviews" },
-  { key: "settings", label: "Settings" },
-  { key: "audit", label: "Audit Logs" },
-];
-
-function csvValue(value: unknown) {
-  const text = String(value ?? "");
-  if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
-  return text;
-}
-
-function downloadCsv(filename: string, rows: AnyRecord[], headers: string[]) {
-  const lines = [
-    headers.join(","),
-    ...rows.map((row) => headers.map((key) => csvValue(row[key])).join(",")),
-  ];
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-function permissionsByGroup(permissions: string[]) {
-  const groups: Array<{ title: string; prefix: string }> = [
-    { title: "Dashboard", prefix: "dashboard:" },
-    { title: "Fleet", prefix: "vehicles:" },
-    { title: "Drivers", prefix: "drivers:" },
-    { title: "Shipments / Jobs", prefix: "shipments:" },
-    { title: "Dispatch", prefix: "dispatch:" },
-    { title: "Customers", prefix: "customers:" },
-    { title: "Safety", prefix: "safety:" },
-    { title: "Maintenance", prefix: "maintenance:" },
-    { title: "Compliance", prefix: "compliance:" },
-    { title: "Alerts", prefix: "alerts:" },
-    { title: "Reports", prefix: "reports:" },
-    { title: "Admin", prefix: "users:" },
-    { title: "Roles", prefix: "roles:" },
-    { title: "Settings", prefix: "settings:" },
-    { title: "Audit", prefix: "audit:" },
-  ];
-  const grouped = groups
-    .map((group) => ({
-      ...group,
-      permissions: permissions.filter((permission) => permission.startsWith(group.prefix)),
-    }))
-    .filter((group) => group.permissions.length > 0);
-  // Catch-all so permissions with unknown prefixes (access_review:, telematics:, …)
-  // stay visible and grantable instead of silently disappearing from the editor.
-  const known = new Set(grouped.flatMap((g) => g.permissions));
-  const other = permissions.filter((p) => !known.has(p));
-  if (other.length > 0) grouped.push({ title: "Other", prefix: "", permissions: other });
-  return grouped;
-}
-
-function permissionList(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String);
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed.map(String) : [value];
-    } catch {
-      return value.split(",").map((item) => item.trim()).filter(Boolean);
-    }
-  }
-  return [];
-}
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("") || "?";
-}
-
-/** Deterministic avatar hue per name so the roster is scannable at a glance. */
-function avatarHue(name: string): number {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-  return h;
-}
-
-function Avatar({ name }: { name: string }) {
-  const hue = avatarHue(name);
-  return (
-    <span
-      aria-hidden="true"
-      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-[inset_0_1px_0_rgba(255,255,255,.4),0_2px_5px_rgba(15,23,42,.25)]"
-      style={{ background: `linear-gradient(145deg, hsl(${hue} 55% 52%), hsl(${hue} 60% 40%))` }}
-    >
-      {initials(name)}
-    </span>
-  );
-}
-
-/** Pulls the human-readable message out of an Axios/ApiResponse error. */
-function extractApiError(err: unknown, fallback: string): string {
-  const data = (err as { response?: { data?: { message?: string; errors?: string[] } } })?.response?.data;
-  return data?.errors?.[0] ?? data?.message ?? fallback;
-}
-
-function MfaBadge({ status }: { status: unknown }) {
-  const enabled = String(status ?? "").toLowerCase() === "enabled";
-  return (
-    <span className={`iam-chip ${enabled ? "!text-emerald-700" : "!text-slate-400"}`} title={enabled ? "Multi-factor authentication enrolled" : "MFA not enrolled"}>
-      <ShieldCheck className={`h-3 w-3 shrink-0 ${enabled ? "text-emerald-600" : "text-slate-300"}`} />
-      <span>{enabled ? "MFA" : "No MFA"}</span>
-    </span>
-  );
-}
-
-/** One-time activation link panel (same pattern as the API-key panel on SettingsPage). */
-function ActivationLinkPanel({
-  result, copied, onCopy, onDismiss,
-}: {
-  result: ActivationLink; copied: boolean; onCopy: () => void; onDismiss: () => void;
-}) {
-  return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
-      <p className="text-xs font-semibold text-amber-800">One-time activation link — copy it now and share it securely; it will not be shown again.</p>
-      <div className="flex items-center gap-2 min-w-0">
-        <code className="min-w-0 flex-1 whitespace-nowrap rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-mono text-slate-700 overflow-x-auto select-all">
-          {result.link}
-        </code>
-        <button type="button" className="btn-secondary text-xs shrink-0" onClick={onCopy}>
-          {copied ? <><Check className="h-3.5 w-3.5" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}
-        </button>
-      </div>
-      {result.expiresAt && (
-        <p className="text-xs text-amber-700">Link expires {new Date(result.expiresAt).toLocaleDateString()}</p>
-      )}
-      <button type="button" className="text-xs font-semibold text-amber-800 underline" onClick={onDismiss}>
-        Dismiss
-      </button>
-    </div>
-  );
-}
+import {
+  ActivationLinkPanel, Avatar, MfaBadge, TAB_OPTIONS, USER_COLUMNS, USER_PAGE_SIZE, USER_SORT_ACCESSORS,
+  downloadCsv, extractApiError, permissionList, permissionsByGroup,
+  type ActivationLink, type AdminTab, type RoleFormState, type UserFormState, type UserSortKey,
+} from "./admin/AdminPagePrimitives";
+import { AdminAccessReviewsPanel, AdminAuditPanel, AdminPermissionsPanel, AdminRolesPanel, AdminSettingsPanel } from "./admin/AdminTaskPanels";
 
 export function AdminPage() {
   const location = useLocation();
@@ -951,248 +760,74 @@ export function AdminPage() {
       )}
 
       {tab === "roles" && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="min-w-0 truncate text-sm text-slate-500">Roles list and permission bundles.</p>
-            <div className="flex shrink-0 items-center gap-2">
-              <div className="flex rounded-xl border border-slate-200 bg-white p-1" role="group" aria-label="Roles view">
-                {([["list", "List"], ["matrix", "Matrix"]] as Array<["list" | "matrix", string]>).map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    aria-pressed={rolesView === key}
-                    className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${rolesView === key ? "bg-teal-50 text-teal-700" : "text-slate-500 hover:text-slate-700"}`}
-                    onClick={() => setRolesView(key)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <button className="btn-ghost" onClick={exportRoles} disabled={!canExportReports} title={!canExportReports ? "You do not have permission to perform this action." : undefined}>Export</button>
-              <button className="btn-primary" onClick={openCreateRole} disabled={!canCreateRoles}>
-                <Plus className="h-4 w-4" /> Create role
-              </button>
-            </div>
-          </div>
-          {rolesQ.isLoading ? <LoadingState /> : rolesQ.isError ? <ErrorState message="Could not load roles." /> : rolesView === "matrix" ? (
-            <div className="iam-card overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200">
-                    <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 whitespace-nowrap">Permission group</th>
-                    {roles.map((role: AnyRecord) => (
-                      <th key={String(role.id)} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 max-w-[110px]">
-                        <span className="block truncate" title={String(role.name)}>{String(role.name)}</span>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {permissionsByGroup(permissions).map((group) => (
-                    <tr key={group.title}>
-                      <td className="px-4 py-3 font-semibold text-slate-900 whitespace-nowrap">{group.title}</td>
-                      {roles.map((role: AnyRecord) => {
-                        const grantedList = permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json);
-                        const granted = group.permissions.filter((permission) => grantedList.includes(permission)).length;
-                        const total = group.permissions.length;
-                        const tone = granted === total
-                          ? "bg-teal-500/10 font-semibold text-teal-700"
-                          : granted === 0
-                          ? "text-slate-300"
-                          : "text-slate-600";
-                        return (
-                          <td key={String(role.id)} className={`px-4 py-3 whitespace-nowrap tabular-nums ${tone}`} title={`${granted} of ${total} ${group.title} permissions granted`}>
-                            {granted}/{total}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <DataTable rows={roles} columns={["name", "userCount", "permissions"]}
-              columnLabels={{ userCount: "Users", permissions: "Permissions" }}
-              cellRenderers={{ permissions: (role) => `${permissionList(role.permissions ?? role.permissionsJson ?? role.permissions_json).length} permissions` }}
-              actions={(role) => <button type="button" className="btn-ghost btn-compact" onClick={() => openRoleEditor(role)} disabled={!canUpdateRoles || Boolean(role.isSystem ?? role.is_system)} title={Boolean(role.isSystem ?? role.is_system) ? "Built-in templates are immutable; create a tenant role to customize access." : undefined}>{Boolean(role.isSystem ?? role.is_system) ? "Protected" : "Edit"}</button>}
-            />
-          )}
-        </div>
+        <AdminRolesPanel
+          view={rolesView}
+          setView={setRolesView}
+          exportRoles={exportRoles}
+          canExportReports={canExportReports}
+          openCreateRole={openCreateRole}
+          canCreateRoles={canCreateRoles}
+          isLoading={rolesQ.isLoading}
+          isError={rolesQ.isError}
+          roles={roles}
+          permissions={permissions}
+          openRoleEditor={openRoleEditor}
+          canUpdateRoles={canUpdateRoles}
+        />
       )}
 
       {tab === "permissions" && (
-        <div className="space-y-4">
-          {permissionsQ.isError ? (
-            <ErrorState message="The live permissions endpoint failed, so the admin view is not showing a seed-backed replacement." />
-          ) : permissionsQ.isLoading && permissions.length === 0 ? (
-            <div className="space-y-3">
-              <p className="text-sm text-slate-500">Fetching the live RBAC catalog.</p>
-              <LoadingState />
-            </div>
-          ) : (
-            <>
-          <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm text-slate-500">Canonical permission catalog used by the RBAC layer.</p>
-          </div>
-          <div className="grid gap-4 xl:grid-cols-2">
-            {permissionsByGroup(permissions).map((group) => (
-              <div key={group.title} className="iam-card p-5 min-w-0">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-bold text-slate-900 truncate">{group.title}</h3>
-                  <StatusBadge status={`${group.permissions.length} perms`} />
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {group.permissions.map((permission) => (
-                    <span key={permission} className="iam-chip"><span>{permission}</span></span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-            </>
-          )}
-        </div>
+        <AdminPermissionsPanel
+          isError={permissionsQ.isError}
+          isLoading={permissionsQ.isLoading}
+          permissions={permissions}
+        />
       )}
 
       {tab === "access" && (
-        <div className="grid gap-4 xl:grid-cols-[0.75fr_1.25fr]">
-          <div className="space-y-4">
-            {canManageAccessReviews && (
-              <div className="iam-card space-y-3 p-5">
-                <div>
-                  <h2 className="font-bold text-slate-900">Start access certification</h2>
-                  <p className="mt-1 text-xs text-slate-500">Snapshots every active user and their current role permissions for this tenant.</p>
-                </div>
-                <input className="field w-full" value={reviewForm.title} onChange={(e) => setReviewForm((f) => ({ ...f, title: e.target.value }))} placeholder="Quarterly privileged access review" />
-                <textarea className="field min-h-20 w-full" value={reviewForm.description} onChange={(e) => setReviewForm((f) => ({ ...f, description: e.target.value }))} placeholder="Purpose and reviewer guidance" />
-                <div><label className="label">Due date</label><input className="field w-full" type="date" value={reviewForm.dueDate} onChange={(e) => setReviewForm((f) => ({ ...f, dueDate: e.target.value }))} /></div>
-                <button
-                  className="btn-primary w-full"
-                  disabled={!reviewForm.title.trim() || createAccessReview.isPending}
-                  onClick={async () => {
-                    const result = await createAccessReview.mutateAsync({ ...reviewForm, reviewerUserId: Number(session?.user?.id) });
-                    setReviewForm({ title: "", description: "", dueDate: "" });
-                    setSelectedReviewId(Number(result.id));
-                  }}
-                ><Plus className="h-4 w-4" />{createAccessReview.isPending ? "Creating…" : "Create review"}</button>
-              </div>
-            )}
-            <div className="iam-card overflow-hidden">
-              <div className="border-b border-slate-200 px-5 py-4"><h2 className="font-bold text-slate-900">Review campaigns</h2></div>
-              {accessReviewsQ.isLoading ? <LoadingState /> : accessReviewsQ.isError ? <ErrorState message="Could not load access reviews." /> : (accessReviewsQ.data ?? []).length === 0 ? (
-                <div className="p-5"><EmptyState title="No access reviews" subtitle="Create the first tenant access certification campaign." /></div>
-              ) : (accessReviewsQ.data ?? []).map((review) => (
-                <button key={review.id} className={`w-full border-b border-slate-100 px-5 py-4 text-left transition hover:bg-white/60 ${selectedReviewId === Number(review.id) ? "bg-teal-50/70" : ""}`} onClick={() => setSelectedReviewId(Number(review.id))}>
-                  <div className="flex items-start justify-between gap-3"><p className="font-semibold text-slate-900 truncate min-w-0">{String(review.title)}</p><div className="shrink-0"><StatusBadge status={String(review.status)} /></div></div>
-                  <p className="mt-2 text-xs text-slate-500">{Number(review.itemsPending ?? review.items_pending ?? 0)} pending · {Number(review.itemsApproved ?? review.items_approved ?? 0)} approved · {Number(review.itemsRevoked ?? review.items_revoked ?? 0)} revoked</p>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="iam-card min-h-80 overflow-hidden">
-            {!selectedReviewId ? (
-              <div className="flex min-h-80 flex-col items-center justify-center p-8 text-center"><ClipboardCheck className="h-10 w-10 text-teal-500" /><h2 className="mt-3 font-bold text-slate-900">Select a review</h2><p className="mt-1 text-sm text-slate-500">Inspect each user’s snapshotted role and make an explicit retain or revoke decision.</p></div>
-            ) : accessReviewQ.isLoading ? <LoadingState /> : accessReviewQ.isError ? <ErrorState message="Could not load this access review." /> : (
-              <div>
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 p-5">
-                  <div className="min-w-0"><h2 className="text-lg font-bold text-slate-900 truncate">{String(accessReviewQ.data?.title ?? "Access review")}</h2><p className="mt-1 text-sm text-slate-500">{String(accessReviewQ.data?.description ?? "Tenant access certification")}</p></div>
-                  <button className="btn-primary shrink-0" disabled={!canManageAccessReviews || Number(accessReviewQ.data?.itemsPending ?? accessReviewQ.data?.items_pending ?? 0) > 0 || String(accessReviewQ.data?.status) === "completed" || completeAccessReview.isPending} onClick={() => completeAccessReview.mutateAsync(selectedReviewId)}><Check className="h-4 w-4" />Complete review</button>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm"><thead><tr className="border-b border-slate-200">{["User", "Role", "Permissions", "Decision"].map((h) => <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{h}</th>)}</tr></thead>
-                    <tbody className="divide-y divide-slate-100">{(((accessReviewQ.data?.items as AnyRecord[] | undefined) ?? [])).map((item) => {
-                      const pending = String(item.status) === "pending";
-                      return <tr key={String(item.id)}><td className="px-4 py-3 max-w-[220px]"><p className="font-semibold text-slate-900 truncate">{String(item.targetUserName ?? item.target_user_name ?? "User")}</p><p className="text-xs text-slate-500 truncate">{String(item.targetUserEmail ?? item.target_user_email ?? "")}</p></td><td className="px-4 py-3 text-slate-700 max-w-[140px]"><span className="block truncate">{String(item.roleName ?? item.role_name ?? "—")}</span></td><td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{permissionList(item.permissionsSnapshot ?? item.permissions_snapshot).length} granted</td><td className="px-4 py-3">{pending ? <div className="flex gap-2"><button className="btn-ghost h-8 px-3" disabled={!canManageAccessReviews || decideAccessReviewItem.isPending} onClick={() => decideAccessReviewItem.mutateAsync({ reviewId: selectedReviewId, itemId: Number(item.id), decision: "approve" })}>Retain</button><button className="btn-ghost h-8 px-3 text-rose-600" disabled={!canManageAccessReviews || decideAccessReviewItem.isPending} onClick={() => decideAccessReviewItem.mutateAsync({ reviewId: selectedReviewId, itemId: Number(item.id), decision: "revoke", notes: "Access removal required by reviewer" })}>Revoke</button></div> : <StatusBadge status={String(item.status)} />}</td></tr>;
-                    })}</tbody></table>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <AdminAccessReviewsPanel
+          canManage={canManageAccessReviews}
+          form={reviewForm}
+          setForm={setReviewForm}
+          creating={createAccessReview.isPending}
+          onCreate={async () => {
+            const result = await createAccessReview.mutateAsync({ ...reviewForm, reviewerUserId: Number(session?.user?.id) });
+            setReviewForm({ title: "", description: "", dueDate: "" });
+            setSelectedReviewId(Number(result.id));
+          }}
+          reviews={(accessReviewsQ.data ?? []) as AnyRecord[]}
+          reviewsLoading={accessReviewsQ.isLoading}
+          reviewsError={accessReviewsQ.isError}
+          selectedId={selectedReviewId}
+          setSelectedId={setSelectedReviewId}
+          review={accessReviewQ.data as AnyRecord | undefined}
+          reviewLoading={accessReviewQ.isLoading}
+          reviewError={accessReviewQ.isError}
+          completing={completeAccessReview.isPending}
+          onComplete={async () => { await completeAccessReview.mutateAsync(selectedReviewId!); }}
+          deciding={decideAccessReviewItem.isPending}
+          onDecide={async (itemId, decision, notes) => { await decideAccessReviewItem.mutateAsync({ reviewId: selectedReviewId!, itemId, decision, notes }); }}
+        />
       )}
 
       {tab === "settings" && (
-        <div className="iam-card p-5 space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="text-lg font-bold text-slate-900">Tenant Settings</h2>
-              <p className="mt-1 text-sm text-slate-500">Locale and operational preferences for this tenant.</p>
-            </div>
-            <button className="btn-ghost shrink-0" onClick={() => window.location.assign("/settings")}>Open Settings Page</button>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {Object.entries(
-              // The endpoint returns an array of tenant rows — unwrap the first row,
-              // otherwise Object.entries renders "[object Object]" tiles.
-              ((Array.isArray(localeQ.data) ? (localeQ.data as AnyRecord[])[0] : localeQ.data) as AnyRecord | undefined) ?? {}
-            )
-              .filter(([key]) => !["id", "tenant_id", "company_id", "created_at", "updated_at"].includes(key))
-              .slice(0, 6)
-              .map(([key, value]) => (
-              <div key={key} className="iam-kv flex-col !items-start gap-1 min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 truncate w-full">{key.replace(/_/g, " ")}</p>
-                <p className="text-sm text-slate-700 break-words w-full">{String(value ?? "—")}</p>
-              </div>
-            ))}
-          </div>
-          <button className="btn-primary w-fit" onClick={() => window.location.assign("/settings")} disabled={!canViewSettings || !canUpdateSettings}>
-            <ShieldCheck className="h-4 w-4" />
-            Update settings
-          </button>
-        </div>
+        <AdminSettingsPanel
+          localeData={localeQ.data}
+          canViewSettings={canViewSettings}
+          canUpdateSettings={canUpdateSettings}
+        />
       )}
 
       {tab === "audit" && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-slate-500">Recent audit activity and export requests.</p>
-            <button className="btn-ghost shrink-0" onClick={() => window.location.assign("/audit-logs")}>Open Audit Logs</button>
-          </div>
-          <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-            <div className="iam-card overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200">
-                    {["Action", "Actor", "Entity", "Severity"].map((header) => (
-                      <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {((Array.isArray(auditLogsQ.data) ? auditLogsQ.data : []) as AnyRecord[]).slice(0, 8).map((log: AnyRecord) => (
-                    <tr key={String(log.id)}>
-                      <td className="px-4 py-3 text-slate-900 max-w-[220px]"><span className="block truncate" title={String(log.actionName ?? log.action_name ?? "Action")}>{String(log.actionName ?? log.action_name ?? "Action")}</span></td>
-                      <td className="px-4 py-3 text-slate-600 max-w-[160px]"><span className="block truncate">{String(log.actorName ?? log.actor_name ?? "system")}</span></td>
-                      <td className="px-4 py-3 text-slate-600 max-w-[160px]"><span className="block truncate">{String(log.entityName ?? log.entity_name ?? "—")}</span></td>
-                      <td className="px-4 py-3"><StatusBadge status={String(log.severity ?? "Info")} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="iam-card p-5 space-y-3">
-              <h3 className="font-bold text-slate-900">Export Requests</h3>
-              {((Array.isArray(auditExportsQ.data) ? auditExportsQ.data : []) as AnyRecord[]).slice(0, 4).map((entry: AnyRecord) => (
-                <div key={String(entry.id)} className="iam-kv">
-                  <p className="text-sm font-semibold text-slate-900 truncate min-w-0">{String(entry.requestedByName ?? entry.requested_by_name ?? "—")}</p>
-                  <p className="text-xs text-slate-500 shrink-0">{String(entry.status ?? "Pending")}</p>
-                </div>
-              ))}
-              <button
-                className="btn-ghost w-full"
-                onClick={() => createAuditExport.mutate({
-                  requestedByName: String(session?.user?.fullName ?? session?.user?.full_name ?? session?.user?.email ?? ""),
-                  exportFormat: "CSV",
-                })}
-                disabled={!canExportReports}
-                title={!canExportReports ? "You do not have permission to perform this action." : undefined}
-              >
-                Request audit export
-              </button>
-            </div>
-          </div>
-        </div>
+        <AdminAuditPanel
+          auditLogs={(Array.isArray(auditLogsQ.data) ? auditLogsQ.data : []) as AnyRecord[]}
+          auditExports={(Array.isArray(auditExportsQ.data) ? auditExportsQ.data : []) as AnyRecord[]}
+          canExportReports={canExportReports}
+          requestExport={() => createAuditExport.mutate({
+            requestedByName: String(session?.user?.fullName ?? session?.user?.full_name ?? session?.user?.email ?? ""),
+            exportFormat: "CSV",
+          })}
+        />
       )}
 
       {selectedUser && (

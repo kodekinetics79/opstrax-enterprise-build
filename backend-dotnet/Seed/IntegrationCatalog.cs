@@ -1,10 +1,11 @@
 using System.Text.Json;
 using Opstrax.Api.Data;
+using Opstrax.Api.Services;
 
 namespace Opstrax.Api.Seed;
 
 // Canonical connector catalog for the Integrations module — the .NET port of the
-// Node side-service registry (backend/src/modules/integrations/integrations.registry.ts).
+// Canonical integration registry for the active .NET API.
 //
 // WHY THIS EXISTS: the frontend Integrations page was rendering empty because it
 // called the Node :8090 side-service (which hydrates this catalog on read) while the
@@ -84,6 +85,18 @@ public static class IntegrationCatalog
             "Carrier platform for driver apps, dispatch, and compliance workflows.",
             "PS", "Disconnected", "—", null,
             new[]{"driver-app","dispatch"}, new[]{"ELD"}, "Fleet Ops", new { }),
+        new("locus", "Locus", "Telematics & ELD",
+            "Third-party fleet order, vehicle, and tracking exchange. Provider client access and a successful live handshake are required before imported vehicles or locations are treated as operational evidence.",
+            "LOC", "Disconnected", "Never", null,
+            new[]{"partner-fleet","orders","tracking"}, new[]{"Third-party fleet","Dispatch","GPS"}, "Fleet Ops", new { }),
+        new("tamm-saudi", "TAMM (Saudi Arabia)", "Compliance",
+            "Saudi vehicle, driver authorization, and traffic-service verification. Elm/TAMM onboarding and tenant-authorized credentials are required; the catalog entry alone does not verify any vehicle or driver.",
+            "TAM", "Disconnected", "Never", null,
+            new[]{"vehicles","drivers","authorizations"}, new[]{"Government verification","Compliance"}, "Compliance Ops", new { }),
+        new("saudi-payment-gateway", "Saudi Payment Gateway", "Payments",
+            "Licensed PSP connection for mada, SADAD, cards, payment links, reconciliation, and refunds. Provider contracting, technical approval, webhook signing, and a successful live test are required before collecting funds.",
+            "SAR", "Disconnected", "Never", null,
+            new[]{"invoices","payments","refunds"}, new[]{"Accounts receivable","Checkout"}, "Finance Ops", new { }),
         new("wex-fuel-card", "WEX Fuel Card", "Fuel Cards",
             "Fuel transactions, odometer capture, and anomaly detection sync.",
             "WEX", "Connected", "1 min ago", "2026-06-24T14:15:00Z",
@@ -192,6 +205,14 @@ public static class IntegrationCatalog
     private static readonly IReadOnlyDictionary<string, string> BuiltInNames = Entries
         .ToDictionary(entry => entry.Key, entry => entry.Name, StringComparer.OrdinalIgnoreCase);
 
+    // Government and domestic payment-provider entries are market-specific. They
+    // remain absent for every other market, including tenants with no locked market.
+    private static readonly HashSet<string> SaudiOnlyKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "tamm-saudi",
+        "saudi-payment-gateway",
+    };
+
     public static bool IsBuiltInKey(string? key) =>
         !string.IsNullOrWhiteSpace(key) && BuiltInNames.ContainsKey(key);
 
@@ -200,12 +221,21 @@ public static class IntegrationCatalog
             ? name
             : "Catalog connector";
 
+    public static bool IsAvailableForCountry(string? key, string? countryCode) =>
+        string.IsNullOrWhiteSpace(key)
+        || !SaudiOnlyKeys.Contains(key)
+        || string.Equals(TenantMarketPolicyService.NormalizeCountry(countryCode), "SA", StringComparison.Ordinal);
+
+    public static IReadOnlyList<Entry> EntriesForCountry(string? countryCode) =>
+        Entries.Where(entry => IsAvailableForCountry(entry.Key, countryCode)).ToList();
+
     // Idempotent, tenant-scoped hydration. Inserts only the catalog entries a tenant
     // is missing (by integration_key); never overwrites existing rows or a tenant's
     // own connect/configure state. Safe to call on every list read.
     public static async Task EnsureTenantAsync(Database db, long companyId, CancellationToken ct)
     {
-        foreach (var e in Entries)
+        var market = await new TenantMarketPolicyService(db).GetAsync(companyId, ct);
+        foreach (var e in EntriesForCountry(market?.CountryCode))
         {
             await db.ExecuteAsync(
                 @"INSERT INTO integrations

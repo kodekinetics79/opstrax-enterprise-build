@@ -5,6 +5,7 @@ import { Download, Pencil, Plus, Route, Sparkles, Trash2, UserCheck, X } from "l
 import { AiInsightCard, KpiCard, DataTable, EmptyState, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 
 import { usePermissions } from "@/hooks/usePermission";
+import { useTenantCountry } from "@/hooks/useTenantRegion";
 import { useRouteDetail, useRoutes, useRouteSummary } from "@/hooks/useBatch2";
 import { jobsApi } from "@/services/jobsApi";
 import { routesApi } from "@/services/routesApi";
@@ -12,6 +13,7 @@ import { downloadServerExport } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { prepareRouteForm, routeFormForDisplay } from "@/utils/routeForm";
+import { formatTenantDistanceFromMiles } from "@/utils/tenantMeasurements";
 
 const routeFields = [["routeCode","Route Code"],["routeName","Route Name"],["region","Region / Zone"],["plannedStart","Planned Start"],["plannedEnd","Planned End"],["routeType","Route Type"],["optimizationMode","Optimization Mode"],["costEstimate","Cost Estimate"],["status","Status"],["notes","Notes"]];
 const stopFields = [["stopSequence","Sequence"],["stopType","Stop Type"],["address","Address"],["latitude","Latitude"],["longitude","Longitude"],["timeWindowStart","Window Start"],["timeWindowEnd","Window End"],["eta","ETA"],["status","Status"],["notes","Notes"]];
@@ -29,6 +31,7 @@ function routeEstimate(value: unknown, unit: string): string {
 type Toast = { kind: "success" | "error" | "info"; message: string };
 
 export function RoutePlanningPage() {
+  const tenantCountry = useTenantCountry();
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [assigning, setAssigning] = useState<AnyRecord | null>(null);
@@ -116,8 +119,8 @@ export function RoutePlanningPage() {
       <span className="text-xs font-semibold text-slate-500">{routeRows.length} shown · {routeTotal.toLocaleString()} total</span>
       {routeTotal > PAGE_SIZE ? <span className="ml-auto flex items-center gap-2 text-xs text-slate-500"><button type="button" className="btn-ghost h-8" disabled={offset === 0 || routes.isFetching} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>← Prev</button><span>Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(routeTotal / PAGE_SIZE))}</span><button type="button" className="btn-ghost h-8" disabled={offset + PAGE_SIZE >= routeTotal || routes.isFetching} onClick={() => setOffset(offset + PAGE_SIZE)}>Next →</button></span> : null}
     </div>
-    {routeRows.length ? <DataTable rows={routeRows} columns={["routeCode", "routeName", "region", "driverName", "vehicleCode", "stops", "plannedStart", "plannedEnd", "status", "estimatedDurationMinutes", "estimatedDistance", "slaRisk", "recommendedAction"]} showToolbar={false} cellRenderers={{ plannedStart: (row) => routeDateTime(row.plannedStart), plannedEnd: (row) => routeDateTime(row.plannedEnd), estimatedDistance: (row) => routeEstimate(row.estimatedDistance, "mi"), estimatedDurationMinutes: (row) => routeEstimate(row.estimatedDurationMinutes, "min") }} onSelect={setSelected} /> : <EmptyState title="No routes match these filters" subtitle="Adjust the status or search criteria." />}
-    <RouteDrawer detail={detail.data} loading={detail.isLoading} canManage={canManage} canAssign={canAssign} optimizeResult={optimize.data}
+    {routeRows.length ? <DataTable rows={routeRows} columns={["routeCode", "routeName", "region", "driverName", "vehicleCode", "stops", "plannedStart", "plannedEnd", "status", "estimatedDurationMinutes", "estimatedDistance", "slaRisk", "recommendedAction"]} showToolbar={false} cellRenderers={{ plannedStart: (row) => routeDateTime(row.plannedStart), plannedEnd: (row) => routeDateTime(row.plannedEnd), estimatedDistance: (row) => formatTenantDistanceFromMiles(row.estimatedDistance, tenantCountry), estimatedDurationMinutes: (row) => routeEstimate(row.estimatedDurationMinutes, "min") }} onSelect={setSelected} /> : <EmptyState title="No routes match these filters" subtitle="Adjust the status or search criteria." />}
+    <RouteDrawer detail={detail.data} loading={detail.isLoading} canManage={canManage} canAssign={canAssign} optimizeResult={optimize.data} tenantCountry={tenantCountry}
       onClose={() => setSelected(null)} onEdit={(record) => { save.reset(); setEditing(record); }} onAssign={setAssigning}
       onAddStop={() => setStopEditing({ stopType: "Drop-off", status: "Pending", proofStatus: "Pending" })}
       onEditStop={setStopEditing} onDeleteStop={(stopId) => { if (window.confirm("Remove this route stop?")) deleteStop.mutate(stopId); }}
@@ -136,10 +139,10 @@ export function RoutePlanningPage() {
   </div>;
 }
 
-function RouteDrawer({ detail, loading, canManage, canAssign, onClose, onEdit, onAssign, onAddStop, onEditStop, onDeleteStop, onOptimize, onArchive, optimizeResult }: {
+function RouteDrawer({ detail, loading, canManage, canAssign, onClose, onEdit, onAssign, onAddStop, onEditStop, onDeleteStop, onOptimize, onArchive, optimizeResult, tenantCountry }: {
   detail?: AnyRecord; loading: boolean; canManage: boolean; canAssign: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void;
   onAssign: (record: AnyRecord) => void; onAddStop: () => void; onEditStop: (record: AnyRecord) => void; onDeleteStop: (id: string | number) => void;
-  onOptimize: (id: string | number) => void; onArchive: (id: string | number) => void; optimizeResult?: AnyRecord;
+  onOptimize: (id: string | number) => void; onArchive: (id: string | number) => void; optimizeResult?: AnyRecord; tenantCountry: string | null;
 }) {
   if (loading) return null;
   const record = detail?.record as AnyRecord | undefined;
@@ -150,14 +153,14 @@ function RouteDrawer({ detail, loading, canManage, canAssign, onClose, onEdit, o
   return <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-sm"><aside className="fleet-console h-full w-full max-w-4xl overflow-y-auto border-l border-slate-200 p-6"><button type="button" className="float-right icon-btn" onClick={onClose} aria-label="Close"><X /></button><p className="section-title">Route Detail</p><h2 className="mt-3 text-2xl font-black text-slate-950">{String(record.routeName || record.name)}</h2><div className="mt-4 flex flex-wrap gap-2"><StatusBadge status={record.status} /><RiskBadge risk={record.slaRisk} /></div>
     <div className="mt-5 flex flex-wrap gap-3"><button type="button" className="btn-primary" disabled={!canManage || terminal} onClick={() => onEdit(record)}>Edit Route</button><button type="button" className="btn-ghost" disabled={!canAssign || terminal} onClick={() => onAssign(record)}><UserCheck className="h-4 w-4" /> Assign</button><button type="button" className="btn-ghost" disabled={!canManage || terminal} onClick={onAddStop}><Plus className="h-4 w-4" /> Add Stop</button><button type="button" className="btn-ghost" onClick={() => onOptimize(String(record.id))}><Sparkles className="h-4 w-4" /> Optimize Preview</button><button type="button" className="btn-ghost text-rose-700" disabled={!canManage || active} title={active ? "Complete or cancel this active route before archiving" : undefined} onClick={() => onArchive(String(record.id))}><Trash2 className="h-4 w-4" /> Archive</button><Link to="/trips" className="btn-ghost">Trips</Link><Link to="/jobs" className="btn-ghost">Jobs board</Link></div>
     <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_320px]"><section className="deck-inset min-h-[300px] rounded-2xl p-4"><h3 className="section-title">Stop sequence</h3>{stops.length === 0 ? <p className="mt-3 text-sm text-slate-500">No stops added yet — add at least two geocoded stops before optimization.</p> : <ol className="mt-3 space-y-2">{stops.map((stop, i) => <li key={String(stop.id ?? i)} className="deck-alert flex items-center gap-3 px-3 py-2.5"><span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-teal-100 text-[11px] font-black text-teal-800">{String(stop.stopSequence ?? i + 1)}</span><span className="min-w-0 flex-1"><span className="block truncate text-[12.5px] font-bold text-slate-800">{String(stop.customerName ?? stop.address ?? "Stop")}</span><span className="block truncate text-[10.5px] font-medium text-slate-400">{String(stop.stopType ?? "")}{stop.eta ? ` · ETA ${routeDateTime(stop.eta)}` : ""}</span></span><StatusBadge status={stop.status} />{canManage && !terminal ? <><button type="button" className="icon-btn" aria-label="Edit stop" onClick={() => onEditStop(stop)}><Pencil className="h-4 w-4" /></button><button type="button" className="icon-btn text-rose-600" aria-label="Delete stop" onClick={() => onDeleteStop(String(stop.id))}><Trash2 className="h-4 w-4" /></button></> : null}</li>)}</ol>}</section>
-      <section className="panel p-4"><h3 className="section-title">Route Cost / ETA Summary</h3>{["region","plannedStart","plannedEnd","estimatedDistance","estimatedDurationMinutes","costEstimate","optimizationMode"].map((key) => <p key={key} className="mt-2 text-sm text-slate-700"><span className="text-slate-500">{labelize(key)}:</span> {key === "plannedStart" || key === "plannedEnd" ? routeDateTime(record[key]) : key === "estimatedDistance" ? routeEstimate(record[key], "mi") : key === "estimatedDurationMinutes" ? routeEstimate(record[key], "min") : String(record[key] ?? "--")}</p>)}{optimizeResult ? <OptimizationResult result={optimizeResult} /> : null}</section></div>
+      <section className="panel p-4"><h3 className="section-title">Route Cost / ETA Summary</h3>{["region","plannedStart","plannedEnd","estimatedDistance","estimatedDurationMinutes","costEstimate","optimizationMode"].map((key) => <p key={key} className="mt-2 text-sm text-slate-700"><span className="text-slate-500">{labelize(key)}:</span> {key === "plannedStart" || key === "plannedEnd" ? routeDateTime(record[key]) : key === "estimatedDistance" ? formatTenantDistanceFromMiles(record[key], tenantCountry) : key === "estimatedDurationMinutes" ? routeEstimate(record[key], "min") : String(record[key] ?? "--")}</p>)}{optimizeResult ? <OptimizationResult result={optimizeResult} tenantCountry={tenantCountry} /> : null}</section></div>
     <Grid title="Route Recommendations" rows={(detail?.recommendations as AnyRecord[]) || []} columns={["title","body","score","status"]} /><Grid title="Audit Trail" rows={(detail?.auditTrail as AnyRecord[]) || []} columns={["actionName","actorName","createdAt"]} /></aside></div>;
 }
 
-function OptimizationResult({ result }: { result: AnyRecord }) {
+function OptimizationResult({ result, tenantCountry }: { result: AnyRecord; tenantCountry: string | null }) {
   if (!result.optimizationAvailable) return <AiInsightCard insight={{ title: "Optimization unavailable", body: `${String((result.missingInputs as string[] | undefined)?.join("; ") ?? "Complete the required inputs")}. ${String(result.disclaimer ?? "")}` }} />;
   const sequence = (result.recommendedSequence as AnyRecord[] | undefined) ?? [];
-  return <div className="mt-4"><AiInsightCard insight={{ title: "Optimization Preview", body: `${String(result.distanceSavingsMiles ?? 0)} straight-line miles potentially saved. ${String(result.disclaimer ?? "")}` }} /><ol className="mt-3 space-y-1 text-xs text-slate-600">{sequence.map((item) => <li key={String(item.stopId)}>#{String(item.sequence)} · Stop {String(item.stopId)} · {String(item.reason)}</li>)}</ol></div>;
+  return <div className="mt-4"><AiInsightCard insight={{ title: "Optimization Preview", body: `${formatTenantDistanceFromMiles(result.distanceSavingsMiles ?? 0, tenantCountry)} straight-line distance potentially saved. ${String(result.disclaimer ?? "")}` }} /><ol className="mt-3 space-y-1 text-xs text-slate-600">{sequence.map((item) => <li key={String(item.stopId)}>#{String(item.sequence)} · Stop {String(item.stopId)} · {String(item.reason)}</li>)}</ol></div>;
 }
 
 function AssignmentModal({ initial, saving, serverError, onClearError, onClose, onSave }: { initial: AnyRecord; saving: boolean; serverError: string | null; onClearError: () => void; onClose: () => void; onSave: (payload: AnyRecord) => void }) {

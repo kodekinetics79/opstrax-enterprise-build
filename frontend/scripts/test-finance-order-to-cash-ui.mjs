@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const page = readFileSync(resolve(root, "src/pages/FinancialAnalyticsPage.tsx"), "utf8");
 const service = readFileSync(resolve(root, "src/services/financeOrderToCashApi.ts"), "utf8");
+const workspace = readFileSync(resolve(root, "src/components/CommercialWorkspace.tsx"), "utf8");
 
 assert.match(service, /get\("\/api\/invoice-drafts"\)/);
 assert.match(service, /post\(`\/api\/invoice-drafts\/\$\{encodeURIComponent\(draftId\)\}\/issue`/);
@@ -31,8 +32,10 @@ assert.match(page, /apiErrorMessage\(error, "The invoice could not be issued/);
 assert.match(page, /invalidateQueries\(\{ queryKey: \["invoice-drafts"\] \}\)/);
 assert.match(page, /invalidateQueries\(\{ queryKey: \["issued-invoices"\] \}\)/);
 assert.match(page, /invalidateQueries\(\{ queryKey: \["payments"\] \}\)/);
-assert.match(page, /const TAB_ROUTE: Record<Tab, string>/);
-assert.match(page, /onClick=\{\(\) => navigate\(TAB_ROUTE\[t\.key\]\)\}/);
+assert.match(page, /<FinanceWorkspaceTabs \/>/);
+assert.match(workspace, /key: "\/invoices"/);
+assert.match(workspace, /key: "\/payments"/);
+assert.match(workspace, /onSelect=\{\(route\) => navigate\(route\)\}/, "Finance sections must navigate to their canonical routes through the shared compact tab rail");
 assert.doesNotMatch(page, /const \[tab, setTab\] = useState<Tab>/);
 
 console.log("Finance order-to-cash UI contract passed.");

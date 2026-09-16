@@ -16,10 +16,12 @@ public sealed class SafetyPilotAuthDegradationUiContractTests
         var platform = Read("frontend", "src", "hooks", "usePlatformAuth.tsx");
         Assert.Contains("queryClient.clear()", platform, StringComparison.Ordinal);
         Assert.Contains("platformApi.me()", platform, StringComparison.Ordinal);
-        Assert.Contains("window.addEventListener(\"storage\"", platform, StringComparison.Ordinal);
+        Assert.Contains("clearRetiredPlatformSession()", platform, StringComparison.Ordinal);
+        Assert.DoesNotContain("window.addEventListener(\"storage\"", platform, StringComparison.Ordinal);
+        Assert.Contains("window.addEventListener(\"pagehide\"", platform, StringComparison.Ordinal);
         Assert.Contains("window.addEventListener(\"pageshow\"", platform, StringComparison.Ordinal);
         Assert.Contains("document.documentElement.style.visibility = \"hidden\"", platform, StringComparison.Ordinal);
-        Assert.Contains("return { ...fresh, token: current.token }", platform, StringComparison.Ordinal);
+        Assert.DoesNotContain("token: current.token", platform, StringComparison.Ordinal);
 
         var platformEndpoints = Read("backend-dotnet", "Controllers", "PlatformEndpoints.cs");
         var platformMe = Block(platformEndpoints, "private static async Task<IResult> PlatformMe(", "private static async Task<IResult> PlatformLogout(");

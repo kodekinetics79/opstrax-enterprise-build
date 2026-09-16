@@ -413,7 +413,7 @@ public sealed class MaintenanceBackgroundService(
             }, ct);
         if (existing > 0) return;
 
-        _ = ai.CreateRecommendation(
+        _ = await ai.CreateRecommendationAsync(
             companyId.ToString(CultureInfo.InvariantCulture),
             "maintenance.pm.review",
             $"{serviceType} review required",
@@ -428,6 +428,7 @@ public sealed class MaintenanceBackgroundService(
             ActorTypes.System,
             "MaintenanceBackgroundService",
             status: "active",
-            moduleKey: "maintenance");
+            moduleKey: "maintenance",
+            ct: ct);
     }
 }

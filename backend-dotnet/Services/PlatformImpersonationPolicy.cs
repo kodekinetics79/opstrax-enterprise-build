@@ -30,6 +30,20 @@ public static class PlatformImpersonationPolicy
     // being told to trust that it is "read only".
     public static IReadOnlyList<string> ReadOnlyScope => ReadOnlyPathPrefixes;
 
+    // Reviewable mutation-denial matrix. Runtime policy still fails closed for
+    // every method/path not explicitly allowed; this matrix makes the complete
+    // supported read surface auditable and prevents a new read family from being
+    // added without mutation coverage.
+    public static IReadOnlyList<(string Method, string Path)> MutationDenialMatrix =>
+        ReadOnlyPathPrefixes
+            .SelectMany(prefix => new[] { HttpMethods.Post, HttpMethods.Put, HttpMethods.Patch, HttpMethods.Delete }
+                .Select(method => (method, prefix)))
+            .Append((HttpMethods.Post, "/api/auth/me"))
+            .Append((HttpMethods.Put, "/api/auth/me"))
+            .Append((HttpMethods.Patch, "/api/auth/me"))
+            .Append((HttpMethods.Delete, "/api/auth/me"))
+            .ToArray();
+
     public static bool IsEnabled(IConfiguration configuration) =>
         configuration.GetValue("PlatformImpersonation:Enabled", false);
 

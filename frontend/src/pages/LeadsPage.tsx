@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { requireCommercialModuleRecords } from "@/services/commercialModulePayload";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { CommercialDisclosure, CommercialMetricRail, CommercialToolbar, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import type { AnyRecord } from "@/types";
 
 const leadsApi = {
@@ -154,90 +155,45 @@ export function LeadsPage() {
     <div className="page-stack min-w-0">
       {showCreate && <CreateLeadModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Leads</h1>
-          <p className="text-sm text-slate-500 mt-0.5">New business pipeline — track prospects from first contact to qualified opportunity</p>
-        </div>
-        <div className="flex gap-2">
+      <RevenueWorkspaceHeader
+        title="Leads"
+        description="Qualify new Saudi customer demand, ownership, service fit and the next follow-up."
+        activeStage="leads"
+        actions={<div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("leads", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>Add Lead</button>
-        </div>
-      </div>
+        </div>}
+      />
 
-      <div className="panel grid gap-3 md:grid-cols-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Pipeline integrity</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">This view uses live leads only and surfaces an honest empty state if the backend has no data yet.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Customer linkage</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Each record keeps customer, rep, service and next-step context together for sales follow-up.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Workflow boundary</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Lead-to-opportunity and quotation conversion is not automated in this build; each register remains a separate saved workflow.</p>
-        </div>
-      </div>
-
-      {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Total Leads",          val: summary.total },
-          { label: "Active",               val: summary.active, accent: "text-teal-600" },
-          { label: "Qualified",            val: summary.qualified, accent: "text-violet-600" },
-          { label: "Discovery Scheduled",  val: summary.discovery, accent: "text-blue-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-32">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
-
-        {/* Pipeline lane bar */}
-        <div className="panel flex-1 min-w-64 p-4">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Pipeline Stages</p>
-          <div className="flex gap-2 flex-wrap">
-            {PIPELINE_STAGES.map((stage) => (
-              <button
-                key={stage}
-                type="button"
-                onClick={() => setStageFilter(stageFilter === stage ? "All" : stage)}
-                className={`flex flex-col items-center px-3 py-2 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
-                  stageFilter === stage
-                    ? "bg-teal-50 border-teal-300 text-teal-700"
-                    : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
-                }`}
-              >
-                <span className="text-base font-bold">{String(laneCounts[stage] ?? 0)}</span>
-                <span className="whitespace-nowrap">{stage}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+      <CommercialMetricRail metrics={[
+        { label: "Total leads", value: summary.total, detail: `${filtered.length} shown`, active: stageFilter === "All", onClick: () => setStageFilter("All") },
+        { label: "Active", value: summary.active, detail: "open pipeline", tone: "info" },
+        { label: "Discovery", value: summary.discovery, detail: `${laneCounts["Discovery Scheduled"] ?? 0} scheduled`, tone: "info", active: stageFilter === "Discovery Scheduled", onClick: () => setStageFilter("Discovery Scheduled") },
+        { label: "Qualified", value: summary.qualified, detail: "quote-ready", tone: "good", active: stageFilter === "Qualified", onClick: () => setStageFilter("Qualified") },
+        { label: "Proposal needed", value: laneCounts["Proposal Needed"] ?? 0, detail: "needs action", tone: "warn", active: stageFilter === "Proposal Needed", onClick: () => setStageFilter("Proposal Needed") },
+      ]} />
 
       {/* Search / filter bar */}
-      <div className="panel flex items-center gap-3">
-        <div className="flex gap-1.5">
+      <CommercialToolbar
+        filters={<>
           {["All", ...PIPELINE_STAGES].map((f) => (
             <button key={f} type="button" onClick={() => setStageFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+              className={`filter-chip shrink-0 ${
                 stageFilter === f
-                  ? "bg-teal-50 border-teal-300 text-teal-700"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                  ? "filter-chip-active"
+                  : ""
               }`}>
               {f}
             </button>
           ))}
-        </div>
-        <input type="search" placeholder="Search company, rep, industry…" value={search} onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-56" />
-      </div>
+        </>}
+        meta={`${filtered.length} of ${leads.length}`}
+        search={<input type="search" aria-label="Search leads" placeholder="Search company, rep, industry…" value={search} onChange={(e) => setSearch(e.target.value)} className="field" />}
+      />
 
       {/* Table */}
       <div className="panel overflow-hidden p-0">
-        {filtered.length === 0 ? <EmptyState title="No leads match your filters" /> : (
+        {filtered.length === 0 ? <EmptyState title="No leads match your filters" subtitle={leads.length ? "Clear a stage or search filter to see the full pipeline." : "Add the first prospect when customer demand is confirmed."} action={!leads.length ? <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>Add Lead</button> : undefined} /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -270,6 +226,11 @@ export function LeadsPage() {
           </div>
         )}
       </div>
+
+      <CommercialDisclosure>
+        <p><strong>Pipeline integrity:</strong> This register reflects persisted lead records returned by the service. Missing records are not presented as an empty sales pipeline.</p>
+        <p><strong>Workflow boundary:</strong> Lead-to-opportunity and quotation conversion is not automated in this build; each register remains a separate saved workflow.</p>
+      </CommercialDisclosure>
 
       {/* Detail drawer */}
       {selected && (

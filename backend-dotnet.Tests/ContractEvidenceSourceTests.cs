@@ -39,7 +39,8 @@ public sealed class ContractEvidenceSourceTests
         Assert.DoesNotContain("Margin Risk", config);
         Assert.DoesNotContain("Underpriced", config);
         Assert.DoesNotContain("RiskBadge", page);
-        Assert.Contains("Origin Unverified", page);
+        Assert.Contains("Origin unverified", page);
+        Assert.Contains("Legacy origin unverified", page);
         Assert.DoesNotContain("margin risk", page, StringComparison.OrdinalIgnoreCase);
     }
 }

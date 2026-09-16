@@ -1,6 +1,7 @@
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
 using Opstrax.Api.Services;
+using System.Text.Json;
 
 namespace Opstrax.Api.Controllers;
 
@@ -65,12 +66,26 @@ public static class MarketPackEndpoints
         if (Branch(h) is { } branchId) command.Parameters.AddWithValue("@branchId", branchId);
     }
     private static EntitlementService Ent(Database db) => new(db);
-    private static string Actor(HttpContext h) => h.Items.TryGetValue(EndpointMappings.AuthUserIdItemKey, out var u) && u is not null ? $"user:{u}" : "system";
+    private static string Actor(HttpContext h) => $"user:{EndpointMappings.GetUserId(h)}";
     private static IResult OkJson(object data) => Results.Json(ApiResponse<object>.Ok(data));
     private static IResult Denied(string reason) => Results.Json(ApiResponse<object>.Fail("Feature not entitled", reason), statusCode: StatusCodes.Status403Forbidden);
 
+    private static async Task<TenantMarketPolicyService.MarketContext?> Market(HttpContext h, Database db, CancellationToken ct) =>
+        await new TenantMarketPolicyService(db).GetAsync(Company(h), ct);
+
+    private static async Task<IResult?> RequireCompatibleMarket(HttpContext h, Database db, string pack, CancellationToken ct)
+    {
+        var market = await Market(h, db, ct);
+        if (market is null)
+            return Results.Json(ApiResponse<object>.Fail("Operating market not assigned", "A Platform Admin must assign a supported operating country."), statusCode: StatusCodes.Status409Conflict);
+        return TenantMarketPolicyService.IsPackCompatible(market.CountryCode, pack)
+            ? null
+            : Results.Json(ApiResponse<object>.Fail("Market unavailable", $"{pack} is not available for tenants operating in {market.CountryName}."), statusCode: StatusCodes.Status403Forbidden);
+    }
+
     private static async Task<IResult?> RequirePack(HttpContext h, Database db, string pack, CancellationToken ct)
     {
+        if (await RequireCompatibleMarket(h, db, pack, ct) is { } marketBlock) return marketBlock;
         var d = await Ent(db).CheckMarketPackAsync(Company(h), pack, ct);
         return d.Allowed ? null : Denied(d.Reason ?? pack);
     }
@@ -161,7 +176,9 @@ public static class MarketPackEndpoints
         var denied = EndpointMappings.RequirePermission(h, "dashboard:view");
         if (denied is not null) return denied;
         var companyId = Company(h);
-        var packs = await db.QueryAsync("SELECT code, name, description, region, status, default_currency, default_distance_unit, default_fuel_unit, supported_languages, feature_keys, package_key, base_price_cents FROM market_packs ORDER BY name", ct: ct);
+        var market = await Market(h, db, ct);
+        if (market is null) return Results.Json(ApiResponse<object>.Fail("Operating market not assigned"), statusCode: StatusCodes.Status409Conflict);
+        var packs = await db.QueryAsync("SELECT code, name, description, region, status, default_currency, default_distance_unit, default_fuel_unit, supported_languages, feature_keys, package_key, base_price_cents FROM market_packs WHERE code=@pack ORDER BY name", c => c.Parameters.AddWithValue("@pack", market.MarketPackCode ?? ""), ct);
         var assigned = (await db.QueryAsync("SELECT pack_code, status FROM tenant_market_packs WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId), ct))
             .ToDictionary(r => r["packCode"]?.ToString() ?? "", r => r["status"]?.ToString() ?? "");
         var items = packs.Select(p =>
@@ -175,13 +192,14 @@ public static class MarketPackEndpoints
                 tenantEnabled = assigned.TryGetValue(code, out var s) && s == "active",
             };
         });
-        return OkJson(new { items });
+        return OkJson(new { items, market });
     }
 
     private static async Task<IResult> PackDetail(HttpContext h, Database db, string code, CancellationToken ct)
     {
         var denied = EndpointMappings.RequirePermission(h, "dashboard:view");
         if (denied is not null) return denied;
+        if (await RequireCompatibleMarket(h, db, code, ct) is { } block) return block;
         var pack = await db.QuerySingleAsync("SELECT * FROM market_packs WHERE code=@c", c => c.Parameters.AddWithValue("@c", code), ct);
         if (pack is null) return Results.NotFound(ApiResponse<object>.Fail("Market pack not found"));
         var features = await db.QueryAsync("SELECT feature_key, name, tier, included FROM market_pack_features WHERE pack_code=@c ORDER BY id", c => c.Parameters.AddWithValue("@c", code), ct);
@@ -193,6 +211,7 @@ public static class MarketPackEndpoints
     {
         var denied = EndpointMappings.RequirePermission(h, "dashboard:view");
         if (denied is not null) return denied;
+        if (await RequireCompatibleMarket(h, db, code, ct) is { } block) return block;
         var driverReqs = await db.QueryAsync("SELECT requirement_key, name, mandatory FROM market_driver_requirements WHERE pack_code=@c ORDER BY id", c => c.Parameters.AddWithValue("@c", code), ct);
         var vehicleReqs = await db.QueryAsync("SELECT requirement_key, name, mandatory FROM market_vehicle_requirements WHERE pack_code=@c ORDER BY id", c => c.Parameters.AddWithValue("@c", code), ct);
         var docTypes = await db.QueryAsync("SELECT doc_key, name, applies_to, has_expiry FROM market_document_types WHERE pack_code=@c ORDER BY id", c => c.Parameters.AddWithValue("@c", code), ct);
@@ -225,8 +244,11 @@ public static class MarketPackEndpoints
         if (denied is not null) return denied;
         if (await RequirePack(h, db, MarketPackSchemaService.Packs.CanadaNa, ct) is { } block) return block;
         var companyId = Company(h);
-        if (string.IsNullOrWhiteSpace(Str(body, "subjectName"))) return Results.BadRequest(ApiResponse<object>.Fail("Subject name is required."));
-        if (!Allowed(Str(body, "subjectType"), "driver", "vehicle")) return Results.BadRequest(ApiResponse<object>.Fail("Subject type is invalid."));
+        var resolvedSubject = await ComplianceReferenceValidator.ResolveAsync(
+            db, companyId, Branch(h), Str(body, "subjectType"), Str(body, "subjectId"), Str(body, "subjectName"), ct);
+        if (resolvedSubject.Error is not null)
+            return Results.BadRequest(ApiResponse<object>.Fail(resolvedSubject.Error));
+        var subject = resolvedSubject.Reference!;
         if (InvalidDate(body, "expiryDate") || DateOf(body, "expiryDate") is null) return Results.BadRequest(ApiResponse<object>.Fail("A valid expiry date is required."));
         var expiry = DateOf(body, "expiryDate");
         var status = ExpiryStatus(expiry);
@@ -238,9 +260,9 @@ public static class MarketPackEndpoints
             {
                 c.Parameters.AddWithValue("@c", companyId);
                 c.Parameters.AddWithValue("@branchId", (object?)Branch(h) ?? DBNull.Value);
-                c.Parameters.AddWithValue("@st", string.IsNullOrWhiteSpace(Str(body, "subjectType")) ? "driver" : Str(body, "subjectType"));
-                c.Parameters.AddWithValue("@sid", long.TryParse(Str(body, "subjectId"), out var sid) ? sid : (object)DBNull.Value);
-                c.Parameters.AddWithValue("@sn", (object?)NullIfEmpty(Str(body, "subjectName")) ?? DBNull.Value);
+                c.Parameters.AddWithValue("@st", subject.Type);
+                c.Parameters.AddWithValue("@sid", subject.Id);
+                c.Parameters.AddWithValue("@sn", subject.Name);
                 c.Parameters.AddWithValue("@dk", string.IsNullOrWhiteSpace(Str(body, "docKey")) ? "drivers_license" : Str(body, "docKey"));
                 c.Parameters.AddWithValue("@dn", (object?)NullIfEmpty(Str(body, "documentNo")) ?? DBNull.Value);
                 c.Parameters.AddWithValue("@status", status);
@@ -252,7 +274,7 @@ public static class MarketPackEndpoints
             }, ct);
 
         await Ent(db).RecordAsync(companyId, "compliance_documents.count", 1, $"record:{id}", Actor(h), ct);
-        await MaybeRaiseExpiry(db, companyId, Branch(h), "canada_na", id, Str(body, "subjectType"), Str(body, "subjectName"), Str(body, "docKey"), expiry, status, ct);
+        await MaybeRaiseExpiry(db, companyId, Branch(h), "canada_na", id, subject.Type, subject.Name, Str(body, "docKey"), expiry, status, ct);
         return OkJson(await ById(db, h, id, ct));
     }
 
@@ -304,7 +326,11 @@ public static class MarketPackEndpoints
             return Results.BadRequest(ApiResponse<object>.Fail(validationError));
         var companyId = Company(h);
         var branchId = Branch(h);
-        long? vehicleId = long.TryParse(Str(body, "vehicleId"), out var parsedVehicleId) ? parsedVehicleId : null;
+        var resolvedVehicle = await ComplianceReferenceValidator.ResolveAsync(
+            db, companyId, branchId, "vehicle", Str(body, "vehicleId"), Str(body, "vehicleLabel"), ct);
+        if (resolvedVehicle.Error is not null)
+            return Results.BadRequest(ApiResponse<object>.Fail(resolvedVehicle.Error));
+        long? vehicleId = resolvedVehicle.Reference!.Id;
         var defects = new List<(string? ItemKey, string Description, string Severity, bool RepairRequired)>();
         if (body.TryGetValue("defects", out var defectsRaw) && defectsRaw is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Array)
             foreach (var d in je.EnumerateArray())
@@ -326,18 +352,6 @@ public static class MarketPackEndpoints
         {
             id = await db.WithTransactionAsync(async (connection, transaction) =>
             {
-                if (!vehicleId.HasValue)
-                {
-                    await using var resolve = new Npgsql.NpgsqlCommand(
-                        "SELECT id FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND (lower(vehicle_code)=lower(@label) OR lower(COALESCE(plate_number,''))=lower(@label))" + (branchId is null ? "" : " AND branch_id=@branchId") + " ORDER BY id LIMIT 2", connection, transaction);
-                    resolve.Parameters.AddWithValue("@c", companyId); resolve.Parameters.AddWithValue("@label", Str(body, "vehicleLabel").Trim());
-                    if (branchId is not null) resolve.Parameters.AddWithValue("@branchId", branchId.Value);
-                    var matches = new List<long>(); await using var reader = await resolve.ExecuteReaderAsync(ct);
-                    while (await reader.ReadAsync(ct)) matches.Add(reader.GetInt64(0));
-                    await reader.DisposeAsync();
-                    if (matches.Count != 1) throw new InvalidOperationException("Vehicle label must match exactly one tenant/branch vehicle code or plate number.");
-                    vehicleId = matches[0];
-                }
                 if (vehicleId.HasValue)
                 {
                     await using var ownership = new Npgsql.NpgsqlCommand(
@@ -562,7 +576,11 @@ public static class MarketPackEndpoints
         if (denied is not null) return denied;
         if (await RequirePack(h, db, MarketPackSchemaService.Packs.SaudiGcc, ct) is { } block) return block;
         var companyId = Company(h);
-        if (string.IsNullOrWhiteSpace(Str(body, "subjectName"))) return Results.BadRequest(ApiResponse<object>.Fail("Subject name is required."));
+        var resolvedSubject = await ComplianceReferenceValidator.ResolveAsync(
+            db, companyId, Branch(h), Str(body, "subjectType"), Str(body, "subjectId"), Str(body, "subjectName"), ct);
+        if (resolvedSubject.Error is not null)
+            return Results.BadRequest(ApiResponse<object>.Fail(resolvedSubject.Error));
+        var subject = resolvedSubject.Reference!;
         if (InvalidDate(body, "gregorianExpiryDate")) return Results.BadRequest(ApiResponse<object>.Fail("Gregorian expiry date is malformed."));
         var hijriText = Str(body, "hijriExpiryDate").Trim();
         if (!string.IsNullOrWhiteSpace(hijriText) && !ValidHijriText(hijriText)) return Results.BadRequest(ApiResponse<object>.Fail("Hijri expiry date must use YYYY-MM-DD."));
@@ -571,15 +589,16 @@ public static class MarketPackEndpoints
         var expiry = DateOf(body, "gregorianExpiryDate") ?? HijriToGregorian(hijriText);
         var status = ExpiryStatus(expiry);
         var id = await db.InsertAsync("""
-            INSERT INTO compliance_records (company_id, branch_id, pack_code, subject_type, subject_name, doc_key, document_no, document_status, expiry_date, hijri_expiry_date, metadata)
-            VALUES (@c,@branchId,'saudi_gcc',@st,@sn,@dk,@dn,@status,@expiry,@hijri,@meta::jsonb) RETURNING id
+            INSERT INTO compliance_records (company_id, branch_id, pack_code, subject_type, subject_id, subject_name, doc_key, document_no, document_status, expiry_date, hijri_expiry_date, metadata)
+            VALUES (@c,@branchId,'saudi_gcc',@st,@sid,@sn,@dk,@dn,@status,@expiry,@hijri,@meta::jsonb) RETURNING id
             """,
             c =>
             {
                 c.Parameters.AddWithValue("@c", companyId);
                 c.Parameters.AddWithValue("@branchId", (object?)Branch(h) ?? DBNull.Value);
-                c.Parameters.AddWithValue("@st", string.IsNullOrWhiteSpace(Str(body, "subjectType")) ? "transport" : Str(body, "subjectType"));
-                c.Parameters.AddWithValue("@sn", (object?)NullIfEmpty(Str(body, "subjectName")) ?? DBNull.Value);
+                c.Parameters.AddWithValue("@st", subject.Type);
+                c.Parameters.AddWithValue("@sid", subject.Id);
+                c.Parameters.AddWithValue("@sn", subject.Name);
                 c.Parameters.AddWithValue("@dk", string.IsNullOrWhiteSpace(Str(body, "documentType")) ? "transport_permit" : Str(body, "documentType"));
                 c.Parameters.AddWithValue("@dn", (object?)NullIfEmpty(Str(body, "transportDocumentNo")) ?? (object?)NullIfEmpty(Str(body, "permitNo")) ?? DBNull.Value);
                 c.Parameters.AddWithValue("@status", status);
@@ -588,7 +607,7 @@ public static class MarketPackEndpoints
                 c.Parameters.AddWithValue("@meta", BuildMeta(body, "permitNo", "documentStatus"));
             }, ct);
         await Ent(db).RecordAsync(companyId, "compliance_documents.count", 1, $"record:{id}", Actor(h), ct);
-        await MaybeRaiseExpiry(db, companyId, Branch(h), "saudi_gcc", id, Str(body, "subjectType"), Str(body, "subjectName"), Str(body, "documentType"), expiry, status, ct);
+        await MaybeRaiseExpiry(db, companyId, Branch(h), "saudi_gcc", id, subject.Type, subject.Name, Str(body, "documentType"), expiry, status, ct);
         return OkJson(await ById(db, h, id, ct));
     }
 
@@ -690,21 +709,25 @@ public static class MarketPackEndpoints
         if (readinessStatus == "ready" && (!vatValid || !crValid || !evidenceValid))
             return Results.BadRequest(ApiResponse<object>.Fail("Ready status requires a valid 15-digit Saudi VAT number, 10-digit commercial registration, and active canonical evidence record."));
         var derivedStatus = vatValid && crValid && evidenceValid ? "ready" : (!string.IsNullOrWhiteSpace(vat) || !string.IsNullOrWhiteSpace(cr) || evidenceRecordId.HasValue) ? "in_progress" : "not_ready";
-        await db.ExecuteAsync("""
-            INSERT INTO business_tax_readiness (company_id, branch_id, pack_code, vat_number, commercial_registration_no, evidence_record_id, e_invoice_readiness_status, updated_by, updated_at)
-            VALUES (@c,@branchId,'saudi_gcc',@vat,@cr,@evidence,@status,@by,NOW())
-            ON CONFLICT DO NOTHING
-            """,
-            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@branchId", (object?)profileBranchId ?? DBNull.Value); c.Parameters.AddWithValue("@vat", vat); c.Parameters.AddWithValue("@cr", cr); c.Parameters.AddWithValue("@evidence", (object?)evidenceRecordId ?? DBNull.Value); c.Parameters.AddWithValue("@status", derivedStatus); c.Parameters.AddWithValue("@by", Actor(h)); }, ct);
-        await db.ExecuteAsync("""
-            UPDATE business_tax_readiness SET vat_number=COALESCE(NULLIF(@vat,''),vat_number),
-                commercial_registration_no=COALESCE(NULLIF(@cr,''),commercial_registration_no), evidence_record_id=COALESCE(@evidence,evidence_record_id),
-                e_invoice_readiness_status=@status, updated_by=@by, updated_at=NOW()
-            WHERE company_id=@c AND branch_id IS NOT DISTINCT FROM @branchId AND pack_code='saudi_gcc'
-            """,
-            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@branchId", (object?)profileBranchId ?? DBNull.Value); c.Parameters.AddWithValue("@vat", vat); c.Parameters.AddWithValue("@cr", cr); c.Parameters.AddWithValue("@evidence", (object?)evidenceRecordId ?? DBNull.Value); c.Parameters.AddWithValue("@status", derivedStatus); c.Parameters.AddWithValue("@by", Actor(h)); }, ct);
-        await Ent(db).RecordAsync(companyId, "compliance_expiry_alerts.monthly", 0, "vat_readiness_changed", Actor(h), ct); // event marker
-        return OkJson((await ReadSaudiVatProfile(db, h, ct))!);
+        var saved = await db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+            await db.ExecuteAsync("""
+                INSERT INTO business_tax_readiness (company_id, branch_id, pack_code, vat_number, commercial_registration_no, evidence_record_id, e_invoice_readiness_status, updated_by, updated_at)
+                VALUES (@c,@branchId,'saudi_gcc',@vat,@cr,@evidence,@status,@by,NOW())
+                ON CONFLICT DO NOTHING
+                """,
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@branchId", (object?)profileBranchId ?? DBNull.Value); c.Parameters.AddWithValue("@vat", vat); c.Parameters.AddWithValue("@cr", cr); c.Parameters.AddWithValue("@evidence", (object?)evidenceRecordId ?? DBNull.Value); c.Parameters.AddWithValue("@status", derivedStatus); c.Parameters.AddWithValue("@by", Actor(h)); }, ct);
+            await db.ExecuteAsync("""
+                UPDATE business_tax_readiness SET vat_number=COALESCE(NULLIF(@vat,''),vat_number),
+                    commercial_registration_no=COALESCE(NULLIF(@cr,''),commercial_registration_no), evidence_record_id=COALESCE(@evidence,evidence_record_id),
+                    e_invoice_readiness_status=@status, updated_by=@by, updated_at=NOW()
+                WHERE company_id=@c AND branch_id IS NOT DISTINCT FROM @branchId AND pack_code='saudi_gcc'
+                """,
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@branchId", (object?)profileBranchId ?? DBNull.Value); c.Parameters.AddWithValue("@vat", vat); c.Parameters.AddWithValue("@cr", cr); c.Parameters.AddWithValue("@evidence", (object?)evidenceRecordId ?? DBNull.Value); c.Parameters.AddWithValue("@status", derivedStatus); c.Parameters.AddWithValue("@by", Actor(h)); }, ct);
+            await Ent(db).RecordAsync(companyId, "compliance_expiry_alerts.monthly", 0, "vat_readiness_changed", Actor(h), ct);
+            return await ReadSaudiVatProfile(db, h, ct);
+        }, ct);
+        return OkJson(saved!);
     }
 
     private static async Task<Dictionary<string, object?>?> ReadSaudiVatProfile(Database db, HttpContext h, CancellationToken ct)
@@ -795,7 +818,7 @@ ORDER BY id LIMIT 2", c => c.Parameters.AddWithValue("@c", Company(h)), ct);
             // Lock the tenant row to serialize concurrent commercial mutations and
             // validate both sides of the assignment before any ledger is changed.
             var tenant = await db.QuerySingleAsync(
-                "SELECT id, company_code, name FROM companies WHERE id=@id FOR UPDATE",
+                "SELECT id, company_code, name, country FROM companies WHERE id=@id FOR UPDATE",
                 c => c.Parameters.AddWithValue("@id", tenantId), ct);
             if (tenant is null)
                 return Results.Json(ApiResponse<object>.Fail("Not found", "Tenant not found"), statusCode: StatusCodes.Status404NotFound);
@@ -808,6 +831,9 @@ ORDER BY id LIMIT 2", c => c.Parameters.AddWithValue("@c", Company(h)), ct);
             var catalogStatus = pack["status"]?.ToString() ?? "";
             if (status == ActiveMarketPackStatus && catalogStatus != ActiveMarketPackStatus)
                 return Results.Json(ApiResponse<object>.Fail("Validation failed", "Market pack is not active in the catalog"), statusCode: StatusCodes.Status409Conflict);
+            var tenantCountry = tenant["country"]?.ToString();
+            if (status == ActiveMarketPackStatus && !TenantMarketPolicyService.IsPackCompatible(tenantCountry, packCode))
+                return Results.Json(ApiResponse<object>.Fail("Market pack incompatible", $"{packCode} cannot be enabled for tenant operating country {tenantCountry ?? "not assigned"}. Reassign the tenant market through the controlled country workflow first."), statusCode: StatusCodes.Status409Conflict);
 
             var moduleKey = MarketPackSchemaService.ModuleKeyForPack(packCode);
             var beforeAssignment = await db.QuerySingleAsync(
@@ -878,11 +904,11 @@ ORDER BY id LIMIT 2", c => c.Parameters.AddWithValue("@c", Company(h)), ct);
 
     private static string BuildMeta(Dictionary<string, object?> body, params string[] keys)
     {
-        var pairs = keys
-            .Select(k => (k, v: body.TryGetValue(k, out var val) ? val?.ToString() : null))
-            .Where(p => !string.IsNullOrWhiteSpace(p.v))
-            .Select(p => $"\"{p.k}\":\"{p.v!.Replace("\"", "'")}\"");
-        return "{" + string.Join(",", pairs) + "}";
+        var values = keys
+            .Select(k => (key: k, value: body.TryGetValue(k, out var val) ? val?.ToString() : null))
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.value))
+            .ToDictionary(entry => entry.key, entry => entry.value!);
+        return JsonSerializer.Serialize(values);
     }
 
     private static async Task MaybeRaiseExpiry(Database db, long companyId, long? branchId, string pack, long recordId, string subjType, string subjName, string docKey, DateTime? expiry, string status, CancellationToken ct)

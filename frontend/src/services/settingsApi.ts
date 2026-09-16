@@ -13,6 +13,7 @@ export const settingsApi = {
 
   companyProfileGet: () => unwrap<AnyRecord>(apiClient.get("/api/settings/company-profile")),
   companyProfilePut: (body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.put("/api/settings/company-profile", body)),
+  marketContextGet: () => unwrap<AnyRecord>(apiClient.get("/api/settings/market-context")),
 
   notificationPrefsGet: () => unwrap<AnyRecord>(apiClient.get("/api/settings/notification-prefs")),
   notificationPrefsPut: (body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.put("/api/settings/notification-prefs", body)),

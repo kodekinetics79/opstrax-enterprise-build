@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
+using Opstrax.Api.Services;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -78,13 +79,21 @@ public static class FleetTmsLogisticsEndpoints
         return string.IsNullOrEmpty(cleaned) || cleaned.Length > maxLength ? null : cleaned;
     }
 
+    internal static string? ValidateTextLength(string? value, string field, int maxLength)
+        => value?.Trim().Length > maxLength
+            ? $"{field} cannot exceed {maxLength} characters."
+            : null;
+
+    private static string? ValidateOrderText(LogisticsOrderRequest request)
+        => ValidateTextLength(request.City, "City", 120)
+            ?? ValidateTextLength(request.Area, "Area", 120)
+            ?? ValidateTextLength(request.DispatchNotes, "Dispatch notes", 4000);
+
+    private static string? ValidateRouteText(LogisticsRouteRequest request)
+        => ValidateTextLength(request.Notes, "Route notes", 4000);
+
     internal static string LastMileCsvCell(object? value)
-    {
-        var text = value is DateTimeOffset dto ? dto.ToString("O") : value?.ToString() ?? "";
-        var trimmed = text.AsSpan().TrimStart();
-        if (!trimmed.IsEmpty && trimmed[0] is '=' or '+' or '-' or '@') text = "'" + text;
-        return $"\"{text.Replace("\"", "\"\"")}\"";
-    }
+        => SpreadsheetSafeCsv.Cell(value, quoteAlways: true);
 
     private static bool ValidStopStatus(string? status) => status is "OutForDelivery" or "Attempted" or "Failed" or "Rescheduled" or "Delivered";
     private static bool TerminalStop(string? status) => status == "Delivered";
@@ -202,6 +211,7 @@ public static class FleetTmsLogisticsEndpoints
     private static async Task<IResult> CreateOrder(HttpContext http, LogisticsOrderRequest req, Database db, CancellationToken ct)
     {
         if (RequireExplicit(http, "dispatch:create") is { } denied) return denied;
+        if (ValidateOrderText(req) is { } textError) return Bad(textError);
         var orderNumber = Clean(req.OrderNumber, 60);
         var customerName = Clean(req.CustomerName, 255);
         if (orderNumber is null) return Bad("Order number is required and cannot exceed 60 characters.");
@@ -243,6 +253,7 @@ VALUES (@companyId, @branchId, @num, @customer, @segment, @channel, @city, @area
     private static async Task<IResult> UpdateOrder(HttpContext http, long id, LogisticsOrderRequest req, Database db, CancellationToken ct)
     {
         if (RequireExplicit(http, "dispatch:update") is { } denied) return denied;
+        if (ValidateOrderText(req) is { } textError) return Bad(textError);
         var companyId = Cid(http);
         var branchId = Bid(http);
         var current = await Row(db, "fleet_tms_dispatch_orders", companyId, branchId, id, ct);
@@ -304,6 +315,7 @@ WHERE id=@id AND company_id=@companyId AND (@branchId::BIGINT IS NULL OR branch_
     private static async Task<IResult> CreateRoute(HttpContext http, LogisticsRouteRequest req, Database db, CancellationToken ct)
     {
         if (RequireExplicit(http, "dispatch:create") is { } denied) return denied;
+        if (ValidateRouteText(req) is { } textError) return Bad(textError);
         if (Clean(req.RouteCode, 60) is null) return Bad("Route code is required and cannot exceed 60 characters.");
         if (req.PlannedStops is < 0 or > 100_000 || req.CompletedStops is < 0) return Bad("Route stop counts are invalid.");
         if ((req.CompletedStops ?? 0) > (req.PlannedStops ?? 0)) return Bad("Completed stops cannot exceed planned stops.");
@@ -347,6 +359,7 @@ VALUES (@companyId, @branchId, @code, @hub, @territory, @driver, @vehicle, @stat
     private static async Task<IResult> UpdateRoute(HttpContext http, long id, LogisticsRouteRequest req, Database db, CancellationToken ct)
     {
         if (RequireExplicit(http, "dispatch:update") is { } denied) return denied;
+        if (ValidateRouteText(req) is { } textError) return Bad(textError);
         var companyId = Cid(http);
         var branchId = Bid(http);
         var currentRoute = await Row(db, "fleet_tms_delivery_routes", companyId, branchId, id, ct);
@@ -451,6 +464,7 @@ WHERE id=@id AND company_id=@companyId AND (@branchId::BIGINT IS NULL OR branch_
     private static async Task<IResult> DispatchOrder(HttpContext http, long id, DispatchOrderRequest req, Database db, CancellationToken ct)
     {
         if (RequireExplicit(http, "dispatch:assign") is { } denied) return denied;
+        if (ValidateTextLength(req.Notes, "Dispatch notes", 4000) is { } textError) return Bad(textError);
         var companyId = Cid(http);
         var branchId = Bid(http);
         return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
@@ -542,6 +556,7 @@ WHERE id=@id AND company_id=@companyId AND (@branchId::BIGINT IS NULL OR branch_
     private static async Task<IResult> ProgressRoute(HttpContext http, long id, RouteProgressRequest req, Database db, CancellationToken ct)
     {
         if (RequireManage(http) is { } denied) return denied;
+        if (ValidateTextLength(req.Notes, "Route notes", 4000) is { } textError) return Bad(textError);
         var companyId = Cid(http);
         var branchId = Bid(http);
         var key = Clean(req.IdempotencyKey, 80);

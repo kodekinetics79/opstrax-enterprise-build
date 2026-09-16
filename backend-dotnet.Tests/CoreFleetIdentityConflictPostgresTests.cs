@@ -704,11 +704,11 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         }).Build(), accessor);
 
     private static Task<long> SeedCompany(Database db) => db.InsertAsync(
-        "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Fleet Identity Conflict Test','Transportation')",
+        "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Fleet Identity Conflict Test','Transportation','US')",
         c => c.Parameters.AddWithValue("@code", $"FIC-{Guid.NewGuid():N}"));
 
     private static Task<long> SeedImportBranch(Database db, long companyId) => db.InsertAsync(
-        "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')",
+        "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'MAIN','Main','Active','US')",
         c => c.Parameters.AddWithValue("@c", companyId));
 
     private static Task<long> Count(Database db, string table, long companyId)

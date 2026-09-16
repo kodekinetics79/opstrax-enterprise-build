@@ -34,6 +34,7 @@ public static class FleetTmsEndpoints
         Guard(app.MapPost("/api/fleet-tms/fuel/{id:long}/flag", FlagFuelEvent), "fleet:manage");
         Guard(app.MapPost("/api/fleet-tms/shipments/{id:long}/mark-invoice-ready", MarkInvoiceReady), "fleet:manage");
         Guard(app.MapGet("/api/fleet-tms/carriers", WorkspaceCarriers), "fleet:view");
+        Guard(app.MapGet("/api/fleet-tms/backhaul-opportunities", BackhaulOpportunities), "fleet:view");
         Guard(app.MapPost("/api/fleet-tms/shipments/{id:long}/carrier", AssignShipmentCarrier), "fleet:manage");
         Guard(app.MapDelete("/api/fleet-tms/shipments/{id:long}/carrier", UnassignShipmentCarrier), "fleet:manage");
 
@@ -101,8 +102,7 @@ public static class FleetTmsEndpoints
     }
 
     private static string Actor(HttpContext http)
-        => http.Items.TryGetValue(EndpointMappings.AuthUserIdItemKey, out var u) && u is not null
-            ? $"user:{u}" : "system";
+        => $"user:{EndpointMappings.GetUserId(http)}";
 
     private static IResult Ok<T>(T data, string message = "") => Results.Ok(ApiResponse<object>.Ok(data!, message));
     private static IResult NotFound(string message = "Not found") => Results.NotFound(ApiResponse<object>.Fail(message));
@@ -163,8 +163,7 @@ FROM fleet_tms_shipments WHERE company_id=@companyId AND id=@shipmentId",
     {
         if (!IsDriver(http)) return true;
         if (task.GetValueOrDefault("driverId") is not { } rawDriver || rawDriver is DBNull) return false;
-        var userId = http.Items.TryGetValue(EndpointMappings.AuthUserIdItemKey, out var rawUser) && rawUser is not null
-            ? Convert.ToInt64(rawUser) : 0L;
+        var userId = EndpointMappings.GetUserId(http);
         return await db.ScalarLongAsync(
             "SELECT COUNT(*) FROM drivers WHERE id=@driverId AND user_id=@userId AND company_id=@companyId AND deleted_at IS NULL",
             c => { c.Parameters.AddWithValue("@driverId", Convert.ToInt64(rawDriver)); c.Parameters.AddWithValue("@userId", userId); c.Parameters.AddWithValue("@companyId", CompanyId(http)); }, ct) == 1;
@@ -238,6 +237,62 @@ FROM fleet_tms_shipments WHERE company_id=@companyId" + owned + " GROUP BY route
         var items = await db.QueryAsync($"SELECT * FROM fleet_tms_vehicles {where} ORDER BY vehicle_number",
             c => { BindOwner(c, http); if (!string.IsNullOrWhiteSpace(status)) c.Parameters.AddWithValue("@status", status); }, ct);
         return Ok(new { items });
+    }
+
+    // Recorded return-load candidates for vehicles already travelling toward a pickup
+    // city. Matching is deliberately conservative: it requires an exact normalized
+    // destination/origin match and recorded weight/volume capacity. This is a decision
+    // aid, not an automatic booking or a fabricated route-optimization score.
+    private static async Task<IResult> BackhaulOpportunities(HttpContext http, Database db, string? vehicleNumber, CancellationToken ct)
+    {
+        var items = await db.QueryAsync(@"
+WITH current_legs AS (
+  SELECT DISTINCT ON (s.vehicle_number)
+         s.id shipment_id,s.vehicle_number,s.destination,s.branch_id,s.pickup_scheduled_at_utc,
+         s.weight_kg current_weight_kg,s.volume_cbm current_volume_cbm
+  FROM fleet_tms_shipments s
+  WHERE s.company_id=@companyId
+    AND NULLIF(BTRIM(s.vehicle_number),'') IS NOT NULL
+    AND s.status IN ('Loaded','PickedUp','InTransit')
+    AND (@scopeBranchId::BIGINT IS NULL OR s.branch_id=@scopeBranchId)
+    AND (@vehicleNumber::TEXT IS NULL OR LOWER(s.vehicle_number)=LOWER(@vehicleNumber))
+  ORDER BY s.vehicle_number,s.picked_up_at_utc DESC NULLS LAST,s.updated_at_utc DESC NULLS LAST,s.id DESC
+)
+SELECT leg.vehicle_number,leg.shipment_id current_shipment_id,leg.destination return_origin,
+       candidate.id candidate_shipment_id,candidate.shipment_number,candidate.customer_name,
+       candidate.origin,candidate.destination,candidate.pickup_scheduled_at_utc,
+       candidate.weight_kg,candidate.volume_cbm,candidate.priority,
+       v.ownership_model,v.body_type,v.capacity_kg,v.capacity_cbm,
+       GREATEST(COALESCE(v.capacity_kg,0)-candidate.weight_kg,0) remaining_kg_after_booking,
+       GREATEST(COALESCE(v.capacity_cbm,0)-candidate.volume_cbm,0) remaining_cbm_after_booking,
+       CASE WHEN COALESCE(v.capacity_kg,0)>0 OR COALESCE(v.capacity_cbm,0)>0 THEN
+         ROUND(LEAST(100,GREATEST(
+           CASE WHEN COALESCE(v.capacity_kg,0)>0 THEN candidate.weight_kg/v.capacity_kg*100 ELSE 0 END,
+           CASE WHEN COALESCE(v.capacity_cbm,0)>0 THEN candidate.volume_cbm/v.capacity_cbm*100 ELSE 0 END)),1)
+       ELSE NULL END candidate_utilization_pct,
+       'Exact recorded city match' match_basis
+FROM current_legs leg
+JOIN vehicles v ON v.company_id=@companyId AND v.vehicle_code=leg.vehicle_number AND v.deleted_at IS NULL
+JOIN fleet_tms_shipments candidate ON candidate.company_id=@companyId
+  AND candidate.status IN ('Booked','Planned')
+  AND NULLIF(BTRIM(candidate.vehicle_number),'') IS NULL
+  AND LOWER(BTRIM(candidate.origin))=LOWER(BTRIM(leg.destination))
+  AND (@scopeBranchId::BIGINT IS NULL OR candidate.branch_id=@scopeBranchId)
+WHERE (COALESCE(v.capacity_kg,0)>0 AND candidate.weight_kg<=v.capacity_kg)
+  AND (candidate.volume_cbm=0 OR (COALESCE(v.capacity_cbm,0)>0 AND candidate.volume_cbm<=v.capacity_cbm))
+ORDER BY candidate.pickup_scheduled_at_utc NULLS LAST,candidate.priority DESC,candidate.id
+LIMIT 100", c =>
+        {
+            BindOwner(c, http);
+            c.Parameters.Add("@scopeBranchId", NpgsqlTypes.NpgsqlDbType.Bigint).Value = (object?)BranchId(http) ?? DBNull.Value;
+            c.Parameters.Add("@vehicleNumber", NpgsqlTypes.NpgsqlDbType.Text).Value = (object?)vehicleNumber?.Trim() ?? DBNull.Value;
+        }, ct);
+        return Ok(new
+        {
+            generatedAtUtc = DateTime.UtcNow,
+            matchBasis = "Exact recorded destination-to-origin city match with recorded payload fit",
+            items
+        });
     }
 
     private static async Task<IResult> Tracking(HttpContext http, Database db, string? shipmentNumber, int page = 1, int pageSize = 20, CancellationToken ct = default)
@@ -401,12 +456,12 @@ FROM fleet_tms_tracking_points " + where + canonical;
             c => { BindOwner(c, http); c.Parameters.AddWithValue("@id", id); }, ct);
         if (stopCount == 0) return Bad("At least one shipment stop is required before dispatch.");
 
-        await db.ExecuteAsync(@"
+        var dispatched = await db.ExecuteAsync(@"
 UPDATE fleet_tms_shipments SET status='InTransit',
     driver_name=@driver, vehicle_number=@vehicle, route_code=@route,
     notes=COALESCE(@notes, notes),
     picked_up_at_utc=NOW(), updated_at_utc=NOW()
-WHERE id=@id AND company_id=@companyId" + Owned(http),
+WHERE id=@id AND company_id=@companyId AND status=@expectedStatus" + Owned(http),
             c =>
             {
                 c.Parameters.AddWithValue("@driver", driver);
@@ -414,8 +469,11 @@ WHERE id=@id AND company_id=@companyId" + Owned(http),
                 c.Parameters.AddWithValue("@route", route);
                 c.Parameters.AddWithValue("@notes", S(req.Notes));
                 c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@expectedStatus", currentStatus);
                 BindOwner(c, http);
             }, ct);
+        if (dispatched != 1)
+            return Results.Conflict(ApiResponse<object>.Fail("Shipment status changed before dispatch. Refresh and try again."));
 
         await db.ExecuteAsync(@"
 UPDATE fleet_tms_vehicles SET status='OnTrip', driver_name=@driver, updated_at_utc=NOW()
@@ -444,7 +502,14 @@ ON CONFLICT DO NOTHING",
     private static async Task<IResult> ServiceVehicle(HttpContext http, long id, VehicleServiceRequest req, Database db, CancellationToken ct)
     {
         var companyId = CompanyId(http);
-        var vehicle = await RowById(db, http, "fleet_tms_vehicles", id, ct);
+        return await db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+        // Dispatch locks this same vehicle row. Holding it through the active-load
+        // check and status change makes service entry mutually exclusive with a
+        // concurrent dispatch instead of relying on a stale availability read.
+        var vehicle = await db.QuerySingleAsync(
+            $"SELECT * FROM fleet_tms_vehicles WHERE id=@id AND company_id=@companyId{Owned(http)} FOR UPDATE",
+            c => { c.Parameters.AddWithValue("@id", id); BindOwner(c, http); }, ct);
         if (vehicle is null) return NotFound();
         var status = string.IsNullOrWhiteSpace(req.Status) ? "Maintenance" : req.Status.Trim();
         if (status is not ("Available" or "Maintenance" or "OutOfService")) return Bad("Invalid vehicle service status.");
@@ -472,6 +537,7 @@ WHERE id=@id AND company_id=@companyId" + Owned(http),
             }, ct);
         if (rows == 0) return NotFound();
         return Ok(await RowById(db, http, "fleet_tms_vehicles", id, ct)!);
+        }, ct);
     }
 
     private static async Task<IResult> CloseMaintenance(HttpContext http, long id, CloseMaintenanceRequest req, Database db, CancellationToken ct)
@@ -898,7 +964,7 @@ VALUES (@companyId, @branchId, @sid, @tokenHash, @expires, @sharedBy, NOW())",
             c => { BindOwner(c, http); c.Parameters.AddWithValue("@sid", shipmentId); c.Parameters.AddWithValue("@stopId", req.StopId); }, ct);
         if (duplicatePod > 0) return Bad("A POD already exists for this delivery stop.");
 
-        var userId = http.Items.TryGetValue(EndpointMappings.AuthUserIdItemKey, out var u) && u is not null ? (object)Convert.ToInt64(u) : DBNull.Value;
+        var userId = EndpointMappings.GetUserId(http);
         var id = await db.InsertAsync(@"
 INSERT INTO fleet_tms_pods
  (company_id, branch_id, shipment_id, stop_id, captured_by_user_id, recipient_name, recipient_phone,
@@ -1007,7 +1073,7 @@ WHERE id=@podId AND shipment_id=@sid AND company_id=@companyId" + Owned(http),
     private static async Task<IResult> VerifyPod(HttpContext http, long shipmentId, long podId, Database db, CancellationToken ct)
     {
         var companyId = CompanyId(http);
-        var userId = http.Items.TryGetValue(EndpointMappings.AuthUserIdItemKey, out var u) && u is not null ? (object)Convert.ToInt64(u) : DBNull.Value;
+        var userId = EndpointMappings.GetUserId(http);
         var rows = await db.ExecuteAsync(
             $"UPDATE fleet_tms_pods SET status='Verified', verified_at=NOW(), verified_by_user_id=@uid, updated_at=NOW() WHERE id=@podId AND shipment_id=@sid AND company_id=@companyId{Owned(http)} AND status='Submitted'",
             c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@podId", podId); c.Parameters.AddWithValue("@sid", shipmentId); BindOwner(c, http); }, ct);
@@ -1150,7 +1216,7 @@ ON CONFLICT (company_id, shipment_id, stop_id) WHERE status <> 'Rejected' DO NOT
                 {
                     c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", stop.GetValueOrDefault("branchId") ?? DBNull.Value);
                     c.Parameters.AddWithValue("@sid", shipmentId); c.Parameters.AddWithValue("@stopId", stopId);
-                    c.Parameters.AddWithValue("@uid", http.Items.TryGetValue(EndpointMappings.AuthUserIdItemKey, out var uid) ? uid ?? DBNull.Value : DBNull.Value);
+                    c.Parameters.AddWithValue("@uid", EndpointMappings.GetUserId(http));
                     c.Parameters.AddWithValue("@driverId", task.GetValueOrDefault("driverId") ?? DBNull.Value); c.Parameters.AddWithValue("@vehicleId", task.GetValueOrDefault("vehicleId") ?? DBNull.Value);
                     c.Parameters.AddWithValue("@recipient", req.RecipientName!.Trim()); c.Parameters.AddWithValue("@phone", req.RecipientPhone?.Trim() ?? "");
                     c.Parameters.AddWithValue("@sig", req.SignatureUrl?.Trim() ?? ""); c.Parameters.AddWithValue("@photo", req.PhotoUrl?.Trim() ?? ""); c.Parameters.AddWithValue("@doc", req.DocumentUrl?.Trim() ?? "");

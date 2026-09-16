@@ -84,10 +84,10 @@ public static partial class EndpointMappings
     }
 
     private static string DvirCreateHash(Dictionary<string, object?> body, long driverId, long vehicleId,
-        string inspectionType, string? requestedReportNumber)
+        string inspectionType, string? requestedReportNumber, string countryCode)
         => PilotSha256(new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
-            ["countryCode"] = PilotText(body, "countryCode", 12) ?? "US",
+            ["countryCode"] = countryCode,
             ["driverId"] = driverId,
             ["inspectionType"] = inspectionType,
             ["notes"] = PilotText(body, "notes", 4000),
@@ -96,6 +96,27 @@ public static partial class EndpointMappings
             ["riskScore"] = decimal.TryParse(Get(body, "riskScore")?.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var risk) ? Math.Clamp(risk, 0, 100) : 0m,
             ["vehicleId"] = vehicleId
         });
+
+    private static async Task<(TenantMarketPolicyService.MarketContext? Market, IResult? Error)> DvirMarketAsync(
+        HttpContext http, Database db, CancellationToken ct)
+    {
+        var market = await new TenantMarketPolicyService(db).GetAsync(GetCompanyId(http), ct);
+        return market is null
+            ? (null, Results.Json(ApiResponse<object>.Fail("Operating market not assigned"), statusCode: StatusCodes.Status409Conflict))
+            : (market, null);
+    }
+
+    private static IResult? RejectDvirCountryMismatch(
+        Dictionary<string, object?> body, TenantMarketPolicyService.MarketContext market)
+    {
+        var requested = PilotText(body, "countryCode", 12);
+        return string.IsNullOrWhiteSpace(requested) ||
+               string.Equals(TenantMarketPolicyService.NormalizeCountry(requested), market.CountryCode, StringComparison.Ordinal)
+            ? null
+            : Results.Json(
+                ApiResponse<object>.Fail("DVIR country is locked", $"This workspace can only create {market.CountryName} DVIR records."),
+                statusCode: StatusCodes.Status409Conflict);
+    }
 
     // Server-side module-entitlement gate for the paid DVIR / HOS / ELD compliance surface.
     // RBAC alone let a package_allowlist tenant WITHOUT the fleet.compliance add-on read and
@@ -247,6 +268,9 @@ public static partial class EndpointMappings
     {
         if (RequireAnyDirectPermission(http, "maintenance:update", "maintenance:manage") is { } denied) return denied;
         if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
+        var (market, marketError) = await DvirMarketAsync(http, db, ct);
+        if (marketError is not null) return marketError;
+        if (RejectDvirCountryMismatch(body, market!) is { } countryError) return countryError;
         var name = PilotText(body, "templateName", 160);
         var type = PilotText(body, "inspectionType", 40);
         if (name is null || type is null)
@@ -275,7 +299,7 @@ public static partial class EndpointMappings
                 {
                     c.Parameters.AddWithValue("@cid", companyId);
                     c.Parameters.AddWithValue("@name", name);
-                    c.Parameters.AddWithValue("@country", PilotText(body, "countryCode", 12) ?? "US");
+                    c.Parameters.AddWithValue("@country", market!.CountryCode);
                     c.Parameters.AddWithValue("@vehicleType", (object?)PilotText(body, "vehicleType", 80) ?? DBNull.Value);
                     c.Parameters.AddWithValue("@type", type);
                 }, ct);
@@ -304,9 +328,12 @@ public static partial class EndpointMappings
     {
         if (RequireAnyDirectPermission(http, "maintenance:update", "maintenance:manage") is { } denied) return denied;
         if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
+        var (market, marketError) = await DvirMarketAsync(http, db, ct);
+        if (marketError is not null) return marketError;
+        if (RejectDvirCountryMismatch(body, market!) is { } countryError) return countryError;
         var affected = await db.ExecuteAsync(
             @"UPDATE dvir_templates SET
-                template_name=COALESCE(@name,template_name),country_code=COALESCE(@country,country_code),
+                template_name=COALESCE(@name,template_name),country_code=@country,
                 vehicle_type=COALESCE(@vehicleType,vehicle_type),inspection_type=COALESCE(@type,inspection_type),
                 status=COALESCE(@status,status)
               WHERE id=@id AND company_id=@cid",
@@ -314,7 +341,7 @@ public static partial class EndpointMappings
             {
                 c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http));
                 c.Parameters.AddWithValue("@name", (object?)PilotText(body, "templateName", 160) ?? DBNull.Value);
-                c.Parameters.AddWithValue("@country", (object?)PilotText(body, "countryCode", 12) ?? DBNull.Value);
+                c.Parameters.AddWithValue("@country", market!.CountryCode);
                 c.Parameters.AddWithValue("@vehicleType", (object?)PilotText(body, "vehicleType", 80) ?? DBNull.Value);
                 c.Parameters.AddWithValue("@type", (object?)PilotText(body, "inspectionType", 40) ?? DBNull.Value);
                 c.Parameters.AddWithValue("@status", (object?)PilotText(body, "status", 30) ?? DBNull.Value);
@@ -329,6 +356,9 @@ public static partial class EndpointMappings
     {
         if (RequireAnyDirectPermission(http, "maintenance:create", "maintenance:manage") is { } denied) return denied;
         if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
+        var (market, marketError) = await DvirMarketAsync(http, db, ct);
+        if (marketError is not null) return marketError;
+        if (RejectDvirCountryMismatch(body, market!) is { } countryError) return countryError;
         if (!PilotPositiveLong(Get(body, "driverId"), out var driverId) ||
             !PilotPositiveLong(Get(body, "vehicleId"), out var vehicleId))
             return Results.BadRequest(ApiResponse<object>.Fail("A positive driverId and vehicleId are required"));
@@ -346,7 +376,7 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("Inspection type is required"));
         if (int.TryParse(Get(body, "defectsFound")?.ToString(), out var submittedDefects) && submittedDefects > 0)
             return Results.BadRequest(ApiResponse<object>.Fail("Defects require checklist evidence; use the inspection submission workflow"));
-        var requestHash = DvirCreateHash(body, driverId, vehicleId, inspectionType, requestedReportNumber);
+        var requestHash = DvirCreateHash(body, driverId, vehicleId, inspectionType, requestedReportNumber, market!.CountryCode);
 
         var companyId = GetCompanyId(http);
         try
@@ -400,7 +430,7 @@ public static partial class EndpointMappings
                         c.Parameters.AddWithValue("@key", (object?)idempotencyKey ?? DBNull.Value);
                         c.Parameters.AddWithValue("@requestHash", requestHash);
                         c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@vid", vehicleId);
-                        c.Parameters.AddWithValue("@country", PilotText(body, "countryCode", 12) ?? "US");
+                        c.Parameters.AddWithValue("@country", market.CountryCode);
                         c.Parameters.AddWithValue("@type", inspectionType);
                         c.Parameters.AddWithValue("@risk", decimal.TryParse(Get(body, "riskScore")?.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var risk) ? Math.Clamp(risk, 0, 100) : 0m);
                         c.Parameters.AddWithValue("@action", (object?)PilotText(body, "recommendedAction", 240) ?? DBNull.Value);
@@ -431,6 +461,9 @@ public static partial class EndpointMappings
     {
         if (RequireAnyDirectPermission(http, "maintenance:update", "maintenance:manage") is { } denied) return denied;
         if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
+        var (market, marketError) = await DvirMarketAsync(http, db, ct);
+        if (marketError is not null) return marketError;
+        if (RejectDvirCountryMismatch(body, market!) is { } countryError) return countryError;
         var forbidden = new[] { "driverId", "vehicleId", "defectsFound", "safeToOperate", "inspectionStatus",
             "driverSignatureStatus", "mechanicReviewStatus", "repairCertificationStatus" };
         if (forbidden.Any(k => Get(body, k) is not DBNull))
@@ -439,7 +472,7 @@ public static partial class EndpointMappings
         if (expectedVersion is null)
             return Results.BadRequest(ApiResponse<object>.Fail("rowVersion is required for DVIR updates"));
         var affected = await db.ExecuteAsync(
-            @"UPDATE dvir_reports SET country_code=COALESCE(@country,country_code),
+            @"UPDATE dvir_reports SET country_code=@country,
                     inspection_type=COALESCE(@type,inspection_type),risk_score=COALESCE(@risk,risk_score),
                     recommended_action=COALESCE(@action,recommended_action),notes=COALESCE(@notes,notes),
                     row_version=row_version+1
@@ -449,7 +482,7 @@ public static partial class EndpointMappings
             c =>
             {
                 c.Parameters.AddWithValue("@id", id); BindPilotScope(c, http);
-                c.Parameters.AddWithValue("@country", (object?)PilotText(body, "countryCode", 12) ?? DBNull.Value);
+                c.Parameters.AddWithValue("@country", market!.CountryCode);
                 c.Parameters.AddWithValue("@type", (object?)PilotText(body, "inspectionType", 40) ?? DBNull.Value);
                 c.Parameters.AddWithValue("@risk", decimal.TryParse(Get(body, "riskScore")?.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var risk) ? Math.Clamp(risk, 0, 100) : DBNull.Value);
                 c.Parameters.AddWithValue("@action", (object?)PilotText(body, "recommendedAction", 240) ?? DBNull.Value);
@@ -642,7 +675,8 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("rowVersion and the exact repair-review acknowledgment are required"));
 
         var companyId = GetCompanyId(http);
-        return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
+        var refreshAvailability = false;
+        var result = await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
         {
             var safetyIdentity = await ResolveDvirSafetyIdentityAsync(db, companyId, id, ct);
             if (safetyIdentity is null) return Results.NotFound(ApiResponse<object>.Fail("DVIR report not found for the authenticated driver"));
@@ -676,11 +710,16 @@ public static partial class EndpointMappings
                     driver_acknowledged_by=COALESCE(driver_acknowledged_by,@uid),row_version=row_version+1
                   WHERE dvir_report_id=@id AND company_id=@cid",
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@uid", PilotUserId(http)); }, ct);
-            await MaintenanceBackgroundService.UpdateVehicleAvailabilityAsync(db, ct);
+            // The whole-fleet reconciliation is deliberately deferred until after
+            // this transaction commits so it cannot extend the driver/DVIR locks.
+            refreshAvailability = true;
             await audit.LogAsync(http, "dvir.repairs.driver_acknowledged", "DVIR", id,
                 JsonSerializer.Serialize(new { attestationHash = PilotSha256(attestation!) }), ct);
             return Results.Ok(ApiResponse<object>.Ok(new { id, rowVersion = expectedVersion.Value + 1, safeToOperate = true }, "Certified repairs acknowledged; vehicle availability re-evaluated"));
         }, ct);
+        if (refreshAvailability)
+            await MaintenanceBackgroundService.UpdateVehicleAvailabilityAsync(db, ct);
+        return result;
     }
 
     private static async Task<IResult> DvirDefectResolvePilot(long id, HttpContext http, Dictionary<string, object?> body,
@@ -1023,7 +1062,8 @@ public static partial class EndpointMappings
         return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
         {
             var device = await db.QuerySingleAsync(
-                @"SELECT status,row_version,last_sync_at,provider_sync_status,malfunction_code FROM eld_devices
+                @"SELECT status,row_version,malfunction_code,
+                         provider,provider_account_ref,provider_external_id FROM eld_devices
                   WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
                     AND (@branchId::bigint IS NULL OR branch_id=@branchId) FOR UPDATE",
                 c => { c.Parameters.AddWithValue("@id", id); BindPilotScope(c, http); }, ct);
@@ -1034,15 +1074,6 @@ public static partial class EndpointMappings
             if (!new[] { "Malfunction", "Diagnostic" }.Contains(fromStatus, StringComparer.OrdinalIgnoreCase))
                 return Results.Conflict(ApiResponse<object>.Fail("Only a Malfunction or Diagnostic ELD device can be verified for recovery"));
 
-            var lastSync = device["lastSyncAt"] switch
-            {
-                DateTimeOffset dto => dto,
-                DateTime dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)),
-                _ => (DateTimeOffset?)null
-            };
-            var syncStatus = device["providerSyncStatus"]?.ToString();
-            var recentHealthySync = lastSync.HasValue && lastSync.Value >= DateTimeOffset.UtcNow.AddMinutes(-15)
-                && syncStatus is not null && new[] { "Success", "Healthy", "Connected" }.Contains(syncStatus, StringComparer.OrdinalIgnoreCase);
             var credentials = await db.QuerySingleInSystemScopeAsync(
                 @"SELECT api_key_hash,hmac_secret_encrypted FROM eld_devices
                   WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
@@ -1051,8 +1082,58 @@ public static partial class EndpointMappings
             var credentialsValid = credentials?["apiKeyHash"]?.ToString() is { Length: 64 } apiHash
                 && apiHash.All(Uri.IsHexDigit)
                 && credentials["hmacSecretEncrypted"]?.ToString()?.Trim().Length >= 24;
-            var verifiedForActive = recentHealthySync && credentialsValid;
-            var targetStatus = verifiedForActive ? "Active" : "Diagnostic";
+            var acceptedConnectivity = await db.QuerySingleAsync(
+                @"SELECT le.source_channel,le.event_time,le.received_at,
+                         EXISTS (
+                           SELECT 1 FROM integrations i
+                           WHERE i.company_id=e.company_id
+                             AND LOWER(BTRIM(i.integration_key))='samsara'
+                             AND LOWER(BTRIM(i.status))='connected'
+                             AND i.provider_account_verified_at IS NOT NULL
+                             AND i.provider_account_ref=e.provider_account_ref
+                         ) provider_account_verified
+                  FROM eld_devices e
+                  LEFT JOIN LATERAL (
+                    SELECT source_channel,event_time,received_at
+                    FROM location_events candidate
+                    WHERE candidate.company_id=e.company_id AND candidate.device_id=e.id
+                    ORDER BY candidate.received_at DESC,candidate.id DESC LIMIT 1
+                  ) le ON TRUE
+                  WHERE e.id=@id AND e.company_id=@cid AND e.deleted_at IS NULL",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            static DateTimeOffset? UtcTimestamp(object? value) => value switch
+            {
+                DateTimeOffset dto => dto.ToUniversalTime(),
+                DateTime dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)),
+                _ => null
+            };
+            var verification = EldRecoveryEvidencePolicy.Evaluate(new(
+                device["provider"]?.ToString(),
+                credentialsValid,
+                !string.IsNullOrWhiteSpace(device["providerAccountRef"]?.ToString())
+                    && !string.IsNullOrWhiteSpace(device["providerExternalId"]?.ToString()),
+                Convert.ToBoolean(acceptedConnectivity?.GetValueOrDefault("providerAccountVerified") ?? false),
+                acceptedConnectivity?.GetValueOrDefault("sourceChannel")?.ToString(),
+                UtcTimestamp(acceptedConnectivity?.GetValueOrDefault("eventTime")),
+                UtcTimestamp(acceptedConnectivity?.GetValueOrDefault("receivedAt"))),
+                DateTimeOffset.UtcNow);
+
+            if (verification.PreviewOnly)
+            {
+                await audit.LogAsync(http, "eld.malfunction.recovery.previewed", "EldDevice", id,
+                    JsonSerializer.Serialize(new { fromStatus, verification.VerificationLane, verification.Reason }), ct);
+                return Results.Ok(ApiResponse<object>.Ok(new
+                {
+                    id, status = fromStatus, rowVersion = expectedVersion.Value,
+                    previewOnly = true, providerSupported = false,
+                    connectivityAuthoritative = false,
+                    verificationLane = verification.VerificationLane,
+                    verificationReason = verification.Reason,
+                    malfunctionCode = device.GetValueOrDefault("malfunctionCode")
+                }, "Recovery evidence previewed; this provider cannot be verified by the current build and no device state was changed"));
+            }
+
+            var targetStatus = verification.CanActivate ? "Active" : "Diagnostic";
             await db.ExecuteAsync(
                 @"UPDATE eld_devices SET status=@status,
                     malfunction_resolved_at=CASE WHEN status='Malfunction' THEN NOW() ELSE malfunction_resolved_at END,
@@ -1080,14 +1161,20 @@ public static partial class EndpointMappings
                     c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId);
                 }, ct);
             await audit.LogAsync(http, "eld.malfunction.resolved", "EldDevice", id,
-                JsonSerializer.Serialize(new { fromStatus, targetStatus, recentHealthySync, credentialsValid, lastSync, syncStatus, evidence }), ct);
+                JsonSerializer.Serialize(new { fromStatus, targetStatus, credentialsValid, verification, evidence }), ct);
             return Results.Ok(ApiResponse<object>.Ok(new
             {
                 id, status = targetStatus, rowVersion = expectedVersion.Value + 1,
-                verifiedRecentProviderSync = recentHealthySync, verifiedCredentials = credentialsValid, malfunctionCode = device.GetValueOrDefault("malfunctionCode")
+                previewOnly = false,
+                providerSupported = verification.ProviderSupported,
+                connectivityAuthoritative = verification.ConnectivityAuthoritative,
+                verificationLane = verification.VerificationLane,
+                verificationReason = verification.Reason,
+                verifiedCredentials = credentialsValid,
+                malfunctionCode = device.GetValueOrDefault("malfunctionCode")
             }, targetStatus == "Active"
-                ? "ELD malfunction resolved after operator evidence and a recent healthy provider sync"
-                : "ELD malfunction resolution recorded; device remains Diagnostic until a recent healthy provider sync is verified"));
+                ? "ELD malfunction resolved after operator evidence and recent authenticated device telemetry"
+                : "ELD malfunction resolution recorded; device remains Diagnostic until authoritative connectivity evidence and direct-device credentials are verified"));
         }, ct);
     }
 }

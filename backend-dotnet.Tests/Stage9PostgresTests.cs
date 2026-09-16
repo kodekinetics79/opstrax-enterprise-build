@@ -338,10 +338,10 @@ public class Stage9PostgresTests
         {
             await new Stage9SchemaService(db).EnsureAsync();
             await db.ExecuteAsync(
-                "INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Fleet identity test','transport')",
+                "INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Fleet identity test','transport','US')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"FI-{companyId}"); });
             var branchId = await db.InsertAsync(
-                "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,'Identity branch','Active')",
+                "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,@code,'Identity branch','Active','US')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"BR-{companyId}"); });
             var driverId = await db.InsertAsync(
                 "INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status) VALUES (@c,@b,@code,'Identity Driver','Available')",

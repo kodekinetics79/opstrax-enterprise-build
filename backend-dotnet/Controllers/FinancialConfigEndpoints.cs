@@ -26,7 +26,7 @@ public static class FinancialConfigEndpoints
     private static async Task<IResult> CreateDraft(HttpContext http, Dictionary<string, object?> body, FinancialConfigService svc, CancellationToken ct)
     {
         if (EndpointMappings.RequirePermission(http, "finance.config.create") is { } d) return d;
-        var userId = Convert.ToInt64(http.Items[EndpointMappings.AuthUserIdItemKey] ?? 0L);
+        var userId = EndpointMappings.GetUserId(http);
         var o = await svc.CreateDraftAsync(EndpointMappings.GetCompanyId(http),
             Str(body, "archetype") ?? "custom", Str(body, "templateKey"), Long(body, "basedOnConfigSetId"),
             Str(body, "title") ?? "Config set", userId, ct);
@@ -58,7 +58,7 @@ public static class FinancialConfigEndpoints
     private static async Task<IResult> UpsertDocument(HttpContext http, long id, Dictionary<string, object?> body, FinancialConfigService svc, CancellationToken ct)
     {
         if (EndpointMappings.RequirePermission(http, "finance.config.update") is { } d) return d;
-        var userId = Convert.ToInt64(http.Items[EndpointMappings.AuthUserIdItemKey] ?? 0L);
+        var userId = EndpointMappings.GetUserId(http);
         var docType = Str(body, "docType"); var docKey = Str(body, "docKey");
         if (docType is null || docKey is null) return Results.BadRequest(ApiResponse<object>.Fail("docType and docKey are required"));
         var content = body.TryGetValue("content", out var cv) && cv is not null ? JsonSerializer.Serialize(cv) : "{}";
@@ -76,7 +76,7 @@ public static class FinancialConfigEndpoints
     private static async Task<IResult> Publish(HttpContext http, long id, Dictionary<string, object?>? body, FinancialConfigService svc, CancellationToken ct)
     {
         if (EndpointMappings.RequirePermission(http, "finance.config.publish") is { } d) return d;
-        var userId = Convert.ToInt64(http.Items[EndpointMappings.AuthUserIdItemKey] ?? 0L);
+        var userId = EndpointMappings.GetUserId(http);
         var eff = body is not null && body.TryGetValue("effectiveFrom", out var e) && DateOnly.TryParse(e?.ToString(), out var ed) ? ed : DateOnly.FromDateTime(DateTime.UtcNow);
         var mode = string.Equals(body is not null && body.TryGetValue("mode", out var m) ? m?.ToString() : null, "commit", StringComparison.OrdinalIgnoreCase)
             ? ConfigPublishMode.Commit : ConfigPublishMode.Preview;
@@ -88,7 +88,7 @@ public static class FinancialConfigEndpoints
     private static async Task<IResult> Archive(HttpContext http, long id, FinancialConfigService svc, CancellationToken ct)
     {
         if (EndpointMappings.RequirePermission(http, "finance.config.update") is { } d) return d;
-        var userId = Convert.ToInt64(http.Items[EndpointMappings.AuthUserIdItemKey] ?? 0L);
+        var userId = EndpointMappings.GetUserId(http);
         var o = await svc.ArchiveAsync(EndpointMappings.GetCompanyId(http), id, userId, ct);
         return o.Ok ? Results.Ok(ApiResponse<object>.Ok(new { o.Status }, "Config set archived"))
                     : Results.BadRequest(ApiResponse<object>.Fail($"Cannot archive: {o.Reason}"));

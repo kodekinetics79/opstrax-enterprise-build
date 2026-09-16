@@ -67,8 +67,8 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
         }
 
         var companyId = await db.InsertAsync(
-            @"INSERT INTO companies (company_code, name, industry, timezone, status)
-              VALUES (@code, @name, 'Transport & Logistics', 'America/New_York', 'Active')",
+            @"INSERT INTO companies (company_code, name, industry, country, currency, timezone, status)
+              VALUES (@code, @name, 'Transport & Logistics', 'US', 'USD', 'America/New_York', 'Active')",
             c => { c.Parameters.AddWithValue("@code", companyCode); c.Parameters.AddWithValue("@name", companyName); }, ct);
 
         var correlation = new InMemoryCorrelationContext($"demo-{Guid.NewGuid():N}", $"demo-cause-{Guid.NewGuid():N}", $"demo-req-{Guid.NewGuid():N}", companyId.ToString(), ActorTypes.TenantUser, "1");
@@ -237,8 +237,8 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@driverId", drivers[0]); }, ct);
         // A DVIR report + one open defect (Compliance / DVIR module).
         var dvirId = await db.ScalarLongAsync(
-            @"INSERT INTO dvir_reports (company_id, report_number, driver_id, vehicle_id, inspection_type, inspection_status, safe_to_operate, submitted_at)
-              VALUES (@companyId, 'MER-DVIR-1', @driverId, @vehicleId, 'Pre-Trip', 'Submitted', false, NOW() - INTERVAL '2 hour') RETURNING id",
+            @"INSERT INTO dvir_reports (company_id, report_number, driver_id, vehicle_id, country_code, inspection_type, inspection_status, safe_to_operate, submitted_at)
+              VALUES (@companyId, 'MER-DVIR-1', @driverId, @vehicleId, 'US', 'Pre-Trip', 'Submitted', false, NOW() - INTERVAL '2 hour') RETURNING id",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@driverId", drivers[0]); c.Parameters.AddWithValue("@vehicleId", vehicles[2]); }, ct);
         await db.ExecuteAsync(
             @"INSERT INTO dvir_defects (company_id, dvir_report_id, defect_category, defect_description, severity, status, vehicle_id)

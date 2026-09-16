@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { requireCommercialModuleRecords } from "@/services/commercialModulePayload";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { CommercialDisclosure, CommercialMetricRail, CommercialToolbar, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import type { AnyRecord } from "@/types";
 
 function persistedNumber(value: unknown): number | null {
@@ -143,62 +144,41 @@ export function CampaignsPage() {
     <div className="page-stack min-w-0">
       {showCreate && <CreateCampaignModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Campaigns</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Persisted campaign register with recorded targeting and performance evidence</p>
-        </div>
-        <div className="flex gap-2">
+      <RevenueWorkspaceHeader
+        title="Campaigns"
+        description="Target customer segments, measure engagement, and move qualified demand into the sales pipeline."
+        eyebrow="Growth workspace"
+        actions={<div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("campaigns", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>New Campaign</button>
-        </div>
-      </div>
+        </div>}
+      />
 
-      <div className="panel grid gap-3 md:grid-cols-2">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Attribution boundary</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Campaign-to-lead creation and revenue attribution are not automated in this build.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Evidence rule</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Audience, engagement, leads and revenue remain unavailable until persisted measurements exist.</p>
-        </div>
-      </div>
+      <CommercialMetricRail metrics={[
+        { label: "Campaigns", value: campaigns.length },
+        { label: "Active", value: active, tone: "good", active: statusFilter === "Active", onClick: () => setStatusFilter(statusFilter === "Active" ? "All" : "Active") },
+        { label: "Leads generated", value: measuredLeadRows.length ? totalLeads : "—", tone: "info" },
+        { label: "Revenue influenced", value: revenueLabel, tone: "neutral" },
+      ]} />
 
-      {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Total Campaigns",     val: campaigns.length },
-          { label: "Active",              val: active, accent: "text-teal-600" },
-          { label: "Leads Generated",     val: measuredLeadRows.length ? totalLeads : "—", accent: "text-blue-600" },
-          { label: "Revenue Influenced",  val: revenueLabel, accent: "text-violet-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-36">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Filters */}
-      <div className="panel flex flex-wrap gap-3 items-center">
-        <div className="flex gap-1.5">
+      <CommercialToolbar
+        filters={<>
           {(["All", "Active", "Scheduled", "Completed"] as const).map((f) => (
             <button key={f} type="button" onClick={() => setStatusFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+              className={`filter-chip shrink-0 ${
                 statusFilter === f
-                  ? "bg-teal-50 border-teal-300 text-teal-700"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                  ? "filter-chip-active"
+                  : ""
               }`}>{f}</button>
           ))}
-        </div>
-        <input type="search" placeholder="Search campaigns, segments…" value={search} onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-56" />
-      </div>
+        </>}
+        meta={`${filtered.length} shown`}
+        search={<input type="search" aria-label="Search campaigns" placeholder="Search campaigns, segments…" value={search} onChange={(e) => setSearch(e.target.value)} className="field" />}
+      />
 
       {/* Table */}
       <div className="panel overflow-hidden p-0">
-        {filtered.length === 0 ? <EmptyState title="No campaigns match your filters" /> : (
+        {filtered.length === 0 ? <EmptyState title="No campaigns match your filters" subtitle={campaigns.length ? "Clear a status or search filter to see the full campaign register." : "Create the first campaign when its audience and owner are confirmed."} action={!campaigns.length ? <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>New Campaign</button> : undefined} /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -235,6 +215,11 @@ export function CampaignsPage() {
           </div>
         )}
       </div>
+
+      <CommercialDisclosure title="Attribution and evidence">
+        <p>Campaign-to-lead creation and revenue attribution are not automated in this build.</p>
+        <p>Audience, engagement, leads and revenue remain unavailable until persisted measurements exist.</p>
+      </CommercialDisclosure>
 
       {/* Detail drawer */}
       {selected && (

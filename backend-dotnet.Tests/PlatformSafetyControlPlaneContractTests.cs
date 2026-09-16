@@ -34,7 +34,7 @@ public sealed class PlatformSafetyControlPlaneContractTests
     public void Integrations_HaveServerGateAndPlatformAdminControls()
     {
         var program = Read("backend-dotnet", "Program.cs");
-        var tenants = Read("frontend", "src", "pages", "platform", "PlatformTenantsPage.tsx");
+        var tenants = Read("frontend", "src", "pages", "platform", "tenant-management", "tenantManagementModel.ts");
         var packages = Read("frontend", "src", "pages", "platform", "PlatformPackagesPage.tsx");
 
         Assert.Contains("(\"/api/integrations\",        \"integrations\")", program, StringComparison.Ordinal);

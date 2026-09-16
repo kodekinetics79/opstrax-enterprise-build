@@ -33,7 +33,7 @@ public sealed class SamsaraEngineStateTruthPostgresTests
         }).Build());
         var suffix = Guid.NewGuid().ToString("N");
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Synthetic engine truth regression','Transportation') RETURNING id",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,'Synthetic engine truth regression','Transportation','US') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SET-{suffix[..10]}"));
         try
         {
@@ -42,7 +42,7 @@ public sealed class SamsaraEngineStateTruthPostgresTests
                   VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb,'samsara-org:engine-test',NOW()) RETURNING id",
                 c => c.Parameters.AddWithValue("@cid", companyId));
             var branchId = await db.InsertAsync(
-                "INSERT INTO branches(company_id,branch_code,name,status) VALUES(@cid,@code,'Synthetic branch','Active') RETURNING id",
+                "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES(@cid,@code,'Synthetic branch','Active','US') RETURNING id",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", $"SET-B-{suffix[..8]}"); });
             var vehicleId = await db.InsertAsync(
                 @"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier)

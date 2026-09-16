@@ -160,7 +160,7 @@ public sealed class TelemetryBackgroundService(
 
             logger.LogDebug("Stale-device alert created: company={CompanyId} vehicle={VehicleId}", companyId, vehicleId);
 
-            var recommendation = ai.CreateRecommendation(
+            var recommendation = await ai.CreateRecommendationAsync(
                     companyId.ToString(),
                     "telemetry.stale_device",
                     $"Stale telemetry for vehicle {vehicleId}",
@@ -174,7 +174,8 @@ public sealed class TelemetryBackgroundService(
                     alertId.ToString(),
                     ActorTypes.System,
                     "telemetry-background",
-                    moduleKey: "control-tower");
+                    moduleKey: "control-tower",
+                    ct: ct);
 
             await db.ExecuteAsync(
                     "UPDATE telemetry_alerts SET ai_recommendation_id=@rid, updated_at=NOW() WHERE id=@id AND company_id=@cid",

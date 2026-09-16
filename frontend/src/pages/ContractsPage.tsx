@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { contractsApi } from "@/services/contractsApi";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { CommercialDisclosure, CommercialMetricRail, CommercialToolbar, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import type { AnyRecord } from "@/types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -146,65 +147,58 @@ export function ContractsPage() {
         <CreateContractModal onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />
       )}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Contracts</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Persisted contract terms, currencies, renewal dates, and rate oversight</p>
-        </div>
-        <div className="flex gap-2">
+      <RevenueWorkspaceHeader
+        title="Contracts"
+        description="Govern commercial terms, effective dates, renewal exposure and rate ownership."
+        activeStage="contracts"
+        actions={<div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("contracts", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>New Contract</button>
-        </div>
-      </div>
+        </div>}
+      />
 
-      {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Active Contracts",    val: s.activeContracts ?? contracts.filter((c) => c.status === "Active").length, accent: "text-teal-600" },
-          { label: "Expiring Soon",       val: s.expiringSoon ?? contracts.filter((c) => c.displayStatus === "Expiring Soon").length, accent: "text-amber-600" },
-          { label: "Expired",             val: s.expiredContracts ?? contracts.filter((c) => c.displayStatus === "Expired").length, accent: "text-red-600" },
-          { label: "Customers Covered",   val: s.customersCovered ?? "--" },
-          { label: "Renewal Queue",       val: s.renewalQueue ?? "--", accent: "text-amber-600" },
-          { label: "Origin Unverified",   val: s.legacyOriginUnverified ?? "--", accent: "text-amber-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-32">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
-      </div>
+      <CommercialMetricRail metrics={[
+        { label: "All contracts", value: contracts.length, detail: `${filtered.length} shown`, active: statusFilter === "All", onClick: () => setStatusFilter("All") },
+        { label: "Active", value: String(s.activeContracts ?? contracts.filter((c) => c.status === "Active").length), detail: `${String(s.customersCovered ?? "—")} customers`, tone: "good", active: statusFilter === "Active", onClick: () => setStatusFilter("Active") },
+        { label: "Expiring soon", value: String(s.expiringSoon ?? contracts.filter((c) => c.displayStatus === "Expiring Soon").length), detail: "renewal attention", tone: "warn", active: statusFilter === "Expiring Soon", onClick: () => setStatusFilter("Expiring Soon") },
+        { label: "Expired", value: String(s.expiredContracts ?? contracts.filter((c) => c.displayStatus === "Expired").length), detail: "cannot govern jobs", tone: "bad", active: statusFilter === "Expired", onClick: () => setStatusFilter("Expired") },
+        { label: "Renewal queue", value: String(s.renewalQueue ?? "—"), detail: "recorded actions", tone: "warn", active: statusFilter === "Under Renewal", onClick: () => setStatusFilter("Under Renewal") },
+        { label: "Origin unverified", value: String(s.legacyOriginUnverified ?? "—"), detail: "needs provenance", tone: "warn" },
+      ]} />
 
       {/* Filters */}
-      <div className="panel flex flex-wrap gap-3 items-center">
-        <div className="flex gap-1.5 flex-wrap">
+      <CommercialToolbar
+        filters={<>
           {(["All", "Active", "Expiring Soon", "Expired", "Under Renewal"] as StatusFilter[]).map((f) => (
             <button
               key={f}
               type="button"
               onClick={() => setStatusFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+              className={`filter-chip shrink-0 ${
                 statusFilter === f
-                  ? "bg-teal-50 border-teal-300 text-teal-700"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                  ? "filter-chip-active"
+                  : ""
               }`}
             >
               {f}
             </button>
           ))}
-        </div>
-        <input
+        </>}
+        meta={`${filtered.length} of ${contracts.length}`}
+        search={<input
           type="search"
+          aria-label="Search contracts"
           placeholder="Search contracts, customers…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-56"
-        />
-      </div>
+          className="field"
+        />}
+      />
 
       {/* Table */}
       <div className="panel overflow-hidden p-0">
         {filtered.length === 0 ? (
-          <EmptyState title="No contracts match your filters" />
+          <EmptyState title="No contracts match your filters" subtitle={contracts.length ? "Clear a status or search filter to see the full contract register." : "Create the first contract after customer, dates and rate ownership are confirmed."} action={!contracts.length ? <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>New Contract</button> : undefined} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -255,6 +249,11 @@ export function ContractsPage() {
           </div>
         )}
       </div>
+
+      <CommercialDisclosure>
+        <p><strong>Contract evidence:</strong> Status, effective dates, rates and version history come from persisted tenant-scoped records.</p>
+        <p><strong>Activation:</strong> Activate only reviewed drafts or expired records with confirmed customer and rate terms. Origin-unverified records remain visibly flagged.</p>
+      </CommercialDisclosure>
 
       {/* Detail drawer */}
       {selected && (

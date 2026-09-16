@@ -110,10 +110,10 @@ public class GeofenceEvaluatorPostgresTests
     {
         var db = CreateDatabase();
         await db.ExecuteAsync("ALTER TABLE geofences ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL");
-        var cid = await db.InsertAsync("INSERT INTO companies (company_code,name,industry) VALUES (@code,'Branch Geo','logistics') RETURNING id",
+        var cid = await db.InsertAsync("INSERT INTO companies (company_code,name,industry,country) VALUES (@code,'Branch Geo','logistics','US') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"BGE-{Guid.NewGuid():N}"[..14]));
-        var a = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'A','A','Active') RETURNING id", c => c.Parameters.AddWithValue("@c", cid));
-        var b = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'B','B','Active') RETURNING id", c => c.Parameters.AddWithValue("@c", cid));
+        var a = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'A','A','Active','US') RETURNING id", c => c.Parameters.AddWithValue("@c", cid));
+        var b = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'B','B','Active','US') RETURNING id", c => c.Parameters.AddWithValue("@c", cid));
         var vid = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier) VALUES (@c,@b,@code,'truck','legacy-fleet-identifier',@code) RETURNING id",
             c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@b", b); c.Parameters.AddWithValue("@code", $"BV-{Guid.NewGuid():N}"[..12]); });
         var gid = await db.InsertAsync(
@@ -157,7 +157,7 @@ public class GeofenceEvaluatorPostgresTests
     private static async Task<(long cid, long vid, long gid)> SeedAsync(Database db)
     {
         await db.ExecuteAsync("ALTER TABLE geofences ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL");
-        var cid = await db.InsertAsync("INSERT INTO companies (company_code, name, industry) VALUES (@code, 'Geo Co', 'logistics') RETURNING id",
+        var cid = await db.InsertAsync("INSERT INTO companies (company_code, name, industry,country) VALUES (@code, 'Geo Co', 'logistics','US') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"GEO-{Guid.NewGuid():N}".Substring(0, 14)));
         var vid = await db.InsertAsync(
             "INSERT INTO vehicles (company_id, vehicle_code, type, vin_exception_type, alternate_identifier) VALUES (@c, @code, 'truck', 'legacy-fleet-identifier', @code) RETURNING id",

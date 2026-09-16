@@ -30,7 +30,8 @@ public sealed class FeatureFlagService(Database db)
     /// <summary>
     /// The flags every tenant gets. Seeded ENABLED so provisioning a tenant never changes
     /// behaviour — these are kill switches / ramp controls over features that already ship,
-    /// not hidden features. Add an entry here plus a db/init migration to backfill existing
+    /// not hidden features. Add an entry here plus an owner-applied file in
+    /// database/migrations and enroll it in the migration ledger runner to backfill existing
     /// tenants; new tenants pick it up at creation.
     /// </summary>
     public static readonly DefaultFlag[] Defaults =

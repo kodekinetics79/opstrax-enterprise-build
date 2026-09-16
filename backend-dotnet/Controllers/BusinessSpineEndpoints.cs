@@ -84,6 +84,10 @@ public static class BusinessSpineEndpoints
         var guard = EndpointMappings.RequirePermission(http, "rate_card.create");
         if (guard is not null) return guard;
 
+        foreach (var key in new[] { "customerId", "contractId" })
+            if (HasValue(body, key) && !TryLong(body, key, out _))
+                return Results.BadRequest(ApiResponse<object>.Fail($"{key} must be a valid integer"));
+
         if (!TryDate(body, "effectiveDate", out var effectiveDate))
         {
             return Results.BadRequest(ApiResponse<object>.Fail("effectiveDate is required"));
@@ -180,17 +184,23 @@ public static class BusinessSpineEndpoints
         var guard = EndpointMappings.RequirePermission(http, "charge.create");
         if (guard is not null) return guard;
 
-        if (!Long(body, "jobId").HasValue)
+        if (!TryLong(body, "jobId", out var jobId) || jobId <= 0)
         {
-            return Results.BadRequest(ApiResponse<object>.Fail("jobId is required"));
+            return Results.BadRequest(ApiResponse<object>.Fail("jobId must be a positive integer"));
         }
+        foreach (var key in new[] { "tripId", "rateCardId", "approvedByUserId" })
+            if (HasValue(body, key) && !TryLong(body, key, out _))
+                return Results.BadRequest(ApiResponse<object>.Fail($"{key} must be a valid integer"));
+        foreach (var key in new[] { "quantity", "unitRate", "amount" })
+            if (HasValue(body, key) && !TryDecimal(body, key, out _))
+                return Results.BadRequest(ApiResponse<object>.Fail($"{key} must be a valid number"));
 
         JobChargeRecord charge;
         try
         {
             charge = await svc.CreateJobChargeAsync(
                 EndpointMappings.GetCompanyId(http),
-                Long(body, "jobId")!.Value,
+                jobId,
                 Long(body, "tripId"),
                 Long(body, "rateCardId"),
                 Str(body, "chargeCode") ?? $"CHG-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
@@ -238,6 +248,13 @@ public static class BusinessSpineEndpoints
         var guard = EndpointMappings.RequirePermission(http, "rate_card.update");
         if (guard is not null) return guard;
 
+        foreach (var key in new[] { "customerId", "contractId" })
+            if (HasValue(body, key) && !TryLong(body, key, out _))
+                return Results.BadRequest(ApiResponse<object>.Fail($"{key} must be a valid integer"));
+        foreach (var key in new[] { "baseRate", "minimumCharge", "fuelSurchargePercent" })
+            if (HasValue(body, key) && !TryDecimal(body, key, out _))
+                return Results.BadRequest(ApiResponse<object>.Fail($"{key} must be a valid number"));
+
         var companyId = EndpointMappings.GetCompanyId(http);
         var current = await svc.GetRateCardByIdAsync(companyId, id, ct);
         if (current is null)
@@ -257,7 +274,7 @@ public static class BusinessSpineEndpoints
             var approvalRequest = approval.CreateRequest(
                 companyId.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.TenantUser,
-                http.Items[EndpointMappings.AuthUserIdItemKey]?.ToString(),
+                EndpointMappings.GetUserId(http).ToString(),
                 "customer.contract.rate_change",
                 "rate_card",
                 id.ToString(CultureInfo.InvariantCulture),
@@ -332,8 +349,11 @@ public static class BusinessSpineEndpoints
         var guard = EndpointMappings.RequirePermission(http, "charge.update");
         if (guard is not null) return guard;
 
+        foreach (var key in new[] { "jobId", "tripId", "rateCardId", "approvedByUserId" })
+            if (HasValue(body, key) && !TryLong(body, key, out _))
+                return Results.BadRequest(ApiResponse<object>.Fail($"{key} must be a valid integer"));
         foreach (var key in new[] { "quantity", "unitRate", "amount" })
-            if (body.ContainsKey(key) && DecN(body, key) is null)
+            if (HasValue(body, key) && !TryDecimal(body, key, out _))
                 return Results.BadRequest(ApiResponse<object>.Fail($"{key} must be a valid number"));
         var companyId = EndpointMappings.GetCompanyId(http);
         JobChargeRecord? charge;
@@ -475,21 +495,31 @@ public static class BusinessSpineEndpoints
             : null;
 
     private static long? Long(Dictionary<string, object?> body, string key)
-        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull
-            ? value is JsonElement element && element.TryGetInt64(out var parsed) ? parsed : Convert.ToInt64(value, CultureInfo.InvariantCulture)
-            : null;
+        => TryLong(body, key, out var value) ? value : null;
 
     private static decimal Dec(Dictionary<string, object?> body, string key, decimal fallback = 0m)
-        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull
-            ? value is JsonElement element && element.TryGetDecimal(out var parsed) ? parsed : Convert.ToDecimal(value, CultureInfo.InvariantCulture)
-            : fallback;
+        => TryDecimal(body, key, out var value) ? value : fallback;
 
     private static decimal? DecN(Dictionary<string, object?> body, string key)
-        => body.TryGetValue(key, out var value) && value is not null && value is not DBNull
-            ? value is JsonElement element && element.TryGetDecimal(out var parsed) ? parsed : Convert.ToDecimal(value, CultureInfo.InvariantCulture)
-            : null;
+        => TryDecimal(body, key, out var value) ? value : null;
 
-    private static bool TryDecimal(Dictionary<string, object?> body, string key, out decimal value)
+    private static bool HasValue(Dictionary<string, object?> body, string key)
+        => body.TryGetValue(key, out var value)
+           && value is not null and not DBNull
+           && !string.IsNullOrWhiteSpace(value is JsonElement element ? element.ToString() : Convert.ToString(value, CultureInfo.InvariantCulture));
+
+    internal static bool TryLong(Dictionary<string, object?> body, string key, out long value)
+    {
+        value = default;
+        if (!body.TryGetValue(key, out var raw) || raw is null or DBNull) return false;
+        if (raw is JsonElement element)
+            return element.ValueKind == JsonValueKind.Number
+                ? element.TryGetInt64(out value)
+                : long.TryParse(element.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+        return long.TryParse(Convert.ToString(raw, CultureInfo.InvariantCulture), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+    }
+
+    internal static bool TryDecimal(Dictionary<string, object?> body, string key, out decimal value)
     {
         value = default;
         if (!body.TryGetValue(key, out var raw) || raw is null || raw is DBNull) return false;

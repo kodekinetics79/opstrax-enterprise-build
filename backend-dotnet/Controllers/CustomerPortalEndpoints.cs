@@ -36,8 +36,7 @@ public static class CustomerPortalEndpoints
         if (denied is not null) return (0, 0, denied);
 
         var companyId = EndpointMappings.GetCompanyId(http);
-        var userId = http.Items.TryGetValue(EndpointMappings.AuthUserIdItemKey, out var uid) && uid is not null
-            ? Convert.ToInt64(uid) : 0;
+        var userId = EndpointMappings.GetUserId(http);
 
         var customerId = await svc.ResolveCustomerIdForUserAsync(companyId, userId, ct);
         if (customerId is null)

@@ -270,7 +270,7 @@ public sealed class FleetMasterAssignmentHosPostgresTests
     {
         private readonly string prefix = "MASTER-HOS-" + Guid.NewGuid().ToString("N");
         private readonly List<long> companies = [];
-        public long CompanyA, CompanyB, BranchA, BranchB;
+        public long CompanyA, CompanyB, BranchA, BranchB, UserId;
         public readonly Dictionary<string, (long Driver, long Vehicle)> Pairs = [];
         public static async Task<Fixture> Create()
         {
@@ -316,12 +316,12 @@ public sealed class FleetMasterAssignmentHosPostgresTests
         private async Task<IResult> Call(string path, long id, Dictionary<string, object?> body, bool companyWide = false, bool allowed = true, CancellationToken ct = default)
         {
             var db = new Database(config, new TenantScopeAccessor());
-            return await db.RunInTenantScopeAsync(CompanyA, async () =>
+            return await db.RunInTenantScopeAsync(CompanyA, UserId, async () =>
             {
                 var http = new DefaultHttpContext();
                 http.Items[EndpointMappings.AuthCompanyIdItemKey] = CompanyA;
                 if (!companyWide) http.Items[EndpointMappings.AuthBranchIdItemKey] = BranchA;
-                http.Items[EndpointMappings.AuthUserIdItemKey] = 0L;
+                http.Items[EndpointMappings.AuthUserIdItemKey] = UserId;
                 http.Items[EndpointMappings.AuthRoleItemKey] = "Synthetic fleet operator";
                 http.Items[EndpointMappings.AuthPermissionsItemKey] = allowed ? new[] { "fleet:manage", "dispatch:assign", "vehicles:view" } : new[] { "fleet:view", "dispatch:assign" };
                 var handler = Registered(path);
@@ -450,12 +450,13 @@ public sealed class FleetMasterAssignmentHosPostgresTests
         }
         private async Task Initialize()
         {
-            CompanyA = long.Parse(await Sql("INSERT INTO companies(company_code,name,industry) VALUES (@code,'Synthetic master pairing fixture','Transportation') RETURNING id", ("code", prefix + "A")));
+            CompanyA = long.Parse(await Sql("INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Synthetic master pairing fixture','Transportation','CA') RETURNING id", ("code", prefix + "A")));
             companies.Add(CompanyA);
-            CompanyB = long.Parse(await Sql("INSERT INTO companies(company_code,name,industry) VALUES (@code,'Synthetic foreign fixture','Transportation') RETURNING id", ("code", prefix + "B")));
+            CompanyB = long.Parse(await Sql("INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Synthetic foreign fixture','Transportation','CA') RETURNING id", ("code", prefix + "B")));
             companies.Add(CompanyB);
-            BranchA = long.Parse(await Sql("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'A','Synthetic A','Active') RETURNING id", ("c", CompanyA)));
-            BranchB = long.Parse(await Sql("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'B','Synthetic B','Active') RETURNING id", ("c", CompanyA)));
+            BranchA = long.Parse(await Sql("INSERT INTO branches(company_id,branch_code,name,status,country_code,timezone) VALUES (@c,'A','Synthetic A','Active','CA','America/Toronto') RETURNING id", ("c", CompanyA)));
+            BranchB = long.Parse(await Sql("INSERT INTO branches(company_id,branch_code,name,status,country_code,timezone) VALUES (@c,'B','Synthetic B','Active','CA','America/Toronto') RETURNING id", ("c", CompanyA)));
+            UserId = long.Parse(await Sql("INSERT INTO users(company_id,branch_id,full_name,email,role_name,status) VALUES (@c,@b,'Synthetic fleet operator',@email,'Fleet Manager','Active') RETURNING id", ("c", CompanyA), ("b", BranchA), ("email", $"{prefix.ToLowerInvariant()}@example.invalid")));
             foreach (var key in new[] { "A", "A2", "B", "FOREIGN" })
             {
                 var company = key == "FOREIGN" ? CompanyB : CompanyA;
@@ -476,7 +477,7 @@ public sealed class FleetMasterAssignmentHosPostgresTests
                 unlink.Parameters.AddWithValue("ids", companies.ToArray()); unlink.Parameters.AddWithValue("prefix", prefix + "%");
                 await unlink.ExecuteNonQueryAsync();
             }
-            foreach (var table in new[] { "entity_timeline_events", "audit_logs", "dispatch_assignments", "vehicle_assignments", "hos_clocks", "drivers", "vehicles", "branches" })
+            foreach (var table in new[] { "entity_timeline_events", "audit_logs", "dispatch_assignments", "vehicle_assignments", "hos_clocks", "drivers", "vehicles", "users", "branches" })
             {
                 await using var command = new NpgsqlCommand($"DELETE FROM {table} WHERE company_id=ANY(@ids) AND company_id IN (SELECT id FROM companies WHERE company_code LIKE @prefix)", connection, transaction);
                 command.Parameters.AddWithValue("ids", companies.ToArray()); command.Parameters.AddWithValue("prefix", prefix + "%"); await command.ExecuteNonQueryAsync();

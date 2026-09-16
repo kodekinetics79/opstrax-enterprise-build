@@ -3,33 +3,20 @@ import { ArrowRight, RefreshCw, Sparkles } from "lucide-react";
 import { marketPackApi } from "@/services/marketPackApi";
 import { PageHeader, KpiCard, DataTable, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
+import { countryLabel, useTenantCountry } from "@/hooks/useTenantRegion";
 
 type AnyRecord = Record<string, any>;
-type Tab = "canada" | "saudi";
-
-// Fleet Compliance — regional market-pack readiness (Canada/NA + Saudi/GCC).
-// Canada remains market-pack entitlement-based. Saudi/GCC now uses the live
-// Saudi readiness foundation so the tab shows real tenant data instead of a
-// dead not-enabled state.
-export function FleetCompliancePage({ initialTab = "canada" }: { initialTab?: Tab } = {}) {
-  const [tab, setTab] = useState<Tab>(initialTab);
+// One country-resolved compliance workspace. Direct navigation can never expose
+// another market's controls; the backend independently enforces the same rule.
+export function FleetCompliancePage() {
+  const country = useTenantCountry();
+  const isSaudiMarket = country === "SA";
+  const isNorthAmerica = country === "CA" || country === "US";
   return (
     <div className="space-y-6">
-      <PageHeader title="Fleet Compliance" eyebrow="Market Packs" description="Market-pack readiness — Canada / North America and Saudi / GCC." />
-      <div className="flex gap-2">
-        <TabButton active={tab === "canada"} onClick={() => setTab("canada")}>Canada / North America</TabButton>
-        <TabButton active={tab === "saudi"} onClick={() => setTab("saudi")}>Saudi / GCC</TabButton>
-      </div>
-      {tab === "canada" ? <CanadaReadiness /> : <SaudiReadiness />}
+      <PageHeader title={`${countryLabel(country)} Fleet Compliance`} eyebrow="Operating Market" description={`Rules and evidence resolved from the tenant's locked ${countryLabel(country)} market profile.`} />
+      {isSaudiMarket ? <SaudiReadiness /> : isNorthAmerica ? <CanadaReadiness /> : <ErrorState message="Operating market is not assigned or does not have a supported compliance pack." />}
     </div>
-  );
-}
-
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${active ? "bg-teal-500 text-white" : "border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300"}`}>
-      {children}
-    </button>
   );
 }
 
@@ -335,8 +322,8 @@ function SaudiReadiness() {
               <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
               Refresh live data
             </button>
-            <a href="/fleet-saudi-readiness" className="btn-primary inline-flex items-center gap-2">
-              Open full Saudi workspace
+            <a href="/settings" className="btn-primary inline-flex items-center gap-2">
+              Open Saudi settings
               <ArrowRight className="h-4 w-4" />
             </a>
           </div>

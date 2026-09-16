@@ -35,9 +35,9 @@ public class TaxServicePostgresTests
         var (db, svc, cid, cust) = Setup();
         try
         {
-            var p = await PublishProfileAsync(db, cid, "vat", inclusive: false);
+            var p = await PublishProfileAsync(db, cid, "gst", inclusive: false);
             await RuleAsync(db, cid, p, "STANDARD", 0.15m, "S");
-            await SellerRegAsync(db, cid, "vat");
+            await SellerRegAsync(db, cid, "gst");
             var draft = await SeedDraftAsync(db, cid, cust, "USD", ("BASE", "base", 1000m));
 
             var o = await svc.ComputeForDraftAsync(cid, draft, TaxMode.Commit);
@@ -59,9 +59,9 @@ public class TaxServicePostgresTests
         var (db, svc, cid, cust) = Setup();
         try
         {
-            var p = await PublishProfileAsync(db, cid, "vat", inclusive: true);
+            var p = await PublishProfileAsync(db, cid, "gst", inclusive: true);
             await RuleAsync(db, cid, p, "STANDARD", 0.15m, "S");
-            await SellerRegAsync(db, cid, "vat");
+            await SellerRegAsync(db, cid, "gst");
             var draft = await SeedDraftAsync(db, cid, cust, "USD", ("BASE", "base", 1150m));
 
             var o = await svc.ComputeForDraftAsync(cid, draft, TaxMode.Commit);
@@ -80,9 +80,9 @@ public class TaxServicePostgresTests
         var (db, svc, cid, cust) = Setup();
         try
         {
-            var p = await PublishProfileAsync(db, cid, "vat", inclusive: false);
+            var p = await PublishProfileAsync(db, cid, "gst", inclusive: false);
             await RuleAsync(db, cid, p, "STANDARD", 0.15m, "S");
-            await SellerRegAsync(db, cid, "vat");
+            await SellerRegAsync(db, cid, "gst");
             await db.ExecuteAsync(
                 "INSERT INTO customer_tax_status (company_id, customer_id, tax_exempt, exemption_reason, effective_date) VALUES (@c,@cust,TRUE,'Diplomatic', DATE '2025-01-01')",
                 c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@cust", cust); });
@@ -106,7 +106,7 @@ public class TaxServicePostgresTests
         var (db, svc, cid, cust) = Setup();
         try
         {
-            var p = await PublishProfileAsync(db, cid, "vat", inclusive: false);
+            var p = await PublishProfileAsync(db, cid, "gst", inclusive: false);
             await RuleAsync(db, cid, p, "ZERO", 0m, "Z");   // zero-rated, no seller reg needed
             var draft = await SeedDraftAsync(db, cid, cust, "USD", ("BASE", "base", 1000m));
 
@@ -125,7 +125,7 @@ public class TaxServicePostgresTests
         var (db, svc, cid, cust) = Setup();
         try
         {
-            var p = await PublishProfileAsync(db, cid, "vat", inclusive: false);
+            var p = await PublishProfileAsync(db, cid, "gst", inclusive: false);
             await RuleAsync(db, cid, p, "STANDARD", 0.15m, "S");   // non-zero tax, but NO seller registration
             var draft = await SeedDraftAsync(db, cid, cust, "USD", ("BASE", "base", 1000m));
 
@@ -141,7 +141,7 @@ public class TaxServicePostgresTests
     [Fact]
     public async Task Unsupported_Regime_Is_FailClosed()
     {
-        var (db, svc, cid, cust) = Setup();
+        var (db, svc, cid, cust) = Setup("US");
         try
         {
             var p = await PublishProfileAsync(db, cid, "us_sales_tax", inclusive: false);
@@ -162,8 +162,8 @@ public class TaxServicePostgresTests
         var (db, svc, cid, cust) = Setup();
         try
         {
-            var p = await PublishProfileAsync(db, cid, "vat", inclusive: false);
-            await SellerRegAsync(db, cid, "vat");
+            var p = await PublishProfileAsync(db, cid, "gst", inclusive: false);
+            await SellerRegAsync(db, cid, "gst");
             // A rule that only matches a different charge code, and NO catch-all.
             await db.ExecuteAsync(
                 "INSERT INTO tax_rules (company_id, tax_profile_id, match_charge_code, tax_code, tax_category, rate, taxable, priority) VALUES (@c,@p,'SPECIAL','STANDARD','S',0.15,TRUE,10)",
@@ -184,9 +184,9 @@ public class TaxServicePostgresTests
         var (db, svc, cid, cust) = Setup();
         try
         {
-            var p = await PublishProfileAsync(db, cid, "vat", inclusive: false);
+            var p = await PublishProfileAsync(db, cid, "gst", inclusive: false);
             await RuleAsync(db, cid, p, "STANDARD", 0.15m, "S");
-            await SellerRegAsync(db, cid, "vat");
+            await SellerRegAsync(db, cid, "gst");
             var draft = await SeedDraftAsync(db, cid, cust, "USD", ("BASE", "base", 1000m));
 
             await svc.ComputeForDraftAsync(cid, draft, TaxMode.Commit);
@@ -224,9 +224,9 @@ public class TaxServicePostgresTests
         var (db, svc, cid, cust) = Setup();
         try
         {
-            var p = await PublishProfileAsync(db, cid, "vat", inclusive: false);
+            var p = await PublishProfileAsync(db, cid, "gst", inclusive: false);
             await RuleAsync(db, cid, p, "REVERSE_CHARGE", 0m, "S");
-            await SellerRegAsync(db, cid, "vat");
+            await SellerRegAsync(db, cid, "gst");
             var draft = await SeedDraftAsync(db, cid, cust, "USD", ("BASE", "base", 1000m));
 
             var o = await svc.ComputeForDraftAsync(cid, draft, TaxMode.Commit);
@@ -240,7 +240,7 @@ public class TaxServicePostgresTests
     [Fact]
     public async Task Zatca_NonSAR_Currency_Is_FailClosed()
     {
-        var (db, svc, cid, cust) = Setup();
+        var (db, svc, cid, cust) = Setup("SA");
         try
         {
             var p = await PublishProfileAsync(db, cid, "zatca_vat", inclusive: false);
@@ -262,8 +262,8 @@ public class TaxServicePostgresTests
         var (db, svc, cid, cust) = Setup();
         try
         {
-            var p = await PublishProfileAsync(db, cid, "vat", inclusive: false);
-            await SellerRegAsync(db, cid, "vat");
+            var p = await PublishProfileAsync(db, cid, "gst", inclusive: false);
+            await SellerRegAsync(db, cid, "gst");
             // Standard for FUEL, zero-rated for GROCERY, catch-all standard. Amounts chosen to force
             // per-line half-up rounding: 100.10*0.15 = 15.015 -> 15.02; 33.33*0.15 = 4.9995 -> 5.00.
             await db.ExecuteAsync("INSERT INTO tax_rules (company_id, tax_profile_id, match_charge_code, tax_code, tax_category, rate, taxable, priority) VALUES (@c,@p,'GROCERY','ZERO','Z',0,TRUE,20)",
@@ -293,10 +293,10 @@ public class TaxServicePostgresTests
             // freight_taxable=false; a catch-all standard rule would otherwise tax it.
             var p = await db.InsertAsync(
                 @"INSERT INTO tax_profiles (company_id, profile_code, profile_name, regime, price_inclusive, freight_taxable, currency, effective_date, status, author_user_id, published_by_user_id, published_at)
-                  VALUES (@c, @code, 'P', 'vat', FALSE, FALSE, NULL, DATE '2025-01-01', 'published', 1, 2, NOW()) RETURNING id",
+                  VALUES (@c, @code, 'P', 'gst', FALSE, FALSE, NULL, DATE '2025-01-01', 'published', 1, 2, NOW()) RETURNING id",
                 c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@code", $"TPF-{cid}"); });
             await RuleAsync(db, cid, p, "STANDARD", 0.15m, "S");
-            await SellerRegAsync(db, cid, "vat");
+            await SellerRegAsync(db, cid, "gst");
             var draft = await SeedDraftAsync(db, cid, cust, "USD", ("FREIGHT", "freight", 200m), ("BASE", "base", 1000m));
 
             var o = await svc.ComputeForDraftAsync(cid, draft, TaxMode.Commit);
@@ -313,10 +313,10 @@ public class TaxServicePostgresTests
         var (db, svc, cid, cust) = Setup();
         try
         {
-            var p = await PublishProfileAsync(db, cid, "vat", inclusive: false);
+            var p = await PublishProfileAsync(db, cid, "gst", inclusive: false);
             await RuleAsync(db, cid, p, "STANDARD", 0.15m, "S");
             var seller = await db.InsertAsync(
-                "INSERT INTO seller_tax_registration (company_id, jurisdiction, regime, tax_registration_no, effective_date) VALUES (@c,'XX','vat','TRN', DATE '2025-01-01') RETURNING id",
+                "INSERT INTO seller_tax_registration (company_id, jurisdiction, regime, tax_registration_no, effective_date) VALUES (@c,'CA','gst','TRN', DATE '2025-01-01') RETURNING id",
                 c => c.Parameters.AddWithValue("@c", cid));
             var draft = await SeedDraftAsync(db, cid, cust, "USD", ("BASE", "base", 1000m));
 
@@ -340,12 +340,12 @@ public class TaxServicePostgresTests
 
     // ── helpers ──
 
-    private static (Database, TaxService, long, long) Setup()
+    private static (Database, TaxService, long, long) Setup(string country = "CA")
     {
         var db = new Database(new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["ConnectionStrings:DefaultConnection"] = TestDb.ConnectionString }).Build());
-        var cid = db.InsertAsync("INSERT INTO companies (company_code, name, industry) VALUES (@code,'Tax Co','logistics') RETURNING id",
-            c => c.Parameters.AddWithValue("@code", $"TX-{Guid.NewGuid():N}".Substring(0, 16))).GetAwaiter().GetResult();
+        var cid = db.InsertAsync("INSERT INTO companies (company_code, name, industry, country) VALUES (@code,'Tax Co','logistics',@country) RETURNING id",
+            c => { c.Parameters.AddWithValue("@code", $"TX-{Guid.NewGuid():N}".Substring(0, 16)); c.Parameters.AddWithValue("@country", country); }).GetAwaiter().GetResult();
         var cust = db.InsertAsync("INSERT INTO customers (company_id, customer_code, name) VALUES (@c,@code,'Buyer') RETURNING id",
             c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@code", $"CU-{cid}"); }).GetAwaiter().GetResult();
         return (db, new TaxService(db), cid, cust);
@@ -366,7 +366,7 @@ public class TaxServicePostgresTests
 
     private static async Task SellerRegAsync(Database db, long cid, string regime) =>
         await db.ExecuteAsync(
-            "INSERT INTO seller_tax_registration (company_id, jurisdiction, regime, tax_registration_no, effective_date) VALUES (@c,'XX',@r,'TRN123', DATE '2025-01-01')",
+            "INSERT INTO seller_tax_registration (company_id, jurisdiction, regime, tax_registration_no, effective_date) SELECT @c,UPPER(country),@r,'TRN123',DATE '2025-01-01' FROM companies WHERE id=@c",
             c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@r", regime); });
 
     private static async Task<Guid> SeedDraftAsync(Database db, long cid, long cust, string currency, params (string code, string type, decimal amount)[] lines)

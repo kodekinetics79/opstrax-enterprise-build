@@ -7,8 +7,8 @@ import type { AnyRecord } from "@/types";
 // ── Live data ─────────────────────────────────────────────────────────────────
 
 const FORM_TEMPLATES: AnyRecord[] = [
-  { id: 1, formKey: "pre-trip",     title: "Pre-Trip Inspection",         category: "Inspection",  fields: 22, requiredRole: "Driver",    frequency: "Daily",    compliance: "FMCSA / UAE MOI", active: true  },
-  { id: 2, formKey: "post-trip",    title: "Post-Trip Inspection",        category: "Inspection",  fields: 18, requiredRole: "Driver",    frequency: "Daily",    compliance: "FMCSA / UAE MOI", active: true  },
+  { id: 1, formKey: "pre-trip",     title: "Pre-Trip Inspection",         category: "Inspection",  fields: 22, requiredRole: "Driver",    frequency: "Daily",    compliance: "Operating market profile", active: true  },
+  { id: 2, formKey: "post-trip",    title: "Post-Trip Inspection",        category: "Inspection",  fields: 18, requiredRole: "Driver",    frequency: "Daily",    compliance: "Operating market profile", active: true  },
   { id: 3, formKey: "dvir",         title: "Driver Vehicle Inspection (DVIR)", category: "DVIR",   fields: 31, requiredRole: "Driver",    frequency: "Per trip", compliance: "49 CFR 396.11",   active: true  },
   { id: 4, formKey: "incident",     title: "Incident Report",             category: "Safety",      fields: 28, requiredRole: "Driver",    frequency: "On event", compliance: "Internal policy", active: true  },
   { id: 5, formKey: "delivery-pod", title: "Proof of Delivery",           category: "Delivery",    fields: 14, requiredRole: "Driver",    frequency: "Per stop", compliance: "Customer SLA",    active: true  },

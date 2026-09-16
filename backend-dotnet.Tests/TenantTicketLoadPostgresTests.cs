@@ -22,8 +22,11 @@ public sealed class TenantTicketLoadPostgresTests(ITestOutputHelper output)
         var markerA = $"TKT-LOAD-A-{suffix}";
         var markerB = $"TKT-LOAD-B-{suffix}";
         await owner.ExecuteAsync(
-            @"INSERT INTO dvir_reports(company_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status)
-              VALUES (@a,@ma,0,0,'Pre-Trip','Submitted'),(@b,@mb,0,0,'Pre-Trip','Submitted')",
+            @"INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES
+                (@a,'TKT-LOAD-' || @a,'Ticket load fixture A','Transportation','US'),
+                (@b,'TKT-LOAD-' || @b,'Ticket load fixture B','Transportation','US');
+              INSERT INTO dvir_reports(company_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,country_code)
+              VALUES (@a,@ma,0,0,'Pre-Trip','Submitted','US'),(@b,@mb,0,0,'Pre-Trip','Submitted','US')",
             c =>
             {
                 c.Parameters.AddWithValue("@a", tenantA); c.Parameters.AddWithValue("@ma", markerA);
@@ -83,6 +86,9 @@ public sealed class TenantTicketLoadPostgresTests(ITestOutputHelper output)
         {
             await owner.ExecuteAsync("DELETE FROM dvir_reports WHERE report_number=ANY(@markers)",
                 c => c.Parameters.AddWithValue("@markers", new[] { markerA, markerB }));
+            await owner.ExecuteAsync(
+                "DELETE FROM companies WHERE id=ANY(@ids) AND company_code LIKE 'TKT-LOAD-%'",
+                c => c.Parameters.AddWithValue("@ids", new[] { tenantA, tenantB }));
             NpgsqlConnection.ClearAllPools();
         }
     }

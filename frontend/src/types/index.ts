@@ -56,6 +56,10 @@ export type UserSession = {
   role: string;
   company: AnyRecord;
   permissions: string[];
+  portalContext?: {
+    driverId?: number | null;
+    customerId?: number | null;
+  };
   entitlementPolicyMode?: "legacy_allow" | "package_allowlist";
   entitlements?: Record<string, boolean>;
   supportAccess?: {

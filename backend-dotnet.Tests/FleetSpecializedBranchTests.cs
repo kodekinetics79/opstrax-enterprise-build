@@ -307,7 +307,7 @@ public sealed class FleetSpecializedBranchTests
         const long branchId = 113;
         try
         {
-            await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Specialized test','transport') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"SP-{companyId}"); });
+            await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Specialized test','transport','SA') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"SP-{companyId}"); });
             await db.ExecuteAsync("INSERT INTO tenant_market_packs(company_id,pack_code,status) VALUES (@c,'saudi_gcc','active') ON CONFLICT (company_id,pack_code) DO UPDATE SET status='active'", c => c.Parameters.AddWithValue("@c", companyId));
             for (var i = 0; i < 12; i++) await db.ExecuteAsync("INSERT INTO fleet_tms_shipments(company_id,shipment_number,is_invoice_ready,customer_vat_number,customer_commercial_registration_no) VALUES (@c,@n,true,'VAT','CR')", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@n", $"READY-{i}"); });
             for (var i = 0; i < 3; i++) await db.ExecuteAsync("INSERT INTO fleet_tms_shipments(company_id,shipment_number,is_invoice_ready) VALUES (@c,@n,false)", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@n", $"BLOCKED-{i}"); });
@@ -328,8 +328,6 @@ public sealed class FleetSpecializedBranchTests
             var branchSummary = branchPayload.RootElement.GetProperty("data").GetProperty("summary");
             Assert.False(branchSummary.GetProperty("shipmentMetricsAvailable").GetBoolean());
             Assert.Equal(JsonValueKind.Null, branchSummary.GetProperty("readyCount").ValueKind);
-            var retired = await Invoke("ComplianceDocuments", Principal(companyId, branchId), db, null, null, CancellationToken.None);
-            Assert.Equal(StatusCodes.Status410Gone, Assert.IsAssignableFrom<IStatusCodeHttpResult>(retired).StatusCode);
             var docsPayload = Payload(await InvokeMarket("SaudiDocuments", Principal(companyId, branchId), db, CancellationToken.None));
             var canonicalData = docsPayload.RootElement.GetProperty("data");
             Assert.True(canonicalData.ValueKind != JsonValueKind.Null, docsPayload.RootElement.ToString());
@@ -687,9 +685,6 @@ VALUES (@c,@b,@d,@r,'TemperatureBreach','High','Open',11.5,'LegacyUnverified','L
 
         try
         {
-            Assert.Equal("ExpiringSoon", FleetTmsColdChainEndpoints.ComputeExpiryStatus(expiry, "Active"));
-            Assert.Equal("Expired", FleetTmsColdChainEndpoints.ComputeExpiryStatus(DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)), "Active"));
-
             var firstId = await InsertReadinessDoc(db, companyId, branchOne, "Branch", "Riyadh branch", "VAT-B1", "CR-B1", expiry);
             var secondId = await InsertReadinessDoc(db, companyId, branchTwo, "Branch", "Jeddah branch", "VAT-B2", "CR-B2", expiry);
             var visible = await db.QueryAsync(@"SELECT id, expiry_status, vat_number, commercial_registration_no
@@ -719,14 +714,17 @@ VALUES (@c,@b,@d,@r,'TemperatureBreach','High','Open',11.5,'LegacyUnverified','L
         var db = Db();
         await new MarketPackSchemaService(db).EnsureAsync();
         var companyId = 896_000L + Random.Shared.Next(1, 3_000);
+        var saudiCompanyId = companyId + 100_000L;
         const long branchOne = 601;
         const long branchTwo = 602;
 
         try
         {
+            await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Regional compliance test','transport','CA') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"REG-{companyId}"); });
+            await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Saudi regional compliance test','transport','SA') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", saudiCompanyId); c.Parameters.AddWithValue("@code", $"REG-{saudiCompanyId}"); });
             var canadaOne = await InsertComplianceRecord(db, companyId, branchOne, "canada_na", "driver", "Ontario driver", "drivers_license");
             var canadaTwo = await InsertComplianceRecord(db, companyId, branchTwo, "canada_na", "driver", "Quebec driver", "drivers_license");
-            var saudiOne = await InsertComplianceRecord(db, companyId, branchOne, "saudi_gcc", "transport", "Riyadh vehicle", "transport_permit");
+            var saudiOne = await InsertComplianceRecord(db, saudiCompanyId, branchOne, "saudi_gcc", "vehicle", "Riyadh vehicle", "transport_permit");
             await db.InsertAsync(@"INSERT INTO compliance_expiry_events
                 (company_id, branch_id, pack_code, record_id, subject_name, severity, message, expiry_date)
                 VALUES (@companyId, @branchId, 'canada_na', @recordId, 'Ontario driver', 'warning', 'Expiring', CURRENT_DATE + 10)",
@@ -746,13 +744,14 @@ VALUES (@c,@b,@d,@r,'TemperatureBreach','High','Open',11.5,'LegacyUnverified','L
             await db.InsertAsync(@"INSERT INTO business_tax_readiness
                 (company_id, branch_id, pack_code, vat_number, commercial_registration_no, e_invoice_readiness_status)
                 VALUES (@companyId, @branchId, 'saudi_gcc', 'VAT-B1', 'CR-B1', 'ready')",
-                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", branchOne); });
+                c => { c.Parameters.AddWithValue("@companyId", saudiCompanyId); c.Parameters.AddWithValue("@branchId", branchOne); });
 
             var branchDocs = await db.QueryAsync("SELECT id, pack_code FROM compliance_records WHERE company_id=@companyId AND branch_id=@branchId",
                 c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", branchOne); });
-            Assert.Equal(2, branchDocs.Count);
-            Assert.Contains(branchDocs, r => Convert.ToInt64(r["id"]) == saudiOne);
+            Assert.Single(branchDocs);
+            Assert.Contains(branchDocs, r => Convert.ToInt64(r["id"]) == canadaOne);
             Assert.DoesNotContain(branchDocs, r => Convert.ToInt64(r["id"]) == canadaTwo);
+            Assert.DoesNotContain(branchDocs, r => Convert.ToInt64(r["id"]) == saudiOne);
 
             var crossBranchUpdate = await db.ExecuteAsync("UPDATE compliance_records SET document_status='valid' WHERE company_id=@companyId AND branch_id=@branchId AND id=@id",
                 c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", branchOne); c.Parameters.AddWithValue("@id", canadaTwo); });
@@ -766,13 +765,14 @@ VALUES (@c,@b,@d,@r,'TemperatureBreach','High','Open',11.5,'LegacyUnverified','L
             Assert.Equal(300m, iftaFuel);
 
             var tax = await db.QuerySingleAsync("SELECT e_invoice_readiness_status FROM business_tax_readiness WHERE company_id=@companyId AND branch_id=@branchId AND pack_code='saudi_gcc'",
-                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", branchOne); });
+                c => { c.Parameters.AddWithValue("@companyId", saudiCompanyId); c.Parameters.AddWithValue("@branchId", branchOne); });
             Assert.Equal("ready", tax!["eInvoiceReadinessStatus"]?.ToString());
         }
         finally
         {
             foreach (var table in new[] { "compliance_expiry_events", "inspection_defects", "vehicle_inspection_records", "jurisdiction_mileage_records", "jurisdiction_fuel_records", "business_tax_readiness", "compliance_records" })
-                await db.ExecuteAsync($"DELETE FROM {table} WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+                await db.ExecuteAsync($"DELETE FROM {table} WHERE company_id IN (@companyId,@saudiCompanyId)", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@saudiCompanyId", saudiCompanyId); });
+            await db.ExecuteAsync("DELETE FROM companies WHERE id IN (@companyId,@saudiCompanyId)", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@saudiCompanyId", saudiCompanyId); });
         }
     }
 
@@ -786,7 +786,7 @@ VALUES (@c,@b,@d,@r,'TemperatureBreach','High','Open',11.5,'LegacyUnverified','L
         const long branchId = 701;
         try
         {
-            await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'DVIR test','transport') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"DVIR-{companyId}"); });
+            await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'DVIR test','transport','CA') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"DVIR-{companyId}"); });
             await db.ExecuteAsync("INSERT INTO tenant_market_packs(company_id,pack_code,status) VALUES (@c,'canada_na','active') ON CONFLICT (company_id,pack_code) DO UPDATE SET status='active'", c => c.Parameters.AddWithValue("@c", companyId));
             var vehicleId = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status) VALUES (@c,@b,'DVIR-701','Truck','legacy-fleet-identifier','DVIR-701','Available','available')", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); });
             var defects = JsonSerializer.SerializeToElement(new[] { new { description = "Brake pressure below threshold", severity = "critical", repairRequired = true } });
@@ -832,38 +832,39 @@ VALUES (@c,@b,@d,@r,'TemperatureBreach','High','Open',11.5,'LegacyUnverified','L
     }
 
     [Fact]
-    public async Task SaudiSurfaces_DenyWithoutEntitlementAndLegacyLedgerCannotMutate()
+    public async Task SaudiSurfaces_DenyWithoutEntitlement()
     {
         var db = Db();
         await new FleetTmsColdChainSchemaService(db, NullLogger<FleetTmsColdChainSchemaService>.Instance).EnsureAsync();
         await new MarketPackSchemaService(db).EnsureAsync();
-        var http = Principal(999_991, 801);
-        var legacyRequest = new FleetReadinessDocumentRequest(
-            Kind: "Compliance", SubjectType: "Vehicle", SubjectId: null, SubjectName: "Truck", DocumentType: "Permit",
-            DocumentNumber: null, TransportDocumentNo: null, PermitNo: null, VATNumber: null, CommercialRegistrationNo: null,
-            CountryCode: "SA", NationalAddressBuildingNo: null, NationalAddressAdditionalNo: null, District: null, City: null,
-            Region: null, PostalCode: null, DocumentStatus: "Active", IssueDate: null, HijriExpiryDate: null,
-            GregorianExpiryDate: DateOnly.FromDateTime(DateTime.UtcNow.AddDays(30)), Notes: null);
-        var fleetResults = new[]
+        const long companyId = 999_991;
+        try
         {
-            await Invoke("SaudiRegions", http, db, CancellationToken.None),
-            await Invoke("ComplianceDocuments", http, db, null!, null!, CancellationToken.None),
-            await Invoke("CreateComplianceDocument", http, legacyRequest, db, CancellationToken.None),
-            await Invoke("UpdateComplianceDocument", http, 1L, legacyRequest, db, CancellationToken.None),
-            await Invoke("ComplianceExpiries", http, db, CancellationToken.None),
-            await Invoke("VatInvoiceReady", http, db, CancellationToken.None),
-        };
-        var marketResults = new[]
+            await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,'NO-SA-PACK','Saudi no-pack test','transport','SA') ON CONFLICT (id) DO UPDATE SET country='SA'", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM tenant_market_packs WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            var http = Principal(companyId, 801);
+            var fleetResults = new[]
+            {
+                await Invoke("SaudiRegions", http, db, CancellationToken.None),
+                await Invoke("VatInvoiceReady", http, db, CancellationToken.None),
+            };
+            var marketResults = new[]
+            {
+                await InvokeMarket("SaudiRegions", http, db, CancellationToken.None),
+                await InvokeMarket("SaudiDocuments", http, db, CancellationToken.None),
+                await InvokeMarket("CreateSaudiDocument", http, new Dictionary<string, object?>(), db, CancellationToken.None),
+                await InvokeMarket("UpdateSaudiDocument", 1L, http, new Dictionary<string, object?>(), db, CancellationToken.None),
+                await InvokeMarket("SaudiExpiries", http, db, CancellationToken.None),
+                await InvokeMarket("SaudiVatReadiness", http, db, CancellationToken.None),
+                await InvokeMarket("SetSaudiVatReadiness", http, new Dictionary<string, object?>(), db, CancellationToken.None),
+            };
+            Assert.All(fleetResults.Concat(marketResults), result => Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode));
+        }
+        finally
         {
-            await InvokeMarket("SaudiRegions", http, db, CancellationToken.None),
-            await InvokeMarket("SaudiDocuments", http, db, CancellationToken.None),
-            await InvokeMarket("CreateSaudiDocument", http, new Dictionary<string, object?>(), db, CancellationToken.None),
-            await InvokeMarket("UpdateSaudiDocument", 1L, http, new Dictionary<string, object?>(), db, CancellationToken.None),
-            await InvokeMarket("SaudiExpiries", http, db, CancellationToken.None),
-            await InvokeMarket("SaudiVatReadiness", http, db, CancellationToken.None),
-            await InvokeMarket("SetSaudiVatReadiness", http, new Dictionary<string, object?>(), db, CancellationToken.None),
-        };
-        Assert.All(fleetResults.Concat(marketResults), result => Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode));
+            await db.ExecuteAsync("DELETE FROM tenant_market_packs WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM companies WHERE id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+        }
     }
 
     [Fact]
@@ -873,7 +874,7 @@ VALUES (@c,@b,@d,@r,'TemperatureBreach','High','Open',11.5,'LegacyUnverified','L
         var companyId = 899_000L + Random.Shared.Next(1, 500);
         try
         {
-            await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Preview test','transport') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"PREVIEW-{companyId}"); });
+            await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Preview test','transport','CA') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"PREVIEW-{companyId}"); });
             await db.ExecuteAsync("INSERT INTO tenant_market_packs(company_id,pack_code,status) VALUES (@c,'canada_na','active') ON CONFLICT (company_id,pack_code) DO UPDATE SET status='active'", c => c.Parameters.AddWithValue("@c", companyId));
             var http = Principal(companyId, null);
             foreach (var method in new[] { "IftaReadiness", "HosReadiness" })
@@ -897,8 +898,8 @@ VALUES (@c,@b,@d,@r,'TemperatureBreach','High','Open',11.5,'LegacyUnverified','L
         var companyId = 900_000L + Random.Shared.Next(1, 500); const long branchId = 802;
         try
         {
-            await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'VAT test','transport') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"VAT-{companyId}"); });
-            await db.ExecuteAsync("INSERT INTO branches(id,company_id,branch_code,name,status) OVERRIDING SYSTEM VALUE VALUES (@b,@c,'SOLE','Sole VAT branch','Active')", c => { c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@c", companyId); });
+            await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'VAT test','transport','SA') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"VAT-{companyId}"); });
+            await db.ExecuteAsync("INSERT INTO branches(id,company_id,branch_code,name,status,country_code) OVERRIDING SYSTEM VALUE VALUES (@b,@c,'SOLE','Sole VAT branch','Active','SA')", c => { c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@c", companyId); });
             await db.ExecuteAsync("INSERT INTO tenant_market_packs(company_id,pack_code,status) VALUES (@c,'saudi_gcc','active') ON CONFLICT (company_id,pack_code) DO UPDATE SET status='active'", c => c.Parameters.AddWithValue("@c", companyId));
             var evidenceId = await db.InsertAsync("INSERT INTO compliance_records(company_id,branch_id,pack_code,subject_type,subject_name,doc_key,document_status,expiry_date) VALUES (@c,@b,'saudi_gcc','business','VAT Evidence','vat_registration','valid',CURRENT_DATE+90)", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); });
             var http = Principal(companyId, branchId);
@@ -929,9 +930,9 @@ VALUES (@c,@b,@d,@r,'TemperatureBreach','High','Open',11.5,'LegacyUnverified','L
         try
         {
             foreach (var company in new[] { soleCompany, multiCompany })
-                await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Branch rollout','transport') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@code", $"BR-{company}"); });
-            var soleBranch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'SOLE','Sole','Active')", c => c.Parameters.AddWithValue("@c", soleCompany));
-            await db.ExecuteAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'ONE','One','Active'),(@c,'TWO','Two','Active')", c => c.Parameters.AddWithValue("@c", multiCompany));
+                await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Branch rollout','transport','SA') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@code", $"BR-{company}"); });
+            var soleBranch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'SOLE','Sole','Active','SA')", c => c.Parameters.AddWithValue("@c", soleCompany));
+            await db.ExecuteAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'ONE','One','Active','SA'),(@c,'TWO','Two','Active','SA')", c => c.Parameters.AddWithValue("@c", multiCompany));
             var soleRecord = await db.InsertAsync("INSERT INTO compliance_records(company_id,pack_code,subject_type,doc_key) VALUES (@c,'saudi_gcc','business','permit')", c => c.Parameters.AddWithValue("@c", soleCompany));
             var soleInspection = await db.InsertAsync("INSERT INTO vehicle_inspection_records(company_id,vehicle_label,inspector_name) VALUES (@c,'SOLE-TRUCK','Inspector')", c => c.Parameters.AddWithValue("@c", soleCompany));
             var soleDefect = await db.InsertAsync("INSERT INTO inspection_defects(company_id,inspection_id,description) VALUES (@c,@i,'Sole defect')", c => { c.Parameters.AddWithValue("@c", soleCompany); c.Parameters.AddWithValue("@i", soleInspection); });

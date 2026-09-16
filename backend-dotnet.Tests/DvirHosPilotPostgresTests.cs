@@ -12,6 +12,8 @@ namespace Opstrax.Tests;
 [Trait("Category", "Integration")]
 public sealed class DvirHosPilotPostgresTests
 {
+    private const string TenantCountryCode = "CA";
+    private const string TenantTimezone = "America/Toronto";
     private const string HosAttestationText = "I certify that this daily HOS record is true and correct.";
     private const string DvirAttestationText = "I certify that this DVIR is true and correct and that I completed this inspection.";
     private const string RepairAttestationText = "I acknowledge that I reviewed the certified repairs for this DVIR.";
@@ -571,10 +573,10 @@ public sealed class DvirHosPilotPostgresTests
         try
         {
             var report = await db.InsertAsync(
-                @"INSERT INTO dvir_reports(company_id,branch_id,report_number,driver_id,vehicle_id,inspection_type,
+                @"INSERT INTO dvir_reports(company_id,branch_id,report_number,driver_id,vehicle_id,country_code,inspection_type,
                     inspection_status,defects_found,safe_to_operate,mechanic_review_status,repair_certification_status)
-                  VALUES(@c,@b,@n,@d,@v,'Pre-Trip','defect_found',1,FALSE,'Pending','Pending')",
-                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@b", seed.BranchA); c.Parameters.AddWithValue("@n", $"DVIR-LIFE-{seed.CompanyId}"); c.Parameters.AddWithValue("@d", seed.DriverA); c.Parameters.AddWithValue("@v", seed.VehicleA); });
+                  VALUES(@c,@b,@n,@d,@v,@country,'Pre-Trip','defect_found',1,FALSE,'Pending','Pending')",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@b", seed.BranchA); c.Parameters.AddWithValue("@n", $"DVIR-LIFE-{seed.CompanyId}"); c.Parameters.AddWithValue("@d", seed.DriverA); c.Parameters.AddWithValue("@v", seed.VehicleA); c.Parameters.AddWithValue("@country", TenantCountryCode); });
             var defect = await db.InsertAsync(
                 @"INSERT INTO dvir_defects(company_id,branch_id,dvir_report_id,vehicle_id,driver_id,defect_category,
                     defect_description,severity,status,out_of_service)
@@ -650,6 +652,7 @@ public sealed class DvirHosPilotPostgresTests
             {
                 ["driverId"] = seed.DriverA,
                 ["vehicleId"] = seed.VehicleA,
+                ["countryCode"] = TenantCountryCode,
                 ["inspectionType"] = "Pre-Trip"
             };
             var dbA = Db(); var dbB = Db();
@@ -679,6 +682,84 @@ public sealed class DvirHosPilotPostgresTests
             Assert.Equal(StatusCodes.Status404NotFound, Status(cross));
         }
         finally { await Cleanup(db, seed.CompanyId); }
+    }
+
+    [Fact]
+    public async Task DvirMutationsLockCountryToTenantOperatingMarket()
+    {
+        var db = Db();
+        var seed = await Seed(db);
+        try
+        {
+            var market = await new CountryProfileService(db)
+                .ApplyToTenantAsync(seed.CompanyId, "SA", "dvir-market-isolation-test");
+            Assert.Equal("SA", market?.CountryCode);
+            var mismatchedReport = new Dictionary<string, object?>
+            {
+                ["driverId"] = seed.DriverA,
+                ["vehicleId"] = seed.VehicleA,
+                ["countryCode"] = "US",
+                ["inspectionType"] = "Pre-Trip",
+            };
+            var rejectedReport = await Invoke("CreateDvirReportPilot",
+                Principal(seed.CompanyId, seed.BranchA, "maintenance:create"), mismatchedReport,
+                db, new AuditService(db), CancellationToken.None);
+            Assert.Equal(StatusCodes.Status409Conflict, Status(rejectedReport));
+
+            var canonicalReport = new Dictionary<string, object?>
+            {
+                ["driverId"] = seed.DriverA,
+                ["vehicleId"] = seed.VehicleA,
+                ["inspectionType"] = "Pre-Trip",
+                ["reportNumber"] = $"DVIR-MARKET-{seed.CompanyId}",
+            };
+            var createdReport = await Invoke("CreateDvirReportPilot",
+                Principal(seed.CompanyId, seed.BranchA, "maintenance:create"), canonicalReport,
+                db, new AuditService(db), CancellationToken.None);
+            Assert.Equal(StatusCodes.Status201Created, Status(createdReport));
+            var persistedReport = await db.QuerySingleAsync(
+                "SELECT country_code FROM dvir_reports WHERE company_id=@c AND report_number=@n",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@n", $"DVIR-MARKET-{seed.CompanyId}"); });
+            Assert.Equal("SA", persistedReport!["countryCode"]);
+
+            var checklist = JsonSerializer.SerializeToElement(new[]
+            {
+                new { category = "Vehicle", itemName = "Service brakes operate correctly", required = true },
+            });
+            var mismatchedTemplate = new Dictionary<string, object?>
+            {
+                ["templateName"] = "Wrong market template",
+                ["inspectionType"] = "Pre-Trip",
+                ["countryCode"] = "US",
+                ["checklistItems"] = checklist,
+            };
+            var rejectedTemplate = await Invoke("CreateDvirTemplatePilot",
+                Principal(seed.CompanyId, seed.BranchA, "maintenance:update"), mismatchedTemplate,
+                db, new AuditService(db), CancellationToken.None);
+            Assert.Equal(StatusCodes.Status409Conflict, Status(rejectedTemplate));
+
+            var canonicalTemplate = new Dictionary<string, object?>(mismatchedTemplate);
+            canonicalTemplate.Remove("countryCode");
+            canonicalTemplate["templateName"] = "Tenant market template";
+            var createdTemplate = await Invoke("CreateDvirTemplatePilot",
+                Principal(seed.CompanyId, seed.BranchA, "maintenance:update"), canonicalTemplate,
+                db, new AuditService(db), CancellationToken.None);
+            Assert.Equal(StatusCodes.Status201Created, Status(createdTemplate));
+            var persistedTemplate = await db.QuerySingleAsync(
+                "SELECT id,country_code FROM dvir_templates WHERE company_id=@c AND template_name='Tenant market template'",
+                c => c.Parameters.AddWithValue("@c", seed.CompanyId));
+            Assert.Equal("SA", persistedTemplate!["countryCode"]);
+
+            var rejectedUpdate = await Invoke("UpdateDvirTemplatePilot",
+                Principal(seed.CompanyId, seed.BranchA, "maintenance:update"), Convert.ToInt64(persistedTemplate["id"]),
+                new Dictionary<string, object?> { ["countryCode"] = "US", ["templateName"] = "Must not persist" },
+                db, new AuditService(db), CancellationToken.None);
+            Assert.Equal(StatusCodes.Status409Conflict, Status(rejectedUpdate));
+            Assert.Equal(0, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM dvir_templates WHERE company_id=@c AND template_name='Must not persist'",
+                c => c.Parameters.AddWithValue("@c", seed.CompanyId)));
+        }
+        finally { await CleanupMarketIsolationSeed(db, seed.CompanyId); }
     }
 
     [Fact]
@@ -730,19 +811,26 @@ public sealed class DvirHosPilotPostgresTests
             var resolve = new Dictionary<string, object?> { ["rowVersion"] = 2, ["resolutionEvidence"] = "Provider diagnostic completed; device rebooted and inspected" };
             Assert.Equal(StatusCodes.Status200OK, Status(await Invoke("EldResolveMalfunctionPilot", Principal(seed.CompanyId, seed.BranchA, "compliance:update"), deviceA, resolve, db, new AuditService(db), CancellationToken.None)));
             var diagnostic = await db.QuerySingleAsync("SELECT status,malfunction_code,malfunction_description,resolution_evidence,malfunction_resolved_by,row_version FROM eld_devices WHERE id=@id", c => c.Parameters.AddWithValue("@id", deviceA));
-            Assert.Equal("Diagnostic", diagnostic!["status"]);
+            Assert.Equal("Malfunction", diagnostic!["status"]);
             Assert.Equal("P1", diagnostic["malfunctionCode"]);
             Assert.NotNull(diagnostic["malfunctionDescription"]);
-            Assert.NotNull(diagnostic["resolutionEvidence"]);
-            Assert.Equal(42L, Convert.ToInt64(diagnostic["malfunctionResolvedBy"]));
-            Assert.Equal(StatusCodes.Status409Conflict, Status(await Invoke("EldResolveMalfunctionPilot", Principal(seed.CompanyId, seed.BranchA, "compliance:update"), deviceA, resolve, db, new AuditService(db), CancellationToken.None)));
+            Assert.Null(diagnostic["resolutionEvidence"]);
+            Assert.Null(diagnostic["malfunctionResolvedBy"]);
+            Assert.Equal(2L, Convert.ToInt64(diagnostic["rowVersion"]));
+            Assert.Equal(1, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM audit_logs WHERE company_id=@c AND entity_id=@id AND action_name='eld.malfunction.recovery.previewed'",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@id", deviceA); }));
 
             await db.ExecuteAsync("UPDATE eld_devices SET last_sync_at=NOW(),provider_sync_status='Healthy',api_key_hash=@hash,hmac_secret=NULL,hmac_secret_encrypted=@secret WHERE id=@id",
                 c => { c.Parameters.AddWithValue("@hash", new string('a', 64)); c.Parameters.AddWithValue("@secret", new string('s', 32)); c.Parameters.AddWithValue("@id", deviceA); });
-            var verified = new Dictionary<string, object?> { ["rowVersion"] = 3, ["resolutionEvidence"] = "Provider shows healthy sync and operator verified status" };
+            await db.ExecuteAsync(
+                @"INSERT INTO location_events(company_id,vehicle_id,device_id,lat,lng,event_time,received_at,source,source_channel)
+                  VALUES(@c,@v,@d,24.7136,46.6753,NOW(),NOW(),'device','native-hmac')",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@v", seed.VehicleA); c.Parameters.AddWithValue("@d", deviceA); });
+            var verified = new Dictionary<string, object?> { ["rowVersion"] = 2, ["resolutionEvidence"] = "Authenticated device telemetry received after operator diagnostic" };
             Assert.Equal(StatusCodes.Status200OK, Status(await Invoke("EldResolveMalfunctionPilot", Principal(seed.CompanyId, seed.BranchA, "compliance:update"), deviceA, verified, db, new AuditService(db), CancellationToken.None)));
             Assert.Equal("Active", (await db.QuerySingleAsync("SELECT status FROM eld_devices WHERE id=@id", c => c.Parameters.AddWithValue("@id", deviceA)))!["status"]);
-            Assert.Equal(3, await db.ScalarLongAsync("SELECT COUNT(*) FROM eld_malfunction_history WHERE company_id=@c AND eld_device_id=@id", c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@id", deviceA); }));
+            Assert.Equal(2, await db.ScalarLongAsync("SELECT COUNT(*) FROM eld_malfunction_history WHERE company_id=@c AND eld_device_id=@id", c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@id", deviceA); }));
         }
         finally { await Cleanup(db, seed.CompanyId); }
     }
@@ -997,9 +1085,9 @@ public sealed class DvirHosPilotPostgresTests
         try
         {
             var report = await db.InsertAsync(
-                @"INSERT INTO dvir_reports(company_id,branch_id,report_number,driver_id,vehicle_id,inspection_type)
-                  VALUES(@c,@b,@n,@d,@v,'Post-Trip')",
-                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@b", seed.BranchA); c.Parameters.AddWithValue("@n", $"DVIR-SIGN-{seed.CompanyId}"); c.Parameters.AddWithValue("@d", seed.DriverA); c.Parameters.AddWithValue("@v", seed.VehicleA); });
+                @"INSERT INTO dvir_reports(company_id,branch_id,report_number,driver_id,vehicle_id,country_code,inspection_type)
+                  VALUES(@c,@b,@n,@d,@v,@country,'Post-Trip')",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@b", seed.BranchA); c.Parameters.AddWithValue("@n", $"DVIR-SIGN-{seed.CompanyId}"); c.Parameters.AddWithValue("@d", seed.DriverA); c.Parameters.AddWithValue("@v", seed.VehicleA); c.Parameters.AddWithValue("@country", TenantCountryCode); });
             var result = await Invoke("DvirDriverSignPilot", Principal(seed.CompanyId, seed.BranchA, "maintenance:update"), report, DvirAttestation(1), db, new AuditService(db), CancellationToken.None);
             Assert.Equal(StatusCodes.Status403Forbidden, Status(result));
             Assert.Equal(StatusCodes.Status400BadRequest, Status(await Invoke("DvirDriverSignPilot", DriverPrincipal(seed.CompanyId, seed.BranchA), report, Version(1), db, new AuditService(db), CancellationToken.None)));
@@ -1021,9 +1109,9 @@ public sealed class DvirHosPilotPostgresTests
         try
         {
             var report = await db.InsertAsync(
-                @"INSERT INTO dvir_reports(company_id,branch_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status)
-                  VALUES(@c,@b,@n,@d,@v,'Pre-Trip','Submitted')",
-                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@b", seed.BranchA); c.Parameters.AddWithValue("@n", $"DVIR-IMMUTABLE-{seed.CompanyId}"); c.Parameters.AddWithValue("@d", seed.DriverA); c.Parameters.AddWithValue("@v", seed.VehicleA); });
+                @"INSERT INTO dvir_reports(company_id,branch_id,report_number,driver_id,vehicle_id,country_code,inspection_type,inspection_status)
+                  VALUES(@c,@b,@n,@d,@v,@country,'Pre-Trip','Submitted')",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@b", seed.BranchA); c.Parameters.AddWithValue("@n", $"DVIR-IMMUTABLE-{seed.CompanyId}"); c.Parameters.AddWithValue("@d", seed.DriverA); c.Parameters.AddWithValue("@v", seed.VehicleA); c.Parameters.AddWithValue("@country", TenantCountryCode); });
             var http = Principal(seed.CompanyId, seed.BranchA, "maintenance:update");
             Assert.Equal(StatusCodes.Status400BadRequest, Status(await Invoke("DeleteDvirReportPilot", http, report, db, new AuditService(db), CancellationToken.None)));
             http.Request.QueryString = new QueryString("?rowVersion=1");
@@ -1042,13 +1130,13 @@ public sealed class DvirHosPilotPostgresTests
         try
         {
             var reportA = await db.InsertAsync(
-                @"INSERT INTO dvir_reports(company_id,branch_id,report_number,driver_id,vehicle_id,inspection_type)
-                  VALUES(@c,@b,@n,@d,@v,'Pre-Trip')",
-                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@b", seed.BranchA); c.Parameters.AddWithValue("@n", $"LEGACY-A-{seed.CompanyId}"); c.Parameters.AddWithValue("@d", seed.DriverA); c.Parameters.AddWithValue("@v", seed.VehicleA); });
+                @"INSERT INTO dvir_reports(company_id,branch_id,report_number,driver_id,vehicle_id,country_code,inspection_type)
+                  VALUES(@c,@b,@n,@d,@v,@country,'Pre-Trip')",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@b", seed.BranchA); c.Parameters.AddWithValue("@n", $"LEGACY-A-{seed.CompanyId}"); c.Parameters.AddWithValue("@d", seed.DriverA); c.Parameters.AddWithValue("@v", seed.VehicleA); c.Parameters.AddWithValue("@country", TenantCountryCode); });
             var reportB = await db.InsertAsync(
-                @"INSERT INTO dvir_reports(company_id,branch_id,report_number,driver_id,vehicle_id,inspection_type)
-                  VALUES(@c,@b,@n,@d,@v,'Post-Trip')",
-                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@b", seed.BranchB); c.Parameters.AddWithValue("@n", $"LEGACY-B-{seed.CompanyId}"); c.Parameters.AddWithValue("@d", seed.DriverB); c.Parameters.AddWithValue("@v", seed.VehicleB); });
+                @"INSERT INTO dvir_reports(company_id,branch_id,report_number,driver_id,vehicle_id,country_code,inspection_type)
+                  VALUES(@c,@b,@n,@d,@v,@country,'Post-Trip')",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@b", seed.BranchB); c.Parameters.AddWithValue("@n", $"LEGACY-B-{seed.CompanyId}"); c.Parameters.AddWithValue("@d", seed.DriverB); c.Parameters.AddWithValue("@v", seed.VehicleB); c.Parameters.AddWithValue("@country", TenantCountryCode); });
             var defectA = await db.InsertAsync(
                 @"INSERT INTO dvir_defects(company_id,branch_id,dvir_report_id,vehicle_id,driver_id,defect_category,defect_description,severity,status)
                   VALUES(@c,@b,@r,@v,@d,'Lights','Lamp','Low','Open')",
@@ -1159,17 +1247,29 @@ public sealed class DvirHosPilotPostgresTests
     private static async Task<PilotSeed> Seed(Database db)
     {
         var company = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(1_000_000, 9_000_000);
-        const long branchA = 66101;
-        const long branchB = 66102;
         await db.ExecuteAsync(
-            "INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES(@id,@code,'DVIR HOS Pilot Test','Transportation')",
-            c => { c.Parameters.AddWithValue("@id", company); c.Parameters.AddWithValue("@code", $"DH-{company}"); });
+            "INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES(@id,@code,'DVIR HOS Pilot Test','Transportation',@country)",
+            c => { c.Parameters.AddWithValue("@id", company); c.Parameters.AddWithValue("@code", $"DH-{company}"); c.Parameters.AddWithValue("@country", TenantCountryCode); });
+        var branchA = await Branch(db, company, "A");
+        var branchB = await Branch(db, company, "B");
         var driverA = await Driver(db, company, branchA, "A", DriverUserId(company));
         var driverB = await Driver(db, company, branchB, "B", DriverUserId(company) + 1);
         var vehicleA = await Vehicle(db, company, branchA, "A");
         var vehicleB = await Vehicle(db, company, branchB, "B");
         return new(company, branchA, branchB, driverA, driverB, vehicleA, vehicleB);
     }
+
+    private static Task<long> Branch(Database db, long company, string suffix) => db.InsertAsync(
+        @"INSERT INTO branches(company_id,branch_code,name,branch_type,country_code,timezone,status)
+          VALUES(@c,@code,@name,'branch',@country,@timezone,'Active')",
+        c =>
+        {
+            c.Parameters.AddWithValue("@c", company);
+            c.Parameters.AddWithValue("@code", $"DH-B-{suffix}-{company}");
+            c.Parameters.AddWithValue("@name", $"DVIR/HOS Branch {suffix}");
+            c.Parameters.AddWithValue("@country", TenantCountryCode);
+            c.Parameters.AddWithValue("@timezone", TenantTimezone);
+        });
 
     private static Task<long> Driver(Database db, long company, long branch, string suffix, long userId) => db.InsertAsync(
         "INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status,user_id) VALUES(@c,@b,@code,@name,'Available',@uid)",
@@ -1224,13 +1324,33 @@ public sealed class DvirHosPilotPostgresTests
         {
             "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM dvir_defects WHERE company_id=@c",
             "DELETE FROM ai_recommendations WHERE company_id=@c",
+            "DELETE FROM inspection_checklist_items WHERE company_id=@c", "DELETE FROM dvir_templates WHERE company_id=@c",
             "DELETE FROM dvir_reports WHERE company_id=@c", "UPDATE hos_logs SET location=COALESCE(location,'') || '-cleanup' WHERE company_id=@c AND is_certified", "DELETE FROM hos_logs WHERE company_id=@c",
             "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM eld_malfunction_history WHERE company_id=@c",
             "DELETE FROM diagnostic_holds WHERE company_id=@c", "DELETE FROM fault_occurrences WHERE company_id=@c", "DELETE FROM fault_codes WHERE company_id=@c",
-            "DELETE FROM canonical_telemetry_events WHERE company_id=@c",
+            "DELETE FROM canonical_telemetry_events WHERE company_id=@c", "DELETE FROM location_events WHERE company_id=@c",
             "DELETE FROM eld_devices WHERE company_id=@c",
             "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c",
+            "DELETE FROM branches WHERE company_id=@c",
             "DELETE FROM companies WHERE id=@c"
+        }) await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));
+    }
+
+    private static async Task CleanupMarketIsolationSeed(Database db, long company)
+    {
+        foreach (var sql in new[]
+        {
+            "DELETE FROM audit_logs WHERE company_id=@c",
+            "DELETE FROM inspection_checklist_items WHERE company_id=@c",
+            "DELETE FROM dvir_templates WHERE company_id=@c",
+            "DELETE FROM dvir_reports WHERE company_id=@c",
+            "DELETE FROM vehicles WHERE company_id=@c",
+            "DELETE FROM drivers WHERE company_id=@c",
+            "DELETE FROM branches WHERE company_id=@c",
+            "DELETE FROM tenant_market_packs WHERE company_id=@c",
+            "DELETE FROM tenant_entitlements WHERE company_id=@c",
+            "DELETE FROM tenant_locale_settings WHERE tenant_id=@c",
+            "DELETE FROM companies WHERE id=@c",
         }) await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));
     }
 

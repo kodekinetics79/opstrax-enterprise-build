@@ -17,6 +17,34 @@ public class CountryProfilePostgresTests
 {
     private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
+    [Fact]
+    public async Task Batch6ReferenceSeeds_PreserveCanonicalProfileAndRuleIdentity_AfterStage101()
+    {
+        var db = CreateDatabase();
+        var canadaProfileId = await db.ScalarLongAsync(
+            "SELECT id FROM compliance_profiles WHERE country_code='CA' AND profile_name='Canada Federal HOS - South of 60N'");
+        var saudiProfileId = await db.ScalarLongAsync(
+            "SELECT id FROM compliance_profiles WHERE country_code='SA' AND profile_name='Saudi TGA Goods Transport HOS'");
+        Assert.True(canadaProfileId > 0);
+        Assert.True(saudiProfileId > 0);
+
+        await new Batch6SchemaService(db).EnsureAsync();
+        await new Batch6SchemaService(db).EnsureAsync();
+
+        Assert.Equal(canadaProfileId, await db.ScalarLongAsync(
+            "SELECT id FROM compliance_profiles WHERE country_code='CA' AND profile_name='Canada Federal HOS - South of 60N'"));
+        Assert.Equal(saudiProfileId, await db.ScalarLongAsync(
+            "SELECT id FROM compliance_profiles WHERE country_code='SA' AND profile_name='Saudi TGA Goods Transport HOS'"));
+        Assert.Equal(canadaProfileId, await db.ScalarLongAsync(
+            "SELECT profile_id FROM compliance_rules WHERE rule_code='CA-S60-HOS-13H-DRIVE'"));
+        Assert.Equal(saudiProfileId, await db.ScalarLongAsync(
+            "SELECT profile_id FROM compliance_rules WHERE rule_code='SA-TGA-HOS-9H-DRIVE'"));
+        Assert.Equal(1, await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM compliance_profiles WHERE country_code='US' AND profile_name='FMCSA Property Carrier'"));
+        Assert.Equal(0, await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM compliance_profiles WHERE country_code='SA' AND authority ILIKE '%SASO%' AND is_active"));
+    }
+
     // ── STEP 1c: seeded profiles return exact expected values ────────────────────
     [Fact]
     public async Task Seeded_Profiles_SA_And_CA_Return_Exact_Expected_Values()
@@ -277,6 +305,8 @@ public class CountryProfilePostgresTests
         var companyId = await db.ScalarLongAsync("SELECT id FROM companies WHERE company_code=@code LIMIT 1",
             c => c.Parameters.AddWithValue("@code", companyCode));
         if (companyId <= 0) return;
+        await db.ExecuteAsync("DELETE FROM tenant_market_packs WHERE company_id=@id", c => c.Parameters.AddWithValue("@id", companyId));
+        await db.ExecuteAsync("DELETE FROM tenant_locale_settings WHERE tenant_id=@id", c => c.Parameters.AddWithValue("@id", companyId));
         await db.ExecuteAsync("DELETE FROM tenant_entitlements WHERE company_id=@id", c => c.Parameters.AddWithValue("@id", companyId));
         await db.ExecuteAsync("DELETE FROM tenant_subscriptions WHERE company_id=@id", c => c.Parameters.AddWithValue("@id", companyId));
         await db.ExecuteAsync("DELETE FROM companies WHERE id=@id", c => c.Parameters.AddWithValue("@id", companyId));

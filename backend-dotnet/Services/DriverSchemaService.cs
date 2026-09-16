@@ -104,8 +104,8 @@ CREATE TABLE IF NOT EXISTS hos_records (
         // idx_drivers_user_id was a plain index, which let two drivers share one login while
         // GetDriverIdFromAuthAsync's `LIMIT 1` silently picked one of them. Partial, so the
         // many un-provisioned (NULL) and soft-deleted drivers don't collide.
-        // Kept in step with db/init/009_driver_portal_identity.sql, which is what production
-        // actually applies (schema init is skipped there under the restricted role).
+        // Kept in step with the owner-applied production migration
+        // database/migrations/2026_08_21_stage84_driver_hos_runtime_contract.sql.
         try
         {
             await db.ExecuteAsync("DROP INDEX IF EXISTS idx_drivers_user_id");

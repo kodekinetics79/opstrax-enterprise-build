@@ -34,6 +34,10 @@ public static class PlatformAdminEndpoints
 {
     private const string SuperAdminRoleKey = "platform_super_admin";
     private static readonly TimeSpan InviteLifetime = TimeSpan.FromDays(7);
+    private static readonly TimeSpan MfaEnrollmentLifetime = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan MfaEnrollmentLockout = TimeSpan.FromMinutes(15);
+    internal const int MaxMfaEnrollmentAttempts = 5;
+    private const long AdminRosterAdvisoryLockKey = 7_311_042_026L;
 
     // ONE canonical route shape (the H5 spec contract). The handler methods for
     // role/status remain internal — PATCH and disable/enable delegate to them.
@@ -206,49 +210,45 @@ public static class PlatformAdminEndpoints
         if (string.IsNullOrWhiteSpace(roleKey))
             return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["roleKey is required."]));
 
-        var target = await LoadAdminAsync(db, id, ct);
-        if (target is null) return Results.NotFound(ApiResponse<object>.Fail("Operator not found"));
-
-        var newRoleId = await db.ScalarLongAsync("SELECT COALESCE((SELECT id FROM platform_roles WHERE role_key=@k), 0)",
-            c => c.Parameters.AddWithValue("@k", roleKey), ct);
-        if (newRoleId <= 0) return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["Unknown platform role."]));
-
-        // Escalation fence: touching a Super Admin, or granting the Super Admin
-        // role, requires the actor to be a Super Admin.
-        if ((IsSuperRole(target.RoleKey) || IsSuperRole(roleKey)) && !IsSuperAdmin(principal!))
+        return await WithAdminRosterLockAsync(db, async () =>
         {
-            await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
-                new { attempted = "role_change", from = target.RoleKey, to = roleKey }, ct);
-            return Results.Json(ApiResponse<object>.Fail("Forbidden", "Only a Platform Super Admin can change Super Admin assignments"),
-                statusCode: StatusCodes.Status403Forbidden);
-        }
+            var target = await LoadAdminAsync(db, id, ct);
+            if (target is null) return Results.NotFound(ApiResponse<object>.Fail("Operator not found"));
 
-        // Last-Super-Admin fence: demoting the only active Super Admin would
-        // permanently lock the control plane.
-        if (IsSuperRole(target.RoleKey) && !IsSuperRole(roleKey) &&
-            target.Status == "Active" && await CountActiveSuperAdminsAsync(db, ct) <= 1)
-        {
-            return Results.Conflict(ApiResponse<object>.Fail("Cannot demote the last active Platform Super Admin"));
-        }
+            var newRoleId = await db.ScalarLongAsync("SELECT COALESCE((SELECT id FROM platform_roles WHERE role_key=@k), 0)",
+                c => c.Parameters.AddWithValue("@k", roleKey), ct);
+            if (newRoleId <= 0) return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["Unknown platform role."]));
 
-        var roleActuallyChanged = !string.Equals(target.RoleKey, roleKey, StringComparison.OrdinalIgnoreCase);
-        await db.ExecuteAsync("UPDATE platform_admins SET role_id=@r, updated_at=NOW() WHERE id=@id",
-            c => { c.Parameters.AddWithValue("@r", newRoleId); c.Parameters.AddWithValue("@id", id); }, ct);
+            if ((IsSuperRole(target.RoleKey) || IsSuperRole(roleKey)) && !IsSuperAdmin(principal!))
+            {
+                await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
+                    new { attempted = "role_change", from = target.RoleKey, to = roleKey }, ct);
+                return Results.Json(ApiResponse<object>.Fail("Forbidden", "Only a Platform Super Admin can change Super Admin assignments"),
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
 
-        // A role change (promotion or demotion) revokes live sessions so the
-        // operator re-authenticates into the new privilege set — no session may
-        // outlive the privileges it was minted under.
-        var revoked = 0L;
-        if (roleActuallyChanged)
-        {
-            revoked = await db.ScalarLongAsync(
-                "WITH gone AS (DELETE FROM platform_sessions WHERE admin_id=@id RETURNING 1) SELECT COUNT(*) FROM gone",
-                c => c.Parameters.AddWithValue("@id", id), ct);
-        }
+            // The count and mutation share this transaction and the global roster
+            // advisory lock, so two concurrent demotions cannot both pass.
+            if (IsSuperRole(target.RoleKey) && !IsSuperRole(roleKey) &&
+                target.Status == "Active" && await CountActiveSuperAdminsAsync(db, ct) <= 1)
+                return Results.Conflict(ApiResponse<object>.Fail("Cannot demote the last active Platform Super Admin"));
 
-        await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.role_changed", "PlatformAdmin", id, null,
-            new { from = target.RoleKey, to = roleKey, sessionsRevoked = revoked }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, roleKey, sessionsRevoked = revoked }, "Role updated"));
+            var roleActuallyChanged = !string.Equals(target.RoleKey, roleKey, StringComparison.OrdinalIgnoreCase);
+            await db.ExecuteAsync("UPDATE platform_admins SET role_id=@r, updated_at=NOW() WHERE id=@id",
+                c => { c.Parameters.AddWithValue("@r", newRoleId); c.Parameters.AddWithValue("@id", id); }, ct);
+
+            var revoked = 0L;
+            if (roleActuallyChanged)
+            {
+                revoked = await db.ScalarLongAsync(
+                    "WITH gone AS (DELETE FROM platform_sessions WHERE admin_id=@id RETURNING 1) SELECT COUNT(*) FROM gone",
+                    c => c.Parameters.AddWithValue("@id", id), ct);
+            }
+
+            await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.role_changed", "PlatformAdmin", id, null,
+                new { from = target.RoleKey, to = roleKey, sessionsRevoked = revoked }, ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id, roleKey, sessionsRevoked = revoked }, "Role updated"));
+        }, ct);
     }
 
     // ── PATCH /api/platform/admins/{id}  {roleKey?, fullName?} ───────────────
@@ -324,52 +324,63 @@ public static class PlatformAdminEndpoints
     private static async Task<(AdminOpOutcome Outcome, long Revoked)> ApplyAdminStatusCoreAsync(
         PlatformEndpoints.PlatformPrincipal principal, HttpContext http, long id, string status, Database db, CancellationToken ct)
     {
-        var target = await LoadAdminAsync(db, id, ct);
-        if (target is null) return (AdminOpOutcome.NotFound, 0);
-
-        if (status == "Disabled" && id == principal.AdminId)
-            return (AdminOpOutcome.SelfDisable, 0);
-
-        if (IsSuperRole(target.RoleKey) && !IsSuperAdmin(principal))
+        return await WithAdminRosterLockAsync(db, async () =>
         {
-            await PlatformEndpoints.AuditAsync(db, principal, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
-                new { attempted = "status_change", to = status }, ct);
-            return (AdminOpOutcome.EscalationDenied, 0);
-        }
+            var target = await LoadAdminAsync(db, id, ct);
+            if (target is null) return (AdminOpOutcome.NotFound, 0L);
 
-        if (status == "Disabled" && IsSuperRole(target.RoleKey) &&
-            target.Status == "Active" && await CountActiveSuperAdminsAsync(db, ct) <= 1)
-        {
-            return (AdminOpOutcome.LastSuperAdmin, 0);
-        }
+            if (status == "Disabled" && id == principal.AdminId)
+                return (AdminOpOutcome.SelfDisable, 0L);
 
-        await db.ExecuteAsync("UPDATE platform_admins SET status=@s, updated_at=NOW() WHERE id=@id",
-            c => { c.Parameters.AddWithValue("@s", status); c.Parameters.AddWithValue("@id", id); }, ct);
+            if (IsSuperRole(target.RoleKey) && !IsSuperAdmin(principal))
+            {
+                await PlatformEndpoints.AuditAsync(db, principal, http, "platform.admin.escalation_denied", "PlatformAdmin", id, null,
+                    new { attempted = "status_change", to = status }, ct);
+                return (AdminOpOutcome.EscalationDenied, 0L);
+            }
 
-        var revoked = 0L;
-        if (status == "Disabled")
-        {
-            // Kill live access immediately; AuthenticateAsync also rejects
-            // non-Active admins, so this is defense in depth.
-            revoked = await db.ScalarLongAsync(
-                "WITH gone AS (DELETE FROM platform_sessions WHERE admin_id=@id RETURNING 1) SELECT COUNT(*) FROM gone",
-                c => c.Parameters.AddWithValue("@id", id), ct);
-        }
+            if (status == "Disabled" && IsSuperRole(target.RoleKey) &&
+                target.Status == "Active" && await CountActiveSuperAdminsAsync(db, ct) <= 1)
+                return (AdminOpOutcome.LastSuperAdmin, 0L);
 
-        await PlatformEndpoints.AuditAsync(db, principal, http,
-            status == "Disabled" ? "platform.admin.disabled" : "platform.admin.enabled",
-            "PlatformAdmin", id, null, new { sessionsRevoked = revoked }, ct);
-        return (AdminOpOutcome.Ok, revoked);
+            await db.ExecuteAsync("UPDATE platform_admins SET status=@s, updated_at=NOW() WHERE id=@id",
+                c => { c.Parameters.AddWithValue("@s", status); c.Parameters.AddWithValue("@id", id); }, ct);
+
+            var revoked = 0L;
+            if (status == "Disabled")
+            {
+                revoked = await db.ScalarLongAsync(
+                    "WITH gone AS (DELETE FROM platform_sessions WHERE admin_id=@id RETURNING 1) SELECT COUNT(*) FROM gone",
+                    c => c.Parameters.AddWithValue("@id", id), ct);
+            }
+
+            await PlatformEndpoints.AuditAsync(db, principal, http,
+                status == "Disabled" ? "platform.admin.disabled" : "platform.admin.enabled",
+                "PlatformAdmin", id, null, new { sessionsRevoked = revoked }, ct);
+            return (AdminOpOutcome.Ok, revoked);
+        }, ct);
     }
 
     // Bulk operator operations — the Platform Operators table multi-select action bar.
     // disable | enable | revoke-sessions. Every id runs through the same guarded core
     // as its single-row counterpart; a blocked row (self, escalation, last-super-admin)
     // is reported, not silently skipped, and never fails the whole batch.
-    private static async Task<IResult> BulkAdmins(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    private static async Task<IResult> BulkAdmins(HttpContext http, Database db, CancellationToken ct)
     {
+        // Authenticate before the framework or application parses an attacker-sized
+        // JSON body. Anonymous callers are rejected after headers only.
         var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:admins:manage", ct);
         if (error is not null) return error;
+
+        Dictionary<string, object?> body;
+        try
+        {
+            body = await http.Request.ReadFromJsonAsync<Dictionary<string, object?>>(cancellationToken: ct) ?? [];
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid JSON body"));
+        }
 
         var action = (BulkStr(body, "action") ?? "").ToLowerInvariant();
         if (action is not ("disable" or "enable" or "revoke-sessions"))
@@ -404,7 +415,10 @@ public static class PlatformAdminEndpoints
             }
             catch (Exception ex)
             {
-                results.Add(new { id, ok = false, error = ex.Message });
+                var reference = System.Diagnostics.Activity.Current?.TraceId.ToString() ?? http.TraceIdentifier;
+                http.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("Opstrax.PlatformAdminBulk")
+                    .LogError(ex, "Platform admin bulk {Action} failed for operator {OperatorId}; reference {Reference}", action, id, reference);
+                results.Add(new { id, ok = false, error = $"Operation failed. Reference: {reference}" });
             }
         }
 
@@ -541,28 +555,40 @@ public static class PlatformAdminEndpoints
         var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:dashboard:view", ct);
         if (error is not null) return error;
 
-        // Do not let an already-enabled second factor be silently rebound (a hijacked session could
-        // otherwise overwrite the secret with the attacker's authenticator). Enrolling over an active
-        // MFA requires disabling it first through a re-authenticated path.
-        var current = await db.ScalarLongAsync("SELECT COUNT(*) FROM platform_admins WHERE id=@id AND mfa_enabled=true",
-            c => c.Parameters.AddWithValue("@id", principal!.AdminId), ct);
-        if (current > 0)
-            return Results.Json(ApiResponse<object>.Fail("MFA is already enabled", "mfa_already_enabled"),
-                statusCode: StatusCodes.Status409Conflict);
-
-        var secret = TotpService.GenerateSecret();
-        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
-        var protectedSecret = pii.Encrypt(secret);
-        await db.ExecuteAsync(
-            "UPDATE platform_admins SET mfa_secret=@s, mfa_enabled=false, updated_at=NOW() WHERE id=@id",
-            c => { c.Parameters.AddWithValue("@s", protectedSecret!); c.Parameters.AddWithValue("@id", principal!.AdminId); }, ct);
-
-        await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.mfa_enroll_started", "PlatformAdmin", principal!.AdminId, null, null, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new
+        return await db.RunInSystemTransactionAsync<IResult>(async () =>
         {
-            secret,
-            otpauthUri = TotpService.BuildOtpAuthUri("OpsTrax Platform", principal!.Email, secret),
-        }, "Add this secret to your authenticator app, then verify a code to activate MFA"));
+            // Serialize enrollment for this account. Two concurrent requests must
+            // never each receive a different secret while only one is persisted.
+            var current = await db.QuerySingleAsync(
+                "SELECT mfa_enabled, mfa_enrollment_locked_until FROM platform_admins WHERE id=@id FOR UPDATE",
+                c => c.Parameters.AddWithValue("@id", principal!.AdminId), ct);
+            if (current?["mfaEnabled"] is true)
+                return Results.Json(ApiResponse<object>.Fail("MFA is already enabled", "mfa_already_enabled"),
+                    statusCode: StatusCodes.Status409Conflict);
+            if (current?["mfaEnrollmentLockedUntil"] is DateTime lockedUntil && lockedUntil > DateTime.UtcNow)
+                return Results.Json(ApiResponse<object>.Fail("Too many failed attempts", "Try again after the enrollment lockout expires"),
+                    statusCode: StatusCodes.Status429TooManyRequests);
+
+            var secret = TotpService.GenerateSecret();
+            var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+            var protectedSecret = pii.Encrypt(secret);
+            await db.ExecuteAsync(
+                @"UPDATE platform_admins
+                     SET mfa_secret=@s, mfa_enabled=false,
+                         mfa_enrollment_started_at=NOW(),
+                         mfa_enrollment_failed_attempts=0,
+                         mfa_enrollment_locked_until=NULL,
+                         updated_at=NOW()
+                   WHERE id=@id",
+                c => { c.Parameters.AddWithValue("@s", protectedSecret!); c.Parameters.AddWithValue("@id", principal!.AdminId); }, ct);
+
+            await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.mfa_enroll_started", "PlatformAdmin", principal!.AdminId, null, null, ct);
+            return Results.Ok(ApiResponse<object>.Ok(new
+            {
+                secret,
+                otpauthUri = TotpService.BuildOtpAuthUri("OpsTrax Platform", principal!.Email, secret),
+            }, "Add this secret to your authenticator app, then verify a code to activate MFA"));
+        }, ct);
     }
 
     // ── POST /api/platform/auth/mfa/verify {code} ────────────────────────────
@@ -571,23 +597,77 @@ public static class PlatformAdminEndpoints
         var (principal, error) = await PlatformEndpoints.RequireAsync(http, db, "platform:dashboard:view", ct);
         if (error is not null) return error;
 
-        var row = await db.QuerySingleAsync("SELECT mfa_secret FROM platform_admins WHERE id=@id",
-            c => c.Parameters.AddWithValue("@id", principal!.AdminId), ct);
-        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
-        var secret = pii.Decrypt(row?["mfaSecret"]?.ToString());
-        if (string.IsNullOrWhiteSpace(secret))
-            return Results.BadRequest(ApiResponse<object>.Fail("No MFA enrollment in progress — call enroll first"));
-
-        if (!TotpService.VerifyCode(secret, request.Code))
+        return await db.RunInSystemTransactionAsync<IResult>(async () =>
         {
-            await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.mfa_verify_failed", "PlatformAdmin", principal!.AdminId, null, null, ct);
-            return Results.Json(ApiResponse<object>.Fail("Invalid code"), statusCode: StatusCodes.Status401Unauthorized);
-        }
+            var row = await db.QuerySingleAsync(
+                @"SELECT mfa_secret, mfa_enabled, mfa_enrollment_started_at,
+                         mfa_enrollment_failed_attempts, mfa_enrollment_locked_until
+                    FROM platform_admins WHERE id=@id FOR UPDATE",
+                c => c.Parameters.AddWithValue("@id", principal!.AdminId), ct);
 
-        await db.ExecuteAsync("UPDATE platform_admins SET mfa_enabled=true, updated_at=NOW() WHERE id=@id",
-            c => c.Parameters.AddWithValue("@id", principal!.AdminId), ct);
-        await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.mfa_enabled", "PlatformAdmin", principal!.AdminId, null, null, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { mfaEnabled = true }, "MFA is now required on every sign-in"));
+            if (row?["mfaEnabled"] is true)
+                return Results.Conflict(ApiResponse<object>.Fail("MFA is already enabled"));
+
+            var lockedUntil = row?["mfaEnrollmentLockedUntil"] as DateTime?;
+            if (lockedUntil is not null && lockedUntil.Value > DateTime.UtcNow)
+                return Results.Json(ApiResponse<object>.Fail("Too many failed attempts", "Start a new enrollment after the lockout expires"),
+                    statusCode: StatusCodes.Status429TooManyRequests);
+
+            var startedAt = row?["mfaEnrollmentStartedAt"] as DateTime?;
+            if (startedAt is null || startedAt.Value < DateTime.UtcNow.Subtract(MfaEnrollmentLifetime))
+            {
+                await db.ExecuteAsync(
+                    @"UPDATE platform_admins
+                         SET mfa_secret=NULL, mfa_enrollment_started_at=NULL,
+                             mfa_enrollment_failed_attempts=0, mfa_enrollment_locked_until=NULL,
+                             updated_at=NOW()
+                       WHERE id=@id",
+                    c => c.Parameters.AddWithValue("@id", principal!.AdminId), ct);
+                await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.mfa_enrollment_expired", "PlatformAdmin", principal!.AdminId, null, null, ct);
+                return Results.Json(ApiResponse<object>.Fail("MFA enrollment expired", "Start a new enrollment"),
+                    statusCode: StatusCodes.Status410Gone);
+            }
+
+            var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+            var secret = pii.Decrypt(row?["mfaSecret"]?.ToString());
+            if (string.IsNullOrWhiteSpace(secret))
+                return Results.BadRequest(ApiResponse<object>.Fail("No MFA enrollment in progress — call enroll first"));
+
+            if (!TotpService.VerifyCode(secret, request.Code))
+            {
+                var attempts = Convert.ToInt32(row?["mfaEnrollmentFailedAttempts"] ?? 0) + 1;
+                var locked = attempts >= MaxMfaEnrollmentAttempts;
+                await db.ExecuteAsync(
+                    @"UPDATE platform_admins
+                         SET mfa_enrollment_failed_attempts=LEAST(@attempts, @max),
+                             mfa_enrollment_locked_until=CASE WHEN @locked THEN NOW() + @duration ELSE NULL END,
+                             updated_at=NOW()
+                       WHERE id=@id",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@attempts", attempts);
+                        c.Parameters.AddWithValue("@max", MaxMfaEnrollmentAttempts);
+                        c.Parameters.AddWithValue("@locked", locked);
+                        c.Parameters.AddWithValue("@duration", MfaEnrollmentLockout);
+                        c.Parameters.AddWithValue("@id", principal!.AdminId);
+                    }, ct);
+                await PlatformEndpoints.AuditAsync(db, principal!, http,
+                    locked ? "platform.admin.mfa_enrollment_locked" : "platform.admin.mfa_verify_failed",
+                    "PlatformAdmin", principal!.AdminId, null, new { attempts }, ct);
+                return Results.Json(ApiResponse<object>.Fail(locked ? "Too many failed attempts" : "Invalid code"),
+                    statusCode: locked ? StatusCodes.Status429TooManyRequests : StatusCodes.Status401Unauthorized);
+            }
+
+            await db.ExecuteAsync(
+                @"UPDATE platform_admins
+                     SET mfa_enabled=true, mfa_enrollment_started_at=NULL,
+                         mfa_enrollment_failed_attempts=0, mfa_enrollment_locked_until=NULL,
+                         updated_at=NOW()
+                   WHERE id=@id",
+                c => c.Parameters.AddWithValue("@id", principal!.AdminId), ct);
+            await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.mfa_enabled", "PlatformAdmin", principal!.AdminId, null, null, ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { mfaEnabled = true }, "MFA is now required on every sign-in"));
+        }, ct);
     }
 
     // ── POST /api/platform/admins/{id}/mfa/reset ─────────────────────────────
@@ -609,7 +689,12 @@ public static class PlatformAdminEndpoints
                 statusCode: StatusCodes.Status403Forbidden);
         }
 
-        await db.ExecuteAsync("UPDATE platform_admins SET mfa_secret=NULL, mfa_enabled=false, updated_at=NOW() WHERE id=@id",
+        await db.ExecuteAsync(
+            @"UPDATE platform_admins
+                 SET mfa_secret=NULL, mfa_enabled=false,
+                     mfa_enrollment_started_at=NULL, mfa_enrollment_failed_attempts=0,
+                     mfa_enrollment_locked_until=NULL, updated_at=NOW()
+               WHERE id=@id",
             c => c.Parameters.AddWithValue("@id", id), ct);
         var revoked = await db.ScalarLongAsync(
             "WITH gone AS (DELETE FROM platform_sessions WHERE admin_id=@id RETURNING 1) SELECT COUNT(*) FROM gone",
@@ -653,7 +738,7 @@ public static class PlatformAdminEndpoints
         }
 
         var password = request.Password ?? "";
-        if (password.Length < 12 || !password.Any(char.IsLetter) || !password.Any(char.IsDigit))
+        if (!PlatformSuperAdminReconciler.MeetsPasswordPolicy(password))
             return Results.BadRequest(ApiResponse<object>.Fail("Validation failed",
                 ["Password must be at least 12 characters and contain letters and digits."]));
 
@@ -720,8 +805,9 @@ public static class PlatformAdminEndpoints
 
         var current = request.CurrentPassword ?? "";
         var next    = request.NewPassword ?? "";
-        if (next.Length < 12)
-            return Results.BadRequest(ApiResponse<object>.Fail("New password must be at least 12 characters"));
+        if (!PlatformSuperAdminReconciler.MeetsPasswordPolicy(next))
+            return Results.BadRequest(ApiResponse<object>.Fail(
+                "New password must be at least 12 characters and contain letters and digits"));
         if (string.Equals(current, next, StringComparison.Ordinal))
             return Results.BadRequest(ApiResponse<object>.Fail("New password must differ from the current password"));
 
@@ -742,7 +828,7 @@ public static class PlatformAdminEndpoints
 
         var revoked = await db.ExecuteAsync(
             "DELETE FROM platform_sessions WHERE admin_id=@id AND session_token<>@tok",
-            c => { c.Parameters.AddWithValue("@id", principal!.AdminId); c.Parameters.AddWithValue("@tok", PlatformEndpoints.BearerToken(http)); }, ct);
+            c => { c.Parameters.AddWithValue("@id", principal!.AdminId); c.Parameters.AddWithValue("@tok", PlatformEndpoints.SessionToken(http)); }, ct);
 
         await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.admin.password_changed", "PlatformAdmin", principal!.AdminId, null,
             new { otherSessionsRevoked = revoked }, ct);
@@ -814,6 +900,15 @@ public static class PlatformAdminEndpoints
               JOIN platform_roles r ON r.id = a.role_id
               WHERE r.role_key=@k AND a.status='Active'",
             c => c.Parameters.AddWithValue("@k", SuperAdminRoleKey), ct);
+
+    private static Task<T> WithAdminRosterLockAsync<T>(Database db, Func<Task<T>> action, CancellationToken ct)
+        => db.RunInSystemTransactionAsync(async () =>
+        {
+            await db.ExecuteAsync(
+                "SELECT pg_advisory_xact_lock(@lockKey)",
+                c => c.Parameters.AddWithValue("@lockKey", AdminRosterAdvisoryLockKey), ct);
+            return await action();
+        }, ct);
 
     private static (string RawToken, string TokenHash) NewInviteToken()
     {

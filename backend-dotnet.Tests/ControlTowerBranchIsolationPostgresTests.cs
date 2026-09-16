@@ -16,7 +16,7 @@ public sealed class ControlTowerBranchIsolationPostgresTests
         var db = Database();
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var company = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Control Tower branch test','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Control Tower branch test','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"CTB-{suffix}"));
         var branchA = await Branch(db, company, $"A-{suffix}");
         var branchB = await Branch(db, company, $"B-{suffix}");
@@ -307,7 +307,7 @@ public sealed class ControlTowerBranchIsolationPostgresTests
     }
 
     private static Task<long> Branch(Database db, long company, string code) => db.InsertAsync(
-        "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@cid,@code,@code,'Active')",
+        "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@cid,@code,@code,'Active','US')",
         c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@code", code); });
 
     private static Task<long> Vehicle(Database db, long company, long? branch, string code, int risk) => db.InsertAsync(

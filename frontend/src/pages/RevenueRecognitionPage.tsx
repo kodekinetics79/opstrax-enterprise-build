@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarCheck, Lock, PlayCircle, RefreshCw } from "lucide-react";
 import { revrecApi } from "@/services/revrecApi";
-import { ErrorState, LoadingState, PageHeader } from "@/components/ui";
+import { ErrorState, LoadingState } from "@/components/ui";
+import { FinanceWorkspaceTabs, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import { Table, money } from "@/pages/BillingConsolidationPage";
 import type { AnyRecord } from "@/types";
 
@@ -20,11 +21,14 @@ export function RevenueRecognitionPage() {
   const today = new Date().toISOString().slice(0, 10);
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="page-stack min-w-0">
+      <RevenueWorkspaceHeader
         title="Revenue Recognition"
         description="Revenue is recognized automatically when an invoice is issued. Review it here and close accounting periods."
+        activeStage="invoices"
+        eyebrow="Finance workspace"
       />
+      <FinanceWorkspaceTabs />
 
       {/* Recognized-revenue summary per currency */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

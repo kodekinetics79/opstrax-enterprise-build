@@ -72,6 +72,9 @@ public sealed class PlatformSchemaService(Database db)
         // TOTP second factor: base32 secret set at enrollment; mfa_enabled flips
         // true only after the operator proves possession with a valid code.
         await db.ExecuteAsync("ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR(160) NULL");
+        await db.ExecuteAsync("ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS mfa_enrollment_started_at TIMESTAMPTZ NULL");
+        await db.ExecuteAsync("ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS mfa_enrollment_failed_attempts INT NOT NULL DEFAULT 0");
+        await db.ExecuteAsync("ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS mfa_enrollment_locked_until TIMESTAMPTZ NULL");
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS platform_sessions (

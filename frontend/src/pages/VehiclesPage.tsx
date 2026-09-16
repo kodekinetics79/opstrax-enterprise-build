@@ -10,10 +10,12 @@ import {
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
 import { vehiclesApi } from "@/services/vehiclesApi";
+import { fleetApi } from "@/services/fleetTmsApi";
 import { driversApi } from "@/services/driversApi";
 import { downloadServerExport } from "@/services/fleetDomainApi";
 import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
+import { useTenantCountry } from "@/hooks/useTenantRegion";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { resolveAuthorizedSummaryCount } from "@/utils/vehicleSummaryPresentation";
@@ -22,6 +24,7 @@ import { labelize, LoadingState, ErrorState, EmptyState, PageHeader, PageStack }
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { AnyRecord, UserSession } from "@/types";
 import { optionalTelemetryHeading, readSpeedMph, telemetrySpeedSummary } from "@/utils/telemetryMeasurements";
+import { formatTenantDistanceFromMiles, milesToTenantDistance, mphToTenantSpeed, tenantDistanceToMiles, tenantDistanceUnit, tenantSpeedUnit } from "@/utils/tenantMeasurements";
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -97,7 +100,7 @@ type VehicleField = {
   key: string;
   label: string;
   required?: boolean;
-  type?: "text" | "number" | "select" | "email";
+  type?: "text" | "number" | "select" | "email" | "date";
   options?: readonly string[];
 };
 
@@ -114,6 +117,15 @@ const FIELDS: VehicleField[] = [
   { key: "plateNumber", label: "Plate number" },
   { key: "plateJurisdiction", label: "Plate jurisdiction" },
   { key: "vehicleClass", label: "Vehicle class", type: "select", options: ["Class 1", "Class 2", "Class 3", "Class 4", "Class 5", "Class 6", "Class 7", "Class 8"] },
+  { key: "ownershipModel", label: "Fleet source", type: "select", options: ["Owned", "Rented", "Partner"], required: true },
+  { key: "fleetProviderName", label: "Rental / partner provider" },
+  { key: "rentalContractNumber", label: "Rental contract" },
+  { key: "rentalEndDate", label: "Rental end date", type: "date" },
+  { key: "bodyType", label: "Body / equipment", type: "select", options: ["Flatbed", "Box Truck", "Curtain Side", "Dry Van", "Refrigerated", "Tanker", "Lowbed", "20 ft Container", "40 ft Container", "Pickup"] },
+  { key: "capacityKg", label: "Payload capacity (kg)", type: "number" },
+  { key: "capacityCbm", label: "Volume capacity (m³)", type: "number" },
+  { key: "trackingProvider", label: "Tracking source", type: "select", options: ["OpsTrax", "Locus", "Samsara", "Geotab", "Motive", "Other"] },
+  { key: "externalFleetId", label: "Provider vehicle ID" },
   { key: "status", label: "Status", type: "select", options: ["Available", "On Route", "At Stop", "Idle", "Delayed", "Maintenance"] },
 ] as const;
 
@@ -145,6 +157,7 @@ type VehicleArchiveTarget = Readonly<{
 export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const { session } = useAuth();
+  const tenantCountry = useTenantCountry();
   const hasPermission = useHasPermission();
   const queryClient = useQueryClient();
 
@@ -238,7 +251,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
     setSearchParams(next, { replace: true });
     if (!canCreate) return;
     setIsCreating(true);
-    setEditing({ type: "Truck", status: "Available" });
+    setEditing({ type: "Truck", status: "Available", ownershipModel: "Owned" });
   }, [searchParams, setSearchParams, canCreate]);
 
   const save = useMutation({
@@ -401,7 +414,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
               <Download className="h-4 w-4" /> Export
             </button>
             {canCreate ? (
-              <button type="button" onClick={() => { setIsCreating(true); setEditing({ type: "Truck", status: "Available" }); }} className="btn-primary min-h-11 sm:min-h-8">
+              <button type="button" onClick={() => { setIsCreating(true); setEditing({ type: "Truck", status: "Available", ownershipModel: "Owned" }); }} className="btn-primary min-h-11 sm:min-h-8">
                 <Plus className="h-4 w-4" /> New vehicle
               </button>
             ) : null}
@@ -422,12 +435,12 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
       ) : null}
       {exportError ? <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{exportError} No partial-page fallback was downloaded.</div> : null}
 
-      {/* Compact operating summary keeps the roster in the first viewport. */}
-      <dl className="vehicle-summary-strip panel grid shrink-0 grid-cols-2 gap-1 p-1 xl:grid-cols-4" aria-label="Vehicle operating summary">
-        <ClayStat Icon={Gauge}      tone="fc-clay-teal"    iconCls="text-teal-700"    label="Page readiness"      value={readiness == null ? "Unknown" : `${readiness}%`} meter={readiness ?? undefined} caption={`${readinessRows.length} assessed on this page · ${rows.length - readinessRows.length} unknown`} />
-        <ClayStat Icon={Navigation} tone="fc-clay-emerald" iconCls="text-emerald-700" label="Page moving"      value={moving}          meter={rows.length ? (moving / rows.length) * 100 : 0} caption={`${available} available on this page`} />
-        <ClayStat Icon={ShieldAlert} tone="fc-clay-red"    iconCls="text-rose-700"    label="Scope at risk" value={atRisk == null ? "Unknown" : atRisk} alert={atRisk != null && atRisk > 0} caption="Tenant or permitted branch summary" />
-        <ClayStat Icon={Cpu}        tone="fc-clay-amber"   iconCls="text-amber-700"   label="Scope device / camera gaps" value={deviceEx == null ? "Unknown" : deviceEx} alert={deviceEx != null && deviceEx > 0} caption="Tenant or permitted branch summary" />
+      <dl className="panel flex shrink-0 flex-wrap items-center gap-x-5 gap-y-1 px-3 py-2 text-xs" aria-label="Vehicle operating summary">
+        <div title={`${readinessRows.length} assessed on this page`}><dt className="inline text-slate-500">Page readiness </dt><dd className="inline font-bold text-slate-900">{readiness == null ? "Unknown" : `${readiness}%`}</dd></div>
+        <div title="Available telemetry on this page"><dt className="inline text-slate-500">Page moving </dt><dd className="inline font-bold text-emerald-700">{moving}</dd></div>
+        <div title="Available status on this page"><dt className="inline text-slate-500">Page available </dt><dd className="inline font-bold text-teal-700">{available}</dd></div>
+        <div title="Tenant or permitted branch summary"><dt className="inline text-slate-500">Scope needs attention </dt><dd className="inline font-bold text-rose-700">{atRisk == null ? "Unknown" : atRisk}</dd></div>
+        <div title="Tenant or permitted branch summary"><dt className="inline text-slate-500">Scope device gaps </dt><dd className="inline font-bold text-amber-700">{deviceEx == null ? "Unknown" : deviceEx}</dd></div>
       </dl>
 
       {/* The roster is the primary task surface. */}
@@ -457,17 +470,18 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
         <div className="mx-2 mb-1 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="min-h-0 flex-1 overflow-auto">
             {filtered.length ? (
-              <table className="w-full min-w-[720px] text-left text-sm">
+              <table className="w-full min-w-[1080px] text-left text-sm">
                 <thead className="sticky top-0 z-10 bg-[#fcfdff]">
                   <tr className="border-b border-slate-200/80 text-[10px] uppercase tracking-[0.12em] text-slate-400">
                     <th className="px-3 py-2.5 font-bold">Vehicle</th>
+                    <th className="px-3 py-2.5 font-bold">Fleet / capacity</th>
                     <th className="px-3 py-2.5 font-bold">Status</th>
-                    <th className="px-3 py-2.5 font-bold">Reported speed</th>
-                    <th className="hidden px-3 py-2.5 font-bold lg:table-cell">Last seen</th>
+                    <th className="px-3 py-2.5 font-bold">Live</th>
+                    <th className="px-3 py-2.5 font-bold">Payload</th>
                     <th className="px-3 py-2.5 font-bold">Readiness</th>
                     <th className="px-3 py-2.5 font-bold">Risk</th>
-                    <th className="hidden px-3 py-2.5 font-bold md:table-cell">Driver</th>
-                    <th className="hidden px-3 py-2.5 font-bold xl:table-cell">Health</th>
+                    <th className="px-3 py-2.5 font-bold">Driver / Iqama</th>
+                    <th className="px-3 py-2.5 font-bold">Tracking / TAMM</th>
                     <th className="px-3 py-2.5"><span className="sr-only">Open</span></th>
                   </tr>
                 </thead>
@@ -489,12 +503,16 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
                             </div>
                           </div>
                         </td>
+                        <td className="px-3 py-2.5">
+                          <div className="font-semibold text-slate-700">{String(g(row, "ownershipModel", "ownership_model") ?? "Owned")}{g(row, "fleetProviderName", "fleet_provider_name") ? ` · ${String(g(row, "fleetProviderName", "fleet_provider_name"))}` : ""}</div>
+                          <div className="text-xs text-slate-500">{String(g(row, "bodyType", "body_type") ?? g(row, "type") ?? "Body unknown")} · {g(row, "capacityKg", "capacity_kg") ? `${Number(g(row, "capacityKg", "capacity_kg")).toLocaleString()} kg` : "capacity missing"}</div>
+                        </td>
                         <td className="px-3 py-2.5"><StatusPill status={g(row, "status")} /></td>
                         <td className="px-3 py-2.5">
                           {fresh && speed != null ? (
                             <span className="inline-flex items-baseline gap-1">
-                              <span className={`text-[15px] font-bold tabular-nums ${moving ? "text-emerald-600" : "text-slate-400"}`}>{Math.round(speed)}</span>
-                              <span className="text-[10px] font-semibold text-slate-400">mph</span>
+                              <span className={`text-[15px] font-bold tabular-nums ${moving ? "text-emerald-600" : "text-slate-400"}`}>{Math.round(mphToTenantSpeed(speed, tenantCountry) ?? speed)}</span>
+                              <span className="text-[10px] font-semibold text-slate-400">{tenantSpeedUnit(tenantCountry)} · {fresh.label}</span>
                             </span>
                           ) : fresh ? (
                             <span className="text-xs italic text-slate-400">Speed unavailable</span>
@@ -502,23 +520,11 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
                             <span className="text-xs italic text-slate-400">No GPS</span>
                           )}
                         </td>
-                        <td className="hidden px-3 py-2.5 lg:table-cell">
-                          {fresh ? (
-                            <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${fresh.live ? "text-emerald-600" : "text-slate-500"}`}>
-                              {fresh.live && <span className="live-dot h-1.5 w-1.5" />}
-                              {fresh.label}
-                            </span>
-                          ) : <span className="text-xs italic text-slate-400">—</span>}
-                        </td>
+                        <td className="px-3 py-2.5"><Meter value={g(row, "payloadUtilizationPct", "payload_utilization_pct") == null ? null : Number(g(row, "payloadUtilizationPct", "payload_utilization_pct"))} /><div className="mt-1 text-[10px] text-slate-500">{Number(g(row, "currentLoadKg", "current_load_kg") ?? 0).toLocaleString()} / {g(row, "capacityKg", "capacity_kg") ? Number(g(row, "capacityKg", "capacity_kg")).toLocaleString() : "—"} kg</div></td>
                         <td className="px-3 py-2.5"><Meter value={ready} /></td>
                         <td className="px-3 py-2.5"><RiskChip tier={riskTier(row)} /></td>
-                        <td className="hidden px-3 py-2.5 text-slate-600 md:table-cell">{String(g(row, "assignedDriver", "assigned_driver", "driverName") ?? "—")}</td>
-                        <td className="hidden px-3 py-2.5 xl:table-cell">
-                          <div className="flex items-center gap-3">
-                          <HealthDot status={vehicleDeviceStatus(row)} icon={<Cpu className="h-3.5 w-3.5" />} />
-                          <HealthDot status={vehicleCameraStatus(row)} icon={<Camera className="h-3.5 w-3.5" />} />
-                          </div>
-                        </td>
+                        <td className="px-3 py-2.5 text-slate-600"><div>{String(g(row, "assignedDriver", "assigned_driver", "driverName") ?? "Unassigned")}</div><div className={`text-[10px] font-semibold ${/valid/i.test(String(g(row, "iqamaReadiness", "iqama_readiness"))) ? "text-emerald-700" : "text-amber-700"}`}>Iqama: {String(g(row, "iqamaReadiness", "iqama_readiness") ?? "Missing")}</div></td>
+                        <td className="px-3 py-2.5"><div className="flex items-center gap-2"><HealthDot status={vehicleDeviceStatus(row)} icon={<Cpu className="h-3.5 w-3.5" />} /><span className="text-xs text-slate-600">{String(g(row, "trackingProvider", "tracking_provider") ?? "Not configured")}</span></div><div className="mt-1 text-[10px] font-semibold text-slate-500">TAMM: {String(g(row, "tammStatus", "tamm_status") ?? "Not configured")}</div></td>
                         <td className="px-3 py-2.5 text-right">
                           <button type="button" className="ml-auto grid min-h-11 min-w-11 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 sm:min-h-8 sm:min-w-8" aria-label={`Open ${String(g(row, "vehicleCode", "vehicle_code") ?? `vehicle ${row.id}`)}`} onClick={(event) => { event.stopPropagation(); setSelectedId(row.id as string); }}>
                             <ChevronRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
@@ -570,6 +576,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
           refreshing={detail.isFetching} detailError={detail.isError ? apiErrorMessage(detail.error, "Vehicle data could not be refreshed.") : null} onRefresh={() => { void detail.refetch(); }}
           canUpdate={canUpdate && !archivedView} canDelete={canDelete && !archivedView} canAssign={canAssign && !archivedView} canReactivate={canUpdate && archivedView} assigning={assign.isPending}
           canViewCameraEvidence={canViewCameraEvidence}
+          tenantCountry={tenantCountry}
           lifecycleBusy={lifecycleBusy}
           lifecycleSelectionPreparing={lifecycleSelectionPreparing}
           lifecycleSelectionUnavailable={lifecycleSelectionUnavailable}
@@ -601,7 +608,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
       ) : null}
 
       {editing && canManageFleet && (
-        <VehicleFormModal title={isCreating ? "New vehicle" : "Edit vehicle"} initial={editing} saving={save.isPending} serverError={save.error ? apiErrorMessage(save.error, "The vehicle could not be saved. Please try again.") : undefined}
+        <VehicleFormModal title={isCreating ? "New vehicle" : "Edit vehicle"} initial={editing} tenantCountry={tenantCountry} saving={save.isPending} serverError={save.error ? apiErrorMessage(save.error, "The vehicle could not be saved. Please try again.") : undefined}
           onClose={() => { if (save.isPending) return; save.reset(); setEditing(null); setIsCreating(false); }} onSave={(p) => save.mutate(p)} />
       )}
       {assignmentVehicle && canAssign ? (
@@ -745,9 +752,9 @@ function DriverAssignmentModal({ vehicle, drivers, saving, serverError, onClose,
 
 /* ------------------------------------------------------------------ drawer */
 
-function VehicleDrawer({ record, detail, loading, refreshing, detailError, onRefresh, canUpdate, canDelete, canAssign, canReactivate, canViewCameraEvidence, assigning, lifecycleBusy, lifecycleSelectionPreparing, lifecycleSelectionUnavailable, lifecycleStatusError, lifecycleNeedsRefresh, lifecycleError, onClose, onEdit, onDelete, onReactivate, onRetryLifecycleStatus, onAssign, onNavigate }: {
+function VehicleDrawer({ record, detail, loading, refreshing, detailError, onRefresh, canUpdate, canDelete, canAssign, canReactivate, canViewCameraEvidence, tenantCountry, assigning, lifecycleBusy, lifecycleSelectionPreparing, lifecycleSelectionUnavailable, lifecycleStatusError, lifecycleNeedsRefresh, lifecycleError, onClose, onEdit, onDelete, onReactivate, onRetryLifecycleStatus, onAssign, onNavigate }: {
   record: AnyRecord; detail?: AnyRecord; loading: boolean; refreshing: boolean; detailError: string | null; onRefresh: () => void;
-  canUpdate: boolean; canDelete: boolean; canAssign: boolean; canReactivate: boolean; canViewCameraEvidence: boolean; assigning: boolean;
+  canUpdate: boolean; canDelete: boolean; canAssign: boolean; canReactivate: boolean; canViewCameraEvidence: boolean; tenantCountry: string | null; assigning: boolean;
   lifecycleBusy: boolean; lifecycleSelectionPreparing: boolean; lifecycleSelectionUnavailable: boolean;
   lifecycleStatusError: string | null; lifecycleNeedsRefresh: boolean; lifecycleError: string | null;
   onClose: () => void; onEdit: () => void; onDelete: () => void; onReactivate: () => void; onRetryLifecycleStatus: () => void;
@@ -770,14 +777,28 @@ function VehicleDrawer({ record, detail, loading, refreshing, detailError, onRef
   const hasGps = lat != null && lng != null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) && Math.abs(Number(lat)) <= 90 && Math.abs(Number(lng)) <= 180 && !(Number(lat) === 0 && Number(lng) === 0);
   const track = () => onNavigate(`/map-view?vehicleId=${encodeURIComponent(String(record.id))}`);
   const canReadDevices = useHasPermission()(PERMISSIONS.TELEMETRY_DEVICES_READ);
+  const backhaul = useQuery({
+    queryKey: ["fleet-backhaul", code],
+    queryFn: () => fleetApi.backhaul(code),
+    enabled: tab === "behaviour" && Boolean(code),
+    retry: false,
+  });
+  const backhaulRows = backhaul.data?.items ?? [];
   const profile = [
     ["Recorded status", String(g(record, "status") ?? "Unknown")],
     ["Assigned driver", String(g(record, "assignedDriver", "assigned_driver", "driverName") ?? "Unassigned")],
-    ["Odometer (recorded)", measuredNumber(g(record, "odometerMiles", "odometer_miles"), "mi")],
+    ["Odometer (recorded)", formatTenantDistanceFromMiles(g(record, "odometerMiles", "odometer_miles"), tenantCountry)],
     ["Year", String(g(record, "year") ?? "Unknown")],
     ["VIN", String(g(record, "vin") ?? "Unknown")],
     ["Plate", [g(record, "plateNumber", "plate_number"), g(record, "plateJurisdiction", "plate_jurisdiction")].filter(Boolean).join(" · ") || "Unknown"],
     ["Class", String(g(record, "vehicleClass", "vehicle_class") ?? "Unknown")],
+    ["Fleet source", `${String(g(record, "ownershipModel", "ownership_model") ?? "Owned")}${g(record, "fleetProviderName", "fleet_provider_name") ? ` · ${String(g(record, "fleetProviderName", "fleet_provider_name"))}` : ""}`],
+    ["Rental contract", [g(record, "rentalContractNumber", "rental_contract_number"), g(record, "rentalEndDate", "rental_end_date") ? `ends ${String(g(record, "rentalEndDate", "rental_end_date"))}` : null].filter(Boolean).join(" · ") || "Not applicable"],
+    ["Body / capacity", `${String(g(record, "bodyType", "body_type") ?? "Not recorded")} · ${g(record, "capacityKg", "capacity_kg") ? `${Number(g(record, "capacityKg", "capacity_kg")).toLocaleString()} kg` : "kg unknown"} · ${g(record, "capacityCbm", "capacity_cbm") ? `${Number(g(record, "capacityCbm", "capacity_cbm")).toLocaleString()} m³` : "m³ unknown"}`],
+    ["Current booked payload", `${Number(g(record, "currentLoadKg", "current_load_kg") ?? 0).toLocaleString()} kg · ${g(record, "payloadUtilizationPct", "payload_utilization_pct") == null ? "utilization unavailable" : `${Number(g(record, "payloadUtilizationPct", "payload_utilization_pct"))}% utilized`}`],
+    ["Driver eligibility", `${String(g(record, "iqamaReadiness", "iqama_readiness") ?? "Missing")} Iqama/work authorization${g(record, "iqamaExpiryDate", "iqama_expiry_date") ? ` · expires ${String(g(record, "iqamaExpiryDate", "iqama_expiry_date"))}` : ""}`],
+    ["Tracking source", `${String(g(record, "trackingProvider", "tracking_provider") ?? "Not configured")}${g(record, "externalFleetId", "external_fleet_id") ? ` · ${String(g(record, "externalFleetId", "external_fleet_id"))}` : ""}`],
+    ["TAMM verification", `${String(g(record, "tammStatus", "tamm_status") ?? "Not configured")}${g(record, "tammLastVerifiedAt", "tamm_last_verified_at") ? ` · ${timestamp(g(record, "tammLastVerifiedAt", "tamm_last_verified_at"))}` : ""}`],
     ["Alternate identity", g(record, "alternateIdentifier", "alternate_identifier") ? `${String(g(record, "alternateIdentifier", "alternate_identifier"))} (${String(g(record, "vinExceptionType", "vin_exception_type") ?? "governed exception")})` : "Not recorded"],
   ];
 
@@ -818,7 +839,7 @@ function VehicleDrawer({ record, detail, loading, refreshing, detailError, onRef
               <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold text-slate-900">{motion}</h3><span className="text-xs text-slate-500">{fresh ? `GPS ${fresh.label}` : "No verified GPS timestamp"}</span></div>
                 <dl className="vehicle-property-list mt-2">
-                  <dt>Last reported speed</dt><dd>{measuredNumber(speed, "mph")}{speed != null && !fresh?.live ? " · historical sample" : ""}</dd>
+                  <dt>Last reported speed</dt><dd>{measuredNumber(mphToTenantSpeed(speed, tenantCountry), tenantSpeedUnit(tenantCountry))}{speed != null && !fresh?.live ? " · historical sample" : ""}</dd>
                   <dt>GPS time</dt><dd>{timestamp(seenAt)}</dd>
                   <dt>Observation source</dt><dd>{String(g(record, "observationSource") ?? "Not reported")}</dd>
                   <dt>Heading</dt><dd>{headingLabel(g(record, "heading"))}</dd>
@@ -831,6 +852,12 @@ function VehicleDrawer({ record, detail, loading, refreshing, detailError, onRef
               </section>
               <DrawerSection title="Active work" icon={<Boxes className="h-4 w-4" />} count={activeJobs.length}>
                 {access?.activeJobs === false ? <EmptyLine text="Job activity is not available for this role." /> : activeJobs.length ? <div className="space-y-1">{activeJobs.map((job, i) => <button type="button" key={String(job.id ?? i)} onClick={() => onNavigate(`/jobs?jobId=${encodeURIComponent(String(job.id))}`)} className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs"><span><strong>{String(g(job, "jobNumber", "job_number") ?? `Job ${job.id}`)}</strong> · {String(job.status ?? "Unknown")}{g(job, "eta") ? ` · ETA ${timestamp(job.eta)}` : ""}</span><ChevronRight className="h-4 w-4" /></button>)}</div> : <EmptyLine text="No active work returned for this vehicle." />}
+              </DrawerSection>
+              <DrawerSection title="Return-load opportunities" icon={<Navigation className="h-4 w-4" />} count={backhaulRows.length}>
+                {backhaul.isLoading ? <p className="text-xs text-slate-500">Checking recorded destination, available loads, and payload fit…</p> : null}
+                {backhaul.isError ? <p role="alert" className="text-xs text-amber-700">Return-load candidates could not be checked. <button type="button" className="underline" onClick={() => void backhaul.refetch()}>Retry</button></p> : null}
+                {!backhaul.isLoading && !backhaul.isError && backhaulRows.length === 0 ? <EmptyLine text="No exact destination-to-origin return load with recorded capacity fit is available." /> : null}
+                {backhaulRows.length ? <div className="space-y-1">{backhaulRows.map((candidate) => <button type="button" key={candidate.candidateShipmentId} onClick={() => onNavigate(`/fleet-workspace?shipmentId=${encodeURIComponent(candidate.candidateShipmentId)}`)} className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs"><span><strong>{candidate.shipmentNumber}</strong> · {candidate.origin} → {candidate.destination}<span className="block text-slate-500">{Number(candidate.weightKg).toLocaleString()} kg · {candidate.candidateUtilizationPct == null ? "utilization unavailable" : `${candidate.candidateUtilizationPct}% of capacity`} · {candidate.matchBasis}</span></span><ChevronRight className="h-4 w-4 shrink-0" /></button>)}</div> : null}
               </DrawerSection>
               <DrawerTable title="Driving & device events" icon={<ShieldAlert className="h-4 w-4" />} rows={rows("safetyEvents")} cols={["eventType", "severity", "reviewStatus", "eventTime"]} onEmpty="No recorded driving or device events returned." />
               <p className="text-[11px] text-slate-500">Active work returns up to 12 records. GPS history covers the latest 100 observations within 24 hours.</p>
@@ -975,12 +1002,17 @@ function fmt(v: unknown) {
 
 /* ------------------------------------------------------------------ form modal */
 
-function VehicleFormModal({ title, initial, saving, serverError, onClose, onSave }: { title: string; initial: AnyRecord; saving: boolean; serverError?: string; onClose: () => void; onSave: (p: AnyRecord) => void }) {
+function vehicleFormInitial(initial: AnyRecord, tenantCountry: string | null): AnyRecord {
+  const odometer = milesToTenantDistance(initial.odometerMiles ?? initial.odometer_miles, tenantCountry);
+  return odometer == null ? initial : { ...initial, odometerMiles: Math.round(odometer) };
+}
+
+function VehicleFormModal({ title, initial, tenantCountry, saving, serverError, onClose, onSave }: { title: string; initial: AnyRecord; tenantCountry: string | null; saving: boolean; serverError?: string; onClose: () => void; onSave: (p: AnyRecord) => void }) {
   const dialogRef = useDialogFocus<HTMLFormElement>(true, () => { if (!saving) onClose(); });
-  const [form, setForm] = useState<AnyRecord>(initial);
+  const [form, setForm] = useState<AnyRecord>(() => vehicleFormInitial(initial, tenantCountry));
   const [errors, setErrors] = useState<string[]>([]);
 
-  useEffect(() => { setForm(initial); }, [initial]);
+  useEffect(() => { setForm(vehicleFormInitial(initial, tenantCountry)); }, [initial, tenantCountry]);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -1023,6 +1055,17 @@ function VehicleFormModal({ title, initial, saving, serverError, onClose, onSave
       payload.vinExceptionType = undefined;
       payload.alternateIdentifier = undefined;
     }
+    const ownership = String(payload.ownershipModel ?? "Owned");
+    if ((ownership === "Rented" || ownership === "Partner") && !String(payload.fleetProviderName ?? "").trim()) {
+      nextErrors.push("Rental / partner provider is required for a rented or partner vehicle.");
+    }
+    if (String(payload.trackingProvider ?? "").trim() && !String(payload.externalFleetId ?? "").trim()) {
+      nextErrors.push("Provider vehicle ID is required when a tracking source is selected.");
+    }
+
+    if (payload.odometerMiles != null) {
+      payload.odometerMiles = tenantDistanceToMiles(payload.odometerMiles, tenantCountry);
+    }
 
     if (nextErrors.length > 0) {
       setErrors(nextErrors);
@@ -1045,7 +1088,7 @@ function VehicleFormModal({ title, initial, saving, serverError, onClose, onSave
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           {FIELDS.map((f) => (
             <label key={f.key} className="block">
-              <span className="mb-1.5 block text-xs font-bold text-slate-600">{f.label}{f.required ? <span className="text-rose-500"> *</span> : null}</span>
+              <span className="mb-1.5 block text-xs font-bold text-slate-600">{f.key === "odometerMiles" ? `Odometer (${tenantDistanceUnit(tenantCountry)})` : f.label}{f.required ? <span className="text-rose-500"> *</span> : null}</span>
               {f.type === "select" && f.options ? (
                 <select className="fc-search w-full px-3 py-2.5 text-sm text-slate-800 outline-none"
                   required={Boolean(f.required)} value={String(form[f.key] ?? "")} onChange={(e) => setForm((c) => ({ ...c, [f.key]: e.target.value }))}>

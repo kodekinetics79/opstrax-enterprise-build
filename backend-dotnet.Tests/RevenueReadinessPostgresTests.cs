@@ -40,11 +40,11 @@ public class RevenueReadinessPostgresTests
         // Publish a 15% VAT profile with a catch-all standard rule + seller registration.
         var profileId = await db.InsertAsync(
             @"INSERT INTO tax_profiles (company_id, profile_code, profile_name, regime, price_inclusive, currency, effective_date, status, author_user_id, published_by_user_id, published_at)
-              VALUES (@c, 'TP-ISSUE', 'P', 'vat', FALSE, NULL, DATE '2025-01-01', 'published', 1, 2, NOW()) RETURNING id",
+              VALUES (@c, 'TP-ISSUE', 'P', 'gst', FALSE, NULL, DATE '2025-01-01', 'published', 1, 2, NOW()) RETURNING id",
             c => c.Parameters.AddWithValue("@c", companyId));
         await db.ExecuteAsync("INSERT INTO tax_rules (company_id, tax_profile_id, tax_code, tax_category, rate, taxable, priority) VALUES (@c,@p,'STANDARD','S',0.15,TRUE,0)",
             c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@p", profileId); });
-        await db.ExecuteAsync("INSERT INTO seller_tax_registration (company_id, jurisdiction, regime, tax_registration_no, effective_date) VALUES (@c,'XX','vat','TRN', DATE '2025-01-01')",
+        await db.ExecuteAsync("INSERT INTO seller_tax_registration (company_id, jurisdiction, regime, tax_registration_no, effective_date) VALUES (@c,'CA','gst','TRN', DATE '2025-01-01')",
             c => c.Parameters.AddWithValue("@c", companyId));
 
         var service = CreateRevenueService(db);
@@ -1137,8 +1137,8 @@ ON CONFLICT DO NOTHING");
     private static async Task<long> SeedCompanyAsync(Database db, string? companyCode = null)
     {
         var companyId = await db.InsertAsync(
-            @"INSERT INTO companies (company_code, name, industry, timezone, status)
-              VALUES (@code, @name, 'Logistics', 'America/New_York', 'Active')
+            @"INSERT INTO companies (company_code, name, industry, country, timezone, status)
+              VALUES (@code, @name, 'Logistics', 'CA', 'America/Toronto', 'Active')
               ON CONFLICT (company_code) DO UPDATE SET name=EXCLUDED.name",
             c =>
             {

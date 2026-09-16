@@ -757,10 +757,10 @@ public sealed class FleetIdentityInstallationPostgresTests
     }
 
     private static async Task Company(Database db,long id,string suffix) => await db.ExecuteAsync(
-        "INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,@name,'transport')",
+        "INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,@name,'transport','US')",
         c => { c.Parameters.AddWithValue("@c",id); c.Parameters.AddWithValue("@code",$"INSTALL-{id}-{suffix}"); c.Parameters.AddWithValue("@name",$"Installation tenant {suffix}"); });
     private static Task<long> Branch(Database db,long company,string suffix) => db.InsertAsync(
-        "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,@name,'Active')",
+        "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,@code,@name,'Active','US')",
         c => { c.Parameters.AddWithValue("@c",company); c.Parameters.AddWithValue("@code",$"BR-{company}-{suffix}"); c.Parameters.AddWithValue("@name",$"Branch {suffix}"); });
     private static Task<long> Vehicle(Database db,long company,long branch,string code,string? vin=null,string? alternate=null) => db.InsertAsync(
         @"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin,vin_exception_type,alternate_identifier,status,availability_status,out_of_service)

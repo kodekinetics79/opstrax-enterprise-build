@@ -109,15 +109,5 @@ public sealed class GeneralLedgerExportService(Database db)
     private static string Money(object? v) => ToDec(v).ToString("F2", CultureInfo.InvariantCulture);
     private static string MoneyOrBlank(object? v) { var d = ToDec(v); return d == 0m ? "" : d.ToString("F2", CultureInfo.InvariantCulture); }
 
-    private static string Row(params string[] cells) => string.Join(",", cells.Select(Escape));
-
-    // RFC-escape + anti-CSV-injection: a cell starting with = + - or @ gets a leading apostrophe so a
-    // spreadsheet never executes it as a formula.
-    private static string Escape(string cell)
-    {
-        if (cell.Length > 0 && cell[0] is '=' or '+' or '-' or '@') cell = "'" + cell;
-        if (cell.Contains(',') || cell.Contains('"') || cell.Contains('\n') || cell.Contains('\r'))
-            cell = "\"" + cell.Replace("\"", "\"\"") + "\"";
-        return cell;
-    }
+    private static string Row(params string[] cells) => SpreadsheetSafeCsv.Row(cells);
 }

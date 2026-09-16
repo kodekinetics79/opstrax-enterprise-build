@@ -16,12 +16,12 @@ public sealed class TelemetryLineagePostgresTests
         var db = Db();
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Breadcrumb lineage test','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Breadcrumb lineage test','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"BREAD-{suffix}"));
         try
         {
             var branchId = await db.InsertAsync(
-                "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')",
+                "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'MAIN','Main','Active','US')",
                 c => c.Parameters.AddWithValue("@c", companyId));
             var vehicleId = await db.InsertAsync(
                 @"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status)

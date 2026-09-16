@@ -35,7 +35,7 @@ public sealed class PlatformControlSnapshotContractTests
     public void PlatformUiOffersAuditedSnapshotDownloadWithDigest()
     {
         var service = Read("frontend", "src", "services", "platformApi.ts");
-        var page = Read("frontend", "src", "pages", "platform", "PlatformTenantsPage.tsx");
+        var page = Read("frontend", "src", "pages", "platform", "tenant-management", "TenantDetailDrawer.tsx");
         Assert.Contains("captureTenantControlSnapshot", service, StringComparison.Ordinal);
         Assert.Contains("Capture audited control snapshot", page, StringComparison.Ordinal);
         Assert.Contains("snapshotSha256", page, StringComparison.Ordinal);
@@ -66,9 +66,9 @@ public sealed class PlatformControlSnapshotContractTests
             .ToArray();
 
         Assert.Equal(spaEntries, serverEntries);
-        Assert.Equal(92, serverEntries.Length);
+        Assert.Equal(91, serverEntries.Length);
         Assert.Equal(45, serverEntries.Count(entry => entry.Entitlement.Length > 0));
-        Assert.Equal(47, serverEntries.Count(entry => entry.Entitlement.Length == 0));
+        Assert.Equal(46, serverEntries.Count(entry => entry.Entitlement.Length == 0));
     }
 
     private static string Read(params string[] parts)

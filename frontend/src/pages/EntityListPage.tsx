@@ -6,7 +6,6 @@ import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, ArchiveRestore, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Trash2, Upload, UserCheck, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
-import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { AiInsightCard, DataTable, EmptyState, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { DriverIntelligenceBoard, triageOf, type Triage } from "@/components/DriverIntelligenceBoard";
 import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
@@ -16,12 +15,11 @@ import { assetsApi } from "@/services/assetsApi";
 import { customersApi } from "@/services/customersApi";
 import { driversApi } from "@/services/driversApi";
 import { EntityImportExport } from "@/components/EntityImportExport";
-import { jobsApi } from "@/services/jobsApi";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { downloadServerExport } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
-type EntityKind = "vehicles" | "drivers" | "jobs" | "customers" | "assets";
+type EntityKind = "drivers" | "assets";
 
 // Generic drawers must stay safe when an endpoint adds implementation columns.
 // Search indexes and authentication/crypto material are never customer-facing data.
@@ -82,43 +80,6 @@ type EntityConfig = {
 };
 
 const config: Record<EntityKind, EntityConfig> = {
-  vehicles: {
-    title: "Vehicles",
-    eyebrow: "Fleet Master Data",
-    description: "Fleet registry with readiness, risk heat, device/camera health, maintenance, compliance, cost, documents, safety events and AI recommendations.",
-    columns: ["vehicleCode", "type", "make", "model", "plateNumber", "status", "fleetReadinessScore", "dataQualityScore", "riskHeatScore", "assignedDriver"],
-    api: vehiclesApi,
-    fields: [
-      { key: "vehicleCode", label: "Vehicle Code", required: true },
-      { key: "type", label: "Type", required: true, type: "select", options: ["Truck", "Van", "Box Truck", "Reefer"] },
-      { key: "make", label: "Make" },
-      { key: "model", label: "Model" },
-      { key: "year", label: "Year", type: "number" },
-      { key: "odometerMiles", label: "Odometer (mi)", type: "number" },
-      { key: "vin", label: "VIN" },
-      { key: "plateNumber", label: "Plate Number" },
-      { key: "status", label: "Status", type: "select", options: ["Available", "On Route", "At Stop", "Idle", "Delayed", "Maintenance"] },
-    ],
-    defaults: { type: "Truck", status: "Available" },
-    kpis: [
-      ["Fleet Readiness", "fleetReadinessScore", "%"],
-      ["Data Completeness", "dataCompletenessScore", "%"],
-      ["At Risk", "atRisk", ""],
-      ["Device Exceptions", "deviceExceptions", ""],
-    ],
-    wow: ["Vehicle Risk Heat Score", "Recommended Action", "Smart Driver Assignment Suggestion", "Fleet Readiness Score", "Data Completeness Score"],
-    painPoints: ["Unplanned downtime", "Dispatching unavailable units", "Device/camera blind spots", "Expiring documents", "Cost leakage by asset"],
-    competitiveEdges: ["Readiness + risk in one score", "Camera/device status visible before dispatch", "Maintenance, safety, fuel and compliance evidence in one drawer", "Smart driver match action", "Audit-ready lifecycle trail"],
-    decisionSignals: ["readiness_score", "data_quality_score", "risk_score", "device_status", "camera_status", "assigned_driver"],
-    detailSections: [
-      ["Maintenance Summary", "maintenance", ["title", "category", "status", "riskLevel", "dueDate"]],
-      ["Compliance Summary", "compliance", ["documentName", "documentType", "status", "expiryDate"]],
-      ["Documents", "documents", ["documentName", "documentType", "status", "expiryDate"]],
-      ["Trip Activity", "trips", ["status", "startedAt", "completedAt"]],
-      ["Safety Events", "safetyEvents", ["eventType", "severity", "reviewStatus", "eventTime"]],
-      ["Audit Trail", "auditTrail", ["actionName", "actorName", "createdAt"]],
-    ],
-  },
   drivers: {
     title: "Drivers",
     eyebrow: "Driver Operations",
@@ -151,44 +112,6 @@ const config: Record<EntityKind, EntityConfig> = {
       ["DVIR Status", "inspections", ["inspectionType", "result", "createdAt"]],
       ["Safety / Coaching Queue", "safetyEvents", ["eventType", "severity", "reviewStatus", "eventTime"]],
       ["Vehicle Assignment History", "assignmentHistory", ["vehicleCode", "status", "effectiveFrom", "effectiveTo"]],
-      ["Audit Trail", "auditTrail", ["actionName", "actorName", "createdAt"]],
-    ],
-  },
-  customers: {
-    title: "Clients / Customers",
-    eyebrow: "Customer Operations",
-    description: "Customer profiles with contacts, addresses, active jobs, SLA health, communication history, contracts, ETA history and AI recommendations.",
-    columns: ["customerCode", "name", "contactName", "email", "status", "slaTier", "slaHealthScore", "deliveryExperienceScore", "activeJobs", "riskHeatScore"],
-    api: customersApi,
-    fields: [
-      { key: "customerCode", label: "Customer Code", required: true },
-      { key: "name", label: "Customer Name", required: true },
-      { key: "contactName", label: "Primary Contact" },
-      { key: "email", label: "Email", type: "email" },
-      { key: "phone", label: "Phone" },
-      { key: "billingAddress", label: "Billing Address" },
-      { key: "shippingAddress", label: "Shipping Address" },
-      { key: "status", label: "Status", type: "select", options: ["Active", "At Risk", "On Hold"] },
-      { key: "slaTier", label: "SLA Tier", type: "select", options: ["Standard", "Gold", "Platinum"] },
-    ],
-    defaults: { status: "Active", slaTier: "Standard" },
-    kpis: [
-      ["SLA Health", "slaHealthScore", "%"],
-      ["Delivery Experience", "deliveryExperienceScore", "%"],
-      ["At Risk Watch", "atRisk", ""],
-      ["Platinum Accounts", "platinumAccounts", ""],
-    ],
-    wow: ["Customer SLA Health Score", "At-Risk Customer Watch", "Recommended Customer Update", "Customer Delivery Experience Score"],
-    painPoints: ["SLA surprise escalations", "Manual customer update follow-up", "Contract/rate context separated from jobs", "ETA history hard to find", "At-risk account drift"],
-    competitiveEdges: ["SLA and delivery experience scored together", "ETA history and communications tied to each customer", "Contracts, active jobs and contacts in one view", "Customer update recommendation", "Customer risk watch for service teams"],
-    decisionSignals: ["sla_health_score", "delivery_experience_score", "risk_score", "active_jobs", "sla_tier", "status"],
-    detailSections: [
-      ["Contact Info", "contacts", ["fullName", "title", "email", "phone", "isPrimary"]],
-      ["Billing / Shipping Addresses", "addresses", ["addressType", "addressLine", "city", "state", "postalCode"]],
-      ["Active Jobs", "activeJobs", ["jobCode", "jobType", "status", "priority", "scheduledStart"]],
-      ["Communication History", "communications", ["channel", "message", "status", "sentAt"]],
-      ["Contract / Rate Summary", "contracts", ["contractCode", "title", "rateType", "status", "expirationDate"]],
-      ["Customer ETA History", "etaHistory", ["message", "channel", "status", "sentAt"]],
       ["Audit Trail", "auditTrail", ["actionName", "actorName", "createdAt"]],
     ],
   },
@@ -226,30 +149,7 @@ const config: Record<EntityKind, EntityConfig> = {
       ["Audit Trail", "auditTrail", ["actionName", "actorName", "createdAt"]],
     ],
   },
-  jobs: {
-    title: "Jobs & Orders",
-    eyebrow: "Dispatch Workflow",
-    description: "Customer jobs with pickup/drop-off, SLA/ETA, dispatch assignment, proof of delivery, communications and AI recommendations.",
-    columns: ["jobCode", "customerName", "jobType", "pickupAddress", "dropoffAddress", "status", "priority", "vehicleCode", "driverName"],
-    api: jobsApi,
-    fields: [
-      { key: "jobCode", label: "Job Code", required: true },
-      { key: "customerId", label: "Customer ID", type: "number" },
-      { key: "jobType", label: "Job Type", type: "select", options: ["Delivery", "Pickup", "Transfer", "Service", "Expedited"] },
-      { key: "priority", label: "Priority", type: "select", options: ["Low", "Normal", "High", "Critical"] },
-      { key: "pickupAddress", label: "Pickup Address", required: true },
-      { key: "dropoffAddress", label: "Drop-off Address", required: true },
-      { key: "status", label: "Status", type: "select", options: ["Unassigned", "Assigned", "En Route", "At Stop", "Delivered", "Cancelled"] },
-      { key: "notes", label: "Notes" },
-    ],
-    defaults: { jobType: "Delivery", priority: "Normal", status: "Unassigned", customerId: 1 },
-    kpis: [["Total Records", "total", ""], ["Active", "active", ""], ["At Risk", "atRisk", ""], ["Signals", "aiSignals", ""]],
-    wow: [],
-    painPoints: [],
-    competitiveEdges: [],
-    decisionSignals: [],
-    detailSections: [],
-  },
+
 };
 
 export function EntityListPage({ kind }: { kind: EntityKind }) {
@@ -272,7 +172,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const isScopedViewer = Boolean(session && (isDriverPortalRole(String(session.role ?? "")) || isCustomerPortalRole(String(session.role ?? ""))));
   const queryClient = useQueryClient();
   const permissions = permissionMatrix(kind);
-  const isFleetMaster = kind === "vehicles" || kind === "drivers" || kind === "assets";
+  const isFleetMaster = true;
   const canManageFleet = hasPermission(PERMISSIONS.FLEET_MANAGE);
   // The shipped fleet-master write endpoints all require fleet:manage. Use the
   // server contract here so page-specific labels cannot advertise a 403 action.
@@ -291,7 +191,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const canDelete = isFleetMaster ? canManageFleet : hasPermission(permissions.delete);
   const canAssign = isFleetMaster ? canManageFleet : hasPermission(permissions.assign);
   const canExport = hasPermission(permissions.export);
-  const archivedView = (kind === "vehicles" || kind === "drivers") && statusFilter === "Archived";
+  const archivedView = kind === "drivers" && statusFilter === "Archived";
 
   const list = useQuery({ queryKey: [kind, "lifecycle", archivedView ? "archived" : "active"], queryFn: () => archivedView && cfg.api.listArchived ? cfg.api.listArchived() : cfg.api.list() });
   const summary = useQuery({ queryKey: [kind, "summary"], queryFn: cfg.api.summary });
@@ -303,10 +203,9 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const selectedDetail = detail.data;
   const selectedRecord = (selectedDetail?.record as AnyRecord | undefined) || selected;
   const recommendations = (selectedDetail?.recommendations as AnyRecord[] | undefined) || [];
-  const driverOptions = useQuery({ queryKey: ["drivers", "assignment-options", 2000], queryFn: () => driversApi.listPaged({ limit: 2000 }).then((result) => result.rows), enabled: canAssign && !isScopedViewer && (kind === "vehicles" || kind === "assets") });
-  const vehicleOptions = useQuery({ queryKey: ["vehicles", "assignment-options", 2000], queryFn: () => vehiclesApi.listPaged({ limit: 2000 }).then((result) => result.rows), enabled: canAssign && !isScopedViewer && (kind === "drivers" || kind === "assets") });
+  const driverOptions = useQuery({ queryKey: ["drivers", "assignment-options", 2000], queryFn: () => driversApi.listPaged({ limit: 2000 }).then((result) => result.rows), enabled: canAssign && !isScopedViewer && kind === "assets" });
+  const vehicleOptions = useQuery({ queryKey: ["vehicles", "assignment-options", 2000], queryFn: () => vehiclesApi.listPaged({ limit: 2000 }).then((result) => result.rows), enabled: canAssign && !isScopedViewer });
   const customerOptions = useQuery({ queryKey: ["customers", "assignment-options"], queryFn: customersApi.list, enabled: canAssign && !isScopedViewer && kind === "assets" });
-  const planningInsights = useQuery({ queryKey: ["vehicles", "planning-insights"], queryFn: vehiclesApi.planningInsights, enabled: kind === "vehicles" && !isScopedViewer });
   const scopedRows = useMemo(() => scopeRowsForSession(kind, list.data || [], session), [kind, list.data, session]);
   const visibleSummary = useMemo(() => buildVisibleSummary(kind, scopedRows, summary.data as AnyRecord | undefined, session), [kind, scopedRows, session, summary.data]);
 
@@ -339,25 +238,18 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const assignMutation = useMutation({
     mutationFn: async (targetId?: string) => {
       if (!selectedRecord?.id) return null;
-      if (kind === "vehicles") {
-        if (!targetId) throw new Error("Choose a driver before confirming the assignment.");
-        return vehiclesApi.assignDriver(String(selectedRecord.id), targetId);
-      }
       if (kind === "drivers") {
         if (!targetId) throw new Error("Choose a vehicle before confirming the assignment.");
         return driversApi.assignVehicle(String(selectedRecord.id), targetId);
       }
-      if (kind === "assets") {
-        const vehicle = pickBestVehicle(vehicleOptions.data || []);
-        const driver = pickBestDriver(driverOptions.data || []);
-        const customer = (customerOptions.data || [])[0];
-        return assetsApi.assign(String(selectedRecord.id), {
-          vehicleId: vehicle?.id ?? null,
-          driverId: driver?.id ?? null,
-          customerId: customer?.id ?? null,
-        });
-      }
-      return null;
+      const vehicle = pickBestVehicle(vehicleOptions.data || []);
+      const driver = pickBestDriver(driverOptions.data || []);
+      const customer = (customerOptions.data || [])[0];
+      return assetsApi.assign(String(selectedRecord.id), {
+        vehicleId: vehicle?.id ?? null,
+        driverId: driver?.id ?? null,
+        customerId: customer?.id ?? null,
+      });
     },
     onSuccess: async () => {
       setAssignmentOpen(false);
@@ -368,11 +260,9 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     },
   });
   const exportMutation = useMutation({
-    mutationFn: () => kind === "vehicles"
-      ? downloadServerExport("/api/vehicles/export", `vehicles_${new Date().toISOString().slice(0, 10)}.csv`)
-      : kind === "drivers"
-        ? downloadServerExport("/api/drivers/export", `drivers_${new Date().toISOString().slice(0, 10)}.csv`)
-        : Promise.resolve(exportCsv(kind, rows)),
+    mutationFn: () => kind === "drivers"
+      ? downloadServerExport("/api/drivers/export", `drivers_${new Date().toISOString().slice(0, 10)}.csv`)
+      : Promise.resolve(exportCsv(kind, rows)),
   });
 
   const rows = useMemo(() => {
@@ -383,7 +273,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
       // driver may legitimately be Available, On Route, or Suspended; the "Active"
       // tab means not archived rather than the literal operational status "Active".
       const matchesStatus = archivedView || statusFilter === "All" ||
-        ((kind === "vehicles" || kind === "drivers") && statusFilter === "Active") ||
+        (kind === "drivers" && statusFilter === "Active") ||
         String(row.status || "").toLowerCase().includes(statusFilter.toLowerCase()) ||
         (statusFilter === "At Risk" && (Number(row.riskScore || row.risk_score || 0) >= 40 || /maintenance|delayed/i.test(String(row.status))));
 
@@ -480,7 +370,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
               Triage: {triageFilter} <X className="h-3 w-3" />
             </button>
           ) : null}
-          {["All", "Active", "Available", "At Risk", "Maintenance", ...((kind === "vehicles" || kind === "drivers") ? ["Archived"] : [])].map((item) => (
+          {["All", "Active", "Available", "At Risk", "Maintenance", ...(kind === "drivers" ? ["Archived"] : [])].map((item) => (
             <button key={item} aria-pressed={statusFilter === item} className={`${statusFilter === item ? "btn-primary" : "btn-ghost"} btn-compact`} onClick={() => setStatusFilter(item)}>{item}</button>
           ))}
         </div>
@@ -525,7 +415,6 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
                 summary={visibleSummary}
               />
             ) : null}
-            {kind === "vehicles" && !isScopedViewer ? <VehiclePlanningForecast data={planningInsights.data} loading={planningInsights.isLoading} /> : null}
           </div>
         </details>
       ) : null}
@@ -546,7 +435,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         }}
         onReactivate={(record) => canUpdate && cfg.api.reactivate && reactivateMutation.mutate(String(record.id))}
         onSmartAssign={!archivedView && isFleetMaster && canAssign ? () => {
-          if (kind === "vehicles" || kind === "drivers") setAssignmentOpen(true);
+          if (kind === "drivers") setAssignmentOpen(true);
           else assignMutation.mutate(undefined);
         } : undefined}
         onNavigate={navigate}
@@ -587,11 +476,11 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
           onSave={(payload) => saveMutation.mutate(payload)}
         />
       ) : null}
-      {assignmentOpen && selectedRecord && (kind === "vehicles" || kind === "drivers") ? (
+      {assignmentOpen && selectedRecord && kind === "drivers" ? (
         <FleetMasterAssignmentModal
           kind={kind}
           record={selectedRecord}
-          options={(kind === "vehicles" ? driverOptions.data : vehicleOptions.data) || []}
+          options={vehicleOptions.data || []}
           saving={assignMutation.isPending}
           serverError={assignMutation.error ? apiErrorMessage(assignMutation.error, "The assignment could not be saved. Please try again.") : undefined}
           onClose={() => setAssignmentOpen(false)}
@@ -759,7 +648,7 @@ function BulkImportControls({ kind, fields, defaults, create, canImport, onImpor
 }
 
 function FleetMasterAssignmentModal({ kind, record, options, saving, serverError, onClose, onSave }: {
-  kind: "vehicles" | "drivers";
+  kind: "drivers";
   record: AnyRecord;
   options: AnyRecord[];
   saving: boolean;
@@ -769,18 +658,14 @@ function FleetMasterAssignmentModal({ kind, record, options, saving, serverError
 }) {
   const close = () => { if (!saving) onClose(); };
   const dialogRef = useDialogFocus<HTMLFormElement>(true, close);
-  const currentTargetId = String(kind === "vehicles"
-    ? (record.assignedDriverId ?? record.assigned_driver_id ?? "")
-    : (record.assignedVehicleId ?? record.assigned_vehicle_id ?? ""));
+  const currentTargetId = String(record.assignedVehicleId ?? record.assigned_vehicle_id ?? "");
   const [targetId, setTargetId] = useState(currentTargetId);
   const eligible = options.filter((option) => {
     if (String(option.id) === currentTargetId) return true;
-    return kind === "vehicles"
-      ? !(option.assignedVehicleId ?? option.assigned_vehicle_id)
-      : !(option.assignedDriverId ?? option.assigned_driver_id);
+    return !(option.assignedDriverId ?? option.assigned_driver_id);
   });
   const recordLabel = recordTitle(kind, record);
-  const targetLabel = kind === "vehicles" ? "driver" : "vehicle";
+  const targetLabel = "vehicle";
 
   return (
     <div className="fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 backdrop-blur-sm">
@@ -798,9 +683,7 @@ function FleetMasterAssignmentModal({ kind, record, options, saving, serverError
           <select className="field w-full" required value={targetId} onChange={(event) => setTargetId(event.target.value)}>
             <option value="">Select an available {targetLabel}</option>
             {eligible.map((option) => <option key={String(option.id)} value={String(option.id)}>
-              {kind === "vehicles"
-                ? `${String(option.driverCode ?? option.driver_code ?? option.id)} — ${String(option.fullName ?? option.full_name ?? "Unnamed driver")}`
-                : `${String(option.vehicleCode ?? option.vehicle_code ?? option.id)} — ${String(option.make ?? "")} ${String(option.model ?? "")}`.trim()}
+              {`${String(option.vehicleCode ?? option.vehicle_code ?? option.id)} — ${String(option.make ?? "")} ${String(option.model ?? "")}`.trim()}
             </option>)}
           </select>
         </label>
@@ -835,7 +718,7 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
   const dialogRef = useDialogFocus<HTMLElement>(Boolean(record), onClose);
   const hasPermission = useHasPermission();
   const canViewDevices = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_VIEW);
-  const vehicleId = kind === "drivers" ? record?.assignedVehicleId ?? record?.assigned_vehicle_id : kind === "vehicles" ? record?.id : null;
+  const vehicleId = kind === "drivers" ? record?.assignedVehicleId ?? record?.assigned_vehicle_id : null;
   const linkedVehicle = useQuery({
     queryKey: ["vehicles", "linked-device-detail", vehicleId],
     queryFn: () => readLinkedVehicle(String(vehicleId), vehiclesApi.detail),
@@ -873,8 +756,8 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
           {scores.length ? <dl className="record-detail-scores">{scores.map(([key, value]) => <div key={key}><dt>{labelize(key)}</dt><dd>{String(value)}</dd></div>)}</dl> : null}
           <h3 className="text-sm font-bold text-slate-900">Profile</h3>
           <dl className="record-detail-fields">{entries.map(([key, value]) => <div key={key}><dt>{labelize(key)}</dt><dd>{displayRecordValue(value)}</dd></div>)}</dl>
-          {(kind === "drivers" || kind === "vehicles") ? <section className="record-detail-devices">
-            <h3 className="text-sm font-bold text-slate-900">{kind === "drivers" ? `Vehicle & devices · ${String(record.assignedVehicle || record.assignedVehicleCode || "Unassigned")}` : "Installed devices"}</h3>
+          {kind === "drivers" ? <section className="record-detail-devices">
+            <h3 className="text-sm font-bold text-slate-900">{`Vehicle & devices · ${String(record.assignedVehicle || record.assignedVehicleCode || "Unassigned")}`}</h3>
             {linkedVehicle.data?.archived ? <p className="text-sm text-amber-700">This assigned vehicle is archived. Change vehicle to select an active unit.</p> : null}
             {!vehicleId ? <p className="text-sm text-slate-500">Assign a vehicle to see its installed devices.</p> : !canViewDevices ? <p className="text-sm text-slate-500">Device viewing permission is required.</p> : !hasPermission(PERMISSIONS.VEHICLES_VIEW) ? <p className="text-sm text-slate-500">Vehicle viewing permission is required.</p> : linkedVehicle.isPending ? <p role="status" className="text-sm text-slate-500">Loading installed devices…</p> : linkedVehicle.isError ? <div role="alert" className="text-sm text-rose-700">Could not load this vehicle’s devices. <button type="button" className="text-teal-700 underline" onClick={() => void linkedVehicle.refetch()}>Retry</button></div> : devices.length ? <ul className="divide-y divide-slate-200">{devices.map(device => <li key={String(device.deviceId ?? device.device_id)} className="flex items-center justify-between gap-2 py-2"><span className="text-sm"><strong>{String(device.deviceSerial ?? device.device_serial ?? "Installed device")}</strong><span className="block text-xs text-slate-500">{String(device.deviceRole ?? device.device_role ?? "Device")} · {String(device.status ?? "Unknown")}</span></span><button type="button" className="btn-ghost" onClick={() => onNavigate(deviceDetailsRoute(device.deviceId ?? device.device_id))}>Configure / restart</button></li>)}</ul> : <p className="text-sm text-slate-500">No installed device is recorded for this vehicle.</p>}
           </section> : null}
@@ -891,23 +774,19 @@ function FleetPainPointCockpit({ kind, config: cfg, rows, summary }: { kind: Ent
   const ready = Math.max(0, rows.length - blockers);
   const assigned = rows.filter((row) => row.assignedDriver || row.assignedVehicle || row.assigned_driver || row.assigned_vehicle || row.customerName).length;
   const blindSpots = rows.filter((row) => /degraded|review|offline|unknown/i.test(String(row.deviceStatus || row.device_status || row.cameraStatus || row.camera_status || ""))).length;
-  const primaryScore = kind === "vehicles"
-    ? Number(summary?.fleetReadinessScore ?? summary?.fleet_readiness_score ?? 0)
-    : kind === "drivers"
-      ? Number(summary?.driverReadinessScore ?? summary?.driver_readiness_score ?? 0)
-      : Number(summary?.utilizationScore ?? summary?.utilization_score ?? 0);
+  const primaryScore = kind === "drivers"
+    ? Number(summary?.driverReadinessScore ?? summary?.driver_readiness_score ?? 0)
+    : Number(summary?.utilizationScore ?? summary?.utilization_score ?? 0);
   const assignedPct = rows.length ? Math.round((assigned / rows.length) * 100) : 0;
-  const title = kind === "vehicles" ? "Fleet Readiness" : kind === "drivers" ? "Driver Readiness" : "Asset Control";
-  const sub = kind === "vehicles"
-    ? "A live-feeling view of what can move, what is blocked, and what should be retired or fixed before it hurts dispatch."
-    : kind === "drivers"
-      ? "Availability, safety, compliance and assignment signals in one place so dispatch does not gamble with driver fit."
-      : "Trailer and equipment control focused on utilization, geofence trust, and fast reassignment.";
+  const title = kind === "drivers" ? "Driver Readiness" : "Asset Control";
+  const sub = kind === "drivers"
+    ? "Availability, safety, compliance and assignment signals in one place so dispatch does not gamble with driver fit."
+    : "Trailer and equipment control focused on utilization, geofence trust, and fast reassignment.";
   const lanes = [
     { label: "Ready", value: ready, pct: rows.length ? Math.round((ready / rows.length) * 100) : 0, color: chart.emerald600, bg: "bg-emerald-50", border: "border-emerald-200" },
     { label: "Blocked", value: blockers, pct: rows.length ? Math.round((blockers / rows.length) * 100) : 0, color: chart.amber600, bg: "bg-amber-50", border: "border-amber-200" },
     { label: "Assigned", value: assigned, pct: assignedPct, color: chart.blue600, bg: "bg-blue-50", border: "border-blue-200" },
-    { label: kind === "vehicles" ? "Blind spots" : "Review", value: kind === "vehicles" ? blindSpots : rows.filter((row) => riskValue(row) >= 40).length, pct: rows.length ? Math.round(((kind === "vehicles" ? blindSpots : rows.filter((row) => riskValue(row) >= 40).length) / rows.length) * 100) : 0, color: chart.violet600, bg: "bg-violet-50", border: "border-violet-200" },
+    { label: "Review", value: rows.filter((row) => riskValue(row) >= 40).length, pct: rows.length ? Math.round((rows.filter((row) => riskValue(row) >= 40).length / rows.length) * 100) : 0, color: chart.violet600, bg: "bg-violet-50", border: "border-violet-200" },
   ];
   const watchList = [...rows].sort((a, b) => riskValue(b) - riskValue(a)).slice(0, 4);
 
@@ -1015,146 +894,6 @@ function RiskActionQueue({ kind, rows }: { kind: EntityKind; rows: AnyRecord[] }
   );
 }
 
-function VehiclePlanningForecast({ data, loading }: { data?: AnyRecord; loading: boolean }) {
-  const replacement = ((data?.replacementForecast as AnyRecord[]) || []).slice(0, 6);
-  const customers = ((data?.customerBusiness as AnyRecord[]) || []).slice(0, 5);
-  const routes = ((data?.routeBusiness as AnyRecord[]) || []).slice(0, 5);
-  const gaps = ((data?.operationalGaps as AnyRecord[]) || []);
-  const chartRows = replacement.map((row) => ({
-    name: String(row.vehicleCode || row.vehicle_code || "").replace("-", "\n"),
-    score: Number(row.capexPriorityScore ?? row.capex_priority_score ?? 0),
-    status: String(row.lifecycleStatus || row.lifecycle_status || ""),
-  }));
-
-  return (
-    <section className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,.85fr)]">
-      <div className="overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 via-blue-50 to-teal-50 p-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <p className="section-title">Resource Planning / Forecasting</p>
-              <h2 className="mt-2 text-xl font-black text-slate-950">Aging fleet and replacement plan</h2>
-              <p className="mt-2 max-w-3xl text-sm text-slate-600">Real backend-calculated lifecycle visibility using vehicle year, odometer, readiness, risk and downtime status.</p>
-            </div>
-            <span className="badge border-violet-200 bg-violet-50 text-violet-700">CapEx forecast</span>
-          </div>
-        </div>
-        {loading ? <p className="p-5 text-sm text-slate-500">Loading lifecycle forecast...</p> : null}
-        <div className="grid gap-0 lg:grid-cols-[.8fr_1.2fr]">
-          <div className="border-b border-slate-100 p-5 lg:border-b-0 lg:border-r">
-            <p className="text-sm font-black text-slate-950">Replacement priority curve</p>
-            <div className="mt-4 h-56">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartRows}>
-                  <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: chart.slate500 }} />
-                  <Tooltip cursor={{ fill: "rgba(37,99,235,.06)" }} />
-                  <Bar dataKey="score" radius={[8, 8, 0, 0]}>
-                    {chartRows.map((row) => <Cell key={row.name} fill={row.score > 180 ? chart.red600 : row.score > 90 ? chart.amber500 : chart.blue600} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <p className="mt-3 text-xs leading-relaxed text-slate-500">Higher bars mean stronger replacement or budget pressure. This gives the buyer a concrete CapEx queue, not a static vehicle list.</p>
-          </div>
-          <div>
-            {replacement.map((row, index) => {
-              const score = Number(row.capexPriorityScore ?? row.capex_priority_score ?? 0);
-              return (
-                <article key={String(row.id)} className="grid gap-3 border-b border-slate-100 p-4 last:border-b-0 md:grid-cols-[70px_1fr]">
-                  <div className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-lg font-black text-slate-700">#{index + 1}</div>
-                  <div>
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <p className="font-black text-slate-950">{String(row.vehicleCode || row.vehicle_code)}</p>
-                        <p className="text-xs text-slate-500">{String(row.type)} · {String(row.make)} {String(row.model)} · {String(row.ageYears ?? row.age_years)} years · {Number(row.odometerMiles ?? row.odometer_miles ?? 0).toLocaleString()} mi</p>
-                      </div>
-                      <StatusBadge status={row.lifecycleStatus || row.lifecycle_status} />
-                    </div>
-                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.round(score / 2.6))}%`, background: score > 180 ? chart.red600 : score > 90 ? chart.amber500 : chart.blue600 }} />
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-xs font-bold text-slate-600">{String(row.replacementWindow || row.replacement_window)} replacement window</p>
-                      <p className="text-xs font-semibold text-blue-700">{String(row.recommendedAction || row.recommended_action)}</p>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-5">
-        <div className="overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 p-5">
-            <p className="section-title">Measured Features</p>
-            <h3 className="mt-2 font-black text-slate-950">Pain points with live counts</h3>
-          </div>
-          <div className="grid gap-0 sm:grid-cols-2">
-            {gaps.map((gap) => (
-              <div key={String(gap.gapName || gap.gap_name)} className="border-b border-r border-slate-100 p-4">
-                <p className="text-3xl font-black text-slate-950">{String(gap.affectedRecords ?? gap.affected_records ?? 0)}</p>
-                <p className="mt-2 text-sm font-black text-slate-800">{String(gap.gapName || gap.gap_name)}</p>
-                <p className="mt-1 text-xs leading-relaxed text-slate-500">{String(gap.visibility)}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <BusinessPlanningPanel title="Top Customers by Business" rows={customers} entityLabel="customer" />
-        <BusinessPlanningPanel title="Top Routes by Business" rows={routes} entityLabel="route" />
-      </div>
-    </section>
-  );
-}
-
-function BusinessPlanningPanel({ title, rows, entityLabel }: { title: string; rows: AnyRecord[]; entityLabel: "customer" | "route" }) {
-  const counts = rows.map((row) => Number(row.jobCount ?? row.job_count ?? 0));
-  const maxJobs = Math.max(1, ...counts);
-  return (
-    <div className="overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-100 p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="section-title">Business Planning</p>
-            <h3 className="mt-2 text-lg font-black text-slate-950">{title}</h3>
-          </div>
-          <span className="badge border-blue-200 bg-blue-50 text-blue-700">Revenue + margin</span>
-        </div>
-      </div>
-      <div className="divide-y divide-slate-100">
-        {rows.map((row, index) => {
-          const label = entityLabel === "customer" ? row.customerName || row.customer_name : row.routeName || row.route_name;
-          const jobs = Number(row.jobCount ?? row.job_count ?? 0);
-          const width = Math.max(8, Math.round((jobs / maxJobs) * 100));
-          return (
-            <article key={String(row.id)} className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-slate-100 text-xs font-black text-slate-600">{index + 1}</span>
-                    <p className="truncate font-black text-slate-950">{String(label)}</p>
-                  </div>
-                  <p className="mt-2 text-xs text-slate-500">{jobs} jobs · {String(row.revenueEstimate ?? row.revenue_estimate ?? "$0")} revenue · {String(row.marginEstimate ?? row.margin_estimate ?? "$0")} margin</p>
-                </div>
-                <RiskBadge risk={Number(row.avgJobRisk ?? row.avg_job_risk ?? 0) >= 55 ? "High" : Number(row.avgJobRisk ?? row.avg_job_risk ?? 0) >= 35 ? "Medium" : "Low"} />
-              </div>
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-                <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-teal-500" style={{ width: `${width}%` }} />
-              </div>
-              <p className="mt-2 text-xs font-bold text-blue-700">{String(row.planningSignal || row.planning_signal || "Maintain plan")}</p>
-            </article>
-          );
-        })}
-        {!rows.length ? (
-          <div className="p-5 text-sm text-slate-500">No business planning records yet.</div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 function pickBestDriver(rows: AnyRecord[]) {
   const score = (r: AnyRecord) => Number(r.driverReadinessScore ?? r.readinessScore ?? r.safetyScore ?? 0);
   const eligible = rows.filter(r => !r.assignedVehicleId && !r.assigned_vehicle_id &&
@@ -1176,14 +915,12 @@ function riskValue(row: AnyRecord) {
 }
 
 function recordTitle(kind: EntityKind, row: AnyRecord) {
-  if (kind === "vehicles") return String(row.vehicleCode || row.vehicle_code || row.name || `Vehicle ${row.id}`);
   if (kind === "drivers") return String(row.fullName || row.full_name || row.driverCode || `Driver ${row.id}`);
   if (kind === "assets") return String(row.assetCode || row.asset_code || row.name || `Asset ${row.id}`);
   return String(row.name || row.title || `Record ${row.id}`);
 }
 
 function actionFor(kind: EntityKind, row: AnyRecord) {
-  if (kind === "vehicles") return /maintenance/i.test(String(row.status)) ? "Create maintenance review before dispatch release." : "Confirm device, camera and driver assignment before next trip.";
   if (kind === "drivers") return Number(row.complianceScore ?? row.compliance_score ?? 100) < 85 ? "Review license, certification and HOS risk before assigning." : "Match with best-fit vehicle and monitor safety score.";
   if (kind === "assets") return /outside/i.test(String(row.geofenceStatus ?? row.geofence_status)) ? "Open unauthorized movement review and notify dispatch." : "Confirm customer/vehicle assignment and utilization target.";
   return "Review operational record.";
@@ -1311,10 +1048,8 @@ function CreateEditModal({ title, fields, initial, saving, onClose, onSave }: {
 
 
 function permissionMatrix(kind: EntityKind) {
-  if (kind === "vehicles") return { create: "vehicles:create", update: "vehicles:update", delete: "vehicles:delete", assign: "vehicles:assign", export: "vehicles:export" };
   if (kind === "drivers") return { create: "drivers:create", update: "drivers:update", delete: "drivers:delete", assign: "drivers:assign", export: "drivers:export" };
-  if (kind === "jobs") return { create: "shipments:create", update: "shipments:update", delete: "shipments:delete", assign: "dispatch:assign", export: "shipments:export" };
-  return { create: "customers:create", update: "customers:update", delete: "customers:delete", assign: "customers:update", export: "customers:view" };
+  return { create: "assets:create", update: "assets:update", delete: "assets:delete", assign: "assets:update", export: "assets:view" };
 }
 
 function buildVisibleSummary(kind: EntityKind, rows: AnyRecord[], summary: AnyRecord | undefined, session?: AnyRecord | null) {
@@ -1323,28 +1058,12 @@ function buildVisibleSummary(kind: EntityKind, rows: AnyRecord[], summary: AnyRe
 
   if (!scoped) return summary ?? {};
 
-  if (kind === "vehicles") {
-    const readiness = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.fleetReadinessScore ?? row.readinessScore ?? 0), 0) / rows.length) : 0;
-    const completeness = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.dataCompletenessScore ?? row.dataQualityScore ?? 0), 0) / rows.length) : 0;
-    const risk = rows.filter((row) => riskValue(row) >= 40).length;
-    const devices = rows.filter((row) => /offline|review|degraded/i.test(String(row.deviceStatus ?? row.device_status ?? ""))).length;
-    return { ...summary, fleetReadinessScore: readiness, dataCompletenessScore: completeness, atRisk: risk, deviceExceptions: devices };
-  }
-
   if (kind === "drivers") {
     const readiness = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.driverReadinessScore ?? row.readinessScore ?? 0), 0) / rows.length) : 0;
     const completeness = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.complianceScore ?? 0), 0) / rows.length) : 0;
     const risk = rows.filter((row) => riskValue(row) >= 40).length;
     const safety = rows.length ? Math.round(rows.reduce((total, row) => total + Number(row.safetyScore ?? 0), 0) / rows.length) : 0;
     return { ...summary, driverReadinessScore: readiness, dataCompletenessScore: completeness, atRisk: risk, safetyScore: safety };
-  }
-
-  if (kind === "jobs") {
-    const total = rows.length;
-    const active = rows.filter((row) => !/completed|delivered/i.test(String(row.status ?? ""))).length;
-    const atRisk = rows.filter((row) => /delayed|risk/i.test(String(row.slaStatus ?? row.status ?? ""))).length;
-    const assigned = rows.filter((row) => /assigned|en route|at stop/i.test(String(row.status ?? ""))).length;
-    return { ...summary, total: total, active: active, atRisk: atRisk, aiSignals: assigned };
   }
 
   return { ...summary, total: rows.length };

@@ -41,7 +41,7 @@ const NAV_SECTIONS = [
     items: [
       "safety-center", "dashcam", "incidents", "coaching", "driver-scorecards",
       "evidence-packages", "traffic-violations", "digital-forms", "dvir-inspections",
-      "hos-eld", "compliance-center", "fleet-compliance", "fleet-saudi-readiness",
+      "hos-eld", "compliance-center", "fleet-compliance",
     ],
   },
   {

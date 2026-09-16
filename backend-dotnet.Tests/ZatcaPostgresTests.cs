@@ -19,6 +19,7 @@ public class ZatcaPostgresTests
     public async Task Generate_Produces_Ubl_Hash_Qr_And_Chains_Pih_Across_Invoices()
     {
         var db = CreateDatabase();
+        await new CountryProfileSchemaService(db).EnsureAsync();
         await new ZatcaSchemaService(db).EnsureAsync();
         var svc = new ZatcaService(db, new PendingOnboardingZatcaGateway());
         var companyCode = $"ZATCA-{Guid.NewGuid():N}".ToUpperInvariant()[..18];
@@ -29,6 +30,7 @@ public class ZatcaPostgresTests
 
         try
         {
+            await SeedSellerRegistrationAsync(db, companyId);
             var inv1 = await SeedIssuedInvoiceAsync(db, companyId, "ZINV-1", 1000m, 150m, 1150m);
             var inv2 = await SeedIssuedInvoiceAsync(db, companyId, "ZINV-2", 2000m, 300m, 2300m);
 
@@ -76,6 +78,7 @@ public class ZatcaPostgresTests
         finally
         {
             await db.ExecuteAsync("DELETE FROM zatca_invoices WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM seller_tax_registration WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
             await db.ExecuteAsync("DELETE FROM issued_invoices WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
             await db.ExecuteAsync("DELETE FROM invoice_drafts WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
             await db.ExecuteAsync("DELETE FROM customers WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
@@ -87,6 +90,7 @@ public class ZatcaPostgresTests
     public async Task First_Invoice_Pih_Is_Base64_Sha256_Of_Zero()
     {
         var db = CreateDatabase();
+        await new CountryProfileSchemaService(db).EnsureAsync();
         await new ZatcaSchemaService(db).EnsureAsync();
         var svc = new ZatcaService(db, new PendingOnboardingZatcaGateway());
         var companyCode = $"ZATCA0-{Guid.NewGuid():N}".ToUpperInvariant()[..18];
@@ -95,6 +99,7 @@ public class ZatcaPostgresTests
             c => c.Parameters.AddWithValue("@c", companyCode));
         try
         {
+            await SeedSellerRegistrationAsync(db, companyId);
             var inv = await SeedIssuedInvoiceAsync(db, companyId, "Z0-1", 100m, 15m, 115m);
             var r = await svc.GenerateForIssuedInvoiceAsync(companyId, inv, "standard");
             var expected = Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("0")));
@@ -103,12 +108,147 @@ public class ZatcaPostgresTests
         finally
         {
             await db.ExecuteAsync("DELETE FROM zatca_invoices WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM seller_tax_registration WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
             await db.ExecuteAsync("DELETE FROM issued_invoices WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
             await db.ExecuteAsync("DELETE FROM invoice_drafts WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
             await db.ExecuteAsync("DELETE FROM customers WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
             await db.ExecuteAsync("DELETE FROM companies WHERE id=@c", c => c.Parameters.AddWithValue("@c", companyId));
         }
     }
+
+    [Fact]
+    public async Task Concurrent_Generation_Serializes_Icv_And_Pih_Per_Seller()
+    {
+        var db = CreateDatabase();
+        await new CountryProfileSchemaService(db).EnsureAsync();
+        await new ZatcaSchemaService(db).EnsureAsync();
+        var svc = new ZatcaService(db, new PendingOnboardingZatcaGateway());
+        var companyCode = $"ZATCAC-{Guid.NewGuid():N}".ToUpperInvariant()[..18];
+        var companyId = await db.InsertAsync(
+            "INSERT INTO companies (company_code, name, industry, status, country, currency) VALUES (@c,'Concurrent Seller','Logistics','Active','SA','SAR') RETURNING id",
+            c => c.Parameters.AddWithValue("@c", companyCode));
+        try
+        {
+            await SeedSellerRegistrationAsync(db, companyId);
+            var invoiceIds = new List<Guid>();
+            for (var i = 1; i <= 6; i++)
+                invoiceIds.Add(await SeedIssuedInvoiceAsync(db, companyId, $"ZCON-{i}", 100m * i, 15m * i, 115m * i));
+
+            var generated = await Task.WhenAll(invoiceIds.Select(id =>
+                svc.GenerateForIssuedInvoiceAsync(companyId, id, "standard")));
+            var ordered = generated.Select(result => result!).OrderBy(result => result.Icv).ToArray();
+
+            Assert.Equal(Enumerable.Range(1, 6).Select(i => (long)i), ordered.Select(result => result.Icv));
+            for (var i = 1; i < ordered.Length; i++)
+                Assert.Equal(ordered[i - 1].InvoiceHash, ordered[i].Pih);
+        }
+        finally
+        {
+            await db.ExecuteAsync("DELETE FROM zatca_invoices WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM seller_tax_registration WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM issued_invoices WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM invoice_drafts WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM customers WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM companies WHERE id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+        }
+    }
+
+    [Fact]
+    public async Task NonSaudiTenant_CannotEnterZatcaWorkflow()
+    {
+        var db = CreateDatabase();
+        await new CountryProfileSchemaService(db).EnsureAsync();
+        await new ZatcaSchemaService(db).EnsureAsync();
+        var svc = new ZatcaService(db, new PendingOnboardingZatcaGateway());
+        var companyCode = $"NOZATCA-{Guid.NewGuid():N}".ToUpperInvariant()[..18];
+        var companyId = await db.InsertAsync(
+            "INSERT INTO companies (company_code, name, industry, status, country, currency) VALUES (@c,'US Seller','Logistics','Active','US','USD') RETURNING id",
+            c => c.Parameters.AddWithValue("@c", companyCode));
+        try
+        {
+            var error = await Assert.ThrowsAsync<ZatcaPreparationException>(() =>
+                svc.GenerateForIssuedInvoiceAsync(companyId, Guid.NewGuid(), "standard"));
+            Assert.Contains("Saudi Arabia", error.Message, StringComparison.Ordinal);
+            await Assert.ThrowsAsync<ZatcaPreparationException>(() => svc.ListAsync(companyId));
+            await Assert.ThrowsAsync<ZatcaPreparationException>(() => svc.GetSaudiFinanceReadinessAsync(companyId));
+        }
+        finally
+        {
+            await db.ExecuteAsync("DELETE FROM companies WHERE id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+        }
+    }
+
+    [Fact]
+    public async Task CredentialsWithoutCertification_DoNotTransmitInvoiceOrEnableLiveSubmission()
+    {
+        var db = CreateDatabase();
+        await new CountryProfileSchemaService(db).EnsureAsync();
+        await new ZatcaSchemaService(db).EnsureAsync();
+        var gateway = new CertificationPendingGateway();
+        var svc = new ZatcaService(db, gateway);
+        var companyCode = $"ZATCAG-{Guid.NewGuid():N}".ToUpperInvariant()[..18];
+        var companyId = await db.InsertAsync(
+            "INSERT INTO companies (company_code, name, industry, status, country, currency) VALUES (@c,'Gated Seller','Logistics','Active','SA','SAR') RETURNING id",
+            c => c.Parameters.AddWithValue("@c", companyCode));
+        try
+        {
+            await SeedSellerRegistrationAsync(db, companyId);
+            var invoiceId = await SeedIssuedInvoiceAsync(db, companyId, "ZGATE-1", 100m, 15m, 115m);
+
+            var generated = await svc.GenerateForIssuedInvoiceAsync(companyId, invoiceId, "standard");
+            Assert.NotNull(generated);
+            Assert.Equal("certification_pending", generated!.ClearanceStatus);
+            Assert.Equal(0, gateway.StampCalls);
+            Assert.Equal(0, gateway.SubmissionCalls);
+
+            var readiness = await svc.GetSaudiFinanceReadinessAsync(companyId);
+            Assert.True(readiness.ZatcaGatewayConfigured);
+            Assert.False(readiness.ZatcaCertificationVerified);
+            Assert.False(readiness.LiveZatcaSubmissionEnabled);
+            Assert.Equal("Adapter unavailable; provider onboarding required", readiness.PaymentProviderState);
+            Assert.False(readiness.PaymentAcceptanceEnabled);
+            Assert.False(readiness.PaymentWebhookVerified);
+        }
+        finally
+        {
+            await db.ExecuteAsync("DELETE FROM zatca_invoices WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM seller_tax_registration WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM issued_invoices WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM invoice_drafts WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM customers WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM companies WHERE id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+        }
+    }
+
+    private sealed class CertificationPendingGateway : IZatcaComplianceGateway
+    {
+        public bool CredentialsConfigured => true;
+        public bool CertificationVerified => false;
+        public bool LiveSubmissionEnabled => true;
+        public string ProviderState => "certification_pending";
+        public int StampCalls { get; private set; }
+        public int SubmissionCalls { get; private set; }
+
+        public Task<(bool Stamped, string? SignedXml)> StampAsync(string ublXml, CancellationToken ct = default)
+        {
+            StampCalls++;
+            return Task.FromResult((true, (string?)ublXml));
+        }
+
+        public Task<(string Status, string? ResponseJson)> ClearOrReportAsync(
+            string signedXml, string invoiceType, CancellationToken ct = default)
+        {
+            SubmissionCalls++;
+            return Task.FromResult(("cleared", (string?)"{}"));
+        }
+    }
+
+    private static Task SeedSellerRegistrationAsync(Database db, long companyId)
+        => db.ExecuteAsync(
+            @"INSERT INTO seller_tax_registration
+                (company_id, jurisdiction, regime, tax_registration_no, legal_name, effective_date)
+              VALUES (@cid, 'SA', 'zatca_vat', '300000000000003', 'ZATCA Seller', DATE '2025-01-01')",
+            c => c.Parameters.AddWithValue("@cid", companyId));
 
     private static async Task<Guid> SeedIssuedInvoiceAsync(Database db, long companyId, string number, decimal sub, decimal vat, decimal total)
     {

@@ -184,10 +184,10 @@ public sealed class FuelEvidencePostgresTests
     private static IEnumerable Data(IResult result) => Assert.IsAssignableFrom<IEnumerable>(Value(result));
 
     private static Task<long> Company(Database db, string code) => db.InsertAsync(
-        "INSERT INTO companies(company_code,name,industry) VALUES(@code,@code,'Logistics') RETURNING id",
+        "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,@code,'Logistics','US') RETURNING id",
         c => c.Parameters.AddWithValue("@code", code));
     private static Task<long> Branch(Database db, long company, string code) => db.InsertAsync(
-        "INSERT INTO branches(company_id,branch_code,name,status) VALUES(@company,@code,@code,'Active') RETURNING id",
+        "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES(@company,@code,@code,'Active','US') RETURNING id",
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@code", code); });
     private static Task<long> Vehicle(Database db, long company, long branch, string code) => db.InsertAsync(
         @"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier)

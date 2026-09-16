@@ -198,6 +198,9 @@ public class Stage13BSafetyMaintenanceTests
 
     private static async Task SeedFoundationSignalsAsync(Database db, long companyId, long vehicleId, long driverId)
     {
+        await db.ExecuteAsync(
+            "INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES(@companyId,@code,'Stage 13B fixture','Transportation','US')",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@code", $"STAGE13B-{companyId}"); });
         var safetyEvent1 = await db.InsertAsync(
             @"INSERT INTO safety_events (company_id, driver_id, vehicle_id, event_type, severity, status, event_time, risk_score, score_impact, data_origin, verification_status)
               VALUES (@companyId, @driverId, @vehicleId, 'speeding', 'Critical', 'open', NOW(), 92, 14, 'runtime_detection', 'derived_from_qualified_source')",
@@ -249,8 +252,8 @@ public class Stage13BSafetyMaintenanceTests
             });
 
         var dvirReportId = await db.InsertAsync(
-            @"INSERT INTO dvir_reports (company_id, report_number, driver_id, vehicle_id, inspection_type, inspection_status, defects_found, safe_to_operate, risk_score, recommended_action, data_origin, verification_status)
-              VALUES (@companyId, CONCAT('DVIR-STAGE13B-', floor(extract(epoch from now()))::bigint), @driverId, @vehicleId, 'Pre-Trip', 'Submitted', 1, FALSE, 88, 'Repair defects before dispatch', 'user_workflow', 'recorded_by_authenticated_actor')",
+            @"INSERT INTO dvir_reports (company_id, report_number, driver_id, vehicle_id, inspection_type, inspection_status, defects_found, safe_to_operate, risk_score, recommended_action, data_origin, verification_status,country_code)
+              VALUES (@companyId, CONCAT('DVIR-STAGE13B-', floor(extract(epoch from now()))::bigint), @driverId, @vehicleId, 'Pre-Trip', 'Submitted', 1, FALSE, 88, 'Repair defects before dispatch', 'user_workflow', 'recorded_by_authenticated_actor','US')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -338,6 +341,7 @@ public class Stage13BSafetyMaintenanceTests
         await db.ExecuteAsync("DELETE FROM safety_events WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM approval_requests WHERE tenant_id=@tenantId", c => c.Parameters.AddWithValue("@tenantId", companyId));
         await db.ExecuteAsync("DELETE FROM ai_action_requests WHERE tenant_id=@tenantId", c => c.Parameters.AddWithValue("@tenantId", companyId));
+        await db.ExecuteAsync("DELETE FROM companies WHERE id=@companyId AND company_code=@code", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@code", $"STAGE13B-{companyId}"); });
     }
 
     private static async Task<bool> TableExistsAsync(Database db, string tableName)

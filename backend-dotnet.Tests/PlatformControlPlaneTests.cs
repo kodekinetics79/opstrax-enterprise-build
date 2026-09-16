@@ -113,14 +113,27 @@ public class PlatformControlPlaneTests
         var (adminId, _, email) = await SeedAdminSessionAsync(db, "platform_super_admin");
         try
         {
-            var result = await PlatformEndpoints.PlatformLogin(Http(), new PlatformEndpoints.PlatformLoginRequest(email, "Cp-Test-Pass-1!"), db, CancellationToken.None);
+            var loginHttp = Http();
+            loginHttp.Request.Scheme = "https";
+            var result = await PlatformEndpoints.PlatformLogin(loginHttp, new PlatformEndpoints.PlatformLoginRequest(email, "Cp-Test-Pass-1!"), db, CancellationToken.None);
             Assert.Equal(200, StatusOf(result));
 
             var json = JsonOf(result);
-            Assert.Contains("token", json);
+            Assert.DoesNotContain("\"token\"", json, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("passwordHash", json, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("password_hash", json, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("PBKDF2", json);
+
+            var setCookie = loginHttp.Response.Headers.SetCookie.ToString();
+            Assert.Contains($"{PlatformEndpoints.PlatformSessionCookieName}=", setCookie);
+            Assert.Contains("httponly", setCookie, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("secure", setCookie, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("samesite=none", setCookie, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("path=/api/platform", setCookie, StringComparison.OrdinalIgnoreCase);
+
+            var cookieHttp = Http();
+            cookieHttp.Request.Headers.Cookie = setCookie.Split(';', 2)[0];
+            Assert.Equal(200, StatusOf(await PlatformAdminEndpoints.ListAdmins(cookieHttp, db, CancellationToken.None)));
 
             var audited = await db.ScalarLongAsync(
                 "SELECT COUNT(*) FROM platform_audit_log WHERE actor_email=@e AND action='platform.login'",
