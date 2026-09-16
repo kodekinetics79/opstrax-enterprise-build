@@ -170,7 +170,7 @@ public sealed class ActiveShipmentsPostgresRegressionTests
         try
         {
             await SeedCompanyBranch(db, company, branch);
-            await db.ExecuteAsync("INSERT INTO branches(id,company_id,branch_code,name,status) OVERRIDING SYSTEM VALUE VALUES (@id,@c,@code,'Other Branch','Active')",
+            await db.ExecuteAsync("INSERT INTO branches(id,company_id,branch_code,name,status,country_code) OVERRIDING SYSTEM VALUE VALUES (@id,@c,@code,'Other Branch','Active','US')",
                 c => { c.Parameters.AddWithValue("@id", otherBranch); c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@code", $"OB-{company}"); });
             await SeedCompanyBranch(db, otherCompany, otherCompany + 10);
             var customer = await db.InsertAsync("INSERT INTO customers(company_id,customer_code,name,status) VALUES (@c,@code,@name,'Active')",
@@ -481,8 +481,8 @@ public sealed class ActiveShipmentsPostgresRegressionTests
     }
 
     private static Task SeedCompanyBranch(Database db, long company, long branch) => db.ExecuteAsync(
-        @"INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Active Shipment Test','Transportation');
-          INSERT INTO branches(id,company_id,branch_code,name,status) OVERRIDING SYSTEM VALUE VALUES (@b,@c,@branchCode,'Pilot Branch','Active')",
+        @"INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Active Shipment Test','Transportation','US');
+          INSERT INTO branches(id,company_id,branch_code,name,status,country_code) OVERRIDING SYSTEM VALUE VALUES (@b,@c,@branchCode,'Pilot Branch','Active','US')",
         c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@code", $"AS-{company}"); c.Parameters.AddWithValue("@branchCode", $"ASB-{company}"); });
 
     private static Task<long> Driver(Database db, long company, long branch, string code, string name) => db.InsertAsync(

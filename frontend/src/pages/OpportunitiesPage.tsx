@@ -5,6 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { apiClient, unwrap } from "@/services/apiClient";
 import { requireCommercialModuleRecords } from "@/services/commercialModulePayload";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { CommercialDisclosure, CommercialMetricRail, CommercialToolbar, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import { useTenantCurrency } from "@/hooks/useTenantRegion";
 import type { AnyRecord } from "@/types";
 
@@ -174,66 +175,43 @@ export function OpportunitiesPage() {
     <div className="page-stack min-w-0">
       {showCreate && <CreateOppModal defaultCurrency={tenantCurrency} onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Opportunities</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Persisted opportunity pipeline with recorded value, probability, close date and ownership</p>
-        </div>
-        <div className="flex gap-2">
+      <RevenueWorkspaceHeader
+        title="Opportunities"
+        description="Prioritize qualified deals by value, probability, close date and accountable owner."
+        activeStage="opportunities"
+        actions={<div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("opportunities", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>New Opportunity</button>
-        </div>
-      </div>
+        </div>}
+      />
 
-      <div className="panel grid gap-3 md:grid-cols-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Workflow boundary</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Opportunity-to-contract and pricing conversion is not automated in this build.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Persisted pipeline</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">This board reflects the latest opportunity records returned by the service.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Risk visibility</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Probability and competitor pressure appear only when they have been recorded.</p>
-        </div>
-      </div>
-
-      {/* KPI strip */}
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Total Pipeline",    val: totalPipelineLabel, accent: "text-teal-600" },
-          { label: "Weighted Pipeline", val: weightedPipelineLabel, accent: "text-violet-600" },
-          { label: "Active Deals",      val: active.length, accent: "text-blue-600" },
-          { label: "Closed Won",        val: won, accent: "text-teal-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-36">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
-      </div>
+      <CommercialMetricRail metrics={[
+        { label: "Active deals", value: active.length, detail: `${filtered.length} shown`, tone: "info", active: stageFilter === "All", onClick: () => setStageFilter("All") },
+        { label: "Pipeline", value: totalPipelineLabel, detail: activeCurrencies.length > 1 ? "kept separate" : "recorded value", tone: "good" },
+        { label: "Weighted", value: weightedPipelineLabel, detail: "probability-adjusted", tone: "info" },
+        { label: "Proposal sent", value: chartData.find((item) => item.stage === "Proposal Sent")?.count ?? 0, detail: "awaiting response", tone: "warn", active: stageFilter === "Rate Proposal Sent", onClick: () => setStageFilter("Rate Proposal Sent") },
+        { label: "Closed won", value: won, detail: "recorded deals", tone: "good", active: stageFilter === "Closed Won", onClick: () => setStageFilter("Closed Won") },
+      ]} />
 
       {/* Filters */}
-      <div className="panel flex flex-wrap gap-2 items-center">
-        <div className="flex gap-1.5 flex-wrap">
+      <CommercialToolbar
+        filters={<>
           {["All", ...STAGES.slice(0, 5)].map((f) => (
             <button key={f} type="button" onClick={() => setStageFilter(f)}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+              className={`filter-chip shrink-0 ${
                 stageFilter === f
-                  ? "bg-teal-50 border-teal-300 text-teal-700"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                  ? "filter-chip-active"
+                  : ""
               }`}>{f}</button>
           ))}
-        </div>
-        <input type="search" placeholder="Search customer, owner…" value={search} onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-52" />
-      </div>
+        </>}
+        meta={`${filtered.length} of ${opps.length}`}
+        search={<input type="search" aria-label="Search opportunities" placeholder="Search customer, owner…" value={search} onChange={(e) => setSearch(e.target.value)} className="field" />}
+      />
 
       {/* Table */}
       <div className="panel overflow-hidden p-0">
-        {filtered.length === 0 ? <EmptyState title="No opportunities match your filters" /> : (
+        {filtered.length === 0 ? <EmptyState title="No opportunities match your filters" subtitle={opps.length ? "Clear a stage or search filter to see the full deal register." : "Create the first opportunity after a prospect is qualified."} action={!opps.length ? <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>New Opportunity</button> : undefined} /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -265,6 +243,11 @@ export function OpportunitiesPage() {
           </div>
         )}
       </div>
+
+      <CommercialDisclosure>
+        <p><strong>Persisted pipeline:</strong> Values, probabilities and competitor pressure appear only when they were recorded by the service.</p>
+        <p><strong>Workflow boundary:</strong> Opportunity-to-contract and pricing conversion is not automated in this build.</p>
+      </CommercialDisclosure>
 
       {/* Pipeline funnel chart */}
       <details className="panel p-3">

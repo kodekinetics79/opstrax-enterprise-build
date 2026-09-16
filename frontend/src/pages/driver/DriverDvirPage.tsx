@@ -5,7 +5,9 @@ import { driverApi } from "@/services/driverApi";
 import { ErrorState } from "@/components/ui";
 import { useSingleFlight } from "@/hooks/useSingleFlight";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
+import { useTenantCountry } from "@/hooks/useTenantRegion";
 import type { AnyRecord } from "@/types";
+import { tenantDistanceToMiles, tenantDistanceUnit } from "@/utils/tenantMeasurements";
 
 type ChecklistResult = "pass" | "fail" | "na";
 const DVIR_ATTESTATION = "I certify that this DVIR is true and correct and that I completed this inspection.";
@@ -38,6 +40,7 @@ function ResultButton({ label, active, color, onClick }: {
 
 export function DriverDvirPage() {
   const qc = useQueryClient();
+  const tenantCountry = useTenantCountry();
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [vehicleId, setVehicleId] = useState("");
   const [inspectionType, setInspectionType] = useState("pre_trip");
@@ -196,7 +199,7 @@ export function DriverDvirPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs font-bold text-slate-500 block mb-1">Odometer (mi)</label>
+            <label className="text-xs font-bold text-slate-500 block mb-1">Odometer ({tenantDistanceUnit(tenantCountry)})</label>
             <input
               type="number"
               className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
@@ -340,7 +343,7 @@ export function DriverDvirPage() {
                 void submitSingleFlight(() => submitMut.mutateAsync({
                   vehicleId: Number(vehicleId),
                   inspectionType,
-                  odometerMiles: odometer ? Number(odometer) : undefined,
+                  odometerMiles: odometer ? tenantDistanceToMiles(Number(odometer), tenantCountry) ?? undefined : undefined,
                   notes: notes || undefined,
                   idempotencyKey: idempotencyKey.current,
                   checklistItems: items.map(i => ({

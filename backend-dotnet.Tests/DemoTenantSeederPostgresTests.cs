@@ -322,8 +322,8 @@ public class DemoTenantSeederPostgresTests
 
             // Exercise the real HTTP endpoint once and prove its repeat is a no-op.
             await clean.ExecuteAsync(
-                @"INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE
-                    VALUES (900001,'CLEAN-SEED-AUTH','Clean Seed Auth','Transportation');
+                @"INSERT INTO companies(id,company_code,name,industry,country,currency,timezone) OVERRIDING SYSTEM VALUE
+                    VALUES (900001,'CLEAN-SEED-AUTH','Clean Seed Auth','Transportation','US','USD','America/New_York');
                   INSERT INTO users(id,company_id,full_name,email,role_name,permissions_json,status) OVERRIDING SYSTEM VALUE
                     VALUES (900002,900001,'Clean Seed Operator','clean-seed-operator@example.invalid','Fleet Manager','[""fleet:view""]'::jsonb,'Active');
                   INSERT INTO user_sessions(id,user_id,company_id,session_token,expires_at) OVERRIDING SYSTEM VALUE

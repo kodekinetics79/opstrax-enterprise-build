@@ -247,7 +247,7 @@ public sealed class VehicleOperationalProjectionPostgresTests
             try
             {
                 fixture.Company = await fixture.Db.InsertAsync(
-                    "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Projection test','Transportation')",
+                    "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Projection test','Transportation','US')",
                     c => c.Parameters.AddWithValue("@code", $"VOP-{Guid.NewGuid():N}"));
                 fixture.BranchA = await fixture.Branch("A");
                 fixture.BranchB = await fixture.Branch("B");
@@ -257,7 +257,7 @@ public sealed class VehicleOperationalProjectionPostgresTests
         }
 
         private Task<long> Branch(string code) => Db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,@code,'Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,@code,@code,'Active','US')",
             c => { c.Parameters.AddWithValue("@c", Company); c.Parameters.AddWithValue("@code", code); });
 
         public Task<long> Vehicle(long? branch, string code, string status = "Available", int risk = 0, bool archived = false) => Db.InsertAsync(

@@ -689,15 +689,15 @@ public sealed class Module1DocumentLifecycleMutationPostgresTests
                 foreach (var (key, value) in values) cmd.Parameters.AddWithValue(key, value ?? DBNull.Value);
                 return Convert.ToInt64(await cmd.ExecuteScalarAsync());
             }
-            async Task<long> Company(string suffix) { var id = await Insert("INSERT INTO companies(company_code,name,industry) VALUES (@code,'Synthetic lifecycle fixture','Transportation')", ("code", prefix + suffix)); companies.Add(id); return id; }
+            async Task<long> Company(string suffix) { var id = await Insert("INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Synthetic lifecycle fixture','Transportation','US')", ("code", prefix + suffix)); companies.Add(id); return id; }
             async Task<long> Vehicle(long company, long? branch, string code, long? explicitId = null) => await Insert(
                 $"INSERT INTO vehicles({(explicitId.HasValue ? "id," : "")}company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status) {(explicitId.HasValue ? "OVERRIDING SYSTEM VALUE" : "")} VALUES ({(explicitId.HasValue ? "@id," : "")}@c,@b,@code,'Truck','legacy-fleet-identifier',@alt,'Maintenance')",
                 ("id", explicitId), ("c", company), ("b", branch), ("code", code), ("alt", prefix + code));
             async Task<long> Document(long company, long vehicle, string mode) => await Insert(@"INSERT INTO documents(company_id,title,document_number,document_type,entity_type,entity_id,issued_at,expires_at,status,risk_score,renewal_status,recommended_action,lifecycle_mode,lifecycle_assessed_on,file_url)
                 VALUES (@c,'Synthetic lifecycle fixture - NOT COMPLIANCE','W1-PRESERVE-NUMBER','Synthetic','vehicle',@v,'2026-01-01','2026-08-30','Expired',90,'Renewal Required','Renew document',@mode,CASE WHEN @mode='automatic' THEN DATE '2026-08-31' ELSE NULL END,'objkey:synthetic-no-file')", ("c", company), ("v", vehicle), ("mode", mode));
             CompanyA = await Company("A"); CompanyB = await Company("B");
-            BranchA = await Insert("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'A','Synthetic A','Active')", ("c", CompanyA));
-            BranchB = await Insert("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'B','Synthetic B','Active')", ("c", CompanyA));
+            BranchA = await Insert("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'A','Synthetic A','Active','US')", ("c", CompanyA));
+            BranchB = await Insert("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'B','Synthetic B','Active','US')", ("c", CompanyA));
             VehicleA = await Vehicle(CompanyA, BranchA, "A"); VehicleA2 = await Vehicle(CompanyA, BranchA, "A2");
             var collisionId = 9_000_000_000L + RandomNumberGenerator.GetInt32(1_000_000);
             await using (var collisionGuard = new NpgsqlCommand("SELECT (SELECT count(*) FROM drivers WHERE id=@id)+(SELECT count(*) FROM vehicles WHERE id=@id)", c, tx))

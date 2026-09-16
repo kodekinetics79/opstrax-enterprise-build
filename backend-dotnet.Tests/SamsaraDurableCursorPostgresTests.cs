@@ -323,7 +323,7 @@ public sealed class SamsaraDurableCursorPostgresTests
                 throw new InvalidOperationException("Durable cursor tests refuse remote PostgreSQL hosts.");
             var fixture = new Fixture(connection.ConnectionString);
             fixture.CompanyId = await fixture.Db.InsertAsync(
-                "INSERT INTO companies(company_code,name,industry,entitlement_policy_mode) VALUES(@code,'Synthetic durable cursor fixture','Transportation','package_allowlist') RETURNING id",
+                "INSERT INTO companies(company_code,name,industry,entitlement_policy_mode,country) VALUES(@code,'Synthetic durable cursor fixture','Transportation','package_allowlist','US') RETURNING id",
                 command => command.Parameters.AddWithValue("@code", "SDC-" + fixture._suffix[..12]));
             return fixture;
         }
@@ -371,7 +371,7 @@ public sealed class SamsaraDurableCursorPostgresTests
                 "INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at) VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara',@config::jsonb,'samsara-org:durable-cursor-test',NOW()) RETURNING id",
                 command => { command.Parameters.AddWithValue("@cid", CompanyId); command.Parameters.AddWithValue("@config", encrypted); });
             var branchId = await Db.InsertAsync(
-                "INSERT INTO branches(company_id,branch_code,name,status) VALUES(@cid,@code,'Durable cursor branch','Active') RETURNING id",
+                "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES(@cid,@code,'Durable cursor branch','Active','US') RETURNING id",
                 command => { command.Parameters.AddWithValue("@cid", CompanyId); command.Parameters.AddWithValue("@code", "DCB-" + _suffix[..12]); });
             VehicleId = await Db.InsertAsync(
                 "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier) VALUES(@cid,@branch,@code,'truck','legacy-fleet-identifier',@code) RETURNING id",

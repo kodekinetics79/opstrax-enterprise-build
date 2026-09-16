@@ -304,9 +304,9 @@ public sealed class DispatchPilotPostgresTests
     private static async Task<SeedData> Seed(Database db)
     {
         var suffix = Guid.NewGuid().ToString("N")[..10];
-        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry) VALUES (@x,'Dispatch pilot test','Transportation')", c => c.Parameters.AddWithValue("@x", $"DSP-{suffix}"));
-        var branch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')", c => c.Parameters.AddWithValue("@c", company));
-        var other = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'OTHER','Other','Active')", c => c.Parameters.AddWithValue("@c", company));
+        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry,country) VALUES (@x,'Dispatch pilot test','Transportation','US')", c => c.Parameters.AddWithValue("@x", $"DSP-{suffix}"));
+        var branch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'MAIN','Main','Active','US')", c => c.Parameters.AddWithValue("@c", company));
+        var other = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'OTHER','Other','Active','US')", c => c.Parameters.AddWithValue("@c", company));
         var user = await db.InsertAsync("INSERT INTO users(company_id,branch_id,full_name,email,role_name,status) VALUES (@c,@b,'Pilot Driver',@e,'Driver','Active')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@e", $"{suffix}@example.invalid"); });
         var driver = await db.InsertAsync("INSERT INTO drivers(company_id,branch_id,user_id,driver_code,full_name,status) VALUES (@c,@b,@u,@x,'Pilot Driver','Available')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@u", user); c.Parameters.AddWithValue("@x", $"D-{suffix}"); });
         await db.ExecuteAsync(

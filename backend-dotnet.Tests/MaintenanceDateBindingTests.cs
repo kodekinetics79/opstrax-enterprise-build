@@ -41,11 +41,21 @@ public sealed class MaintenanceDateBindingTests
     {
         var body = new Dictionary<string, object?> { ["vehicleId"] = 1L, ["serviceType"] = "Inspection", [key] = value };
         object?[] arguments = handler == "CreateMaintenance"
-            ? [new DefaultHttpContext(), body, null, null, CancellationToken.None]
-            : [new DefaultHttpContext(), 1L, body, null, null, CancellationToken.None];
+            ? [AuthenticatedMaintenanceManager(), body, null, null, CancellationToken.None]
+            : [AuthenticatedMaintenanceManager(), 1L, body, null, null, CancellationToken.None];
         var method = typeof(EndpointMappings).GetMethod(handler, BindingFlags.NonPublic | BindingFlags.Static)!;
         var result = await (Task<IResult>)method.Invoke(null, arguments)!;
         Assert.Equal(400, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
+    }
+
+    private static DefaultHttpContext AuthenticatedMaintenanceManager()
+    {
+        var http = new DefaultHttpContext();
+        http.Items[EndpointMappings.AuthUserIdItemKey] = 17L;
+        http.Items[EndpointMappings.AuthCompanyIdItemKey] = 23L;
+        http.Items[EndpointMappings.AuthRoleItemKey] = "Maintenance Manager";
+        http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "maintenance:manage" };
+        return http;
     }
 
     internal static void Bind(NpgsqlCommand command, Dictionary<string, object?> body)

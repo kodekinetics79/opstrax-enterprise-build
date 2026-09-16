@@ -112,6 +112,26 @@ export interface FleetVehicle {
   notes: string;
 }
 
+export interface BackhaulOpportunity {
+  vehicleNumber: string;
+  currentShipmentId: string;
+  candidateShipmentId: string;
+  shipmentNumber: string;
+  customerName: string;
+  origin: string;
+  destination: string;
+  pickupScheduledAtUtc?: string | null;
+  weightKg: number;
+  volumeCbm: number;
+  priority: string;
+  ownershipModel: string;
+  bodyType?: string | null;
+  capacityKg?: number | null;
+  capacityCbm?: number | null;
+  candidateUtilizationPct?: number | null;
+  matchBasis: string;
+}
+
 export interface FleetTrackingPoint {
   id: string;
   shipmentNumber: string;
@@ -300,6 +320,10 @@ export const fleetApi = {
     ),
   vehicles: (params: { status?: string } = {}) =>
     unwrap<{ items: FleetVehicle[] }>(apiClient.get("/api/fleet-tms/vehicles", { params })),
+  backhaul: (vehicleNumber?: string) =>
+    unwrap<{ generatedAtUtc: string; matchBasis: string; items: BackhaulOpportunity[] }>(
+      apiClient.get("/api/fleet-tms/backhaul-opportunities", { params: vehicleNumber ? { vehicleNumber } : undefined }),
+    ),
   tracking: (params: { shipmentNumber?: string; page?: number; pageSize?: number } = {}) =>
     unwrap<{ total: number; page: number; pageSize: number; items: FleetTrackingPoint[] }>(
       apiClient.get("/api/fleet-tms/tracking", { params: { page: 1, pageSize: 20, ...params } }),

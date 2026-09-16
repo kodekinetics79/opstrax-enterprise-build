@@ -130,21 +130,16 @@ public sealed class TelemetryLaunchHardeningTests
     {
         var dotnetCatalog = Block(Read("backend-dotnet", "Seed", "IntegrationCatalog.cs"),
             "new(\"samsara\"", "new(\"geotab\"");
-        var nodeCatalog = Block(Read("backend", "src", "modules", "integrations", "integrations.registry.ts"),
-            "key: \"samsara\"", "key: \"geotab\"");
         var initSeed = Read("database", "init", "002_seed.sql");
         var migration = Read("database", "migrations", "2026_09_02_stage94_samsara_provider_truth.sql");
 
-        foreach (var catalog in new[] { dotnetCatalog, nodeCatalog })
-        {
-            Assert.Contains("Disconnected", catalog, StringComparison.Ordinal);
-            Assert.Contains("Never", catalog, StringComparison.Ordinal);
-            Assert.Contains("Odometer", catalog, StringComparison.Ordinal);
-            Assert.DoesNotContain("Connected", catalog, StringComparison.Ordinal);
-            Assert.DoesNotContain("Real-time", catalog, StringComparison.Ordinal);
-            Assert.DoesNotContain("providerAccountId", catalog, StringComparison.Ordinal);
-            Assert.DoesNotContain("Dashcam", catalog, StringComparison.Ordinal);
-        }
+        Assert.Contains("Disconnected", dotnetCatalog, StringComparison.Ordinal);
+        Assert.Contains("Never", dotnetCatalog, StringComparison.Ordinal);
+        Assert.Contains("Odometer", dotnetCatalog, StringComparison.Ordinal);
+        Assert.DoesNotContain("Connected", dotnetCatalog, StringComparison.Ordinal);
+        Assert.DoesNotContain("Real-time", dotnetCatalog, StringComparison.Ordinal);
+        Assert.DoesNotContain("providerAccountId", dotnetCatalog, StringComparison.Ordinal);
+        Assert.DoesNotContain("Dashcam", dotnetCatalog, StringComparison.Ordinal);
 
         Assert.Contains("(1,'Samsara Import Adapter','Telematics','Disconnected')", initSeed, StringComparison.Ordinal);
         Assert.Contains("integration_key = 'samsara'", migration, StringComparison.Ordinal);
@@ -169,12 +164,37 @@ public sealed class TelemetryLaunchHardeningTests
             Assert.Empty(Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(entry.Config));
         });
 
-        var nodeCatalog = Read("backend", "src", "modules", "integrations", "integrations.registry.ts");
-        Assert.Contains("integrationCatalogDefinitions.map", nodeCatalog, StringComparison.Ordinal);
-        Assert.Contains("status: \"Disconnected\"", nodeCatalog, StringComparison.Ordinal);
-        Assert.Contains("sync: \"Never\"", nodeCatalog, StringComparison.Ordinal);
-        Assert.Contains("lastSyncAt: null", nodeCatalog, StringComparison.Ordinal);
-        Assert.Contains("config: {}", nodeCatalog, StringComparison.Ordinal);
+        var source = Read("backend-dotnet", "Seed", "IntegrationCatalog.cs");
+        Assert.Contains(".Select(entry => entry with", source, StringComparison.Ordinal);
+        Assert.Contains("Status = \"Disconnected\"", source, StringComparison.Ordinal);
+        Assert.Contains("SyncLabel = \"Never\"", source, StringComparison.Ordinal);
+        Assert.Contains("LastSyncAt = null", source, StringComparison.Ordinal);
+        Assert.Contains("Config = new Dictionary<string, object?>()", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SaudiGovernmentAndPaymentCatalogEntriesAreMarketLocked()
+    {
+        var sa = Opstrax.Api.Seed.IntegrationCatalog.EntriesForCountry("SA")
+            .Select(entry => entry.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var us = Opstrax.Api.Seed.IntegrationCatalog.EntriesForCountry("US")
+            .Select(entry => entry.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var unset = Opstrax.Api.Seed.IntegrationCatalog.EntriesForCountry(null)
+            .Select(entry => entry.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        Assert.Contains("tamm-saudi", sa);
+        Assert.Contains("saudi-payment-gateway", sa);
+        Assert.DoesNotContain("tamm-saudi", us);
+        Assert.DoesNotContain("saudi-payment-gateway", us);
+        Assert.DoesNotContain("tamm-saudi", unset);
+        Assert.DoesNotContain("saudi-payment-gateway", unset);
+        Assert.Contains("locus", sa);
+        Assert.Contains("locus", us); // Locus itself is global; tenant evidence remains isolated.
+
+        var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        Assert.Contains("IntegrationCatalog.IsAvailableForCountry", endpoints, StringComparison.Ordinal);
+        Assert.Contains("RequireIntegrationMarketAvailabilityAsync", endpoints, StringComparison.Ordinal);
+        Assert.Contains("reserved for a governed catalog provider", endpoints, StringComparison.Ordinal);
     }
 
     [Fact]

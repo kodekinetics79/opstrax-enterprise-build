@@ -362,7 +362,22 @@ public sealed class RevenueReadinessService(
         return new ReadyToBillOutcome(true, "Job marked ready to bill", jobId, "ready_to_bill", false);
     }
 
-    public async Task<InvoiceDraftActionOutcome> CreateInvoiceDraftFromJobAsync(long companyId, long jobId, string? idempotencyKey = null, CancellationToken ct = default)
+    public Task<InvoiceDraftActionOutcome> CreateInvoiceDraftFromJobAsync(long companyId, long jobId, string? idempotencyKey = null, CancellationToken ct = default)
+        => db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+            // One active draft per job is a business invariant. Serialize the read/check/write
+            // path so concurrent requests cannot both pass the active-draft check.
+            await db.ExecuteAsync(
+                "SELECT pg_advisory_xact_lock(hashtextextended('invoice-draft:' || CAST(@companyId AS text) || ':' || CAST(@jobId AS text), 0))",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@jobId", jobId);
+                }, ct);
+            return await CreateInvoiceDraftFromJobCoreAsync(companyId, jobId, idempotencyKey, ct);
+        }, ct);
+
+    private async Task<InvoiceDraftActionOutcome> CreateInvoiceDraftFromJobCoreAsync(long companyId, long jobId, string? idempotencyKey, CancellationToken ct)
     {
         var job = await LoadJobAsync(companyId, jobId, ct);
         if (job is null)

@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { AxiosError, InternalAxiosRequestConfig } from "axios";
 import type { ApiEnvelope } from "@/types";
 import { getGlobalCsrfToken, hydrateGlobalCsrfToken, setGlobalCsrfToken } from "@/auth/csrfTokenStore";
 import { readRawSession, clearAllSessionKeys } from "@/auth/sessionStorage";
@@ -18,13 +19,6 @@ export const API_BASE_URL =
   import.meta.env.VITE_DOTNET_API_URL ||
   import.meta.env.VITE_PLATFORM_API_BASE_URL ||
   (isLocalhost ? "http://localhost:8088" : "");
-
-export const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  headers: { Accept: "application/json" },
-  timeout: 30000,
-  withCredentials: true,
-});
 
 // ── Distributed tracing (W3C trace context) ─────────────────────────────────────
 // The frontend ORIGINATES the trace so a failed call can be followed all the way
@@ -46,8 +40,57 @@ export function newTraceParent(): { traceparent: string; traceId: string; correl
   return { traceparent: `00-${traceId}-${spanId}-01`, traceId, correlationId: hex(16) };
 }
 
-// Request interceptor: Add auth token and CSRF token
-apiClient.interceptors.request.use((config) => {
+type ApiClientPipelineOptions = {
+  prepareRequest?: (config: InternalAxiosRequestConfig) => void;
+  onUnauthorized?: (error: AxiosError) => void;
+};
+
+// Every browser API surface uses this pipeline for credentials, CSRF, tracing,
+// timeout, and trace capture. Callers may add only the identity headers that
+// belong to their own trust boundary (tenant bearer vs platform HttpOnly cookie).
+export function createApiClient(options: ApiClientPipelineOptions = {}) {
+  const client = axios.create({
+    baseURL: API_BASE_URL,
+    headers: { Accept: "application/json" },
+    timeout: 30000,
+    withCredentials: true,
+  });
+
+  client.interceptors.request.use((config) => {
+    options.prepareRequest?.(config);
+
+    const csrfToken = getGlobalCsrfToken();
+    if (csrfToken && ["POST", "PUT", "DELETE", "PATCH"].includes(config.method?.toUpperCase() || "")) {
+      config.headers["X-CSRF-Token"] = csrfToken;
+    }
+
+    const tp = newTraceParent();
+    config.headers["traceparent"] = tp.traceparent;
+    config.headers["X-Correlation-Id"] = tp.correlationId;
+    return config;
+  });
+
+  client.interceptors.response.use(
+    (response) => {
+      const csrfToken = response.headers["x-csrf-token"];
+      if (csrfToken) setGlobalCsrfToken(csrfToken);
+      const tid = response.headers["x-trace-id"];
+      if (tid) lastTraceId = tid;
+      return response;
+    },
+    (error: AxiosError) => {
+      const tid = error.response?.headers?.["x-trace-id"];
+      if (typeof tid === "string") lastTraceId = tid;
+      if (error.response?.status === 401) options.onUnauthorized?.(error);
+      return Promise.reject(error);
+    },
+  );
+
+  return client;
+}
+
+export const apiClient = createApiClient({
+  prepareRequest: (config) => {
   // Read the session (for the bearer token) from the SHARED key list — never hardcode it here, or a
   // key bump silently drops the Authorization header and every authenticated call 401s.
   const session = readRawSession();
@@ -72,43 +115,19 @@ apiClient.interceptors.request.use((config) => {
     }
   }
 
-  // Add CSRF token for state-changing requests
-  const csrfToken = getGlobalCsrfToken();
-  if (csrfToken && ["POST", "PUT", "DELETE", "PATCH"].includes(config.method?.toUpperCase() || "")) {
-    config.headers["X-CSRF-Token"] = csrfToken;
-  }
-
-  // Originate a W3C trace so this call is followable end-to-end.
-  const tp = newTraceParent();
-  config.headers["traceparent"] = tp.traceparent;
-  config.headers["X-Correlation-Id"] = tp.correlationId;
-
-  return config;
-});
-
-// Response interceptor: Capture and store CSRF token; redirect to /login on 401
-apiClient.interceptors.response.use(
-  (response) => {
-    const csrfToken = response.headers["x-csrf-token"];
-    if (csrfToken) {
-      setGlobalCsrfToken(csrfToken);
-    }
-    // Remember the server-side trace id so error surfaces can show a reference.
-    const tid = response.headers["x-trace-id"];
-    if (tid) lastTraceId = tid;
-    return response;
   },
-  (error) => {
-    const tid = error?.response?.headers?.["x-trace-id"];
-    if (tid) lastTraceId = tid;
-    if (error?.response?.status === 401) {
+  onUnauthorized: (error) => {
       const url = (error.config?.url ?? "") as string;
-      // Only auth bootstrap / refresh failures should invalidate the local session.
-      // Page/data 401s are handled by the caller so we do not accidentally log the
-      // user out because of a transient or endpoint-specific failure.
-      const shouldClearSession =
-        url.includes("/api/auth/me") ||
-        url.includes("/api/auth/refresh");
+      const hadAuthenticatedSession = Boolean(readRawSession()) || Boolean(error.config?.headers?.Authorization);
+      const isPreSessionAuthRequest =
+        url.includes("/api/auth/login") ||
+        url.includes("/api/auth/forgot-password") ||
+        url.includes("/api/auth/reset-password") ||
+        url.includes("/api/auth/activate");
+      // A protected endpoint uses 403 for insufficient permission. Therefore a
+      // 401 on any request that carried a session means the session is no longer
+      // authoritative and must use one application-wide expired-session flow.
+      const shouldClearSession = hadAuthenticatedSession && !isPreSessionAuthRequest;
 
       if (shouldClearSession) {
         clearAllSessionKeys();
@@ -116,10 +135,8 @@ apiClient.interceptors.response.use(
           window.location.href = "/login";
         }
       }
-    }
-    return Promise.reject(error);
   }
-);
+});
 
 export async function unwrap<T>(request: Promise<{ data: ApiEnvelope<T> }>): Promise<T> {
   const response = await request;

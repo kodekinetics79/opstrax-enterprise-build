@@ -1,5 +1,9 @@
 # Wave 2 Node dependency hardening — 2026-09-02
 
+> Historical evidence: the general Node API described below was later proven unused
+> and removed on 2026-09-15. Only the independently deployed
+> `services/node-events/` package remains in the current release path.
+
 Scope: repair the two Node production dependency audits on PR #118. This is code
 hardening evidence, not a deployment, provider certification, or gate closure.
 

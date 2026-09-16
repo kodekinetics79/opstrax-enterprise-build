@@ -1,0 +1,131 @@
+.revenue-spine {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.revenue-spine__label {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.revenue-spine__label svg { width: 14px; height: 14px; }
+.revenue-spine__rail { display: flex; min-width: 0; align-items: center; gap: 3px; overflow-x: auto; padding: 2px 1px; }
+.revenue-spine__item { display: inline-flex; flex: 0 0 auto; align-items: center; }
+.revenue-spine__arrow { width: 12px; height: 12px; color: #cbd5e1; }
+
+.revenue-step {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(203,213,225,.82);
+  border-radius: 7px;
+  background: linear-gradient(180deg,#fff,#f7fafc);
+  padding: 4px 8px;
+  color: #526176;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.95), 0 2px 5px rgba(15,23,42,.06);
+  transition: border-color .15s ease, color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+.revenue-step svg { width: 13px; height: 13px; }
+.revenue-step:hover { border-color: rgba(13,148,136,.36); color: #0f766e; transform: translateY(-1px); }
+.revenue-step:active { transform: translateY(1px); box-shadow: inset 0 2px 5px rgba(100,116,139,.18); }
+.revenue-step[data-active="true"] { border-color: rgba(13,148,136,.38); background: linear-gradient(180deg,#e9fbf7,#dff7f2); color: #0f766e; box-shadow: inset 0 1px 0 #fff, inset 0 -2px 4px rgba(13,148,136,.1), 0 3px 8px rgba(13,148,136,.14); }
+
+.commercial-metrics {
+  display: flex;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: rgba(255,255,255,.9);
+  box-shadow: var(--shadow-card);
+}
+
+.commercial-metric {
+  position: relative;
+  display: grid;
+  min-width: 132px;
+  flex: 1 0 132px;
+  min-height: 58px;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: "label label" "value detail";
+  align-content: center;
+  column-gap: 8px;
+  border: 0;
+  border-right: 1px solid #e8edf3;
+  background: transparent;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+button.commercial-metric { cursor: pointer; }
+button.commercial-metric:hover { background: #f8fbfd; }
+button.commercial-metric:active { box-shadow: inset 0 3px 8px rgba(100,116,139,.13); }
+.commercial-metric:last-child { border-right: 0; }
+.commercial-metric::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: #94a3b8; opacity: .25; }
+.commercial-metric[data-tone="good"]::before { background: #10b981; opacity: .8; }
+.commercial-metric[data-tone="warn"]::before { background: #f59e0b; opacity: .85; }
+.commercial-metric[data-tone="bad"]::before { background: #ef4444; opacity: .85; }
+.commercial-metric[data-tone="info"]::before { background: #3b82f6; opacity: .8; }
+.commercial-metric[data-active="true"] { background: linear-gradient(180deg,#effcf8,#e8f8f5); box-shadow: inset 0 2px 5px rgba(13,148,136,.11); }
+.commercial-metric__label { grid-area: label; overflow: hidden; color: #64748b; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.commercial-metric__value { grid-area: value; align-self: end; overflow: hidden; color: #0f172a; font-size: 18px; line-height: 22px; text-overflow: ellipsis; white-space: nowrap; }
+.commercial-metric__detail { grid-area: detail; align-self: end; overflow: hidden; color: #64748b; font-size: 11px; font-weight: 600; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+
+.commercial-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: rgba(255,255,255,.9);
+  padding: 7px 9px;
+  box-shadow: var(--shadow-card);
+}
+.commercial-toolbar__filters { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: 5px; overflow-x: auto; }
+.commercial-toolbar__meta { flex: 0 0 auto; color: #64748b; font-size: 11px; font-weight: 650; white-space: nowrap; }
+.commercial-toolbar__search { flex: 0 1 260px; min-width: 180px; }
+.commercial-toolbar__search :is(input,select) { width: 100%; }
+
+.commercial-disclosure { border: 1px solid var(--border); border-radius: 9px; background: rgba(255,255,255,.72); }
+.commercial-disclosure > summary { display: flex; min-height: 32px; cursor: pointer; list-style: none; align-items: center; gap: 6px; padding: 6px 10px; color: #526176; font-size: 11px; font-weight: 750; }
+.commercial-disclosure > summary::-webkit-details-marker { display: none; }
+.commercial-disclosure > summary svg { width: 13px; height: 13px; color: #0f766e; }
+.commercial-disclosure__body { display: grid; gap: 8px; border-top: 1px solid #e8edf3; padding: 10px; color: #526176; font-size: 12px; line-height: 1.45; }
+
+.commercial-tabs { display: flex; min-width: 0; gap: 5px; overflow-x: auto; border: 1px solid var(--border); border-radius: var(--r-card); background: rgba(255,255,255,.88); padding: 5px; box-shadow: var(--shadow-card); }
+.commercial-tab { display: inline-flex; min-height: 32px; flex: 0 0 auto; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: 5px 10px; color: #526176; font-size: 12px; font-weight: 750; cursor: pointer; }
+.commercial-tab small { color: #94a3b8; font-size: 10px; }
+.commercial-tab:hover { background: #f8fafc; color: #0f172a; }
+.commercial-tab:active { box-shadow: inset 0 2px 5px rgba(100,116,139,.16); }
+.commercial-tab[data-active="true"] { border-color: rgba(13,148,136,.28); background: linear-gradient(180deg,#eafaf6,#ddf5ef); color: #0f766e; box-shadow: inset 0 1px 0 #fff, 0 2px 6px rgba(13,148,136,.12); }
+
+@media (max-width: 767px) {
+  .revenue-spine { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .revenue-spine__rail { width: 100%; }
+  .commercial-metric { min-width: 144px; }
+  .commercial-toolbar { align-items: stretch; flex-direction: column; }
+  .commercial-toolbar__search { flex-basis: auto; min-width: 0; width: 100%; }
+}
+
+@media (pointer: coarse), (max-width: 639px) {
+  .revenue-step, .commercial-tab, button.commercial-metric { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .revenue-step { transition: none; }
+  .revenue-step:hover { transform: none; }
+}

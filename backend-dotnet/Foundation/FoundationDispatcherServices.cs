@@ -7,7 +7,7 @@ namespace Opstrax.Api.Foundation;
 
 public sealed class PostgresEventProcessingLogService(Database db) : IEventProcessingLogService
 {
-    public EventProcessingLogRecord Record(
+    public async Task<EventProcessingLogRecord> RecordAsync(
         string tenantId,
         string eventType,
         string processor,
@@ -15,11 +15,12 @@ public sealed class PostgresEventProcessingLogService(Database db) : IEventProce
         string? message = null,
         string? correlationId = null,
         string? causationId = null,
-        int retryCount = 0)
+        int retryCount = 0,
+        CancellationToken ct = default)
     {
         var tenant = FoundationPersistenceHelpers.RequireTenantId(tenantId);
         var processedAt = DateTimeOffset.UtcNow;
-        var row = db.QuerySingleAsync(
+        var row = await db.QuerySingleAsync(
             @"INSERT INTO event_processing_logs
                 (tenant_id, event_type, processor, status, message, correlation_id, causation_id, processed_at, retry_count)
               VALUES
@@ -36,7 +37,7 @@ public sealed class PostgresEventProcessingLogService(Database db) : IEventProce
                 c.Parameters.AddWithValue("@causationId", (object?)causationId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@processedAt", processedAt);
                 c.Parameters.AddWithValue("@retryCount", retryCount);
-            }).GetAwaiter().GetResult();
+            }, ct);
 
         var id = row is null ? 0L : Convert.ToInt64(row["id"], CultureInfo.InvariantCulture);
         return new EventProcessingLogRecord(id, tenant.ToString(CultureInfo.InvariantCulture), eventType, processor, status, message, correlationId, causationId, processedAt, retryCount);
@@ -160,7 +161,7 @@ public sealed class PostgresOutboxDispatcher(
                     }
                 }
                 await MarkOutboxProcessedAsync(message, ct);
-                eventLogs.Record(message.TenantId, message.EventType, options.WorkerName, "success", null, message.CorrelationId, message.CausationId, message.RetryCount);
+                await eventLogs.RecordAsync(message.TenantId, message.EventType, options.WorkerName, "success", null, message.CorrelationId, message.CausationId, message.RetryCount, ct);
                 processed++;
             }
             catch (Exception ex)
@@ -191,7 +192,7 @@ public sealed class PostgresOutboxDispatcher(
             try
             {
                 await MarkInboxProcessedAsync(message, ct);
-                eventLogs.Record(message.TenantId, message.EventType, options.WorkerName, "success", "Inbox message processed", message.CorrelationId, message.CausationId, message.RetryCount);
+                await eventLogs.RecordAsync(message.TenantId, message.EventType, options.WorkerName, "success", "Inbox message processed", message.CorrelationId, message.CausationId, message.RetryCount, ct);
                 processed++;
             }
             catch (Exception ex)
@@ -404,7 +405,7 @@ public sealed class PostgresOutboxDispatcher(
                 c.Parameters.AddWithValue("@tenantId", FoundationPersistenceHelpers.RequireTenantId(message.TenantId));
             }, ct);
 
-        eventLogs.Record(
+        await eventLogs.RecordAsync(
             message.TenantId,
             message.EventType,
             options.WorkerName,
@@ -412,7 +413,8 @@ public sealed class PostgresOutboxDispatcher(
             ex.Message,
             message.CorrelationId,
             message.CausationId,
-            nextRetryCount);
+            nextRetryCount,
+            ct);
     }
 
     private async Task MarkInboxProcessedAsync(InboxMessageRecord message, CancellationToken ct)
@@ -462,7 +464,7 @@ public sealed class PostgresOutboxDispatcher(
                 c.Parameters.AddWithValue("@tenantId", FoundationPersistenceHelpers.RequireTenantId(message.TenantId));
             }, ct);
 
-        eventLogs.Record(
+        await eventLogs.RecordAsync(
             message.TenantId,
             message.EventType,
             options.WorkerName,
@@ -470,7 +472,8 @@ public sealed class PostgresOutboxDispatcher(
             ex.Message,
             message.CorrelationId,
             message.CausationId,
-            nextRetryCount);
+            nextRetryCount,
+            ct);
     }
 
     private static OutboxMessageRecord ReadOutbox(NpgsqlDataReader reader)

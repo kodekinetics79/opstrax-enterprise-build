@@ -17,19 +17,19 @@ public sealed class CrossModuleFleetPilotPostgresTests
         var db = Db();
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var company = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Cross-module pilot','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Cross-module pilot','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"XMOD-{suffix}"));
         var attackerCompany = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Cross-module attacker','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Cross-module attacker','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"XATT-{suffix}"));
         var branch = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'MAIN','Main','Active','US')",
             c => c.Parameters.AddWithValue("@c", company));
         var otherBranch = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'OTHER','Other','Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'OTHER','Other','Active','US')",
             c => c.Parameters.AddWithValue("@c", company));
         var attackerBranch = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'MAIN','Main','Active','US')",
             c => c.Parameters.AddWithValue("@c", attackerCompany));
 
         try

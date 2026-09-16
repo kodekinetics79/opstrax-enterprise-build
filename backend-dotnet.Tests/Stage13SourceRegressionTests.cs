@@ -81,9 +81,11 @@ public class Stage13SourceRegressionTests
     public void AdminPage_DoesNotSeedPermissionCatalog_WhenLiveEndpointIsUnavailable()
     {
         var adminPage = ReadSource("frontend", "src", "pages", "AdminPage.tsx");
+        var adminPanels = ReadSource("frontend", "src", "pages", "admin", "AdminTaskPanels.tsx");
 
         Assert.DoesNotContain("developmentFleetSeedData.permissions", adminPage);
-        Assert.Contains("The live permissions endpoint failed", adminPage);
-        Assert.Contains("seed-backed replacement", adminPage);
+        Assert.DoesNotContain("developmentFleetSeedData.permissions", adminPanels);
+        Assert.Contains("The live permissions endpoint failed", adminPanels);
+        Assert.Contains("seed-backed replacement", adminPanels);
     }
 }

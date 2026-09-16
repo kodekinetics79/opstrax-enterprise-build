@@ -8,7 +8,6 @@ import { test } from "node:test";
 // https://github.com/advisories/GHSA-x5fp-wj9c-mxmx
 // https://github.com/advisories/GHSA-4mjr-xmp4-gh2g
 const packages = new Map([
-  ["backend", new URL("../../backend/package.json", import.meta.url)],
   ["services/node-events", new URL("../../services/node-events/package.json", import.meta.url)],
 ]);
 const targets = process.argv.slice(2);

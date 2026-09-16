@@ -133,6 +133,13 @@ public class SettlementServicePostgresTests
             var approve = await svc.ApproveStatementAsync(cid, sid, 42);
             Assert.True(approve.Ok);
 
+            var oversized = await svc.RecordPaymentAsync(cid, sid, 300.01m, "ach", "R-TOO-LARGE", "idem-too-large", 42);
+            Assert.False(oversized.Ok);
+            Assert.Equal("exceeds_outstanding_balance", oversized.Reason);
+            Assert.Equal(0, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM settlement_payments WHERE company_id=@c AND statement_id=@s",
+                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@s", sid); }));
+
             var pay = await svc.RecordPaymentAsync(cid, sid, 300m, "ach", "R1", "idem-1", 42);
             Assert.True(pay.Ok);
             Assert.Equal("paid", pay.Status);

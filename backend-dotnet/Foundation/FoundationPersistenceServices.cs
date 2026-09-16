@@ -530,9 +530,12 @@ public sealed class PostgresIdempotencyService(Database db) : IEventIdempotencyS
 public sealed class PostgresAiFoundationService(Database db, ICorrelationContext? correlation = null)
 {
     public AiReasoningRunRecord StartReasoningRun(string tenantId, string triggerType, string inputJson, string promptTemplate, string expectedSchemaJson, string? correlationId = null, string? causationId = null)
+        => StartReasoningRunAsync(tenantId, triggerType, inputJson, promptTemplate, expectedSchemaJson, correlationId, causationId).GetAwaiter().GetResult();
+
+    public async Task<AiReasoningRunRecord> StartReasoningRunAsync(string tenantId, string triggerType, string inputJson, string promptTemplate, string expectedSchemaJson, string? correlationId = null, string? causationId = null, CancellationToken ct = default)
     {
         var startedAt = DateTimeOffset.UtcNow;
-        var row = db.QuerySingleAsync(
+        var row = await db.QuerySingleAsync(
             @"INSERT INTO ai_reasoning_runs
                 (tenant_id, trigger_type, input_json, prompt_template, expected_schema_json, status, correlation_id, causation_id, started_at)
               VALUES
@@ -548,16 +551,19 @@ public sealed class PostgresAiFoundationService(Database db, ICorrelationContext
                 c.Parameters.AddWithValue("@correlationId", (object?)correlationId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@causationId", (object?)causationId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@startedAt", startedAt);
-            }).GetAwaiter().GetResult();
+            }, ct);
 
         var id = row is null ? 0L : Convert.ToInt64(row["id"]);
         return new AiReasoningRunRecord(id, tenantId, triggerType, inputJson, promptTemplate, expectedSchemaJson, "started", null, null, null, correlationId, causationId, startedAt);
     }
 
     public AiReasoningRunRecord CompleteReasoningRun(AiReasoningRunRecord run, string outputJson, decimal confidenceScore)
+        => CompleteReasoningRunAsync(run, outputJson, confidenceScore).GetAwaiter().GetResult();
+
+    public async Task<AiReasoningRunRecord> CompleteReasoningRunAsync(AiReasoningRunRecord run, string outputJson, decimal confidenceScore, CancellationToken ct = default)
     {
         var completedAt = DateTimeOffset.UtcNow;
-        db.ExecuteAsync(
+        await db.ExecuteAsync(
             @"UPDATE ai_reasoning_runs
               SET status='completed', confidence_score=@score, output_json=COALESCE(@output::jsonb, output_json), completed_at=@completedAt
               WHERE id=@id AND tenant_id=@tenantId",
@@ -568,14 +574,17 @@ public sealed class PostgresAiFoundationService(Database db, ICorrelationContext
                 c.Parameters.AddWithValue("@score", confidenceScore);
                 c.Parameters.AddWithValue("@output", outputJson);
                 c.Parameters.AddWithValue("@completedAt", completedAt);
-            }).GetAwaiter().GetResult();
+            }, ct);
         return run with { Status = "completed", OutputJson = outputJson, ConfidenceScore = confidenceScore, CompletedAt = completedAt };
     }
 
     public AiReasoningRunRecord FailReasoningRun(AiReasoningRunRecord run, string errorJson)
+        => FailReasoningRunAsync(run, errorJson).GetAwaiter().GetResult();
+
+    public async Task<AiReasoningRunRecord> FailReasoningRunAsync(AiReasoningRunRecord run, string errorJson, CancellationToken ct = default)
     {
         var completedAt = DateTimeOffset.UtcNow;
-        db.ExecuteAsync(
+        await db.ExecuteAsync(
             @"UPDATE ai_reasoning_runs
               SET status='failed', error_json=COALESCE(@error::jsonb, error_json), completed_at=@completedAt
               WHERE id=@id AND tenant_id=@tenantId",
@@ -585,17 +594,20 @@ public sealed class PostgresAiFoundationService(Database db, ICorrelationContext
                 c.Parameters.AddWithValue("@tenantId", FoundationPersistenceHelpers.RequireTenantId(run.TenantId));
                 c.Parameters.AddWithValue("@error", errorJson);
                 c.Parameters.AddWithValue("@completedAt", completedAt);
-            }).GetAwaiter().GetResult();
+            }, ct);
         return run with { Status = "failed", ErrorJson = errorJson, CompletedAt = completedAt };
     }
 
     public AiRecommendationRecord CreateRecommendation(string tenantId, string recommendationType, string title, string summary, decimal confidenceScore, decimal urgencyScore, string impactJson, string reasonJson, string proposedActionJson, string riskLevel, string? sourceEventId = null, string? actorType = null, string? actorId = null, string status = "draft", string? moduleKey = null)
+        => CreateRecommendationAsync(tenantId, recommendationType, title, summary, confidenceScore, urgencyScore, impactJson, reasonJson, proposedActionJson, riskLevel, sourceEventId, actorType, actorId, status, moduleKey).GetAwaiter().GetResult();
+
+    public async Task<AiRecommendationRecord> CreateRecommendationAsync(string tenantId, string recommendationType, string title, string summary, decimal confidenceScore, decimal urgencyScore, string impactJson, string reasonJson, string proposedActionJson, string riskLevel, string? sourceEventId = null, string? actorType = null, string? actorId = null, string status = "draft", string? moduleKey = null, CancellationToken ct = default)
     {
         var createdAt = DateTimeOffset.UtcNow;
         var effectiveModuleKey = string.IsNullOrWhiteSpace(moduleKey)
             ? "fleet.foundation"
             : moduleKey.Trim();
-        var row = db.QuerySingleAsync(
+        var row = await db.QuerySingleAsync(
             @"INSERT INTO ai_recommendations
                 (company_id, tenant_id, recommendation_type, module_key, title, summary, confidence_score, urgency_score, impact_json, reason_json, proposed_action_json, risk_level, status, source_event_id, actor_type, actor_id, created_at, correlation_id, causation_id)
               VALUES
@@ -621,7 +633,7 @@ public sealed class PostgresAiFoundationService(Database db, ICorrelationContext
                 c.Parameters.AddWithValue("@createdAt", createdAt);
                 c.Parameters.AddWithValue("@correlationId", (object?)correlation?.CorrelationId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@causationId", (object?)correlation?.CausationId ?? DBNull.Value);
-            }).GetAwaiter().GetResult();
+            }, ct);
         var id = row is null ? 0L : Convert.ToInt64(row["id"]);
         return new AiRecommendationRecord(id, tenantId, recommendationType, title, summary, confidenceScore, urgencyScore, impactJson, reasonJson, proposedActionJson, riskLevel, status, sourceEventId, actorType, actorId, createdAt, correlation?.CorrelationId, correlation?.CausationId);
     }

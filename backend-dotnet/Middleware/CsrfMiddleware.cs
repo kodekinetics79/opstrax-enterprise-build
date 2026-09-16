@@ -93,7 +93,6 @@ public class CsrfMiddleware
             !string.Equals(path, "/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(path, "/api/auth/reset-password", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(path, "/api/platform/auth/login", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(path, "/api/platform/auth/logout", StringComparison.OrdinalIgnoreCase) &&
             // Pre-session like login: the invited operator has no bearer/cookie yet.
             // Token-gated + lockout-limited inside the handler.
             !string.Equals(path, "/api/platform/auth/accept-invite", StringComparison.OrdinalIgnoreCase) &&

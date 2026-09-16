@@ -174,7 +174,7 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
 
             if (existingRecommendationCount == 0)
             {
-                _ = ai.CreateRecommendation(
+                _ = await ai.CreateRecommendationAsync(
                     companyId.ToString(CultureInfo.InvariantCulture),
                     "fleet.health.review",
                     "Fleet health review required",
@@ -199,7 +199,8 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
                     ActorTypes.System,
                     "safety-maintenance-foundation",
                     status: "active",
-                    moduleKey: "fleet-health");
+                    moduleKey: "fleet-health",
+                    ct: ct);
             }
         }
 

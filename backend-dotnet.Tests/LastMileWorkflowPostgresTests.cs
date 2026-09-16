@@ -162,8 +162,8 @@ public sealed class LastMileWorkflowPostgresTests
         var db = Db();
         await new FleetTmsLogisticsSchemaService(db, NullLogger<FleetTmsLogisticsSchemaService>.Instance).EnsureAsync();
         var suffix = Guid.NewGuid().ToString("N")[..10];
-        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry) VALUES (@x,'Last Mile Dispatch Pilot','Transportation')", c => c.Parameters.AddWithValue("@x", $"LMD-{suffix}"));
-        var branch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')", c => c.Parameters.AddWithValue("@c", company));
+        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry,country) VALUES (@x,'Last Mile Dispatch Pilot','Transportation','US')", c => c.Parameters.AddWithValue("@x", $"LMD-{suffix}"));
+        var branch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'MAIN','Main','Active','US')", c => c.Parameters.AddWithValue("@c", company));
         try
         {
             var createHttp = Principal(company, branch, "dispatch:create");
@@ -252,9 +252,9 @@ public sealed class LastMileWorkflowPostgresTests
     private static async Task<SeedData> SeedAsync(Database db)
     {
         var suffix = Guid.NewGuid().ToString("N")[..10];
-        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry) VALUES (@x,'Last Mile Pilot','Transportation')", c => c.Parameters.AddWithValue("@x", $"LMW-{suffix}"));
-        var branch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')", c => c.Parameters.AddWithValue("@c", company));
-        var other = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'OTHER','Other','Active')", c => c.Parameters.AddWithValue("@c", company));
+        var company = await db.InsertAsync("INSERT INTO companies(company_code,name,industry,country) VALUES (@x,'Last Mile Pilot','Transportation','US')", c => c.Parameters.AddWithValue("@x", $"LMW-{suffix}"));
+        var branch = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'MAIN','Main','Active','US')", c => c.Parameters.AddWithValue("@c", company));
+        var other = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'OTHER','Other','Active','US')", c => c.Parameters.AddWithValue("@c", company));
         var order = $"LM-{suffix}";
         var routeCode = $"R-{suffix}";
         await db.ExecuteAsync("INSERT INTO fleet_tms_dispatch_orders(company_id,branch_id,order_number,customer_name,status,order_value,route_code) VALUES (@c,@b,@o,'Pilot Customer','InTransit',125,@r)", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@o", order); c.Parameters.AddWithValue("@r", routeCode); });

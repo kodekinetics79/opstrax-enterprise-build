@@ -2,16 +2,20 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, BadgeCheck, ShieldCheck, RefreshCw } from "lucide-react";
 import { taxApi } from "@/services/taxApi";
-import { ErrorState, LoadingState, PageHeader } from "@/components/ui";
+import { ErrorState, LoadingState } from "@/components/ui";
+import { FinanceWorkspaceTabs, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import type { AnyRecord } from "@/types";
+import { countryLabel, useTenantCountry, useTenantCurrency } from "@/hooks/useTenantRegion";
 
-const REGIMES = ["vat", "gst", "zatca_vat", "us_sales_tax"];
 const TAX_CODES = ["STANDARD", "REDUCED", "ZERO", "EXEMPT", "REVERSE_CHARGE", "OUT_OF_SCOPE"];
 const CATEGORIES = ["S", "Z", "E", "O"];
 
 // Tax configuration admin (ADR-008 P3). Manage VAT/GST/ZATCA tax profiles + decision-table rules,
 // publish with maker-checker, and record the seller VAT registration required to charge tax.
 export function TaxAdminPage() {
+  const tenantCountry = useTenantCountry();
+  const tenantCurrency = useTenantCurrency();
+  const marketRegime = tenantCountry === "SA" ? "zatca_vat" : tenantCountry === "CA" ? "gst" : tenantCountry === "US" ? "us_sales_tax" : "vat";
   const qc = useQueryClient();
   const [selected, setSelected] = useState<number | null>(null);
 
@@ -31,12 +35,15 @@ export function TaxAdminPage() {
   const profiles = (profilesQ.data as AnyRecord[]) ?? [];
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Tax Configuration"
-        description="VAT / GST / ZATCA profiles, decision-table rules and seller registration"
+    <div className="page-stack min-w-0">
+      <RevenueWorkspaceHeader
+        title={`${countryLabel(tenantCountry)} Tax Configuration`}
+        description={`${marketRegime.replaceAll("_", " ").toUpperCase()} profiles and seller registration locked to the tenant operating market`}
+        activeStage="invoices"
+        eyebrow="Finance workspace"
         actions={<button onClick={() => void profilesQ.refetch()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"><RefreshCw className="h-4 w-4" /> Refresh</button>}
       />
+      <FinanceWorkspaceTabs />
 
       <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
         {/* Profiles list + create */}
@@ -58,7 +65,7 @@ export function TaxAdminPage() {
               </tbody>
             </table>
           </div>
-          <ProfileForm onSubmit={(b) => createProfile.mutate(b)} busy={createProfile.isPending} />
+          <ProfileForm onSubmit={(b) => createProfile.mutate(b)} busy={createProfile.isPending} regime={marketRegime} currency={tenantCurrency ?? ""} />
         </section>
 
         {/* Selected profile: rules + publish */}
@@ -91,14 +98,19 @@ export function TaxAdminPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500"><ShieldCheck className="h-4 w-4" /> Seller VAT registration</h2>
         <p className="mb-3 text-xs text-slate-400">Required before any non-zero VAT/ZATCA tax can be charged. Sources the ZATCA seller TRN.</p>
-        <SellerForm onSubmit={(b) => saveSeller.mutate(b)} busy={saveSeller.isPending} saved={Boolean(saveSeller.data)} />
+        <SellerForm onSubmit={(b) => saveSeller.mutate(b)} busy={saveSeller.isPending} saved={Boolean(saveSeller.data)} jurisdiction={tenantCountry ?? ""} regime={marketRegime} />
       </section>
     </div>
   );
 }
 
 function StatusPill({ status }: { status: string }) {
-  const map: Record<string, string> = { published: "bg-emerald-100 text-emerald-700", draft: "bg-slate-100 text-slate-600", pending_approval: "bg-amber-100 text-amber-700", archived: "bg-slate-100 text-slate-400" };
+  const map: Record<string, string> = {
+    published: "bg-emerald-100 text-emerald-800",
+    draft: "bg-slate-100 text-slate-700",
+    pending_approval: "bg-amber-100 text-amber-800",
+    archived: "bg-slate-100 text-slate-600",
+  };
   return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${map[status] ?? "bg-slate-100 text-slate-600"}`}>{status}</span>;
 }
 
@@ -112,13 +124,13 @@ function SubmitBtn({ busy, label }: { busy: boolean; label: string }) {
   return <button type="submit" disabled={busy} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"><Plus className="h-4 w-4" /> {label}</button>;
 }
 
-function ProfileForm({ onSubmit, busy }: { onSubmit: (b: Record<string, unknown>) => void; busy: boolean }) {
-  const [f, setF] = useState({ profileName: "", regime: "vat", currency: "", priceInclusive: "false", effectiveDate: "" });
+function ProfileForm({ onSubmit, busy, regime, currency }: { onSubmit: (b: Record<string, unknown>) => void; busy: boolean; regime: string; currency: string }) {
+  const [f, setF] = useState({ profileName: "", priceInclusive: "false", effectiveDate: "" });
   return (
-    <form onSubmit={(e) => { e.preventDefault(); onSubmit({ ...f }); setF({ profileName: "", regime: "vat", currency: "", priceInclusive: "false", effectiveDate: "" }); }} className="grid grid-cols-2 gap-2">
+    <form onSubmit={(e) => { e.preventDefault(); onSubmit({ ...f, regime, currency }); setF({ profileName: "", priceInclusive: "false", effectiveDate: "" }); }} className="grid grid-cols-2 gap-2">
       <Input placeholder="Profile name" value={f.profileName} onChange={(e) => setF({ ...f, profileName: e.target.value })} required />
-      <Select options={REGIMES} value={f.regime} onChange={(e) => setF({ ...f, regime: e.target.value })} />
-      <Input placeholder="Currency (blank = any)" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })} />
+      <Input aria-label="Locked tax regime" value={regime} readOnly disabled />
+      <Input aria-label="Locked currency" value={currency} readOnly disabled />
       <Select options={["false", "true"]} value={f.priceInclusive} onChange={(e) => setF({ ...f, priceInclusive: e.target.value })} />
       <Input type="date" value={f.effectiveDate} onChange={(e) => setF({ ...f, effectiveDate: e.target.value })} required />
       <div className="col-span-2"><SubmitBtn busy={busy} label="Create draft profile" /></div>
@@ -140,12 +152,12 @@ function RuleForm({ onSubmit, busy }: { onSubmit: (b: Record<string, unknown>) =
   );
 }
 
-function SellerForm({ onSubmit, busy, saved }: { onSubmit: (b: Record<string, unknown>) => void; busy: boolean; saved: boolean }) {
-  const [f, setF] = useState({ jurisdiction: "SA", regime: "zatca_vat", taxRegistrationNo: "", legalName: "" });
+function SellerForm({ onSubmit, busy, saved, jurisdiction, regime }: { onSubmit: (b: Record<string, unknown>) => void; busy: boolean; saved: boolean; jurisdiction: string; regime: string }) {
+  const [f, setF] = useState({ taxRegistrationNo: "", legalName: "" });
   return (
-    <form onSubmit={(e) => { e.preventDefault(); onSubmit({ ...f }); }} className="grid grid-cols-2 gap-2 md:grid-cols-4">
-      <Input placeholder="Jurisdiction" value={f.jurisdiction} onChange={(e) => setF({ ...f, jurisdiction: e.target.value })} />
-      <Select options={["zatca_vat", "vat", "gst"]} value={f.regime} onChange={(e) => setF({ ...f, regime: e.target.value })} />
+    <form onSubmit={(e) => { e.preventDefault(); onSubmit({ ...f, jurisdiction, regime }); }} className="grid grid-cols-2 gap-2 md:grid-cols-4">
+      <Input aria-label="Locked jurisdiction" value={jurisdiction} readOnly disabled />
+      <Input aria-label="Locked tax regime" value={regime} readOnly disabled />
       <Input placeholder="Tax registration no (TRN)" value={f.taxRegistrationNo} onChange={(e) => setF({ ...f, taxRegistrationNo: e.target.value })} required />
       <Input placeholder="Legal name" value={f.legalName} onChange={(e) => setF({ ...f, legalName: e.target.value })} />
       <div className="col-span-2 md:col-span-4 flex items-center gap-3"><SubmitBtn busy={busy} label="Save registration" />{saved ? <span className="text-xs text-emerald-600">Saved</span> : null}</div>

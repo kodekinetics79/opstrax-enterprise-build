@@ -113,7 +113,7 @@ function regionalRequirements(countryCode: string) {
     ] as const;
   }
   return [
-    { title: "CDL / commercial license", type: "license", matcher: /license|cdl|class/i },
+    { title: "Commercial driver license", type: "license", matcher: /license|cdl|class/i },
     { title: "Medical card", type: "medical", matcher: /medical|med cert|dot/i },
     { title: "Drug / alcohol program", type: "drug", matcher: /drug|alcohol|consortium/i },
     { title: "Health insurance / benefits", type: "insurance", matcher: /insurance|health/i },
@@ -494,7 +494,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
                 </div>
                 <div className="mt-3 grid gap-3 sm:grid-cols-3">
                   <CredentialCard
-                    title="Driver license / CDL"
+                    title="Commercial driver license"
                     status={String(g(licenseDoc || record, "status") ?? "Missing")}
                     name={String(g(licenseDoc || {}, "documentName", "document_name", "certificationType", "certification_type") ?? "License record")}
                     expiry={fmt(g(record, "licenseExpiry", "license_expiry") ?? g(licenseDoc || {}, "expiryDate", "expiry_date"))}

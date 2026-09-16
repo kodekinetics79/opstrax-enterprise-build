@@ -51,7 +51,8 @@ import {
   type ClayTone,
 } from "@/components/clay";
 import { useHasPermission, PERMISSIONS } from "@/hooks/usePermission";
-import { exportCsv, LoadingState, ErrorState, EmptyState, KpiCard } from "@/components/ui";
+import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { CommercialMetricRail, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import type { AnyRecord } from "@/types";
 
 // ── Domain vocabulary ─────────────────────────────────────────────────────────
@@ -874,15 +875,11 @@ export function CustomersPage() {
 
   return (
     <div className="page-stack min-w-0">
-      {/* Header */}
-      <header className="flex shrink-0 flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold tracking-[-0.01em] text-slate-900">Customers</h1>
-          <p className="mt-0.5 text-sm font-medium text-slate-500">
-            Accounts, SLA health, delivery experience, and risk — wired into jobs, contracts, and sites.
-          </p>
-        </div>
-        <div className="flex gap-2">
+      <RevenueWorkspaceHeader
+        title="Customers"
+        description="Manage account ownership, SLA health, delivery experience and linked commercial activity."
+        activeStage="accounts"
+        actions={<div className="flex gap-2">
           <ClayButton variant="ghost" size="sm" icon={Download} onClick={() => exportCsv("customers", filtered)}>
             Export CSV
           </ClayButton>
@@ -891,21 +888,16 @@ export function CustomersPage() {
               New customer
             </ClayButton>
           )}
-        </div>
-      </header>
+        </div>}
+      />
 
       {/* KPI rail */}
-      <div className="panel flex flex-wrap divide-x divide-slate-200 overflow-hidden" aria-label="Customer account summary" aria-busy={sumQ.isLoading}>
-        {kpis.map((k) => (
-          <KpiCard
-            compact
-            key={k.label}
-            label={k.label}
-            value={sumQ.isLoading ? "—" : <>{k.value}{k.unit}</>}
-            status={sumQ.isLoading ? "Loading" : undefined}
-          />
-        ))}
-      </div>
+      <CommercialMetricRail label="Customer account summary" metrics={kpis.map((k) => ({
+        label: k.label,
+        value: sumQ.isLoading ? "—" : <>{k.value}{k.unit}</>,
+        detail: sumQ.isLoading ? "loading" : "authorized scope",
+        tone: /risk/i.test(k.label) ? "warn" : /active|health|delivery/i.test(k.label) ? "good" : "neutral",
+      }))} />
 
       {bulkResult && (
         <BulkResultBanner result={bulkResult} nameById={nameById} onDismiss={() => setBulkResult(null)} />

@@ -154,6 +154,8 @@ public sealed class Batch1SchemaService(Database db, IConfiguration? configurati
             status VARCHAR(50) NOT NULL DEFAULT 'Active',
             expiry_date DATE NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+        "CREATE INDEX IF NOT EXISTS ix_vehicle_documents_company_vehicle_expiry ON vehicle_documents(company_id, vehicle_id, expiry_date)",
+        "CREATE INDEX IF NOT EXISTS ix_driver_documents_company_driver_expiry ON driver_documents(company_id, driver_id, expiry_date)",
         @"CREATE TABLE IF NOT EXISTS customer_contacts (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL,

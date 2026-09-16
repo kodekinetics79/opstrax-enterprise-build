@@ -19,12 +19,12 @@ public sealed class FleetIdentityDriverPostgresTests
         await new DispatchSchemaService(db, NullLogger<DispatchSchemaService>.Instance).EnsureAsync();
         var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(100_000, 900_000);
         await db.ExecuteAsync(
-            "INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Driver swap test','transport')",
+            "INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Driver swap test','transport','US')",
             c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"SWAP-{companyId}"); });
         try
         {
             var branchId = await db.InsertAsync(
-                "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,'Swap branch','Active')",
+                "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,@code,'Swap branch','Active','US')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"SWAP-BR-{companyId}"); });
             var actorId = await db.InsertAsync(
                 "INSERT INTO users(company_id,branch_id,full_name,email,role_name,status) VALUES (@c,@b,'Dispatcher',@email,'Dispatcher','Active')",
@@ -89,12 +89,12 @@ public sealed class FleetIdentityDriverPostgresTests
         var db = Db();
         var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(10_000, 90_000);
         await db.ExecuteAsync(
-            "INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Driver identity test','transport')",
+            "INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Driver identity test','transport','US')",
             c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"DID-{companyId}"); });
         try
         {
             var branchId = await db.InsertAsync(
-                "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,'Driver branch','Active')",
+                "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,@code,'Driver branch','Active','US')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"BR-{companyId}"); });
             var userId = await db.InsertAsync(
                 "INSERT INTO users(company_id,branch_id,full_name,email,role_name,status) VALUES (@c,@b,'Pilot Driver',@email,'Driver','Active')",
@@ -130,8 +130,8 @@ public sealed class FleetIdentityDriverPostgresTests
             await db.InsertAsync(
                 @"INSERT INTO dvir_reports
                     (company_id,branch_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,
-                     defects_found,safe_to_operate,driver_signature_status,submitted_at)
-                  VALUES (@c,@b,@number,@d,@v,'pre_trip','submitted',0,TRUE,'Pending',NOW())",
+                     defects_found,safe_to_operate,driver_signature_status,submitted_at,country_code)
+                  VALUES (@c,@b,@number,@d,@v,'pre_trip','submitted',0,TRUE,'Pending',NOW(),'US')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId);
@@ -145,8 +145,8 @@ public sealed class FleetIdentityDriverPostgresTests
             var dvirId = await db.InsertAsync(
                 @"INSERT INTO dvir_reports
                     (company_id,branch_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,
-                     defects_found,safe_to_operate,driver_signature_status,submitted_at)
-                  VALUES (@c,@b,@number,@d,@v,'pre_trip','submitted',0,TRUE,'Signed',NOW())",
+                     defects_found,safe_to_operate,driver_signature_status,submitted_at,country_code)
+                  VALUES (@c,@b,@number,@d,@v,'pre_trip','submitted',0,TRUE,'Signed',NOW(),'US')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId);
@@ -156,8 +156,8 @@ public sealed class FleetIdentityDriverPostgresTests
             var newerUnsafeDvirId = await db.InsertAsync(
                 @"INSERT INTO dvir_reports
                     (company_id,branch_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,
-                     defects_found,safe_to_operate,driver_signature_status,submitted_at)
-                  VALUES (@c,@b,@number,@d,@v,'pre_trip','submitted',1,FALSE,'Signed',NOW()+INTERVAL '1 second') RETURNING id",
+                     defects_found,safe_to_operate,driver_signature_status,submitted_at,country_code)
+                  VALUES (@c,@b,@number,@d,@v,'pre_trip','submitted',1,FALSE,'Signed',NOW()+INTERVAL '1 second','US') RETURNING id",
                 c =>
                 {
                     c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId);
@@ -214,8 +214,8 @@ public sealed class FleetIdentityDriverPostgresTests
                 await using (var unsafeInsert = new NpgsqlCommand(
                     @"INSERT INTO dvir_reports
                         (company_id,branch_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,
-                         defects_found,safe_to_operate,driver_signature_status,submitted_at)
-                      VALUES (@c,@b,@number,@d,@v,'pre_trip','submitted',1,FALSE,'Signed',NOW()+INTERVAL '2 seconds')", blocker, blockerTx))
+                         defects_found,safe_to_operate,driver_signature_status,submitted_at,country_code)
+                      VALUES (@c,@b,@number,@d,@v,'pre_trip','submitted',1,FALSE,'Signed',NOW()+INTERVAL '2 seconds','US')", blocker, blockerTx))
                 {
                     unsafeInsert.Parameters.AddWithValue("@c", companyId); unsafeInsert.Parameters.AddWithValue("@b", branchId);
                     unsafeInsert.Parameters.AddWithValue("@number", $"DVIR-CONCURRENT-UNSAFE-{companyId}");

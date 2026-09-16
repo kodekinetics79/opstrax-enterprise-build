@@ -171,7 +171,7 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
     private static IEnumerable Data(IResult result) => Assert.IsAssignableFrom<IEnumerable>(Value(result));
 
     private static Task<long> Company(Database db, string code) => db.InsertAsync(
-        "INSERT INTO companies(company_code,name,industry) VALUES(@code,@code,'Logistics') RETURNING id",
+        "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,@code,'Logistics','US') RETURNING id",
         c => c.Parameters.AddWithValue("@code", code));
     private static Task<long> Customer(Database db, long company, string code) => db.InsertAsync(
         "INSERT INTO customers(company_id,customer_code,name,status,sla_tier) VALUES(@company,@code,@code,'Active','Standard') RETURNING id",
@@ -235,8 +235,8 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@vehicle", vehicle); c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@verification", verification); });
 
     private static Task<long> Dvir(Database db, long company, long driver, long vehicle, string number, string origin, string verification) => db.InsertAsync(
-        @"INSERT INTO dvir_reports(company_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,submitted_at,data_origin,verification_status)
-          VALUES(@company,@number,@driver,@vehicle,'Pre Trip','Submitted',NOW(),@origin,@verification) RETURNING id",
+        @"INSERT INTO dvir_reports(company_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,submitted_at,data_origin,verification_status,country_code)
+          VALUES(@company,@number,@driver,@vehicle,'Pre Trip','Submitted',NOW(),@origin,@verification,'US') RETURNING id",
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@number", number); c.Parameters.AddWithValue("@driver", driver); c.Parameters.AddWithValue("@vehicle", vehicle); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@verification", verification); });
 
     private static Task DvirDefect(Database db, long company, long vehicle, long report, string category, string origin, string verification) => db.ExecuteAsync(

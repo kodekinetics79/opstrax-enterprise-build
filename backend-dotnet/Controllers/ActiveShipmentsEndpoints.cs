@@ -2,6 +2,7 @@ using System.Text;
 using Npgsql;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
+using Opstrax.Api.Services;
 
 namespace Opstrax.Api.Controllers;
 
@@ -60,12 +61,7 @@ public static class ActiveShipmentsEndpoints
     }
 
     internal static string CsvCell(object? value)
-    {
-        var text = value is DateTimeOffset dto ? dto.ToString("O") : value?.ToString() ?? "";
-        var trimmed = text.AsSpan().TrimStart();
-        if (!trimmed.IsEmpty && trimmed[0] is '=' or '+' or '-' or '@') text = "'" + text;
-        return $"\"{text.Replace("\"", "\"\"")}\"";
-    }
+        => SpreadsheetSafeCsv.Cell(value, quoteAlways: true);
 
     private const string Projection = """
 WITH active_jobs AS (

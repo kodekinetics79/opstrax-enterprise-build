@@ -6,7 +6,8 @@ import {
   Download, Fuel, Landmark,
   PenTool, Plus, TrendingDown, Truck, WalletCards, X, Zap,
 } from "lucide-react";
-import { AiInsightCard, DataTable, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { AiInsightCard, DataTable, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
+import { CommercialMetricRail, FinanceWorkspaceTabs, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import {
   useCarrierDetail, useCarriers, useCarriersSummary,
   useContractDetail, useContracts, useContractsSummary,
@@ -22,6 +23,7 @@ import { expensesApi } from "@/services/expensesApi";
 import { fuelApi } from "@/services/fuelApi";
 import type { AnyRecord } from "@/types";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
+import { useTenantCountry, useTenantCurrency } from "@/hooks/useTenantRegion";
 
 type Kind = "fuel" | "expenses" | "contracts" | "carriers" | "cost-margin" | "cost-leakage";
 
@@ -148,6 +150,8 @@ const configs = {
 ────────────────────────────────────────────────────────── */
 export function Batch5FinancePage({ kind }: { kind: Kind }) {
   const config   = configs[kind];
+  const tenantCountry = useTenantCountry();
+  const tenantCurrency = useTenantCurrency() ?? "";
   const rowsQ    = config.useRows();
   const summaryQ = config.useSummary();
 
@@ -251,18 +255,19 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
 
   const summaryData = summaryQ.data ?? {};
   const s = summaryData;
+  const isFinanceWorkspace = kind === "fuel" || kind === "expenses";
 
   return (
     <div className="page-stack min-w-0">
       {/* Header */}
-      <PageHeader
-        eyebrow={config.eyebrow}
+      {isFinanceWorkspace ? <RevenueWorkspaceHeader
+        eyebrow="Finance workspace"
         title={config.title}
         description={config.description}
         actions={
           <>
             {fuelActionLabel && (
-              <button className="btn-primary" onClick={() => setEditing(kind === "fuel" && safeTab === 1 ? defaultIdlingForm() : defaultForm(kind))}>
+              <button className="btn-primary" onClick={() => setEditing(kind === "fuel" && safeTab === 1 ? defaultIdlingForm(tenantCurrency) : defaultForm(kind, tenantCountry, tenantCurrency))}>
                 <Plus className="h-4 w-4" /> {fuelActionLabel}
               </button>
             )}
@@ -271,19 +276,32 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
             </button>
           </>
         }
-      />
+      /> : <PageHeader
+        eyebrow={config.eyebrow}
+        title={config.title}
+        description={config.description}
+        actions={
+          <>
+            {fuelActionLabel && (
+              <button className="btn-primary" onClick={() => setEditing(defaultForm(kind, tenantCountry, tenantCurrency))}>
+                <Plus className="h-4 w-4" /> {fuelActionLabel}
+              </button>
+            )}
+            <button className="btn-ghost" onClick={() => exportCsv(kind, displayRows)}>
+              <Download className="h-4 w-4" /> Export Report
+            </button>
+          </>
+        }
+      />}
+
+      {isFinanceWorkspace ? <FinanceWorkspaceTabs /> : null}
 
       {/* KPI Grid */}
-      <div className="panel flex flex-wrap divide-x divide-slate-100">
-        {config.kpis.slice(0, 5).map(([label, key]) => (
-          <KpiCard compact
-            key={key}
-            label={label}
-            value={s[key] == null ? "—" : String(s[key])}
-            status={/anomaly|missing|critical|leakage|unusual|rejected/i.test(label) ? "Critical" : /pending|risk|expir/i.test(label) ? "pending" : undefined}
-          />
-        ))}
-      </div>
+      <CommercialMetricRail metrics={config.kpis.slice(0, 5).map(([label, key]) => ({
+        label,
+        value: s[key] == null ? "—" : String(s[key]),
+        tone: /anomaly|missing|critical|leakage|unusual|rejected/i.test(label) ? "bad" as const : /pending|risk|expir/i.test(label) ? "warn" as const : "neutral" as const,
+      }))} />
 
       {act.isError && (
         <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -805,21 +823,22 @@ function actionLabel(type: string): string {
   return map[type] ?? labelize(type);
 }
 
-function defaultForm(kind: Kind): AnyRecord {
+function defaultForm(kind: Kind, country: string | null, currency: string): AnyRecord {
   const today = new Date().toISOString().split("T")[0];
-  if (kind === "fuel")       return { fuelType: "Diesel", quantity: "", unit: "Gallons", unitPrice: "", currency: "USD", paymentMethod: "Fleet Card", fuelDate: today };
-  if (kind === "expenses")   return { categoryName: "", amount: "", currency: "", receiptStatus: "Missing", expenseDate: today };
-  if (kind === "contracts")  return { contractType: "Customer", rateType: "Per Mile", baseRate: "", currency: "USD", status: "Draft", effectiveDate: today };
+  const distanceRate = country === "US" ? "Per Mile" : "Per Kilometer";
+  if (kind === "fuel")       return { fuelType: "Diesel", quantity: "", unit: country === "US" ? "Gallons" : "Liters", unitPrice: "", currency, paymentMethod: "Fleet Card", fuelDate: today };
+  if (kind === "expenses")   return { categoryName: "", amount: "", currency, receiptStatus: "Missing", expenseDate: today };
+  if (kind === "contracts")  return { contractType: "Customer", rateType: distanceRate, baseRate: "", currency, status: "Draft", effectiveDate: today };
   if (kind === "carriers")   return { status: "Pending" };
   return {};
 }
 
-function defaultIdlingForm(): AnyRecord {
+function defaultIdlingForm(currency: string): AnyRecord {
   return {
     durationMinutes: "",
     estimatedFuelBurn: "",
     estimatedCost: "",
-    currency: "USD",
+    currency,
     thresholdStatus: "Normal",
   };
 }

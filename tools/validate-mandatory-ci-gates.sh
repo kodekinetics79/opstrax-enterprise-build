@@ -17,7 +17,6 @@ test -f "$ledger" || { echo "Mandatory gate ledger not found: $ledger" >&2; exit
 awk -F '\t' -v require_success="$require_success" '
   BEGIN {
     expected["frontend-build"] = 1
-    expected["node-backend-build"] = 1
     expected["demo-node-events-check"] = 1
     expected["mobile-build-test"] = 1
     expected["launch-tooling-tests"] = 1

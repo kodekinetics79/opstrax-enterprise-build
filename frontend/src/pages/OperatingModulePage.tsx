@@ -29,6 +29,7 @@ import {
   StatusBadge,
   LoadingState,
 } from "@/components/ui";
+import { RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
@@ -901,16 +902,20 @@ function exportCsv(name: string, rows: AnyRecord[]) {
 }
 
 function PriceSimulationPage() {
+  const navigate = useNavigate();
   return (
     <div className="page-stack">
-      <PageHeader
-        eyebrow="Commercial"
+      <RevenueWorkspaceHeader
+        eyebrow="Pricing workspace"
         title="Price Simulation"
         description="A production quote requires persisted customer, contract, lane, rate-card, fuel, toll, tax and cost inputs."
+        activeStage="quotations"
+        actions={<button type="button" className="btn-secondary" onClick={() => navigate("/rate-cards")}>Review rate cards</button>}
       />
       <EmptyState
         title="Pricing source not connected"
         subtitle="No quote is calculated or convertible until those tenant-scoped production inputs and a persisted quote workflow are available."
+        action={<button type="button" className="btn-primary" onClick={() => navigate("/quotations")}>Open quotations</button>}
       />
     </div>
   );

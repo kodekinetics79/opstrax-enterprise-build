@@ -1,15 +1,17 @@
 import { useRef, useState } from "react";
 import { chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation, useNavigate } from "react-router";
+import { Link, useLocation } from "react-router";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { jobsApi } from "@/services/jobsApi";
 import { financeOrderToCashApi } from "@/services/financeOrderToCashApi";
 import { exportCsv, LoadingState, EmptyState, ErrorState, KpiCard, DataTable } from "@/components/ui";
+import { CommercialMetricRail, FinanceWorkspaceTabs, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import { useAuth } from "@/hooks/useAuth";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { useHasPermission } from "@/hooks/usePermission";
+import { useTenantCountry } from "@/hooks/useTenantRegion";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import type { AnyRecord } from "@/types";
 
@@ -148,6 +150,50 @@ function totalsByCurrency(rows: AnyRecord[], value: (row: AnyRecord) => number):
     totals.set(currency, (totals.get(currency) ?? 0) + value(row));
   });
   return [...totals].sort(([left], [right]) => left.localeCompare(right)).map(([currency, total]) => ({ currency, total }));
+}
+
+function SaudiFinanceReadiness() {
+  const readiness = useQuery({
+    queryKey: ["finance", "saudi-readiness"],
+    queryFn: financeOrderToCashApi.saudiFinanceReadiness,
+    staleTime: 30_000,
+  });
+  if (readiness.isLoading) {
+    return <section className="panel px-4 py-3 text-sm text-slate-500">Checking Saudi invoicing and payment readiness…</section>;
+  }
+  if (readiness.isError) {
+    return <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Saudi finance readiness could not be verified. Invoice and payment ledgers remain available.</section>;
+  }
+
+  const row = readiness.data ?? {};
+  const sellerReady = Boolean(row.sellerRegistrationConfigured && row.publishedSaudiTaxProfileConfigured);
+  const zatcaReady = Boolean(row.liveZatcaSubmissionEnabled);
+  const paymentReady = Boolean(row.paymentAcceptanceEnabled && row.paymentWebhookVerified);
+  const prepared = Number(row.preparedInvoiceCount ?? 0);
+
+  const stateClass = (ready: boolean) => ready
+    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+    : "border-amber-200 bg-amber-50 text-amber-900";
+
+  return (
+    <section className="panel flex flex-wrap items-center gap-2 px-3 py-3" aria-label="Saudi finance activation status">
+      <div className="mr-auto min-w-[210px]">
+        <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Saudi finance readiness</p>
+        <p className="mt-0.5 text-xs text-slate-600">Live states only; catalog entries do not enable regulated services.</p>
+      </div>
+      <span className={`rounded-lg border px-3 py-2 text-xs font-semibold ${stateClass(sellerReady)}`}>
+        VAT profile · {sellerReady ? "Ready" : "Setup required"}
+      </span>
+      <span className={`rounded-lg border px-3 py-2 text-xs font-semibold ${stateClass(zatcaReady)}`}>
+        ZATCA · {zatcaReady ? "Gateway enabled" : String(row.zatcaState ?? "Onboarding required")} · {prepared} prepared
+      </span>
+      <span className={`rounded-lg border px-3 py-2 text-xs font-semibold ${stateClass(paymentReady)}`}>
+        Customer payments · {paymentReady ? "Live" : String(row.paymentState ?? "Provider required")}
+      </span>
+      <Link className="btn-secondary whitespace-nowrap text-xs" to="/finance/tax-config">Tax setup</Link>
+      <Link className="btn-secondary whitespace-nowrap text-xs" to="/integrations?provider=saudi-payment-gateway&intent=payment-acceptance">Payment provider</Link>
+    </section>
+  );
 }
 
 type PaymentTarget = {
@@ -441,12 +487,12 @@ function InvoicesTab() {
   return (
     <div className="flex flex-col gap-4">
       {notice && <div className={`rounded-lg border p-3 text-sm ${notice.kind === "error" ? "border-red-300 bg-red-50 text-red-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</div>}
-      <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Invoice summary">
-        <KpiCard compact label="Total invoices" value={rows.length} />
-        <KpiCard compact label="Overdue" value={overdue} status={overdue > 0 ? "Overdue" : "No recorded overdue invoices"} />
-        <KpiCard compact label="Paid" value={paidCount} />
-        {outstandingBalances.map(({ currency, total }) => <KpiCard compact key={`outstanding-${currency}`} label={`Outstanding (${currency})`} value={money(total, currency)} status="Review" />)}
-      </div>
+      <CommercialMetricRail label="Invoice summary" metrics={[
+        { label: "Issued invoices", value: rows.length, detail: `${drafts.length} drafts`, tone: "info" },
+        { label: "Overdue", value: overdue, detail: overdue ? "collections action" : "none recorded", tone: overdue ? "bad" : "neutral" },
+        { label: "Paid", value: paidCount, detail: "fully collected", tone: "good" },
+        ...outstandingBalances.map(({ currency, total }) => ({ label: `Outstanding ${currency}`, value: money(total, currency), detail: "open balance", tone: "warn" as const })),
+      ]} />
       <JobBillingPreparation />
       {canReadDrafts && (
         <section className="panel overflow-hidden p-0" aria-labelledby="invoice-drafts-title">
@@ -563,9 +609,12 @@ function ArAgingTab() {
   })));
 
   return <div className="flex flex-col gap-4">
-    <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Receivables aging summary by currency">
-      {groups.map((group) => <KpiCard compact key={`${group.currency}-summary`} label={`Outstanding (${group.currency})`} value={money(Number(group.totalOutstanding ?? 0), String(group.currency))} status={Number(group.days90Plus ?? 0) > 0 ? "Overdue" : undefined} trend={`90+ days: ${money(Number(group.days90Plus ?? 0), String(group.currency))}`} />)}
-    </div>
+    <CommercialMetricRail label="Receivables aging summary by currency" metrics={groups.map((group) => ({
+      label: `Outstanding ${String(group.currency)}`,
+      value: money(Number(group.totalOutstanding ?? 0), String(group.currency)),
+      detail: `90+ days ${money(Number(group.days90Plus ?? 0), String(group.currency))}`,
+      tone: Number(group.days90Plus ?? 0) > 0 ? "bad" as const : "neutral" as const,
+    }))} />
     {custRows.length === 0 ? <EmptyState title="No outstanding receivables" /> : <DataTable rows={custRows} columns={["Currency", "Customer", "Current", "1–30", "31–60", "61–90", "90+", "Total Outstanding"]} />}
     {groups.length > 0 && <details className="panel p-3">
       <summary className="cursor-pointer text-sm font-semibold text-slate-700">Detailed aging buckets and calculation basis</summary>
@@ -591,10 +640,11 @@ function PaymentsTab() {
   if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load payments."} />;
   return (
     <div className="flex flex-col gap-4">
-      <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Payment summary">
-        <KpiCard compact label="Total payments" value={rows.length} />
-        {recorded.map(({ currency, total }) => <KpiCard compact key={currency} label={`Recorded amount (${currency})`} value={money(total, currency)} />)}
-      </div>
+      <CommercialMetricRail label="Payment summary" metrics={[
+        { label: "Payments", value: rows.length, detail: "ledger records", tone: "info" },
+        ...recorded.map(({ currency, total }) => ({ label: `Recorded ${currency}`, value: money(total, currency), detail: "confirmed receipts", tone: "good" as const })),
+        { label: "Settlement evidence", value: rows.filter((row) => row.providerSettlementClaim === true).length, detail: `${rows.length} total records`, tone: "neutral" },
+      ]} />
       {rows.length === 0 ? <EmptyState title="No payments found" /> : (
         <div className="panel overflow-hidden p-0">
           <div className="overflow-x-auto">
@@ -645,12 +695,12 @@ function ProfitabilityTab() {
   }));
   return (
     <div className="flex flex-col gap-4">
-      <div className="panel flex flex-wrap divide-x divide-slate-100" aria-label="Profitability summary">
-        {totalRev.map(({ currency, total }) => <KpiCard compact key={`revenue-${currency}`} label={`Revenue (${currency})`} value={money(total, currency)} />)}
-        {totalCost.map(({ currency, total }) => <KpiCard compact key={`cost-${currency}`} label={`Cost (${currency})`} value={money(total, currency)} />)}
-        <KpiCard compact label="Customers with cost evidence" value={`${marginRows.length} / ${rows.length}`} />
-        {avgMarginPct == null ? null : <KpiCard compact label="Avg margin % (covered)" value={`${avgMarginPct.toFixed(1)}%`} />}
-      </div>
+      <CommercialMetricRail label="Profitability summary" metrics={[
+        ...totalRev.map(({ currency, total }) => ({ label: `Revenue ${currency}`, value: money(total, currency), detail: "issued invoices", tone: "info" as const })),
+        ...totalCost.map(({ currency, total }) => ({ label: `Cost ${currency}`, value: money(total, currency), detail: "approved costs", tone: "warn" as const })),
+        { label: "Cost coverage", value: `${marginRows.length} / ${rows.length}`, detail: "customers assessed", tone: marginRows.length === rows.length ? "good" : "warn" },
+        ...(avgMarginPct == null ? [] : [{ label: "Average margin", value: `${avgMarginPct.toFixed(1)}%`, detail: "covered accounts", tone: avgMarginPct >= 18 ? "good" as const : "warn" as const }]),
+      ]} />
       {rows.length === 0 ? <EmptyState title="No profitability data" /> : (
         <div className="panel overflow-hidden p-0">
           <div className="overflow-x-auto">
@@ -713,21 +763,7 @@ const ROUTE_TAB: Record<string, Tab> = {
   "/ar-aging": "ar-aging",
 };
 
-const TAB_ROUTE: Record<Tab, string> = {
-  invoices: "/invoices",
-  "ar-aging": "/ar-aging",
-  payments: "/payments",
-  profitability: "/profitability",
-};
-
 type Tab = "invoices" | "ar-aging" | "payments" | "profitability";
-
-const TABS: { key: Tab; label: string }[] = [
-  { key: "invoices",      label: "Invoices" },
-  { key: "ar-aging",      label: "AR Aging" },
-  { key: "payments",      label: "Payments" },
-  { key: "profitability", label: "Profitability" },
-];
 
 const TITLES: Record<Tab, string> = {
   invoices:      "Invoices",
@@ -746,8 +782,8 @@ const DESCRIPTIONS: Record<Tab, string> = {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function FinancialAnalyticsPage() {
+  const tenantCountry = useTenantCountry();
   const { pathname } = useLocation();
-  const navigate = useNavigate();
   const tab = ROUTE_TAB[pathname] ?? "invoices";
 
   const exportFns: Record<Tab, () => void> = {
@@ -766,23 +802,17 @@ export function FinancialAnalyticsPage() {
 
   return (
     <div className="page-stack min-w-0">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">{TITLES[tab]}</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{DESCRIPTIONS[tab]}</p>
-        </div>
-        <button type="button" className="btn-secondary text-sm" onClick={() => void exportFns[tab]()}>Export CSV</button>
-      </div>
+      <RevenueWorkspaceHeader
+        title={TITLES[tab]}
+        description={DESCRIPTIONS[tab]}
+        activeStage={tab === "payments" ? "payments" : "invoices"}
+        eyebrow="Finance workspace"
+        actions={<button type="button" className="btn-secondary text-sm" onClick={() => void exportFns[tab]()}>Export CSV</button>}
+      />
 
-      <nav className="panel flex gap-1 overflow-x-auto p-1.5" aria-label="Financial analytics sections">
-        {TABS.map((t) => (
-          <button key={t.key} type="button" onClick={() => navigate(TAB_ROUTE[t.key])}
-            aria-current={tab === t.key ? "page" : undefined}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === t.key ? "bg-teal-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
-            }`}>{t.label}</button>
-        ))}
-      </nav>
+      <FinanceWorkspaceTabs />
+
+      {tenantCountry === "SA" && (tab === "invoices" || tab === "payments") && <SaudiFinanceReadiness />}
 
       {tab === "invoices"      && <InvoicesTab />}
       {tab === "ar-aging"      && <ArAgingTab />}

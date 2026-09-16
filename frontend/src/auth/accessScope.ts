@@ -1,46 +1,31 @@
 import type { AnyRecord, UserSession } from "@/types";
 
-type SessionLike = Pick<UserSession, "role" | "user" | "company" | "permissions"> | null | undefined;
-
-const DRIVER_IDENTITY_BY_EMAIL: Record<string, string> = {
-  "driver@northshore-fleet.com": "Salman Qureshi",
-  "driver@local-fleet.test": "Salman Qureshi",
-};
-
-const CUSTOMER_IDENTITY_BY_EMAIL: Record<string, string> = {
-  "customer@client.com": "Gulf Express Logistics",
-};
+type SessionLike = Pick<UserSession, "role" | "permissions" | "portalContext"> | null | undefined;
 
 export function scopeRowsForSession(kind: "vehicles" | "drivers" | "jobs" | "shipments" | "customers" | "assets", rows: AnyRecord[], session: SessionLike) {
   if (!session) return rows;
   const role = String(session.role ?? "").toLowerCase();
   if (isDriverPortalRole(role)) {
-    const driverIdentity = resolveDriverIdentity(session);
-    if (!driverIdentity) return rows;
-    return rows.filter((row) => matchesAny(row, driverIdentity, getDriverFields(kind)));
+    const driverId = resolveAuthenticatedDriverId(session);
+    if (!driverId) return [];
+    return rows.filter((row) => matchesId(row, driverId, getDriverIdFields(kind)));
   }
 
   if (isCustomerPortalRole(role)) {
-    const customerIdentity = resolveCustomerIdentity(session);
-    if (!customerIdentity) return rows;
-    return rows.filter((row) => matchesAny(row, customerIdentity, getCustomerFields(kind)));
+    const customerId = resolveAuthenticatedCustomerId(session);
+    if (!customerId) return [];
+    return rows.filter((row) => matchesId(row, customerId, getCustomerIdFields(kind)));
   }
 
   return rows;
 }
 
-export function resolveDriverIdentity(session: SessionLike) {
-  if (!session) return null;
-  const email = String(session.user?.email ?? "").toLowerCase();
-  const mapped = DRIVER_IDENTITY_BY_EMAIL[email];
-  return (mapped ?? String(session.user?.name ?? "").trim()) || null;
+export function resolveAuthenticatedDriverId(session: SessionLike) {
+  return positiveId(session?.portalContext?.driverId);
 }
 
-export function resolveCustomerIdentity(session: SessionLike) {
-  if (!session) return null;
-  const email = String(session.user?.email ?? "").toLowerCase();
-  const mapped = CUSTOMER_IDENTITY_BY_EMAIL[email];
-  return (mapped ?? String(session.company?.name ?? "").trim()) || null;
+export function resolveAuthenticatedCustomerId(session: SessionLike) {
+  return positiveId(session?.portalContext?.customerId);
 }
 
 export function isDriverPortalRole(role: string) {
@@ -53,22 +38,21 @@ export function isCustomerPortalRole(role: string) {
   return normalized.includes("customer") && !normalized.includes("service");
 }
 
-function getDriverFields(kind: string) {
-  if (kind === "vehicles") return ["assignedDriver", "assignedDriverName", "driverName", "driver", "fullName", "name"];
-  if (kind === "drivers") return ["fullName", "name", "driverName", "assignedVehicle"];
-  if (kind === "jobs" || kind === "shipments") return ["driverName", "assignedDriver", "assignedDriverId", "driver", "fullName"];
-  if (kind === "assets") return ["assignedDriver", "assignedDriverName", "driverName"];
-  return ["driverName", "assignedDriver", "fullName", "name"];
+function getDriverIdFields(kind: string) {
+  if (kind === "drivers") return ["id", "driverId"];
+  return ["driverId", "assignedDriverId"];
 }
 
-function getCustomerFields(kind: string) {
-  if (kind === "customers") return ["name", "companyName", "customerName", "customer", "customerCode", "id"];
-  if (kind === "jobs" || kind === "shipments") return ["customerName", "customer", "customerId", "companyName"];
-  if (kind === "assets") return ["customerName", "customer", "companyName"];
-  return ["customerName", "customer", "companyName"];
+function getCustomerIdFields(kind: string) {
+  if (kind === "customers") return ["id", "customerId"];
+  return ["customerId"];
 }
 
-function matchesAny(row: AnyRecord, expected: string, fields: string[]) {
-  const target = expected.toLowerCase();
-  return fields.some((field) => String(row[field] ?? "").toLowerCase() === target || String(row[field] ?? "").toLowerCase().includes(target));
+function positiveId(value: unknown): string | null {
+  const text = String(value ?? "").trim();
+  return /^[1-9]\d*$/.test(text) ? text : null;
+}
+
+function matchesId(row: AnyRecord, expected: string, fields: string[]) {
+  return fields.some((field) => positiveId(row[field]) === expected);
 }

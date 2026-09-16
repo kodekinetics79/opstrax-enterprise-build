@@ -126,6 +126,10 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("RunInTenantTransactionAsync", inspection, StringComparison.Ordinal);
         var inspectionTransaction = Block(source, "private static async Task<IResult> MaintInspectionCreateInTransaction(", "// GET /api/maintenance/inspections/{id}");
         Assert.Contains("AcquireDvirDepartureSafetyLockAsync", inspectionTransaction, StringComparison.Ordinal);
+        Assert.Contains("DvirMarketAsync", inspectionTransaction, StringComparison.Ordinal);
+        Assert.Contains("country_code, inspection_type", inspectionTransaction, StringComparison.Ordinal);
+        Assert.Contains("@country, @itype", inspectionTransaction, StringComparison.Ordinal);
+        Assert.Contains("market!.CountryCode", inspectionTransaction, StringComparison.Ordinal);
         Assert.Contains("isDriverSubmission = authenticatedDriverSubmission", inspectionTransaction, StringComparison.Ordinal);
         Assert.Contains("template_id", inspectionTransaction, StringComparison.Ordinal);
         Assert.Contains("checklist_item_id", inspectionTransaction, StringComparison.Ordinal);

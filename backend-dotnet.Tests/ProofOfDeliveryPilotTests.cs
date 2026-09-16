@@ -151,7 +151,7 @@ public sealed class ProofOfDeliveryPilotTests
         var branchB = companyId + 20;
         await SeedCompanyAndBranch(db, companyId, branchA);
         await db.ExecuteAsync(
-            "INSERT INTO branches(id,company_id,branch_code,name,status) OVERRIDING SYSTEM VALUE VALUES (@id,@c,@code,'Private Branch B','Active')",
+            "INSERT INTO branches(id,company_id,branch_code,name,status,country_code) OVERRIDING SYSTEM VALUE VALUES (@id,@c,@code,'Private Branch B','Active','US')",
             c => { c.Parameters.AddWithValue("@id", branchB); c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"PB-B-{companyId}"); });
         try
         {
@@ -261,7 +261,7 @@ public sealed class ProofOfDeliveryPilotTests
         var branchId = companyId + 10;
         var otherBranch = companyId + 20;
         await SeedCompanyAndBranch(db, companyId, branchId);
-        await db.ExecuteAsync("INSERT INTO branches(id,company_id,branch_code,name,status) OVERRIDING SYSTEM VALUE VALUES (@id,@c,@code,'Other POD Branch','Active')",
+        await db.ExecuteAsync("INSERT INTO branches(id,company_id,branch_code,name,status,country_code) OVERRIDING SYSTEM VALUE VALUES (@id,@c,@code,'Other POD Branch','Active','US')",
             c => { c.Parameters.AddWithValue("@id", otherBranch); c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"POD-OTHER-{companyId}"); });
         WebApplication? app = null;
         try
@@ -361,10 +361,10 @@ public sealed class ProofOfDeliveryPilotTests
     private static async Task SeedCompanyAndBranch(Database db, long companyId, long branchId)
     {
         await db.ExecuteAsync(
-            "INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@id,@code,'POD Pilot Test','Transportation')",
+            "INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (@id,@code,'POD Pilot Test','Transportation','US')",
             c => { c.Parameters.AddWithValue("@id", companyId); c.Parameters.AddWithValue("@code", $"POD-{companyId}"); });
         await db.ExecuteAsync(
-            "INSERT INTO branches(id,company_id,branch_code,name,status) OVERRIDING SYSTEM VALUE VALUES (@id,@c,@code,'POD Branch','Active')",
+            "INSERT INTO branches(id,company_id,branch_code,name,status,country_code) OVERRIDING SYSTEM VALUE VALUES (@id,@c,@code,'POD Branch','Active','US')",
             c => { c.Parameters.AddWithValue("@id", branchId); c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"PB-{companyId}"); });
     }
 

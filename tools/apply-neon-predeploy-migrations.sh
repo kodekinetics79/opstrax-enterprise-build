@@ -331,6 +331,8 @@ MIGRATIONS=(
   2026_09_03_stage99_hos_clock_source_truth
   # Dashcam/provider media remains fail-closed until authentic provider evidence exists.
   2026_09_03_stage100_dashcam_provider_media_truth
+  # Country-specific Canada and Saudi compliance profiles/rules.
+  2026_09_03_stage101_canada_ksa_compliance_baseline
   # Native Driver/Fleet/Customer Expo push token lifecycle; FORCE-RLS and user scoped.
   2026_09_05_stage101_mobile_push_tokens
   # Retire only recognized demo camera rows that still imply provider/video/AI evidence.
@@ -397,6 +399,12 @@ MIGRATIONS=(
   # Feature-flag administration reads/writes updated_by; historical owners did not
   # materialize it on established protected databases.
   2026_09_11_stage140_feature_flag_actor_contract
+  # Saudi owned, rented and partner fleet operating fields.
+  2026_09_15_stage141_saudi_fleet_operations
+  # Canonical tenant market locks across locale, compliance, market pack and tax.
+  2026_09_15_stage142_tenant_market_isolation
+  # Expiring, guess-limited platform MFA enrollment state.
+  2026_09_15_stage143_platform_auth_hardening
   # Commercial truth overlays. These fail customer-facing operational reads
   # closed unless their persisted evidence is qualified at the source.
   2026_09_08_notification_delivery_contract
@@ -416,6 +424,14 @@ MIGRATIONS=(
   2026_09_08_fleet_health_evidence_integrity
   2026_09_08_fleet_utilization_evidence_integrity
   2026_09_08_fuel_workflow_evidence_integrity
+  # Final fail-closed tenant identity boundary. Keep this after every schema owner
+  # and overlay so no historical DEFAULT 1 survives into application writes.
+  2026_09_15_stage144_remove_tenant_identity_defaults
+  # Migration-owned canonical country/HOS reference rows. Runtime DDL/seeding is
+  # disabled after Stage88, so this forward reconciliation owns restart safety.
+  2026_09_15_stage145_canonical_market_reference_reconciliation
+  # Tenant-leading indexes for high-frequency expense and document reads.
+  2026_09_15_stage146_tenant_query_indexes
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -575,7 +591,14 @@ BEGIN
       ('2026_09_11_stage136_platform_hardware_readiness_permission'),
       ('2026_09_11_stage138_evidence_package_truth_boundary'),
       ('2026_09_11_stage139_telemetry_ledger_backfill_reconciliation'),
-      ('2026_09_11_stage140_feature_flag_actor_contract')) required(version)
+      ('2026_09_11_stage140_feature_flag_actor_contract'),
+      ('2026_09_03_stage101_canada_ksa_compliance_baseline'),
+      ('2026_09_15_stage141_saudi_fleet_operations'),
+      ('2026_09_15_stage142_tenant_market_isolation'),
+      ('2026_09_15_stage143_platform_auth_hardening'),
+      ('2026_09_15_stage144_remove_tenant_identity_defaults'),
+      ('2026_09_15_stage145_canonical_market_reference_reconciliation'),
+      ('2026_09_15_stage146_tenant_query_indexes')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (

@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { requireCommercialModuleRecords } from "@/services/commercialModulePayload";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { CommercialDisclosure, CommercialMetricRail, CommercialToolbar, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import { useTenantCurrency } from "@/hooks/useTenantRegion";
 import type { AnyRecord } from "@/types";
 
@@ -160,64 +161,42 @@ export function QuotationsPage() {
   return (
     <div className="page-stack min-w-0">
       {showCreate && <CreateQuoteModal defaultCurrency={tenantCurrency} onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Quotations</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Price quotes — track draft, sent, accepted, and expired quotes with margin visibility</p>
-        </div>
-        <div className="flex gap-2">
+      <RevenueWorkspaceHeader
+        title="Quotations"
+        description="Review route, cargo, price, validity and margin before a quote becomes delivery demand."
+        activeStage="quotations"
+        actions={<div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("quotations", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>New Quote</button>
-        </div>
-      </div>
+        </div>}
+      />
 
-      <div className="panel grid gap-3 md:grid-cols-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Quote integrity</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">This view reflects persisted quote records returned by the service.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Conversion boundary</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Select a quote to prepare a booking with its route and cargo. Review and select the customer before saving; the quote status is unchanged.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Margin discipline</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Every quote keeps route, cargo and margin context visible for review.</p>
-        </div>
-      </div>
+      <CommercialMetricRail metrics={[
+        { label: "All quotes", value: quotes.length, detail: `${filtered.length} shown`, active: statusFilter === "All", onClick: () => setStatusFilter("All") },
+        { label: "Draft", value: quotes.filter((q) => q.status === "Draft").length, detail: "needs review", tone: "warn", active: statusFilter === "Draft", onClick: () => setStatusFilter("Draft") },
+        { label: "Sent", value: sent, detail: "customer review", tone: "info", active: statusFilter === "Sent", onClick: () => setStatusFilter("Sent") },
+        { label: "Accepted", value: accepted, detail: "ready to book", tone: "good", active: statusFilter === "Accepted", onClick: () => setStatusFilter("Accepted") },
+        { label: "Recorded value", value: totalValueLabel, detail: quoteCurrencies.length > 1 ? "currencies separated" : "all statuses", tone: "info" },
+        { label: "Average margin", value: avgMargin == null ? "—" : `${avgMargin.toFixed(1)}%`, detail: `${marginedQuotes.length} assessed`, tone: avgMargin == null ? "neutral" : avgMargin >= 20 ? "good" : "warn" },
+      ]} />
 
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Total Quotes",   val: quotes.length },
-          { label: "Sent",           val: sent, accent: "text-blue-600" },
-          { label: "Accepted",       val: accepted, accent: "text-teal-600" },
-          { label: "Total Value",    val: totalValueLabel, accent: "text-violet-600" },
-          { label: "Avg Margin",     val: avgMargin == null ? "—" : `${avgMargin.toFixed(1)}%`, accent: avgMargin != null && avgMargin >= 20 ? "text-teal-600" : "text-amber-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-32">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="panel flex flex-wrap gap-3 items-center">
-        <div className="flex gap-1.5">
+      <CommercialToolbar
+        filters={<>
           {(["All", "Draft", "Sent", "Accepted", "Expired"] as const).map((f) => (
             <button key={f} type="button" onClick={() => setStatusFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+              className={`filter-chip shrink-0 ${
                 statusFilter === f
-                  ? "bg-teal-50 border-teal-300 text-teal-700"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                  ? "filter-chip-active"
+                  : ""
               }`}>{f}</button>
           ))}
-        </div>
-        <input type="search" placeholder="Search customer, route…" value={search} onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-52" />
-      </div>
+        </>}
+        meta={`${filtered.length} of ${quotes.length}`}
+        search={<input type="search" aria-label="Search quotations" placeholder="Search customer, route…" value={search} onChange={(e) => setSearch(e.target.value)} className="field" />}
+      />
 
       <div className="panel overflow-hidden p-0">
-        {filtered.length === 0 ? <EmptyState title="No quotes match your filters" /> : (
+        {filtered.length === 0 ? <EmptyState title="No quotes match your filters" subtitle={quotes.length ? "Clear a status or search filter to see the full quote register." : "Create the first quote when route, cargo and customer pricing are known."} action={!quotes.length ? <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>New Quote</button> : undefined} /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -246,6 +225,11 @@ export function QuotationsPage() {
           </div>
         )}
       </div>
+
+      <CommercialDisclosure>
+        <p><strong>Quote integrity:</strong> This register reflects persisted quote records returned by the service; monetary totals are never combined across currencies.</p>
+        <p><strong>Conversion boundary:</strong> Selecting “Prepare booking” copies route and cargo into the Jobs form. The quote status is unchanged, and there is no automatic acceptance or contract activation.</p>
+      </CommercialDisclosure>
 
       {selected && (
         <div className="fixed inset-0 z-40 flex justify-end" onClick={() => setSelected(null)}>

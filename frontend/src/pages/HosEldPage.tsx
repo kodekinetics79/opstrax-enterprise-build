@@ -14,6 +14,7 @@ import { useHasPermission } from "@/hooks/usePermission";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { useSingleFlight } from "@/hooks/useSingleFlight";
 import { useAuth } from "@/hooks/useAuth";
+import { useTenantCountry } from "@/hooks/useTenantRegion";
 import type { AnyRecord } from "@/types";
 import { formatDate, formatDateTime, formatMinutesAsClock } from "@/utils/formatters";
 
@@ -76,6 +77,7 @@ function Disclaimer() {
 export function HosEldPage() {
   const { t } = useI18n();
   const { session } = useAuth();
+  const tenantCountry = useTenantCountry();
   const hasPermission = useHasPermission();
   const canManage = hasPermission("compliance:update") || hasPermission("compliance:manage") || hasPermission("telematics:manage");
   const eldEntitled = session?.entitlements && Object.prototype.hasOwnProperty.call(session.entitlements, "telematics")
@@ -468,7 +470,8 @@ export function HosEldPage() {
                 <textarea className="field w-full h-20 resize-none" placeholder="Describe the malfunction..." value={malfForm.desc} onChange={e => setMalfForm(f => f ? { ...f, desc: e.target.value } : f)} />
               </div>
               <div className="rounded border border-amber-400/20 bg-amber-400/5 p-2 text-[11px] text-amber-200/70">
-                Follow the carrier&apos;s applicable jurisdiction and connected ELD provider procedure. In U.S. FMCSA operations, this generally includes documenting the malfunction and maintaining required records by an allowed alternate method until resolved.
+                Follow the carrier&apos;s applicable jurisdiction and connected ELD provider procedure.
+                {tenantCountry === "US" ? " In U.S. FMCSA operations, this generally includes documenting the malfunction and maintaining required records by an allowed alternate method until resolved." : " Document the malfunction and follow the approved local procedure until the device is restored."}
               </div>
             </div>
             <div className="flex gap-2">
@@ -501,7 +504,7 @@ export function HosEldPage() {
               <button type="button" aria-label="Close" className="icon-btn" onClick={() => setResolveForm(null)}><X className="h-4 w-4" /></button>
             </div>
             <label className="block"><span className="mb-1 block text-xs text-slate-300">Operational verification evidence</span><textarea className="field min-h-28 w-full" maxLength={2000} value={resolveForm.evidence} onChange={(event) => setResolveForm((current) => current ? { ...current, evidence: event.target.value } : current)} placeholder="Describe the diagnostic check, provider confirmation, test drive, or other evidence…" /></label>
-            <p className="text-[11px] leading-5 text-amber-200/80">Evidence is retained with the malfunction history. The device returns to Active only with valid provisioned credentials and a healthy provider sync within the last 15 minutes; otherwise it remains Diagnostic.</p>
+            <p className="text-[11px] leading-5 text-amber-200/80">The device returns to Active only when OpsTrax has valid provisioned credentials and accepted device telemetry from the last 15 minutes. Supported provider feeds may verify connectivity, but cannot replace direct-device credentials. Unsupported providers are preview only and do not change device state.</p>
             <div className="flex gap-2"><button type="button" className="btn-ghost flex-1" onClick={() => setResolveForm(null)}>Cancel</button><button type="button" className="btn-primary flex-1" disabled={!resolveForm.evidence.trim() || resolveMalfMut.isPending} onClick={() => { void resolveSingleFlight(() => resolveMalfMut.mutateAsync({ id: resolveForm.id, body: { rowVersion: resolveForm.rowVersion, resolutionEvidence: resolveForm.evidence.trim() } }).then((data) => {
               setActionMessage({ kind: "success", text: `Resolution recorded. Device status: ${String((data as AnyRecord).status ?? "Diagnostic")}.` }); setResolveForm(null);
             }).catch((error) => {

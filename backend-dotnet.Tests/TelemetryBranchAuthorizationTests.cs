@@ -17,7 +17,7 @@ public sealed class TelemetryBranchAuthorizationTests
         var db = Db();
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var company = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Telemetry branch authorization','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Telemetry branch authorization','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"TEL-BR-{suffix}"));
         try
         {
@@ -132,7 +132,7 @@ public sealed class TelemetryBranchAuthorizationTests
     }
 
     private static Task<long> Branch(Database db, long company, string code) => db.InsertAsync(
-        "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,@code,'Active')",
+        "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,@code,@code,'Active','US')",
         c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@code", code); });
 
     private static Task<long> Vehicle(Database db, long company, long branch, string code) => db.InsertAsync(

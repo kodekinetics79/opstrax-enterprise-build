@@ -21,11 +21,21 @@ test("installed parser regressions stay outside zero-install launch tooling", ()
   const suite = "tools/security/test_query_parser_security.mjs";
   assert.ok(fs.existsSync(path.join(repository, suite)));
   assert.equal(fs.existsSync(path.join(repository, "tools/launch/test_query_parser_security.mjs")), false);
-  const backend = workflow.slice(workflow.indexOf("  node-backend-build:"), workflow.indexOf("  demo-node-events-check:"));
   const events = workflow.slice(workflow.indexOf("  demo-node-events-check:"), workflow.indexOf("  mobile-build-test:"));
-  for (const [job, target] of [[backend, "backend"], [events, "services/node-events"]]) {
-    assertOrdered(job, ["npm ci --no-audit --no-fund", "npm audit --omit=dev --audit-level=low", `node ${suite} ${target}`]);
+  assertOrdered(events, ["npm ci --no-audit --no-fund", "npm audit --omit=dev --audit-level=low", `node ${suite} services/node-events`]);
+});
+
+test("retired Node API cannot return to the supported release path", () => {
+  const workflow = read(".github/workflows/ci.yml");
+  const render = read("render.yaml");
+  const dockerfile = read("Dockerfile");
+  const gateValidator = read("tools/validate-mandatory-ci-gates.sh");
+  assert.equal(fs.existsSync(path.join(repository, "backend")), false);
+  for (const source of [workflow, gateValidator]) {
+    assert.doesNotMatch(source, /node-backend-build|working-directory:\s*backend|backend\/tests/);
   }
+  assert.match(render, /dockerfilePath:\s*\.\/backend-dotnet\/Dockerfile/);
+  assert.match(dockerfile, /backend-dotnet\/Opstrax\.Api\.csproj/);
 });
 
 test("CI reapplies terminal security and migration-owned boundaries through the production runner", () => {

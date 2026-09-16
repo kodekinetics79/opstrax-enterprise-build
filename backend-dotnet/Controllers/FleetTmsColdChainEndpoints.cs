@@ -48,10 +48,6 @@ public static class FleetTmsColdChainEndpoints
 
         // Saudi readiness / compliance
         Guard(app.MapGet("/api/fleet-tms/saudi/regions", SaudiRegions), "compliance:view");
-        Guard(app.MapGet("/api/fleet-tms/compliance/documents", ComplianceDocuments), "compliance:view");
-        Guard(app.MapPost("/api/fleet-tms/compliance/documents", CreateComplianceDocument), "compliance:manage");
-        Guard(app.MapPut("/api/fleet-tms/compliance/documents/{id:long}", UpdateComplianceDocument), "compliance:manage");
-        Guard(app.MapGet("/api/fleet-tms/compliance/expiries", ComplianceExpiries), "compliance:view");
         Guard(app.MapGet("/api/fleet-tms/vat/invoice-ready", VatInvoiceReady), "compliance:view");
     }
 
@@ -76,7 +72,7 @@ public static class FleetTmsColdChainEndpoints
         if (Bid(http) is { } branchId) command.Parameters.AddWithValue("@branchId", branchId);
     }
     private static string Actor(HttpContext http)
-        => http.Items.TryGetValue(EndpointMappings.AuthUserIdItemKey, out var u) && u is not null ? $"user:{u}" : "system";
+        => $"user:{EndpointMappings.GetUserId(http)}";
     private static IResult Ok<T>(T data) => Results.Ok(ApiResponse<object>.Ok(data!));
     private static IResult NotFound(string m = "Not found") => Results.NotFound(ApiResponse<object>.Fail(m));
     private static IResult Bad(string m) => Results.BadRequest(ApiResponse<object>.Fail(m));
@@ -1271,9 +1267,17 @@ VALUES (@companyId, @branchId, @asset, @shipment, @carrier, @atype, @aname, @qty
         var asset = req.AssetId.HasValue
             ? await OwnedRow(db, http, "fleet_tms_assets", req.AssetId.Value, ct)
             : await db.QuerySingleAsync(
-                "SELECT * FROM fleet_tms_assets WHERE company_id=@companyId AND lower(asset_tag)=lower(@tag)" + BranchScope(http) + " LIMIT 1",
+                isRfid
+                    ? """
+                      SELECT a.* FROM fleet_tms_assets a
+                      WHERE a.company_id=@companyId
+                        AND EXISTS (SELECT 1 FROM fleet_tms_rfid_events e
+                                    WHERE e.company_id=a.company_id AND e.asset_id=a.id
+                                      AND lower(e.tag_id)=lower(@tag))
+                      """ + BranchScope(http, "a") + " LIMIT 1"
+                    : "SELECT * FROM fleet_tms_assets WHERE company_id=@companyId AND lower(asset_tag)=lower(@tag)" + BranchScope(http) + " LIMIT 1",
                 c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@tag", identifier); BindBranch(c, http); }, ct);
-        if (asset is null || !string.Equals(asset["assetTag"]?.ToString(), identifier, StringComparison.OrdinalIgnoreCase))
+        if (asset is null || (!isRfid && !string.Equals(asset["assetTag"]?.ToString(), identifier, StringComparison.OrdinalIgnoreCase)))
             return NotFound("Unknown asset scan identifier for this tenant.");
         var resolvedAssetId = Convert.ToInt64(asset["id"]);
         if (isRfid)
@@ -1355,62 +1359,6 @@ VALUES (@companyId, @branchId, @asset, @type, @qty, @loc, @actor, NOW(), @notes)
         return Ok(new { items });
     }
 
-    private static async Task<IResult> ComplianceDocuments(HttpContext http, Database db, string? kind, string? subjectType, CancellationToken ct)
-    {
-        if (await RequireSaudiPack(http, db, ct) is { } denied) return denied;
-        return SaudiLedgerRetired();
-    }
-
-    private static async Task<IResult> CreateComplianceDocument(HttpContext http, FleetReadinessDocumentRequest req, Database db, CancellationToken ct)
-    {
-        if (await RequireSaudiPack(http, db, ct) is { } denied) return denied;
-        return SaudiLedgerRetired();
-    }
-
-    private static async Task<IResult> UpdateComplianceDocument(HttpContext http, long id, FleetReadinessDocumentRequest req, Database db, CancellationToken ct)
-    {
-        if (await RequireSaudiPack(http, db, ct) is { } denied) return denied;
-        return SaudiLedgerRetired();
-    }
-
-    private static void BindDoc(NpgsqlCommand c, long companyId, FleetReadinessDocumentRequest req)
-    {
-        c.Parameters.AddWithValue("@companyId", companyId);
-        c.Parameters.AddWithValue("@kind", req.Kind.Trim());
-        c.Parameters.AddWithValue("@subjectType", req.SubjectType.Trim());
-        c.Parameters.AddWithValue("@subjectId", req.SubjectId?.Trim() ?? "");
-        c.Parameters.AddWithValue("@subjectName", req.SubjectName.Trim());
-        c.Parameters.AddWithValue("@docType", req.DocumentType.Trim());
-        c.Parameters.AddWithValue("@docNumber", req.DocumentNumber?.Trim() ?? "");
-        c.Parameters.AddWithValue("@transportDoc", req.TransportDocumentNo?.Trim() ?? "");
-        c.Parameters.AddWithValue("@permit", req.PermitNo?.Trim() ?? "");
-        c.Parameters.AddWithValue("@vat", req.VATNumber?.Trim() ?? "");
-        c.Parameters.AddWithValue("@cr", req.CommercialRegistrationNo?.Trim() ?? "");
-        c.Parameters.AddWithValue("@country", req.CountryCode?.Trim() ?? "SA");
-        c.Parameters.AddWithValue("@building", req.NationalAddressBuildingNo?.Trim() ?? "");
-        c.Parameters.AddWithValue("@additional", req.NationalAddressAdditionalNo?.Trim() ?? "");
-        c.Parameters.AddWithValue("@district", req.District?.Trim() ?? "");
-        c.Parameters.AddWithValue("@city", req.City?.Trim() ?? "");
-        c.Parameters.AddWithValue("@region", req.Region?.Trim() ?? "");
-        c.Parameters.AddWithValue("@postal", req.PostalCode?.Trim() ?? "");
-        c.Parameters.AddWithValue("@docStatus", req.DocumentStatus?.Trim() ?? "Active");
-        c.Parameters.AddWithValue("@expiryStatus", ComputeExpiryStatus(req.GregorianExpiryDate ?? req.HijriExpiryDate, req.DocumentStatus));
-        c.Parameters.AddWithValue("@issue", Dte(req.IssueDate));
-        c.Parameters.AddWithValue("@hijri", Dte(req.HijriExpiryDate));
-        c.Parameters.AddWithValue("@gregorian", Dte(req.GregorianExpiryDate));
-        c.Parameters.AddWithValue("@notes", req.Notes?.Trim() ?? "");
-    }
-
-    private static async Task<IResult> ComplianceExpiries(HttpContext http, Database db, CancellationToken ct)
-    {
-        if (await RequireSaudiPack(http, db, ct) is { } denied) return denied;
-        return SaudiLedgerRetired();
-    }
-
-    private static IResult SaudiLedgerRetired() => Results.Json(ApiResponse<object>.Fail(
-        "Saudi document ledger moved", "Use /api/fleet-compliance/saudi/documents and /api/fleet-compliance/saudi/expiries."),
-        statusCode: StatusCodes.Status410Gone);
-
     private static async Task<IResult> VatInvoiceReady(HttpContext http, Database db, CancellationToken ct)
     {
         if (await RequireSaudiPack(http, db, ct) is { } denied) return denied;
@@ -1454,55 +1402,6 @@ WHERE company_id=@companyId AND (NOT is_invoice_ready OR customer_vat_number = '
             readyShipments,
             blockedShipments,
         });
-    }
-
-    private static string? ValidateDoc(FleetReadinessDocumentRequest req)
-    {
-        if (string.IsNullOrWhiteSpace(req.Kind)) return "Document kind is required.";
-        if (string.IsNullOrWhiteSpace(req.SubjectType)) return "Subject type is required.";
-        if (string.IsNullOrWhiteSpace(req.SubjectName)) return "Subject name is required.";
-        if (string.IsNullOrWhiteSpace(req.DocumentType)) return "Document type is required.";
-        if (!Allowed(req.Kind, "Compliance", "Transport", "Driver")) return "Document kind is invalid.";
-        if (!Allowed(req.SubjectType, "Branch", "Carrier", "Shipment", "Driver", "Vehicle", "Customer", "Location")) return "Subject type is invalid.";
-        if (!Allowed(req.DocumentStatus, "Active", "Suspended", "Expired", "Cancelled", "Pending")) return "Document status is invalid.";
-        if (req.RequiresExpiry && !req.GregorianExpiryDate.HasValue && !req.HijriExpiryDate.HasValue) return "Expiry date is required for readiness documents.";
-        var expiry = req.GregorianExpiryDate ?? req.HijriExpiryDate;
-        if (req.IssueDate.HasValue && expiry.HasValue && req.IssueDate.Value > expiry.Value) return "Issue date cannot be after expiry date.";
-        if (TooLong(req.Kind, 40) || TooLong(req.SubjectType, 40) || TooLong(req.SubjectId, 80) || TooLong(req.SubjectName, 255)
-            || TooLong(req.DocumentType, 120) || TooLong(req.DocumentNumber, 120) || TooLong(req.TransportDocumentNo, 120)
-            || TooLong(req.PermitNo, 120) || TooLong(req.VATNumber, 60) || TooLong(req.CommercialRegistrationNo, 60)
-            || TooLong(req.CountryCode, 8) || TooLong(req.NationalAddressBuildingNo, 40) || TooLong(req.NationalAddressAdditionalNo, 40)
-            || TooLong(req.District, 120) || TooLong(req.City, 120) || TooLong(req.Region, 120) || TooLong(req.PostalCode, 20)
-            || TooLong(req.Notes, 4000)) return "One or more document fields exceed their maximum length.";
-        return null;
-    }
-
-    internal static string ComputeExpiryStatus(DateOnly? gregorianExpiryDate, string? documentStatus)
-    {
-        if (!string.IsNullOrWhiteSpace(documentStatus) && !string.Equals(documentStatus, "Active", StringComparison.OrdinalIgnoreCase))
-            return documentStatus.Trim();
-        if (!gregorianExpiryDate.HasValue) return "Healthy";
-        var days = (gregorianExpiryDate.Value.ToDateTime(TimeOnly.MinValue).Date - DateTime.UtcNow.Date).Days;
-        if (days < 0) return "Expired";
-        if (days <= ExpiryWindowDays) return "ExpiringSoon";
-        return "Healthy";
-    }
-
-    private static DateOnly? DateOnlyValue(object? value) => value switch
-    {
-        DateOnly date => date,
-        DateTime date => DateOnly.FromDateTime(date),
-        _ => null,
-    };
-
-    private static void ApplyLiveExpiry(Dictionary<string, object?> document)
-    {
-        var gregorian = DateOnlyValue(document.GetValueOrDefault("gregorianExpiryDate"));
-        var hijri = DateOnlyValue(document.GetValueOrDefault("hijriExpiryDate"));
-        var effective = gregorian ?? hijri;
-        document["expiryStatus"] = ComputeExpiryStatus(effective, document.GetValueOrDefault("documentStatus")?.ToString());
-        document["expiryCalendar"] = gregorian.HasValue ? "Gregorian" : hijri.HasValue ? "Hijri" : "None";
-        document["effectiveExpiryDate"] = effective?.ToDateTime(TimeOnly.MinValue);
     }
 
     internal static string? ValidateDeviceRequest(TemperatureDeviceRequest req)
@@ -1655,11 +1554,11 @@ WHERE company_id=@companyId AND (NOT is_invoice_ready OR customer_vat_number = '
         }
     }
 
-    private static IReadOnlyCollection<string> ParseCities(string? citiesJson)
+    internal static IReadOnlyCollection<string> ParseCities(string? citiesJson)
     {
         if (string.IsNullOrWhiteSpace(citiesJson)) return [];
         try { return JsonSerializer.Deserialize<string[]>(citiesJson) ?? []; }
-        catch { return []; }
+        catch (JsonException) { return []; }
     }
 }
 
@@ -1672,4 +1571,3 @@ public record AssetTypeRequest(string? Code, string? Name, string? Description, 
 public record AssetAssignmentRequest(long? ShipmentId, long? CarrierId, string? AssigneeType, string? AssigneeName, decimal? Quantity, string? Status, string? CurrentLocation, DateTime? ReleasedAtUtc, string? Notes);
 public record AssetMovementRequest(string? Location, string? Condition, string? Notes, long? ShipmentId, long? CarrierId, string? AssigneeType, string? AssigneeName, decimal? Quantity);
 public record AssetScanRequest(string? Kind, long? AssetId, long? ShipmentId, string? ScannedValue, string? TagId, string? ScannerId, string? ReaderId, string? EventType, string? Status, string? Notes);
-public record FleetReadinessDocumentRequest(string Kind, string SubjectType, string? SubjectId, string SubjectName, string DocumentType, string? DocumentNumber, string? TransportDocumentNo, string? PermitNo, string? VATNumber, string? CommercialRegistrationNo, string? CountryCode, string? NationalAddressBuildingNo, string? NationalAddressAdditionalNo, string? District, string? City, string? Region, string? PostalCode, string? DocumentStatus, DateOnly? IssueDate, DateOnly? HijriExpiryDate, DateOnly? GregorianExpiryDate, string? Notes, bool RequiresExpiry = true);

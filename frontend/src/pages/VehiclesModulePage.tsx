@@ -17,9 +17,11 @@ import { EntityImportExport } from "@/components/EntityImportExport";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
+import { useTenantCountry } from "@/hooks/useTenantRegion";
 import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 import { VehiclesPage as VehiclesRosterPage } from "@/pages/VehiclesPage";
+import { formatTenantDistanceFromMiles } from "@/utils/tenantMeasurements";
 
 const VEHICLE_IMPORT_EXPORT = {
   entity: "vehicles",
@@ -95,6 +97,7 @@ export function VehiclesModulePage() {
   const location = useLocation();
   const section = readSection(location.pathname);
   const { session } = useAuth();
+  const tenantCountry = useTenantCountry();
   const hasPermission = useHasPermission();
   const canManageFleet = hasPermission(PERMISSIONS.FLEET_MANAGE);
 
@@ -245,7 +248,7 @@ export function VehiclesModulePage() {
 
       {section === "planning" && <PlanningView rows={rows} planning={planning.data as AnyRecord} onNavigate={navigate} />}
       {section === "health" && <HealthView rows={rows} onNavigate={navigate} />}
-      {section === "records" && <RecordsView rows={rows} onNavigate={navigate} />}
+      {section === "records" && <RecordsView rows={rows} onNavigate={navigate} tenantCountry={tenantCountry} />}
     </PageStack>
   );
 }
@@ -331,7 +334,7 @@ function HealthView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rout
   );
 }
 
-function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (route: string) => void }) {
+function RecordsView({ rows, onNavigate, tenantCountry }: { rows: AnyRecord[]; onNavigate: (route: string) => void; tenantCountry: string | null }) {
   const [selectedId, setSelectedId] = useState<string | null>(() => (rows[0] ? rowId(rows[0]) : null));
   const detail = useQuery({
     queryKey: ["vehicles", "detail", selectedId],
@@ -385,7 +388,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
               <KpiCard label="Vehicle" value={String(g(record, "vehicleCode", "vehicle_code") ?? `Vehicle ${record.id}`)} />
               <KpiCard label="Status" value={String(g(record, "status") ?? "--")} />
               <KpiCard label="Driver" value={String(g(record, "assignedDriver", "assigned_driver") ?? "Unassigned")} />
-              <KpiCard label="Odometer" value={`${num(g(record, "odometerMiles", "odometer_miles")).toLocaleString()} mi`} />
+              <KpiCard label="Odometer" value={formatTenantDistanceFromMiles(g(record, "odometerMiles", "odometer_miles"), tenantCountry)} />
             </div>
           ) : null}
           <div className="panel p-4">

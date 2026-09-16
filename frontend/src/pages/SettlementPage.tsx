@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Wallet, Eye, CheckCircle2, BadgeCheck, DollarSign, RefreshCw } from "lucide-react";
 import { settlementApi } from "@/services/settlementApi";
-import { ErrorState, LoadingState, PageHeader } from "@/components/ui";
+import { ErrorState, LoadingState } from "@/components/ui";
+import { CommercialMetricRail, FinanceWorkspaceTabs, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import { Field, Table, money } from "@/pages/BillingConsolidationPage";
 import type { AnyRecord } from "@/types";
 
@@ -30,17 +31,18 @@ export function SettlementPage() {
   const ap = apQ.data as AnyRecord | undefined;
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Driver Pay" description="Work out what a driver is owed for the loads they delivered, then approve and pay." />
+    <div className="page-stack min-w-0">
+      <RevenueWorkspaceHeader title="Driver Pay" description="Work out what a driver is owed for the loads they delivered, then approve and pay." eyebrow="Finance workspace" />
+      <FinanceWorkspaceTabs />
 
       {/* AP summary — one glance at what's owed */}
       {ap ? (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <Kpi label="Total pay" value={money(ap.totalPay)} />
-          <Kpi label="Paid" value={money(ap.totalPaid)} />
-          <Kpi label="Outstanding" value={money(ap.outstanding)} tone="warn" />
-          <Kpi label="Statements" value={String(ap.statementCount ?? 0)} />
-        </div>
+        <CommercialMetricRail metrics={[
+          { label: "Total pay", value: money(ap.totalPay) },
+          { label: "Paid", value: money(ap.totalPaid), tone: "good" },
+          { label: "Outstanding", value: money(ap.outstanding), tone: "warn" },
+          { label: "Statements", value: String(ap.statementCount ?? 0) },
+        ]} />
       ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -107,9 +109,6 @@ const inputCls = "w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm 
 const btnPrimary = "inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50";
 const btnGhost = "inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50";
 
-function Kpi({ label, value, tone }: { label: string; value: string; tone?: "warn" }) {
-  return <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</div><div className={`mt-1 text-2xl font-semibold ${tone === "warn" ? "text-orange-600" : "text-slate-800"}`}>{value}</div></div>;
-}
 function Pill({ s }: { s: string }) {
   const m: Record<string, string> = { draft: "bg-slate-100 text-slate-600", approved: "bg-blue-100 text-blue-700", paid: "bg-emerald-100 text-emerald-700" };
   return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${m[s] ?? "bg-slate-100 text-slate-600"}`}>{s}</span>;

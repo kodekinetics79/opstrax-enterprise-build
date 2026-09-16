@@ -634,7 +634,7 @@ public static partial class EndpointMappings
         var rows = ImportRows(body);
         if (rows.Count == 0) return Results.BadRequest(ApiResponse<object>.Fail("No installation rows to import."));
         var companyId = GetCompanyId(http);
-        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var actorId = GetUserId(http);
         return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
             {
                 var advisoryScope = GetBranchId(http)?.ToString(CultureInfo.InvariantCulture) ?? "tenant";

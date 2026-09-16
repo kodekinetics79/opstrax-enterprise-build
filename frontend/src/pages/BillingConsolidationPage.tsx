@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { FileStack, Eye, CheckCircle2, RefreshCw } from "lucide-react";
 import { billingApi } from "@/services/billingApi";
-import { ErrorState, LoadingState, PageHeader } from "@/components/ui";
+import { ErrorState, LoadingState } from "@/components/ui";
+import { FinanceWorkspaceTabs, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import type { AnyRecord } from "@/types";
 
 // Billing consolidation — a task-oriented page: "combine a customer's delivered loads into invoices for
@@ -23,8 +24,9 @@ export function BillingConsolidationPage() {
   const ready = customerId && start && end;
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Consolidate Invoices" description="Combine a customer's delivered loads into one or more invoices for a date range." />
+    <div className="page-stack min-w-0">
+      <RevenueWorkspaceHeader title="Consolidate Invoices" description="Combine a customer's delivered loads into one or more invoices for a date range." activeStage="invoices" eyebrow="Finance workspace" />
+      <FinanceWorkspaceTabs />
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

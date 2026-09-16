@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { exportCsv, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { CommercialDisclosure, CommercialMetricRail, CommercialToolbar, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import { useTenantCurrency } from "@/hooks/useTenantRegion";
 import type { AnyRecord } from "@/types";
 
@@ -163,47 +164,39 @@ export function RateCardsPage() {
   return (
     <div className="page-stack min-w-0">
       {showCreate && <CreateRateCardModal defaultCurrency={tenantCurrency} onClose={() => setShowCreate(false)} onSaved={() => setShowCreate(false)} />}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Rate Cards</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Persisted lane rates, pricing basis, fuel surcharge and effective periods</p>
-        </div>
-        <div className="flex gap-2">
+      <RevenueWorkspaceHeader
+        title="Rate Cards"
+        description="Control lane pricing, vehicle rates, fuel surcharges, currencies, and effective periods."
+        eyebrow="Pricing workspace"
+        actions={<div className="flex gap-2">
           <button type="button" className="btn-secondary text-sm" onClick={() => exportCsv("rate-cards", filtered)}>Export CSV</button>
           <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>New Rate Card</button>
-        </div>
-      </div>
+        </div>}
+      />
 
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Total Rate Cards", val: cards.length },
-          { label: "Active", val: active, accent: "text-teal-600" },
-          { label: "Expiring Soon", val: expiring, accent: "text-amber-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-32">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
-      </div>
+      <CommercialMetricRail metrics={[
+        { label: "Rate cards", value: cards.length },
+        { label: "Active", value: active, tone: "good", active: statusFilter === "Active", onClick: () => setStatusFilter(statusFilter === "Active" ? "All" : "Active") },
+        { label: "Expiring soon", value: expiring, tone: "warn", active: statusFilter === "Expiring Soon", onClick: () => setStatusFilter(statusFilter === "Expiring Soon" ? "All" : "Expiring Soon") },
+      ]} />
 
-      <div className="panel flex flex-wrap gap-3 items-center">
-        <div className="flex gap-1.5">
+      <CommercialToolbar
+        filters={<>
           {(["All", "Active", "Expiring Soon", "Expired"] as const).map((f) => (
             <button key={f} type="button" onClick={() => setStatusFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+              className={`filter-chip shrink-0 ${
                 statusFilter === f
-                  ? "bg-teal-50 border-teal-300 text-teal-700"
-                  : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                  ? "filter-chip-active"
+                  : ""
               }`}>{f}</button>
           ))}
-        </div>
-        <input type="search" placeholder="Search rate card, zone, vehicle…" value={search} onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 w-52" />
-      </div>
+        </>}
+        meta={`${filtered.length} shown`}
+        search={<input type="search" aria-label="Search rate cards" placeholder="Search rate card, zone, vehicle…" value={search} onChange={(e) => setSearch(e.target.value)} className="field" />}
+      />
 
       <div className="panel overflow-hidden p-0">
-        {filtered.length === 0 ? <EmptyState title="No rate cards match your filters" /> : (
+        {filtered.length === 0 ? <EmptyState title="No rate cards match your filters" subtitle={cards.length ? "Clear a status or search filter to see the full pricing register." : "Create the first rate card after its lane, currency and effective date are approved."} action={!cards.length ? <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>New Rate Card</button> : undefined} /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -234,6 +227,10 @@ export function RateCardsPage() {
           </div>
         )}
       </div>
+
+      <CommercialDisclosure title="Pricing evidence">
+        <p>Each rate remains tied to its recorded currency and effective period. Expired or unverified rates stay visible for review and are never presented as current pricing.</p>
+      </CommercialDisclosure>
 
       {selected && (
         <div className="fixed inset-0 z-40 flex justify-end" onClick={() => setSelected(null)}>
