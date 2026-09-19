@@ -19,40 +19,61 @@ export function EnterpriseMark({ compact = false }: { compact?: boolean }) {
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(motion, { toValue: 1, duration: 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(motion, { toValue: 0, duration: 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(motion, { toValue: 1, duration: 2600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(motion, { toValue: 0, duration: 2600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       ]),
     );
     loop.start();
     return () => loop.stop();
   }, [motion]);
 
-  const size = compact ? 48 : 68;
+  const size = compact ? 50 : 74;
   return (
     <Animated.View
       accessibilityLabel="OpsTrax"
-      style={{
-        width: size,
-        height: size,
-        transform: [
-          { perspective: 700 },
-          { rotateZ: motion.interpolate({ inputRange: [0, 1], outputRange: ["-2deg", "2deg"] }) },
-          { translateY: motion.interpolate({ inputRange: [0, 1], outputRange: [0, -3] }) },
-          { scale: motion.interpolate({ inputRange: [0, 1], outputRange: [1, 1.025] }) },
-        ],
-      }}
+      style={[
+        styles.markStage,
+        {
+          width: size,
+          height: size,
+          transform: [
+            { perspective: 800 },
+            { rotateZ: motion.interpolate({ inputRange: [0, 1], outputRange: ["-1.5deg", "1.5deg"] }) },
+            { translateY: motion.interpolate({ inputRange: [0, 1], outputRange: [0, -3] }) },
+            { scale: motion.interpolate({ inputRange: [0, 1], outputRange: [1, 1.035] }) },
+          ],
+        },
+      ]}
     >
-      <LinearGradient colors={["#48f1dd", "#3a8fe9", "#705cff"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.markFrame, { borderRadius: compact ? 16 : 22 }]}>
-        <View style={styles.markTopPlane} />
-        <View style={styles.markSidePlane} />
+      <View style={styles.markGlow} />
+      <LinearGradient
+        colors={["#6ff5e5", "#318df5", "#7358ff"]}
+        start={{ x: 0.08, y: 0.04 }}
+        end={{ x: 0.94, y: 0.96 }}
+        style={[styles.markFrame, { borderRadius: compact ? 17 : 24 }]}
+      >
+        <View style={styles.markBackPlate} />
+        <View style={styles.markFacetTop} />
+        <View style={styles.markFacetSide} />
         <View style={styles.markRouteVertical} />
-        <View style={[styles.markRouteArm, { transform: [{ rotate: "34deg" }] }]} />
-        <View style={[styles.markRouteArm, { transform: [{ rotate: "-34deg" }] }]} />
-        <View style={[styles.markNode, { top: "18%", left: "45%" }]} />
-        <View style={[styles.markNode, { top: "59%", left: "21%" }]} />
-        <View style={[styles.markNode, { top: "59%", right: "21%" }]} />
+        <View style={[styles.markRouteArm, styles.markRouteLeft]} />
+        <View style={[styles.markRouteArm, styles.markRouteRight]} />
+        <View style={[styles.markNode, styles.markNodeTop]} />
+        <View style={[styles.markNode, styles.markNodeLeft]} />
+        <View style={[styles.markNode, styles.markNodeRight]} />
+        <View style={styles.markCore} />
         <View pointerEvents="none" style={styles.markSpecular} />
       </LinearGradient>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.markOrbit,
+          {
+            opacity: motion.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.48] }),
+            transform: [{ rotateZ: motion.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "10deg"] }) }],
+          },
+        ]}
+      />
     </Animated.View>
   );
 }
@@ -185,6 +206,18 @@ export function DriverActionTile({
 }
 
 const styles = StyleSheet.create({
+  markStage: { alignItems: "center", justifyContent: "center" },
+  markGlow: { position: "absolute", width: "86%", height: "86%", borderRadius: 28, backgroundColor: "#3de9df", opacity: 0.18, shadowColor: "#5bf6e6", shadowOpacity: 0.9, shadowRadius: 24 },
+  markBackPlate: { position: "absolute", left: 7, right: 7, top: 7, bottom: 7, borderRadius: 19, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", backgroundColor: "rgba(2,11,28,0.18)", transform: [{ rotate: "45deg" }, { scale: 0.72 }] },
+  markFacetTop: { position: "absolute", top: -8, left: 3, right: 3, height: "50%", borderRadius: 22, backgroundColor: "rgba(255,255,255,0.16)", transform: [{ rotate: "8deg" }] },
+  markFacetSide: { position: "absolute", right: -10, top: 10, bottom: 2, width: "46%", backgroundColor: "rgba(4,10,33,0.26)", transform: [{ rotate: "-9deg" }] },
+  markRouteLeft: { transform: [{ rotate: "-36deg" }] },
+  markRouteRight: { transform: [{ rotate: "36deg" }] },
+  markNodeTop: { top: "16%", left: "44%" },
+  markNodeLeft: { top: "61%", left: "19%" },
+  markNodeRight: { top: "61%", right: "19%" },
+  markCore: { position: "absolute", width: 10, height: 10, borderRadius: 10, left: "43%", top: "48%", backgroundColor: "#ffffff", shadowColor: "#ffffff", shadowOpacity: 1, shadowRadius: 8 },
+  markOrbit: { position: "absolute", width: "118%", height: "72%", borderRadius: 999, borderWidth: 1, borderColor: "rgba(113,243,231,0.50)" },
   markFrame: { flex: 1, overflow: "hidden", borderWidth: 1, borderColor: "rgba(255,255,255,0.28)", shadowColor: "#43e6d3", shadowOpacity: 0.32, shadowRadius: 20, shadowOffset: { width: 0, height: 10 }, elevation: 14 },
   markTopPlane: { position: "absolute", top: -8, left: 6, right: 6, height: "48%", borderRadius: 18, backgroundColor: "rgba(255,255,255,0.13)", transform: [{ rotate: "8deg" }] },
   markSidePlane: { position: "absolute", right: -8, top: 12, bottom: 3, width: "45%", backgroundColor: "rgba(3,12,30,0.23)", transform: [{ rotate: "-8deg" }] },
