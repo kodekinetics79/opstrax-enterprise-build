@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocation } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { customersApi } from "@/services/customersApi";
 import { contractsApi } from "@/services/contractsApi";
 import { exportCsv, LoadingState, EmptyState, ErrorState } from "@/components/ui";
+import { CommercialMetricRail, CommercialTabs, RevenueWorkspaceHeader } from "@/components/CommercialWorkspace";
 import type { AnyRecord } from "@/types";
 
 // ── Persisted record builders ─────────────────────────────────────────────────
@@ -86,19 +86,13 @@ function AccountHealthTab() {
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <ErrorState message="Customer health records are unavailable." onRetry={() => void q.refetch()} />;
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Accounts", val: rows.length },
-          { label: "At Risk", val: atRisk, accent: "text-red-600" },
-          { label: "Avg Health", val: (() => { const scored = rows.map((r) => optionalNumber(r.healthScore)).filter((v): v is number => v != null); return scored.length ? (scored.reduce((a, b) => a + b, 0) / scored.length).toFixed(1) : "—"; })(), accent: "text-violet-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-28">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
-      </div>
+    <div className="flex flex-col gap-3">
+      <CommercialMetricRail metrics={[
+        { label: "Accounts", value: rows.length, detail: "authorized scope" },
+        { label: "At risk", value: atRisk, detail: "needs review", tone: atRisk ? "bad" : "neutral" },
+        { label: "Average health", value: (() => { const scored = rows.map((r) => optionalNumber(r.healthScore)).filter((v): v is number => v != null); return scored.length ? (scored.reduce((a, b) => a + b, 0) / scored.length).toFixed(1) : "—"; })(), detail: "scored accounts", tone: "info" },
+        { label: "Active contracts", value: rows.reduce((sum, row) => sum + Number(row.activeContracts ?? 0), 0), detail: "customer-linked", tone: "good" },
+      ]} />
       <div className="panel overflow-hidden p-0">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -146,19 +140,13 @@ function RenewalsTab() {
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <ErrorState message="Contract renewal records are unavailable." onRetry={() => void q.refetch()} />;
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Renewal Pipeline", val: rows.length },
-          { label: "Expiring Soon", val: rows.filter((r) => /expiring/i.test(String(r.renewalState ?? ""))).length, accent: "text-amber-600" },
-          { label: "Expired", val: rows.filter((r) => /expired/i.test(String(r.renewalState ?? ""))).length, accent: "text-red-600" },
-        ].map(({ label, val, accent }) => (
-          <div key={label} className="panel flex flex-col gap-1 min-w-32">
-            <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
-            <span className="text-xs text-slate-500 font-medium">{label}</span>
-          </div>
-        ))}
-      </div>
+    <div className="flex flex-col gap-3">
+      <CommercialMetricRail metrics={[
+        { label: "Renewal pipeline", value: rows.length, detail: "recorded contracts" },
+        { label: "Expiring soon", value: rows.filter((r) => /expiring/i.test(String(r.renewalState ?? ""))).length, detail: "needs outreach", tone: "warn" },
+        { label: "Expired", value: rows.filter((r) => /expired/i.test(String(r.renewalState ?? ""))).length, detail: "action blocked", tone: "bad" },
+        { label: "Active", value: rows.filter((r) => /active/i.test(String(r.status ?? ""))).length, detail: "current terms", tone: "good" },
+      ]} />
       <div className="panel overflow-hidden p-0">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -215,6 +203,14 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "upsell",      label: "Upsell" },
 ];
 
+const TAB_ROUTE: Record<Tab, string> = {
+  "health": "/account-health",
+  "follow-ups": "/follow-ups",
+  "tickets": "/support-tickets",
+  "renewals": "/renewals",
+  "upsell": "/upsell-opportunities",
+};
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 const TAB_QUERY_KEY: Record<Tab, unknown[]> = {
@@ -227,14 +223,10 @@ const TAB_QUERY_KEY: Record<Tab, unknown[]> = {
 
 export function AccountHealthPage() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const qc = useQueryClient();
-  const defaultTab = (ROUTE_TAB[pathname] as Tab) ?? "health";
-  const [tab, setTab] = useState<Tab>(defaultTab);
+  const tab = (ROUTE_TAB[pathname] as Tab) ?? "health";
   const canExport = tab === "health" || tab === "renewals";
-
-  useEffect(() => {
-    setTab(defaultTab);
-  }, [defaultTab]);
 
   // Export the currently displayed tab's real rows (read straight from the
   // react-query cache) to CSV. No-op with a hint if the tab hasn't loaded yet.
@@ -261,25 +253,16 @@ export function AccountHealthPage() {
 
   return (
     <div className="page-stack">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">{titles[tab]}</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{descriptions[tab]}</p>
-        </div>
-        {canExport ? <button type="button" className="btn-secondary text-sm" onClick={exportActive}>Export CSV</button> : null}
-      </div>
+      <RevenueWorkspaceHeader
+        title={titles[tab]}
+        description={descriptions[tab]}
+        activeStage="accounts"
+        eyebrow="Customer success"
+        actions={canExport ? <button type="button" className="btn-secondary text-sm" onClick={exportActive}>Export CSV</button> : undefined}
+      />
 
       {/* Tabs */}
-      <div className="panel flex gap-1 p-1.5 flex-wrap">
-        {TABS.map((t) => (
-          <button key={t.key} type="button" onClick={() => setTab(t.key)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === t.key ? "bg-teal-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
-            }`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <CommercialTabs label="Customer success sections" items={TABS} active={tab} onSelect={(key) => navigate(TAB_ROUTE[key as Tab])} />
 
       {/* Tab content */}
       {tab === "health"     && <AccountHealthTab />}

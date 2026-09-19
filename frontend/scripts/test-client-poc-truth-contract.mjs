@@ -6,7 +6,10 @@ import ts from "typescript";
 
 const shell = readFileSync(fileURLToPath(new URL("../src/layouts/AppShell.tsx", import.meta.url)), "utf8");
 const integrations = readFileSync(fileURLToPath(new URL("../src/pages/IntegrationsPage.tsx", import.meta.url)), "utf8");
-const tenants = readFileSync(fileURLToPath(new URL("../src/pages/platform/PlatformTenantsPage.tsx", import.meta.url)), "utf8");
+const tenants = [
+  "../src/pages/platform/PlatformTenantsPage.tsx",
+  "../src/pages/platform/tenant-management/TenantDetailDrawer.tsx",
+].map(path => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8")).join("\n");
 
 assert.ok(
   shell.includes('const runtimeState = runtimeQuery.data?.state ?? "Unavailable"'),

@@ -32,14 +32,39 @@ public static class RevenueReadinessEndpoints
         // ── ZATCA Phase-2 e-invoicing (Saudi) — foundation ──
         app.MapGet("/api/finance/zatca/invoices", ZatcaList);
         app.MapPost("/api/finance/zatca/invoices/{issuedInvoiceId:guid}/generate", ZatcaGenerate);
+        app.MapGet("/api/finance/saudi-readiness", SaudiFinanceReadiness);
+    }
+
+    private static async Task<IResult> SaudiFinanceReadiness(HttpContext http, ZatcaService svc, CancellationToken ct)
+    {
+        var denied = EndpointMappings.RequirePermission(http, "finance.invoice.read");
+        if (denied is not null) return denied;
+        try
+        {
+            var readiness = await svc.GetSaudiFinanceReadinessAsync(EndpointMappings.GetCompanyId(http), ct);
+            return Results.Ok(ApiResponse<object>.Ok(readiness));
+        }
+        catch (ZatcaPreparationException market)
+        {
+            return Results.Json(ApiResponse<object>.Fail(market.Message),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
     }
 
     private static async Task<IResult> ZatcaList(HttpContext http, ZatcaService svc, CancellationToken ct)
     {
         var denied = EndpointMappings.RequirePermission(http, "finance.invoice.read");
         if (denied is not null) return denied;
-        var rows = await svc.ListAsync(EndpointMappings.GetCompanyId(http), ct);
-        return Results.Ok(ApiResponse<object>.Ok(rows));
+        try
+        {
+            var rows = await svc.ListAsync(EndpointMappings.GetCompanyId(http), ct);
+            return Results.Ok(ApiResponse<object>.Ok(rows));
+        }
+        catch (ZatcaPreparationException market)
+        {
+            return Results.Json(ApiResponse<object>.Fail(market.Message),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
     }
 
     private static async Task<IResult> ZatcaGenerate(HttpContext http, Guid issuedInvoiceId, Dictionary<string, object?>? body, ZatcaService svc, CancellationToken ct)
@@ -47,14 +72,27 @@ public static class RevenueReadinessEndpoints
         var denied = EndpointMappings.RequirePermission(http, "finance.invoice.issue");
         if (denied is not null) return denied;
         var invoiceType = (body is not null && body.TryGetValue("invoiceType", out var t) ? t?.ToString() : null) ?? "standard";
-        var result = await svc.GenerateForIssuedInvoiceAsync(EndpointMappings.GetCompanyId(http), issuedInvoiceId, invoiceType, ct);
+        invoiceType = invoiceType.Trim().ToLowerInvariant();
+        if (invoiceType is not ("standard" or "simplified"))
+            return Results.BadRequest(ApiResponse<object>.Fail("invoiceType must be 'standard' or 'simplified'"));
+        ZatcaGenerationResult? result;
+        try
+        {
+            result = await svc.GenerateForIssuedInvoiceAsync(EndpointMappings.GetCompanyId(http), issuedInvoiceId, invoiceType, ct);
+        }
+        catch (ZatcaPreparationException validation)
+        {
+            return Results.Conflict(ApiResponse<object>.Fail(validation.Message));
+        }
         if (result is null)
             return Results.NotFound(ApiResponse<object>.Fail("Issued invoice not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             result.ZatcaInvoiceId, result.InvoiceNumber, result.Uuid, result.Icv,
             result.InvoiceHash, result.Pih, result.QrBase64, result.ClearanceStatus,
-        }, "ZATCA e-invoice generated (clearance pending onboarding)"));
+        }, result.ClearanceStatus is "cleared" or "reported"
+            ? "ZATCA submission completed"
+            : "ZATCA preparation artifact generated; live clearance/reporting is not enabled"));
     }
 
     private static async Task<IResult> AccountsReceivableAging(HttpContext http, RevenueReadinessService svc, CancellationToken ct)
@@ -124,11 +162,15 @@ public static class RevenueReadinessEndpoints
         sb.AppendLine("customer_id,customer_name,current,days_1_30,days_31_60,days_61_90,days_90_plus,total_outstanding,currency");
         foreach (var cst in aging.Customers)
         {
-            sb.AppendLine(string.Join(",",
-                cst.CustomerId, Csv(cst.CustomerName), cst.Current, cst.Days1To30, cst.Days31To60, cst.Days61To90, cst.Days90Plus, cst.TotalOutstanding, aging.Currency));
+            sb.AppendLine(SpreadsheetSafeCsv.Row([
+                cst.CustomerId, cst.CustomerName, cst.Current, cst.Days1To30,
+                cst.Days31To60, cst.Days61To90, cst.Days90Plus,
+                cst.TotalOutstanding, aging.Currency]));
         }
-        sb.AppendLine(string.Join(",",
-            "ALL", "\"Company total\"", aging.Current, aging.Days1To30, aging.Days31To60, aging.Days61To90, aging.Days90Plus, aging.TotalOutstanding, aging.Currency));
+        sb.AppendLine(SpreadsheetSafeCsv.Row([
+            "ALL", "Company total", aging.Current, aging.Days1To30,
+            aging.Days31To60, aging.Days61To90, aging.Days90Plus,
+            aging.TotalOutstanding, aging.Currency]));
         return sb.ToString();
     }
 
@@ -138,13 +180,14 @@ public static class RevenueReadinessEndpoints
         sb.AppendLine("customer_id,customer_name,total_collected,total_outstanding,average_days_to_pay,paid_invoice_count,currency");
         foreach (var cst in summary.Customers)
         {
-            sb.AppendLine(string.Join(",",
-                cst.CustomerId, Csv(cst.CustomerName), cst.TotalCollected, cst.TotalOutstanding,
-                cst.AverageDaysToPay?.ToString(CultureInfo.InvariantCulture) ?? "", cst.PaidInvoiceCount, summary.Currency));
+            sb.AppendLine(SpreadsheetSafeCsv.Row([
+                cst.CustomerId, cst.CustomerName, cst.TotalCollected,
+                cst.TotalOutstanding, cst.AverageDaysToPay, cst.PaidInvoiceCount,
+                summary.Currency]));
         }
-        sb.AppendLine(string.Join(",",
-            "ALL", "\"Company total\"", summary.TotalCollected, summary.TotalOutstanding,
-            summary.AverageDaysToPay?.ToString(CultureInfo.InvariantCulture) ?? "", summary.PaidInvoiceCount, summary.Currency));
+        sb.AppendLine(SpreadsheetSafeCsv.Row([
+            "ALL", "Company total", summary.TotalCollected, summary.TotalOutstanding,
+            summary.AverageDaysToPay, summary.PaidInvoiceCount, summary.Currency]));
         return sb.ToString();
     }
 
@@ -155,14 +198,6 @@ public static class RevenueReadinessEndpoints
         var to = DateTimeOffset.TryParse(http.Request.Query["to"].FirstOrDefault(), CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var t)
             ? t : DateTimeOffset.UtcNow.AddDays(1);
         return (from, to);
-    }
-
-    private static string Csv(string? value)
-    {
-        var v = value ?? string.Empty;
-        return v.Contains(',') || v.Contains('"') || v.Contains('\n')
-            ? "\"" + v.Replace("\"", "\"\"") + "\""
-            : v;
     }
 
     private static async Task<IResult> MarkReadyToBill(HttpContext http, long jobId, RevenueReadinessService svc, Database db, CancellationToken ct)
@@ -234,7 +269,7 @@ public static class RevenueReadinessEndpoints
             Str(body, "status"),
             Str(body, "metadataJson"),
             ct,
-            requesterActorId: http.Items[EndpointMappings.AuthUserIdItemKey]?.ToString());
+            requesterActorId: EndpointMappings.GetUserId(http).ToString());
 
         if (outcome.ApprovalRequired)
         {
@@ -261,7 +296,7 @@ public static class RevenueReadinessEndpoints
             id,
             Str(body, "idempotencyKey") ?? (http.Request.Headers.TryGetValue("Idempotency-Key", out var headerValue) ? headerValue.FirstOrDefault() : null),
             ct,
-            requesterActorId: http.Items[EndpointMappings.AuthUserIdItemKey]?.ToString());
+            requesterActorId: EndpointMappings.GetUserId(http).ToString());
 
         if (outcome.ApprovalRequired)
         {
@@ -382,7 +417,7 @@ public static class RevenueReadinessEndpoints
             c.Parameters.AddWithValue("id", id);
         }, ct);
         if (request is null) return Results.NotFound(ApiResponse<object>.Fail("Invoice approval request not found"));
-        var actorId = http.Items[EndpointMappings.AuthUserIdItemKey]?.ToString();
+        var actorId = EndpointMappings.GetUserId(http).ToString();
         if (string.IsNullOrWhiteSpace(actorId) || string.IsNullOrWhiteSpace(request["requestedByActorId"]?.ToString()) || actorId == request["requestedByActorId"]?.ToString())
             return Results.Conflict(ApiResponse<object>.Fail("A different authorized reviewer must decide this invoice approval"));
         if (request["status"]?.ToString() != "pending") return Results.Conflict(ApiResponse<object>.Fail("Approval request is no longer pending"));

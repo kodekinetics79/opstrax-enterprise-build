@@ -1268,13 +1268,13 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
         {
             async Task<long> CompanyAsync(string suffix)
             {
-                var id = await ScalarAsync(@"INSERT INTO companies(company_code,name,industry,entitlement_policy_mode)
-                    VALUES(@code,'Synthetic G5 HTTP transfer','Transportation','package_allowlist') RETURNING id", ("code", Prefix + suffix));
+                var id = await ScalarAsync(@"INSERT INTO companies(company_code,name,industry,entitlement_policy_mode,country)
+                    VALUES(@code,'Synthetic G5 HTTP transfer','Transportation','package_allowlist','US') RETURNING id", ("code", Prefix + suffix));
                 companies.Add(id);
                 return id;
             }
             async Task<long> BranchAsync(long cid, string suffix) => await ScalarAsync(
-                "INSERT INTO branches(company_id,branch_code,name,status) VALUES(@cid,@code,'Synthetic branch','Active') RETURNING id",
+                "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES(@cid,@code,'Synthetic branch','Active','US') RETURNING id",
                 ("cid", cid), ("code", Prefix + suffix));
             async Task<long> VehicleAsync(long cid, long bid, string suffix) => await ScalarAsync(@"INSERT INTO vehicles
                 (company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service)

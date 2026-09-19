@@ -20,51 +20,9 @@ import { logisticsApi, type LogisticsOrder, type LogisticsOverview, type Logisti
 import { notifyApiError } from '@/services/fleetTmsApi';
 import { usePermissions } from '@/hooks/usePermission';
 import { KpiCard, PageHeader, StatusBadge } from '@/components/ui';
-
-type DispatchMode = 'dispatch' | 'orders' | 'routes' | 'delivery';
-
-const MODULES: Record<DispatchMode, {
-  label: string;
-  title: string;
-  subtitle: string;
-  accent: string;
-  summary: string;
-}> = {
-  // Teal/cyan/emerald family throughout, matching the rest of the app (blue/indigo/sky as
-  // the DOMINANT accent was this page's own invention -- every sibling module uses teal as
-  // the brand hue with cyan/emerald as secondary notes, same as btn-primary's own gradient).
-  dispatch: {
-    label: 'Dispatch Command Center',
-    title: 'Logistics command',
-    subtitle: 'Order intake, route movement, recovery actions and proof state across the operation.',
-    accent: 'from-teal-600 via-cyan-500 to-emerald-400',
-    summary: '',
-  },
-  orders: {
-    label: 'Jobs & Orders',
-    title: 'Orders pipeline',
-    subtitle: 'Who ordered, current priority, dispatch state and promised times for every open order.',
-    accent: 'from-emerald-600 via-teal-500 to-cyan-400',
-    summary: '',
-  },
-  routes: {
-    label: 'Route Planning',
-    title: 'Delivery routes',
-    subtitle: 'Stop density, load, driver and completion state per active route.',
-    accent: 'from-cyan-600 via-teal-500 to-emerald-400',
-    summary: '',
-  },
-  delivery: {
-    label: 'Last Mile Delivery',
-    title: 'Last mile stops',
-    subtitle: 'Live delivery state, attempts, reschedules and recipient proof per stop.',
-    accent: 'from-teal-500 via-emerald-500 to-cyan-400',
-    summary: '',
-  },
-};
-
-const MODE_ORDER: DispatchMode[] = ['dispatch', 'orders', 'routes', 'delivery'];
-const PAGE_SIZE = 12;
+import { ActionOrderCard, ActionRouteCard, ActionStopCard, DarkField, DispatchOrderRow, LightField, ReadOnlyMessage } from './dispatch/DispatchWorkspaceComponents';
+import { MODE_ORDER, MODULES, PAGE_SIZE, type DispatchMode } from './dispatch/dispatchWorkspaceModel';
+import { DispatchOverviewPanel } from './dispatch/DispatchOverviewPanel';
 
 type Notice = { kind: 'success' | 'error' | 'info'; message: string };
 
@@ -693,180 +651,38 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
 
   if (mode === 'dispatch') {
     return (
-      <div className="fleet-console page-stack min-w-0 text-slate-900">
-        <PageHeader
-          eyebrow="Dispatch & Delivery"
-          title={config.title}
-          description={config.subtitle}
-          actions={
-            <>
-              {canCreate && (
-                <button type="button" className="btn-primary" onClick={beginCreateOrder}>
-                  <Package className="h-4 w-4" /> Create order
-                </button>
-              )}
-              <button
-                type="button"
-                className="btn-ghost"
-                disabled={loading}
-                onClick={() => {
-                  setLoading(true);
-                  refreshWorkspace().finally(() => setLoading(false));
-                }}
-              >
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-              </button>
-            </>
-          }
-          footer={
-            <nav aria-label="Logistics workspace views" className="flex min-w-0 max-w-full gap-1 overflow-x-auto">
-              {MODE_ORDER.map((item) => {
-                const active = item === mode;
-                return (
-                  <button
-                    key={item}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => {
-                      setOrderIntakeOpen(false);
-                      setMode(item);
-                    }}
-                    className={`${active ? 'btn-primary' : 'btn-ghost'} btn-compact shrink-0`}
-                  >
-                    {MODULES[item].label}
-                  </button>
-                );
-              })}
-            </nav>
-          }
-        />
-
-        {notice && (
-          <div
-            role={notice.kind === 'error' ? 'alert' : 'status'}
-            aria-live={notice.kind === 'error' ? 'assertive' : 'polite'}
-            className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm ${notice.kind === 'error' ? 'border-red-200 bg-red-50 text-red-800' : notice.kind === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-blue-200 bg-blue-50 text-blue-800'}`}
-          >
-            <span>{notice.message}</span>
-            <button type="button" aria-label="Dismiss notification" onClick={() => setNotice(null)} className="icon-btn"><X className="h-4 w-4" /></button>
-          </div>
-        )}
-
-        {loadError && (
-          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-            <span>{loadError}</span>
-            <button type="button" onClick={() => { setLoading(true); refreshWorkspace().finally(() => setLoading(false)); }} className="btn-danger btn-compact">
-              <RefreshCw className="h-4 w-4" /> Retry
-            </button>
-          </div>
-        )}
-
-        <section className="panel grid grid-cols-2 overflow-hidden divide-x divide-y divide-slate-100 lg:grid-cols-4 lg:divide-y-0" aria-label="Dispatch summary">
-          {loading
-            ? Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-[72px] animate-pulse bg-slate-50" />)
-            : stats.map((stat) => (
-                <KpiCard key={stat.label} compact label={stat.label} value={stat.value} status={stat.hint} icon={<stat.icon className="h-4 w-4" />} />
-              ))}
-        </section>
-
-        {alerts.length > 0 && (
-          <section className="panel flex min-w-0 flex-col gap-2 px-3 py-2 lg:flex-row lg:items-center" aria-labelledby="dispatch-alerts-title">
-            <div className="shrink-0">
-              <p id="dispatch-alerts-title" className="text-xs font-bold text-amber-800">Pending alerts</p>
-              <p className="text-[11px] text-slate-500">{alerts.length} need review</p>
-            </div>
-            <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
-              {alerts.slice(0, 4).map((alert) => (
-                <div key={`${alert.orderNumber}-${alert.status}`} className="min-w-[190px] flex-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-xs font-bold text-amber-900">{alert.orderNumber}</span>
-                    <span className="shrink-0 text-[10px] font-bold uppercase text-amber-700">{alert.status}</span>
-                  </div>
-                  <p className="truncate text-[11px] text-amber-800/80">{alert.customerName} · {alert.exceptionReason || 'Recovery follow-up required'}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        <section className="panel min-w-0 overflow-hidden" aria-labelledby="dispatch-orders-title">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
-            <div>
-              <h2 id="dispatch-orders-title" className="text-sm font-bold text-slate-950">Orders requiring action</h2>
-              <p className="text-xs text-slate-500">Assignment, route ownership, and dispatch state in one queue.</p>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span>{orders.length} shown · {orderTotal} total</span>
-              <button type="button" className="btn-ghost btn-compact" onClick={() => setMode('orders')}>Open full pipeline</button>
-            </div>
-          </div>
-
-          {loading ? (
-            <div className="divide-y divide-slate-100">
-              {Array.from({ length: 5 }).map((_, index) => <div key={index} className="h-16 animate-pulse bg-slate-50/70" />)}
-            </div>
-          ) : orders.length ? (
-            <div className="divide-y divide-slate-100">
-              {orders.map((order) => (
-                <DispatchOrderRow
-                  key={order.id}
-                  order={order}
-                  canAssign={canAssign}
-                  canUpdate={canUpdate}
-                  saving={savingId === order.id}
-                  onDispatch={() => handleDispatch(order)}
-                  onEdit={() => beginEditOrder(order)}
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="px-4 py-8 text-center text-sm text-slate-500">No orders are waiting in the current dispatch queue.</p>
-          )}
-        </section>
-
-        {orderIntakeOpen && (canCreate || (Boolean(editingOrderId) && canUpdate)) && (
-          <section className="panel p-4" aria-labelledby="dispatch-order-form-title">
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div>
-                <h2 id="dispatch-order-form-title" className="text-sm font-bold text-slate-950">{editingOrderId ? 'Edit dispatch order' : 'Create dispatch order'}</h2>
-                <p className="text-xs text-slate-500">Required order details are validated before the record enters the queue.</p>
-              </div>
-              <button type="button" className="btn-ghost btn-compact" onClick={resetOrderForm}>Close</button>
-            </div>
-            <form className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" onSubmit={(event) => { event.preventDefault(); void handleCreateOrder(); }}>
-              <LightField label="Order number" value={orderForm.orderNumber} onChange={(value) => setOrderForm((current) => ({ ...current, orderNumber: value }))} required disabled={Boolean(editingOrderId)} />
-              <LightField label="Customer name" value={orderForm.customerName} onChange={(value) => setOrderForm((current) => ({ ...current, customerName: value }))} required />
-              <LightField label="City" value={orderForm.city} onChange={(value) => setOrderForm((current) => ({ ...current, city: value }))} />
-              <LightField label="Area" value={orderForm.area} onChange={(value) => setOrderForm((current) => ({ ...current, area: value }))} />
-              <LightField label="Item count" type="number" min="1" max="100000" value={orderForm.itemCount} onChange={(value) => setOrderForm((current) => ({ ...current, itemCount: value }))} required />
-              <LightField label="Order value" type="number" min="0" step="0.01" value={orderForm.orderValue} onChange={(value) => setOrderForm((current) => ({ ...current, orderValue: value }))} />
-              <label className="form-field flex flex-col text-xs font-semibold text-slate-700">Priority
-                <select value={orderForm.priority} onChange={(event) => setOrderForm((current) => ({ ...current, priority: event.target.value }))} className="field">
-                  {['Low', 'Normal', 'High', 'Critical'].map((priority) => <option key={priority}>{priority}</option>)}
-                </select>
-              </label>
-              <label className="form-field flex flex-col text-xs font-semibold text-slate-700">Assigned route
-                <select value={orderForm.routeCode} onChange={(event) => selectOrderRoute(event.target.value)} className="field">
-                  <option value="">Unassigned</option>
-                  {routes.filter((route) => !terminalRoute(route.status)).map((route) => <option key={route.id} value={route.routeCode}>{route.routeCode} · {route.status}</option>)}
-                </select>
-              </label>
-              <LightField label="Driver name" value={orderForm.driverName} onChange={(value) => setOrderForm((current) => ({ ...current, driverName: value }))} />
-              <LightField label="Vehicle number" value={orderForm.vehicleNumber} onChange={(value) => setOrderForm((current) => ({ ...current, vehicleNumber: value }))} />
-              <LightField label="Promised time" type="datetime-local" value={orderForm.promisedAtUtc} onChange={(value) => setOrderForm((current) => ({ ...current, promisedAtUtc: value }))} />
-              <label className="form-field flex flex-col text-xs font-semibold text-slate-700 xl:col-span-1">Dispatch notes
-                <textarea value={orderForm.dispatchNotes} onChange={(event) => setOrderForm((current) => ({ ...current, dispatchNotes: event.target.value }))} rows={2} className="field min-h-[64px] resize-y" />
-              </label>
-              <div className="flex flex-wrap justify-end gap-2 md:col-span-2 xl:col-span-4">
-                <button type="button" onClick={resetOrderForm} className="btn-ghost">Cancel</button>
-                <button type="submit" disabled={creating} className="btn-primary">
-                  {creating ? 'Saving…' : editingOrderId ? 'Save order' : 'Create order'}
-                </button>
-              </div>
-            </form>
-          </section>
-        )}
-      </div>
+      <DispatchOverviewPanel
+        config={config}
+        canCreate={canCreate}
+        canAssign={canAssign}
+        canUpdate={canUpdate}
+        beginCreateOrder={beginCreateOrder}
+        loading={loading}
+        setLoading={setLoading}
+        refreshWorkspace={refreshWorkspace}
+        setOrderIntakeOpen={setOrderIntakeOpen}
+        setMode={setMode}
+        mode={mode}
+        notice={notice}
+        setNotice={setNotice}
+        loadError={loadError}
+        stats={stats}
+        alerts={alerts}
+        orders={orders}
+        orderTotal={orderTotal}
+        savingId={savingId}
+        handleDispatch={handleDispatch}
+        beginEditOrder={beginEditOrder}
+        orderIntakeOpen={orderIntakeOpen}
+        editingOrderId={editingOrderId}
+        orderForm={orderForm}
+        setOrderForm={setOrderForm}
+        routes={routes}
+        selectOrderRoute={selectOrderRoute}
+        resetOrderForm={resetOrderForm}
+        creating={creating}
+        handleCreateOrder={handleCreateOrder}
+      />
     );
   }
 
@@ -1356,206 +1172,4 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
       </div>
     </>
   );
-}
-
-function DispatchOrderRow({ order, onDispatch, onEdit, saving, canAssign, canUpdate }: { order: LogisticsOrder; onDispatch: () => void; onEdit: () => void; saving: boolean; canAssign: boolean; canUpdate: boolean }) {
-  const dispatchable = order.status === 'Queued' && Boolean(order.routeCode?.trim() && order.driverName?.trim() && order.vehicleNumber?.trim());
-  const promisedDate = order.promisedAtUtc ? new Date(order.promisedAtUtc) : null;
-  const promisedAt = promisedDate && !Number.isNaN(promisedDate.getTime())
-    ? promisedDate.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-    : 'No promised time';
-
-  return (
-    <article className="grid min-w-0 gap-2 px-3 py-2.5 hover:bg-slate-50 lg:grid-cols-[minmax(180px,1.35fr)_110px_minmax(180px,1fr)_150px_auto] lg:items-center">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-bold text-slate-950">{order.orderNumber}</p>
-        <p className="truncate text-xs text-slate-500">{order.customerName}{order.city ? ` · ${order.city}` : ''}</p>
-      </div>
-      <div className="flex items-center gap-2 lg:block">
-        <StatusBadge status={order.status} />
-        <p className="text-[11px] font-semibold text-slate-500 lg:mt-1">{order.priority} priority</p>
-      </div>
-      <div className="min-w-0 text-xs text-slate-600">
-        <p className="truncate font-semibold">{order.routeCode?.trim() || 'Route unassigned'}</p>
-        <p className="truncate text-slate-500">{order.driverName?.trim() || 'Driver pending'} · {order.vehicleNumber?.trim() || 'Vehicle pending'}</p>
-      </div>
-      <p className="text-xs text-slate-500">{promisedAt}</p>
-      {(canAssign || canUpdate) && !terminalOrder(order.status) ? (
-        <div className="flex flex-wrap gap-2 lg:justify-end">
-          {canUpdate && <button type="button" className="btn-ghost btn-compact" disabled={saving} onClick={onEdit}><Pencil className="h-3.5 w-3.5" /> Edit</button>}
-          {canAssign && (
-            <button
-              type="button"
-              className="btn-primary btn-compact"
-              disabled={saving || order.status !== 'Queued'}
-              title={!dispatchable && order.status === 'Queued' ? 'Complete route, driver, and vehicle assignment first' : undefined}
-              onClick={dispatchable ? onDispatch : onEdit}
-            >
-              {saving ? 'Dispatching…' : dispatchable ? 'Dispatch' : 'Assign'}
-            </button>
-          )}
-        </div>
-      ) : <span className="text-right text-xs text-slate-400">No action</span>}
-    </article>
-  );
-}
-
-function ActionOrderCard({ order, onDispatch, onEdit, saving, canAssign, canUpdate }: { order: LogisticsOrder; onDispatch: () => void; onEdit: () => void; saving: boolean; canAssign: boolean; canUpdate: boolean }) {
-  const dispatchable = order.status === 'Queued' && Boolean(order.routeCode?.trim() && order.driverName?.trim() && order.vehicleNumber?.trim());
-  return (
-    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(13,148,136,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{order.orderNumber}</p>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400">{order.customerName} · {order.city}</p>
-        </div>
-        <span className="rounded-full border border-slate-200/70 bg-white px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300">
-          {order.status}
-        </span>
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-        <span>{order.routeCode}</span>
-        <span>•</span>
-        <span>{order.priority}</span>
-        <span>•</span>
-        <span>{order.driverName}</span>
-      </div>
-      <p className="mt-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-        {order.priority === 'High' || order.priority === 'Critical'
-          ? 'Priority order with visible service impact if dispatch slips.'
-          : 'Ready for operational assignment and route ownership.'}
-      </p>
-      {(canAssign || canUpdate) && !terminalOrder(order.status) && (
-        <div className={`mt-4 grid gap-2 ${canAssign && canUpdate ? 'grid-cols-2' : 'grid-cols-1'}`}>
-          {canUpdate && <button type="button" onClick={onEdit} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-700 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"><Pencil className="h-3.5 w-3.5" /> Edit</button>}
-          {canAssign && <button type="button" onClick={dispatchable ? onDispatch : onEdit} disabled={saving || order.status !== 'Queued'} title={!dispatchable && order.status === 'Queued' ? 'Complete route, driver, and vehicle assignment first' : undefined} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-teal-600 via-teal-500 to-blue-600 px-4 py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
-            {saving ? 'Dispatching...' : dispatchable ? 'Dispatch' : 'Complete assignment'} <ArrowRight className="h-4 w-4" />
-          </button>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ActionRouteCard({ route, onAdvance, onInspect, onEdit, saving, canUpdate }: { route: LogisticsRoute; onAdvance: () => void; onInspect: () => void; onEdit: () => void; saving: boolean; canUpdate: boolean }) {
-  const canProgress = canUpdate && ['Ready', 'Active', 'Delayed'].includes(route.status) && route.plannedStops > route.completedStops;
-  return (
-    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(13,148,136,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{route.routeCode}</p>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400">{route.hub} · {route.territory}</p>
-        </div>
-        <span className="rounded-full border border-slate-200/70 bg-white px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300">
-          {route.status}
-        </span>
-      </div>
-      <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] text-slate-400">
-        <span>{route.completedStops}/{route.plannedStops} stops</span>
-        <span>{route.distanceKm.toFixed(1)} km</span>
-        <span>{route.driverName}</span>
-      </div>
-      <p className="mt-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-        {route.nextStop
-          ? `Next operational handoff is ${route.nextStop}.`
-          : 'Planner view is ready for next-stop progression and route recovery.'}
-      </p>
-      <div className={`mt-4 grid gap-2 ${canUpdate ? 'grid-cols-3' : 'grid-cols-1'}`}>
-        <button
-          type="button"
-          onClick={onInspect}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200/70 bg-white px-4 py-3 text-[12px] font-bold text-slate-700 transition hover:border-teal-300 hover:text-teal-700 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
-        >
-          Inspect stops
-        </button>
-        {canUpdate && !terminalRoute(route.status) && <button type="button" onClick={onEdit} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[11px] font-bold text-slate-700 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"><Pencil className="h-3.5 w-3.5" /> Edit</button>}
-        {canUpdate && <button
-          type="button"
-          onClick={onAdvance}
-          disabled={saving || !canProgress}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-teal-600 via-teal-500 to-blue-600 px-4 py-3 text-[12px] font-bold text-white shadow-[0_14px_30px_rgba(13,148,136,0.26)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {saving ? 'Advancing...' : 'Advance route'}
-          <ArrowRight className="h-4 w-4" />
-        </button>}
-      </div>
-    </div>
-  );
-}
-
-function ActionStopCard({ stop, onConfirm, onAttempt, onReschedule, saving, canUpdate, canDeliver }: { stop: LogisticsStop; onConfirm: () => void; onAttempt: () => void; onReschedule: () => void; saving: boolean; canUpdate: boolean; canDeliver: boolean }) {
-  const terminal = terminalStop(stop.status);
-  return (
-    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(13,148,136,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{stop.customerName}</p>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400">{stop.addressLine}</p>
-        </div>
-        <span className="rounded-full border border-slate-200/70 bg-white px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-300">
-          {stop.status}
-        </span>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-        <span>{stop.routeCode}</span>
-        <span>•</span>
-        <span>{stop.timeWindow}</span>
-        <span>•</span>
-        <span>{stop.proofStatus}</span>
-      </div>
-      <p className="mt-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-        {stop.status === 'Attempted' || stop.status === 'Rescheduled'
-          ? 'This stop has an open exception — record an attempt, deliver or reschedule.'
-          : 'Use proof, attempt, or reschedule actions to keep customer visibility current.'}
-      </p>
-      {!terminal && (canUpdate || canDeliver) && <div className={`mt-4 grid gap-2 ${canUpdate && canDeliver ? 'grid-cols-3' : canUpdate ? 'grid-cols-2' : 'grid-cols-1'}`}>
-        {canUpdate && <button
-          type="button"
-          onClick={onAttempt}
-          disabled={saving}
-          className="inline-flex w-full items-center justify-center rounded-2xl border border-amber-200/70 bg-amber-50 px-3 py-3 text-[11px] font-bold text-amber-700 transition hover:border-amber-300 disabled:opacity-60"
-        >
-          Attempt
-        </button>}
-        {canUpdate && <button
-          type="button"
-          onClick={onReschedule}
-          disabled={saving}
-          className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200/70 bg-white px-3 py-3 text-[11px] font-bold text-slate-700 transition hover:border-teal-300 disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
-        >
-          Reschedule
-        </button>}
-        {canDeliver && <button
-          type="button"
-          onClick={onConfirm}
-          disabled={saving}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-400 px-3 py-3 text-[11px] font-bold text-white shadow-[0_14px_30px_rgba(13,148,136,0.22)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {saving ? 'Saving...' : 'Deliver'}
-        </button>}
-      </div>}
-    </div>
-  );
-}
-
-function DarkField({ label, value, onChange, type = 'text', min, max, step, required = false, disabled = false }: { label: string; value: string; onChange: (value: string) => void; type?: string; min?: string; max?: string; step?: string; required?: boolean; disabled?: boolean }) {
-  return (
-    <label className="block text-[11px] font-semibold text-slate-600">
-      {label}{required ? ' *' : ''}
-      <input type={type} min={min} max={max} step={step} required={required} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-55" />
-    </label>
-  );
-}
-
-function LightField({ label, value, onChange, type = 'text', min, max, step, required = false, disabled = false }: { label: string; value: string; onChange: (value: string) => void; type?: string; min?: string; max?: string; step?: string; required?: boolean; disabled?: boolean }) {
-  return (
-    <label className="form-field flex flex-col text-xs font-semibold text-slate-700">
-      {label}{required ? ' *' : ''}
-      <input type={type} min={min} max={max} step={step} required={required} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} className="field disabled:cursor-not-allowed disabled:opacity-55" />
-    </label>
-  );
-}
-
-function ReadOnlyMessage() {
-  return <p className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-500">This is a read-only view. Ask an administrator for the required dispatch create or update permission to change records.</p>;
 }

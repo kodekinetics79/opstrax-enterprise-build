@@ -1,11 +1,9 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  loadPlatformSession,
-  storePlatformSession,
+  clearRetiredPlatformSession,
   platformApi,
-  PLATFORM_STORAGE_KEY,
   hasPlatformPermission,
   type PlatformSession,
 } from "@/services/platformApi";
@@ -20,27 +18,23 @@ type PlatformAuthValue = {
 const PlatformAuthContext = createContext<PlatformAuthValue | null>(null);
 
 async function revalidatePlatformSession(): Promise<PlatformSession> {
-  const current = loadPlatformSession();
-  if (!current?.token) throw new Error("Platform session is unavailable");
-  const fresh = await platformApi.me();
-  return { ...fresh, token: current.token };
+  return platformApi.me();
 }
 
 export function PlatformAuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const initialRef = useRef<PlatformSession | null | undefined>(undefined);
-  if (initialRef.current === undefined) initialRef.current = loadPlatformSession();
-  const [session, setSessionState] = useState<PlatformSession | null>(initialRef.current);
-  const [revalidating, setRevalidating] = useState(initialRef.current != null);
+  const [session, setSessionState] = useState<PlatformSession | null>(null);
+  // The browser cannot inspect an HttpOnly cookie, so every document starts by
+  // asking /me whether a platform session exists. This also refreshes permissions.
+  const [revalidating, setRevalidating] = useState(true);
 
   const setSession = (next: PlatformSession | null) => {
     setSessionState(next);
-    storePlatformSession(next);
     if (!next) queryClient.clear();
   };
 
   useEffect(() => {
-    if (!initialRef.current) { setRevalidating(false); return; }
+    clearRetiredPlatformSession();
     let cancelled = false;
     revalidatePlatformSession()
       .then((fresh) => { if (!cancelled) setSession(fresh); })
@@ -68,20 +62,11 @@ export function PlatformAuthProvider({ children }: { children: ReactNode }) {
           document.documentElement.style.visibility = "";
         });
     };
-    const onStorage = (event: StorageEvent) => {
-      if (event.key !== PLATFORM_STORAGE_KEY) return;
-      if (!event.newValue) { setSession(null); return; }
-      // Do not rewrite the storage value received from another tab: doing so
-      // would create an endless cross-tab validation/write loop.
-      revalidatePlatformSession().then((fresh) => { queryClient.clear(); setSessionState(fresh); }).catch(() => setSession(null));
-    };
     window.addEventListener("pagehide", onPageHide);
     window.addEventListener("pageshow", onPageShow);
-    window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener("pagehide", onPageHide);
       window.removeEventListener("pageshow", onPageShow);
-      window.removeEventListener("storage", onStorage);
       document.documentElement.style.visibility = "";
     };
   }, []);

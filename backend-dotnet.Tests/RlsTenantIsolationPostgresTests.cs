@@ -237,10 +237,10 @@ public sealed class RlsTenantIsolationPostgresTests
         var app = RuntimeDb(maxPool: 3);
         var suffix = Guid.NewGuid().ToString("N");
         var companyA = await owner.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Principal RLS A','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,'Principal RLS A','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", "PRLA-" + suffix));
         var companyB = await owner.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Principal RLS B','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,'Principal RLS B','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", "PRLB-" + suffix));
         var userA = await SeedPrincipal(owner, companyA, "A", suffix);
         var userB = await SeedPrincipal(owner, companyA, "B", suffix);
@@ -347,6 +347,8 @@ public sealed class RlsTenantIsolationPostgresTests
 
         try
         {
+            await owner.ExecuteAsync(
+                "INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES (999999999,'RLS-DRIFT-999999999','RLS drift fixture','Transportation','US') ON CONFLICT (id) DO NOTHING");
             await owner.ExecuteAsync(
                 "DELETE FROM service_heartbeats WHERE service_name=ANY(@names)",
                 c => c.Parameters.AddWithValue("@names", FleetProductionReadinessService.CriticalWorkerNames));
@@ -459,8 +461,8 @@ public sealed class RlsTenantIsolationPostgresTests
         try
         {
             await owner.ExecuteAsync(
-                @"INSERT INTO dvir_reports(company_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status)
-                  VALUES (999999999,@marker,0,0,'Pre-Trip','Submitted')",
+                @"INSERT INTO dvir_reports(company_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,country_code)
+                  VALUES (999999999,@marker,0,0,'Pre-Trip','Submitted','US')",
                 c => c.Parameters.AddWithValue("@marker", marker));
             Assert.Empty(await VisibleMarkers(runtime, marker));
 
@@ -486,6 +488,7 @@ public sealed class RlsTenantIsolationPostgresTests
                 """);
             await owner.ExecuteAsync("DELETE FROM dvir_reports WHERE report_number=@marker",
                 c => c.Parameters.AddWithValue("@marker", marker));
+            await owner.ExecuteAsync("DELETE FROM companies WHERE id=999999999 AND company_code='RLS-DRIFT-999999999'");
         }
 
         Assert.Empty(await VisibleMarkers(runtime, marker));
@@ -549,8 +552,11 @@ public sealed class RlsTenantIsolationPostgresTests
 
     private static async Task SeedMarkers(Database owner, long tenantA, string markerA, long tenantB, string markerB) =>
         await owner.ExecuteAsync(
-            @"INSERT INTO dvir_reports(company_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status)
-              VALUES (@a,@ma,0,0,'Pre-Trip','Submitted'),(@b,@mb,0,0,'Pre-Trip','Submitted')",
+            @"INSERT INTO companies(id,company_code,name,industry,country) OVERRIDING SYSTEM VALUE VALUES
+                (@a,'RLS-TICKET-' || @a,'RLS ticket fixture A','Transportation','US'),
+                (@b,'RLS-TICKET-' || @b,'RLS ticket fixture B','Transportation','US');
+              INSERT INTO dvir_reports(company_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,country_code)
+              VALUES (@a,@ma,0,0,'Pre-Trip','Submitted','US'),(@b,@mb,0,0,'Pre-Trip','Submitted','US')",
             c =>
             {
                 c.Parameters.AddWithValue("@a", tenantA); c.Parameters.AddWithValue("@ma", markerA);
@@ -745,13 +751,23 @@ public sealed class RlsTenantIsolationPostgresTests
 
     private static async Task InsertMarker(Database db, long tenant, string marker) =>
         await db.ExecuteAsync(
-            @"INSERT INTO dvir_reports(company_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status)
-              VALUES (@tenant,@marker,0,0,'Pre-Trip','Submitted')",
+            @"INSERT INTO dvir_reports(company_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,country_code)
+              VALUES (@tenant,@marker,0,0,'Pre-Trip','Submitted','US')",
             c => { c.Parameters.AddWithValue("@tenant", tenant); c.Parameters.AddWithValue("@marker", marker); });
 
-    private static async Task DeleteMarkers(Database owner, params string[] markers) =>
+    private static async Task DeleteMarkers(Database owner, params string[] markers)
+    {
+        var rows = await owner.QueryAsync(
+            "SELECT DISTINCT company_id FROM dvir_reports WHERE report_number=ANY(@markers)",
+            c => c.Parameters.AddWithValue("@markers", markers));
+        var companies = rows.Select(row => Convert.ToInt64(row["companyId"])).ToArray();
         await owner.ExecuteAsync("DELETE FROM dvir_reports WHERE report_number=ANY(@markers)",
             c => c.Parameters.AddWithValue("@markers", markers));
+        if (companies.Length > 0)
+            await owner.ExecuteAsync(
+                "DELETE FROM companies WHERE id=ANY(@companies) AND company_code LIKE 'RLS-TICKET-%'",
+                c => c.Parameters.AddWithValue("@companies", companies));
+    }
 
     private static async Task<string[]> VisibleMarkers(Database db, params string[] markers)
     {

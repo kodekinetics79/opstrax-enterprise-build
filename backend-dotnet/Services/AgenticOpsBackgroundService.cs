@@ -171,12 +171,12 @@ public sealed class AgenticOpsBackgroundService(
         await db.RunInSystemScopeAsync(async () =>
         {
             var foundation = new PostgresAiFoundationService(db);
-            var run = foundation.StartReasoningRun(tenantId.ToString(), "dispatch_exception", context, SystemPrompt, expectedSchema);
+            var run = await foundation.StartReasoningRunAsync(tenantId.ToString(), "dispatch_exception", context, SystemPrompt, expectedSchema, ct: ct);
 
             var result = await brain.DecideAsync(SystemPrompt, context, ct);
             if (!result.Ok)
             {
-                foundation.FailReasoningRun(run, JsonSerializer.Serialize(new { error = result.Error }));
+                await foundation.FailReasoningRunAsync(run, JsonSerializer.Serialize(new { error = result.Error }), ct);
                 return;
             }
 
@@ -198,11 +198,11 @@ public sealed class AgenticOpsBackgroundService(
             }
             catch
             {
-                foundation.FailReasoningRun(run, JsonSerializer.Serialize(new { error = "unparseable model output", raw = result.OutputJson }));
+                await foundation.FailReasoningRunAsync(run, JsonSerializer.Serialize(new { error = "unparseable model output", raw = result.OutputJson }), ct);
                 return;
             }
 
-            foundation.CompleteReasoningRun(run, result.OutputJson, confidence);
+            await foundation.CompleteReasoningRunAsync(run, result.OutputJson, confidence, ct);
 
             var proposedAction = JsonSerializer.Serialize(new
             {
@@ -217,7 +217,7 @@ public sealed class AgenticOpsBackgroundService(
             var reasonJson = JsonSerializer.Serialize(new { reason, source = "agentic-ops-copilot", exception_id = exceptionId });
 
             // Written as PROPOSED — surfaced to the dispatcher, never auto-executed.
-            foundation.CreateRecommendation(
+            await foundation.CreateRecommendationAsync(
                 tenantId.ToString(),
                 recommendationType: "dispatch_copilot",
                 title: title,
@@ -232,7 +232,8 @@ public sealed class AgenticOpsBackgroundService(
                 actorType: "agent",
                 actorId: "dispatch-copilot",
                 status: "proposed",
-                moduleKey: "control-tower");
+                moduleKey: "control-tower",
+                ct: ct);
 
             logger.LogInformation("{Svc} proposed {Action} for exception {Id} (tenant {Tenant}, conf {Conf:P0})",
                 SvcName, actionType, exceptionId, tenantId, confidence);

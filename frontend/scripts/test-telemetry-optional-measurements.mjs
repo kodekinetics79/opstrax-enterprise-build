@@ -162,7 +162,18 @@ test("actual vehicle drawer renders absent instruments without zero or north", (
   const { VehicleDrawer } = loadDeclarations("../src/pages/VehiclesPage.tsx", [
     "g", "num", "riskTier", "vehicleDeviceStatus", "vehicleCameraStatus", "hasRecentHeartbeat", "freshness",
     "StatusPill", "RiskChip", "VehicleDrawer", "Instrument", "headingLabel", "ReplayTrail", "DrawerSection", "DrawerTable", "EmptyLine", "fmt", "timestamp", "SlaChip",
-  ], { ...icons, ...workspace, useDialogFocus: () => ({ current: null }), useState: (initial) => [initial, () => {}], useHasPermission: () => () => false, PERMISSIONS: { TELEMETRY_DEVICES_READ: "telemetry.devices.read" } });
+  ], {
+    ...icons,
+    ...workspace,
+    useDialogFocus: () => ({ current: null }),
+    useState: (initial) => [initial, () => {}],
+    useQuery: () => ({ data: { items: [] }, isLoading: false, isError: false }),
+    formatTenantDistanceFromMiles: (value, country) => value == null ? "Unknown" : `${Math.round(Number(value) * (country === "SA" || country === "CA" ? 1.609344 : 1)).toLocaleString()} ${country === "SA" || country === "CA" ? "km" : "mi"}`,
+    mphToTenantSpeed: (value, country) => value == null ? null : Number(value) * (country === "SA" || country === "CA" ? 1.609344 : 1),
+    tenantSpeedUnit: (country) => country === "SA" || country === "CA" ? "km/h" : "mph",
+    useHasPermission: () => () => false,
+    PERMISSIONS: { TELEMETRY_DEVICES_READ: "telemetry.devices.read" },
+  });
   const drawer = (speedMph, heading) => renderToStaticMarkup(VehicleDrawer({
     record: { id: 1, vehicleCode: "Synthetic partial GPS", lat: 34.05, lng: -118.24,
       lastSeenAt: new Date().toISOString(), speedMph, heading }, detail: {}, loading: false,

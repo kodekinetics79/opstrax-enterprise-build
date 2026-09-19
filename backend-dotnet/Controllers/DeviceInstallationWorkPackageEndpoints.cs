@@ -95,7 +95,7 @@ public static partial class EndpointMappings
 
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var actorId = GetUserId(http);
         if (actorId <= 0) return Results.Unauthorized();
 
         try
@@ -222,7 +222,7 @@ public static partial class EndpointMappings
 
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var actorId = GetUserId(http);
         if (actorId <= 0) return Results.Unauthorized();
         try
         {
@@ -321,7 +321,7 @@ public static partial class EndpointMappings
 
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var actorId = GetUserId(http);
         if (actorId <= 0) return Results.Unauthorized();
         try
         {
@@ -406,7 +406,7 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("A valid installation and idempotency key are required"));
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var actorId = GetUserId(http);
         if (actorId <= 0) return Results.Unauthorized();
 
         try

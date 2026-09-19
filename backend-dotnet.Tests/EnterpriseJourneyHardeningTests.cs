@@ -146,7 +146,7 @@ public sealed class EnterpriseJourneyHardeningTests
         Assert.Contains("id=\"platform-mobile-navigation\"", platformShell);
         Assert.Contains("Open platform navigation", platformShell);
         Assert.Contains("totalsByCurrency", finance);
-        Assert.Contains("Outstanding (${currency})", finance);
+        Assert.Contains("label: `Outstanding ${currency}`", finance);
         Assert.DoesNotContain("label=\"ETA\"", tracking);
         Assert.Contains("Planned arrival", tracking);
     }

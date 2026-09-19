@@ -209,7 +209,7 @@ function categoryFields(category: string): ConfigField[] {
       ];
     case "Compliance":
       return [
-        { key: "profile", label: "Compliance profile", type: "text", placeholder: "US FMCSA" },
+        { key: "profile", label: "Compliance profile", type: "text", placeholder: "Tenant operating-market profile" },
         { key: "exportWindow", label: "Export window", type: "text", placeholder: "daily" },
         { key: "syncIntervalMinutes", label: "Sync interval (minutes)", type: "number", placeholder: "1440" },
       ];

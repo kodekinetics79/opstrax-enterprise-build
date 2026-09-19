@@ -128,7 +128,7 @@ export function DriverHosPage() {
       <DailyCertificationPanel />
 
       <p className="text-xs text-center text-slate-400">
-        HOS data from ELD sync. You are responsible for accurate hours compliance under FMCSA regulations.
+        HOS data from ELD sync. Follow the rules assigned to your tenant&apos;s operating market and your carrier&apos;s approved procedure.
       </p>
     </div>
   );

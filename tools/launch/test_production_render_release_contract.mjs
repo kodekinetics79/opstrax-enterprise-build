@@ -15,14 +15,34 @@ test("Render production cannot auto-deploy a merge ahead of its database", () =>
 
 test("production release applies owner migrations and Stage101 before exact-SHA deploy", () => {
   const workflow = read(".github", "workflows", "production-render-release.yml");
+  const detection = workflow.indexOf("Detect pending lock-sensitive Saudi fleet migration");
+  const suspend = workflow.indexOf("node tools/render-service-control.mjs suspend");
   const migration = workflow.indexOf("bash ./tools/apply-canada-ksa-compliance-predeploy.sh");
+  const resume = workflow.indexOf("node tools/render-service-control.mjs resume");
   const deploy = workflow.indexOf("node tools/render-deploy-exact.mjs");
+  assert.ok(detection >= 0, "lock-sensitive Stage141 detection is missing");
+  assert.ok(suspend > detection, "Render must be suspended after the drain decision");
+  assert.ok(migration > suspend, "owner migrations must run after the API session drain");
+  assert.ok(resume > migration, "Render must be resumed after the migration chain");
   assert.ok(migration >= 0, "Canada/KSA owner migration wrapper is missing");
-  assert.ok(deploy > migration, "Render deploy must follow the successful migration chain");
+  assert.ok(deploy > resume, "Render deploy must follow API resumption");
   assert.match(workflow, /environment:\s*production/);
   assert.match(workflow, /ref:\s*\$\{\{ inputs\.candidate_sha \}\}/);
   assert.match(workflow, /NEON_PRODUCTION_OWNER_URI/);
   assert.match(workflow, /RENDER_API_KEY/);
+  assert.match(workflow, /if: always\(\) && env\.RENDER_DRAIN_REQUIRED == 'true'/);
+  assert.match(workflow, /2026_09_15_stage141_saudi_fleet_operations/);
+});
+
+test("Render service drain uses authenticated suspend/resume endpoints and verifies state", () => {
+  const helper = read("tools", "render-service-control.mjs");
+
+  assert.match(helper, /new Set\(\["suspend", "resume"\]\)/);
+  assert.match(helper, /\/services\/\$\{serviceId\}\/\$\{action\}/);
+  assert.match(helper, /method: "POST"/);
+  assert.match(helper, /action === "suspend" \? "suspended" : "not_suspended"/);
+  assert.match(helper, /Authorization: `Bearer \$\{apiKey\}`/);
+  assert.match(helper, /Timed out waiting for Render service state/);
 });
 
 test("production release deploys the traceable frontend after the exact API and verifies parity", () => {
@@ -44,16 +64,19 @@ test("production release deploys the traceable frontend after the exact API and 
   }
 });
 
-test("Canada/KSA wrapper preserves canonical chain then applies and verifies Stage101", () => {
+test("Canada/KSA wrapper runs the canonical Stage101/145 chain then verifies stable identities", () => {
   const wrapper = read("tools", "apply-canada-ksa-compliance-predeploy.sh");
+  const runner = read("tools", "apply-neon-predeploy-migrations.sh");
   const canonical = wrapper.indexOf("./tools/apply-neon-predeploy-migrations.sh");
-  const stage101 = wrapper.indexOf("2026_09_03_stage101_canada_ksa_compliance_baseline.sql");
   const verification = wrapper.indexOf("DO $verify_stage101$");
+  const stage101 = runner.indexOf("2026_09_03_stage101_canada_ksa_compliance_baseline");
+  const stage145 = runner.indexOf("2026_09_15_stage145_canonical_market_reference_reconciliation");
 
   assert.ok(canonical >= 0, "canonical owner migration chain must still run");
-  assert.ok(stage101 > canonical, "Stage101 must run after the canonical predecessor chain");
-  assert.ok(verification > stage101, "Stage101 post-deploy verification must follow its application");
-  assert.match(wrapper, /schema_migrations/);
+  assert.ok(stage101 >= 0, "canonical migration chain must include Stage101");
+  assert.ok(stage145 > stage101, "stable-key reconciliation must follow the Stage101 baseline");
+  assert.ok(verification > canonical, "reference verification must follow the canonical chain");
+  assert.match(runner, /schema_migrations/);
   assert.match(wrapper, /External provider\/device\/certification\/qualification evidence: STILL REQUIRED/);
 });
 
@@ -141,28 +164,27 @@ test("ledger backfills are reconciled with a new forward-only telemetry migratio
   assert.match(migration, /2026_09_11_stage139_telemetry_ledger_backfill_reconciliation/);
 });
 
-test("Canada/KSA wrapper preserves Batch6 fixed-ID seed contract across release ordering", () => {
+test("Canada/KSA release ordering uses stable market keys rather than fixed seed IDs", () => {
   const wrapper = read("tools", "apply-canada-ksa-compliance-predeploy.sh");
   const runtime = read("backend-dotnet", "Services", "Batch6SchemaService.cs");
+  const reconciliation = read(
+    "database",
+    "migrations",
+    "2026_09_15_stage145_canonical_market_reference_reconciliation.sql",
+  );
 
-  // Runtime reference seeding reserves these original identities and uses
-  // conflict-ignore semantics. The predeploy wrapper must therefore reserve the
-  // Canada/KSA identities before Stage101 adds generated profiles/rules.
-  assert.match(runtime, /\(3,'CA','/);
-  assert.match(runtime, /\(4,'SA','/);
-  assert.match(runtime, /\(6,3,'/);
-  assert.match(runtime, /\(7,3,'/);
-  assert.match(runtime, /\(8,4,'/);
-  assert.match(runtime, /ON CONFLICT DO NOTHING/);
+  assert.match(runtime, /WHERE p\.country_code=s\.country_code AND p\.profile_name=s\.profile_name/);
+  assert.match(runtime, /FROM resolved s WHERE r\.rule_code=s\.rule_code/);
+  assert.match(runtime, /WHERE NOT EXISTS \(SELECT 1 FROM compliance_rules r WHERE r\.rule_code=s\.rule_code\)/);
+  assert.doesNotMatch(runtime, /\(3,'CA','Canada Federal HOS - South of 60N'/);
+  assert.doesNotMatch(runtime, /\(4,'SA','Saudi TGA Goods Transport HOS'/);
 
-  assert.match(wrapper, /\(3,'CA','Canada Federal HOS - South of 60N'/);
-  assert.match(wrapper, /\(4,'SA','Saudi TGA Goods Transport HOS'/);
-  assert.match(wrapper, /\(6,3,'CA-S60-HOS-13H-DRIVE'/);
-  assert.match(wrapper, /\(7,3,'CA-CARRIER-SAFETY-FITNESS'/);
-  assert.match(wrapper, /\(8,4,'SA-TGA-HOS-9H-DRIVE'/);
-  assert.match(wrapper, /pg_get_serial_sequence\('compliance_profiles','id'\)/);
-  assert.match(wrapper, /pg_get_serial_sequence\('compliance_rules','id'\)/);
-  assert.match(wrapper, /Runtime fixed-ID compatibility: VERIFIED/);
+  assert.match(reconciliation, /Canada Federal HOS - South of 60N/);
+  assert.match(reconciliation, /Saudi TGA Goods Transport HOS/);
+  assert.match(reconciliation, /CA-S60-HOS-13H-DRIVE/);
+  assert.match(reconciliation, /CA-CARRIER-SAFETY-FITNESS/);
+  assert.match(reconciliation, /SA-TGA-HOS-9H-DRIVE/);
+  assert.match(wrapper, /Migration\/runtime stable-key compatibility: VERIFIED/);
 });
 
 test("runtime manifest never receives the owner migration credential", () => {
@@ -173,6 +195,10 @@ test("runtime manifest never receives the owner migration credential", () => {
 test("Render deploy helper verifies the exact healthy candidate", () => {
   const helper = read("tools", "render-deploy-exact.mjs");
   assert.match(helper, /commitId:\s*candidateSha/);
+  assert.match(helper, /createdAfter=\$\{encodeURIComponent\(createdAfter\)\}/);
+  assert.match(helper, /entry\?\.deploy \?\? entry/);
+  assert.match(helper, /deploy\?\.commit\?\.id === candidateSha/);
+  assert.match(helper, /exact commit could not be discovered/);
   assert.match(helper, /body\?\.status === "ready"/);
   assert.match(helper, /body\?\.version === candidateSha/);
   assert.match(helper, /pre_deploy_failed/);

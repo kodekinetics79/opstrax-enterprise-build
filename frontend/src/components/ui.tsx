@@ -161,12 +161,12 @@ export function PasswordInput({
    PAGE HEADER
    ============================================================ */
 export function PageHeader({
-  title, eyebrow, description, actions, footer,
+  title, eyebrow, description, actions, footer, compact = false,
 }: {
-  title: string; eyebrow?: string; description: string; actions?: ReactNode; footer?: ReactNode;
+  title: string; eyebrow?: string; description: string; actions?: ReactNode; footer?: ReactNode; compact?: boolean;
 }) {
   return (
-    <div className="liquid-glass page-header relative min-w-0 shrink-0">
+    <div className="liquid-glass page-header relative min-w-0 shrink-0" data-compact={compact || undefined}>
       <div className="pointer-events-none absolute inset-0 rounded-[inherit] bg-[radial-gradient(circle_at_top_right,rgba(45,212,191,.12),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(37,99,235,.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,.3),transparent_28%)]" />
       <div className="page-header__layout relative flex min-w-0 flex-wrap justify-between">
         <div className="min-w-0 flex-[1_1_24rem]">

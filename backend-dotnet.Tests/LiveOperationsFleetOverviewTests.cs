@@ -27,13 +27,13 @@ public sealed class LiveOperationsFleetOverviewTests
     {
         var db = Db(TestDb.ConnectionString);
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Live Ops paging test','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Live Ops paging test','Transportation','US')",
             command => command.Parameters.AddWithValue("@code", $"LOP-{Guid.NewGuid():N}"));
         var branchA = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@cid,@code,'Live Ops A','Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@cid,@code,'Live Ops A','Active','US')",
             command => { command.Parameters.AddWithValue("@cid", companyId); command.Parameters.AddWithValue("@code", $"A{Guid.NewGuid():N}"[..20]); });
         var branchB = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@cid,@code,'Live Ops B','Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@cid,@code,'Live Ops B','Active','US')",
             command => { command.Parameters.AddWithValue("@cid", companyId); command.Parameters.AddWithValue("@code", $"B{Guid.NewGuid():N}"[..20]); });
 
         try
@@ -95,10 +95,10 @@ public sealed class LiveOperationsFleetOverviewTests
     {
         var db = Db(TestDb.ConnectionString);
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Live Ops scale test','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Live Ops scale test','Transportation','US')",
             command => command.Parameters.AddWithValue("@code", $"LOS-{Guid.NewGuid():N}"));
         var branchId = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@cid,@code,'Scale Branch','Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@cid,@code,'Scale Branch','Active','US')",
             command => { command.Parameters.AddWithValue("@cid", companyId); command.Parameters.AddWithValue("@code", $"S{Guid.NewGuid():N}"[..20]); });
 
         try
@@ -150,11 +150,11 @@ public sealed class LiveOperationsFleetOverviewTests
     {
         var db = Db(TestDb.ConnectionString);
         var companyId = await db.InsertAsync(
-            @"INSERT INTO companies(company_code,name,industry,entitlement_policy_mode)
-              VALUES (@code,'Live Ops entitlement test','Transportation','package_allowlist')",
+            @"INSERT INTO companies(company_code,name,industry,entitlement_policy_mode,country)
+              VALUES (@code,'Live Ops entitlement test','Transportation','package_allowlist','US')",
             command => command.Parameters.AddWithValue("@code", $"LOE-{Guid.NewGuid():N}"));
         var branchId = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@cid,@code,'Entitlement Branch','Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@cid,@code,'Entitlement Branch','Active','US')",
             command => { command.Parameters.AddWithValue("@cid", companyId); command.Parameters.AddWithValue("@code", $"E{Guid.NewGuid():N}"[..20]); });
 
         try

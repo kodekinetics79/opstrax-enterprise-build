@@ -1,6 +1,6 @@
 import { apiClient, unwrap } from "@/services/apiClient";
 import { downloadServerExport } from "@/services/fleetDomainApi";
-import { isCustomerPortalRole, isDriverPortalRole, resolveCustomerIdentity, resolveDriverIdentity } from "@/auth/accessScope";
+import { isCustomerPortalRole, isDriverPortalRole, resolveAuthenticatedDriverId } from "@/auth/accessScope";
 import { hasPermission } from "@/auth/rbacConfig";
 import { readRawSession } from "@/auth/sessionStorage";
 import { integrationsApi } from "@/services/integrationsApi";
@@ -1648,7 +1648,7 @@ function ensureManagementAccess(session: UserSession | null) {
 // The backend already scopes /api/telemetry/devices by tenant via the auth token.
 // Here we apply the remaining PORTAL narrowing (driver / customer) using real row
 // fields only — never seed lookups. A driver portal sees only devices whose real
-// driver_name matches their identity; a customer portal has no device-level linkage
+// driver id matches its authenticated backend relationship; a customer portal has no device-level linkage
 // field in the contract, so it honestly sees nothing.
 function scopeDevicesForSession(rows: DeviceCommandRecord[], session: UserSession | null) {
   if (!session) return rows;
@@ -1657,18 +1657,14 @@ function scopeDevicesForSession(rows: DeviceCommandRecord[], session: UserSessio
   const role = String(session.role ?? "").toLowerCase();
 
   if (isDriverPortalRole(role)) {
-    const driverIdentity = resolveDriverIdentity(session);
-    if (!driverIdentity) return [];
-    return rows.filter((row) =>
-      String(row.assignedDriverName ?? "").toLowerCase().includes(String(driverIdentity).toLowerCase()),
-    );
+    const driverId = resolveAuthenticatedDriverId(session);
+    if (!driverId) return [];
+    return rows.filter((row) => String(row.assignedDriverId || row.driverId) === driverId);
   }
 
   if (isCustomerPortalRole(role)) {
     // No device→customer linkage exists in the verified device contract; surfacing
     // any device to a customer portal would be a fabricated association.
-    const customerIdentity = resolveCustomerIdentity(session);
-    if (!customerIdentity) return [];
     return [];
   }
 

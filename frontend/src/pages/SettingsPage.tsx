@@ -14,15 +14,7 @@ import { ChangePasswordCard } from "@/components/ChangePasswordCard";
 import { SsoConnectionsPanel } from "@/components/SsoConnectionsPanel";
 
 const DATE_FORMATS = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"];
-const TIMEZONES = [
-  "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
-  "America/Toronto", "Europe/London", "Asia/Riyadh", "Asia/Dubai", "Asia/Karachi",
-];
-const CURRENCIES = ["USD", "CAD", "SAR", "AED", "PKR", "EUR", "GBP"];
-const DISTANCE_UNITS = ["Miles", "Kilometers"];
-const VOLUME_UNITS = ["Gallons", "Liters"];
-
-type Section = "organization" | "preferences" | "notifications" | "security" | "api" | "about";
+type Section = "market" | "organization" | "preferences" | "notifications" | "security" | "api" | "about";
 
 const NOTIF_CATEGORIES = [
   { key: "speed_alert",      label: "Speed Alert",           description: "Driver exceeds speed threshold" },
@@ -143,17 +135,19 @@ export function SettingsPage() {
   const updatePrefsMut    = useUpdateUserPreferences();
 
   const serverSettings = ((settingsQ.data as AnyRecord[] | undefined)?.[0]) as AnyRecord | undefined;
+  const marketQ = useQuery({ queryKey: ["settings-market-context"], queryFn: settingsApi.marketContextGet });
+  const market = (marketQ.data ?? null) as AnyRecord | null;
 
-  const [section, setSection] = useState<Section>("organization");
+  const [section, setSection] = useState<Section>("market");
 
   const [localeForm, setLocaleForm] = useState({
     defaultLanguage: "en-US",
-    defaultCountry:  "US",
-    timezone:        "America/New_York",
-    dateFormat:      "MM/DD/YYYY",
-    currency:        "USD",
-    distanceUnit:    "Miles",
-    volumeUnit:      "Gallons",
+    defaultCountry:  "",
+    timezone:        "",
+    dateFormat:      "",
+    currency:        "",
+    distanceUnit:    "",
+    volumeUnit:      "",
   });
   const [localeSaved, setLocaleSaved] = useState(false);
 
@@ -175,7 +169,7 @@ export function SettingsPage() {
   // ── Company profile — real, persisted per tenant ──────────────────────────
   const companyProfileQ = useQuery({ queryKey: ["settings-company-profile"], queryFn: settingsApi.companyProfileGet });
   const [companyForm, setCompanyForm] = useState({
-    displayName: "", addressLine1: "", city: "", state: "", country: "US",
+    displayName: "", addressLine1: "", city: "", state: "", country: "",
     phone: "", contactEmail: "", website: "",
   });
   useEffect(() => {
@@ -186,12 +180,24 @@ export function SettingsPage() {
       addressLine1: String(p.addressLine1 ?? ""),
       city:         String(p.city ?? ""),
       state:        String(p.state ?? ""),
-      country:      String(p.country ?? "US"),
+      country:      String(p.country ?? ""),
       phone:        String(p.phone ?? ""),
       contactEmail: String(p.contactEmail ?? ""),
       website:      String(p.website ?? ""),
     });
   }, [companyProfileQ.data]);
+  useEffect(() => {
+    if (!market) return;
+    setLocaleForm((f) => ({
+      ...f,
+      defaultCountry: String(market.countryCode ?? f.defaultCountry),
+      timezone: String(market.timezone ?? f.timezone),
+      currency: String(market.currency ?? f.currency),
+      distanceUnit: String(market.distanceUnit ?? f.distanceUnit),
+      volumeUnit: String(market.volumeUnit ?? f.volumeUnit),
+    }));
+    setCompanyForm((f) => ({ ...f, country: String(market.countryCode ?? f.country) }));
+  }, [market]);
   const companyProfileMut = useMutation({
     mutationFn: () => settingsApi.companyProfilePut(companyForm),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings-company-profile"] }),
@@ -311,8 +317,17 @@ export function SettingsPage() {
   const healthQ = useQuery({ queryKey: ["about-health"], queryFn: aboutApi.healthSummary, enabled: section === "about" });
 
   function saveLocale() {
-    updateSettingsMut.mutate({ ...localeForm });
-    updatePrefsMut.mutate({ language: localeForm.defaultLanguage, countryCode: localeForm.defaultCountry });
+    if (!market) return;
+    const marketLockedForm = {
+      ...localeForm,
+      defaultCountry: String(market.countryCode),
+      timezone: String(market.timezone),
+      currency: String(market.currency),
+      distanceUnit: String(market.distanceUnit),
+      volumeUnit: String(market.volumeUnit),
+    };
+    updateSettingsMut.mutate(marketLockedForm);
+    updatePrefsMut.mutate({ language: localeForm.defaultLanguage, countryCode: String(market.countryCode) });
     setLocale(localeForm.defaultLanguage as LocaleCode);
     setLocaleSaved(true);
     setTimeout(() => setLocaleSaved(false), 2500);
@@ -323,6 +338,7 @@ export function SettingsPage() {
   }
 
   const SECTIONS: { key: Section; label: string; hint: string; icon: React.ElementType }[] = [
+    { key: "market",        label: "Operating Market", hint: "Country rules & controls", icon: Lock },
     { key: "organization",  label: "Organization",     hint: "Profile & contact",         icon: Building2 },
     { key: "preferences",   label: "Preferences",      hint: "Language, units, locale",   icon: Languages },
     { key: "notifications", label: "Notifications",    hint: "Channels per event",        icon: Bell },
@@ -373,6 +389,40 @@ export function SettingsPage() {
         </nav>
 
         <div className="min-w-0 flex flex-col gap-5">
+          {section === "market" && (
+            <div className="iam-card space-y-5 p-6">
+              <SectionHeader icon={Lock} title="Operating Market" description="Platform-controlled country policy for this tenant" />
+              {marketQ.isLoading ? <p className="text-sm text-slate-500">Loading market policy…</p> : marketQ.isError || !market ? (
+                <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                  Operating market is not assigned. A Platform Admin must assign a supported country before regulatory settings are available.
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-teal-200 bg-teal-50/70 px-4 py-3">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700">Assigned market</p>
+                      <p className="mt-1 text-lg font-bold text-slate-950">{String(market.countryName)} <span className="text-sm text-slate-500">({String(market.countryCode)})</span></p>
+                    </div>
+                    <span className="inline-flex items-center gap-2 rounded-full border border-teal-300 bg-white px-3 py-1.5 text-xs font-semibold text-teal-800"><Lock className="h-3.5 w-3.5" /> Managed by {String(market.managedBy)}</span>
+                  </div>
+                  <div className="overflow-hidden rounded-xl border border-slate-200">
+                    <dl className="grid sm:grid-cols-2 xl:grid-cols-3">
+                      {[
+                        ["Currency", market.currency], ["Timezone", market.timezone], ["Measurement", `${market.distanceUnit} · ${market.volumeUnit}`],
+                        ["Invoice regime", String(market.invoicingScheme).replaceAll("_", " ")], ["Tax identifier", market.taxIdLabel],
+                        ["Market pack", market.marketPackName ?? market.marketPackCode ?? "No applicable pack"],
+                      ].map(([label, value]) => <div key={String(label)} className="border-b border-slate-100 px-4 py-3 sm:border-e"><dt className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{String(label)}</dt><dd className="mt-1 text-sm font-semibold text-slate-800">{String(value)}</dd></div>)}
+                    </dl>
+                  </div>
+                  {String(market.countryCode) === "SA" && <div className="grid gap-3 sm:grid-cols-4">
+                    {[["ZATCA", "Phase 2 e-invoice policy"], ["VAT", `${Number(market.defaultTaxRate ?? 0)}% default`], ["Calendar", "Gregorian + Hijri"], ["Languages", "Arabic + English"]].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{label}</p><p className="mt-1 text-sm font-semibold text-slate-800">{value}</p></div>)}
+                  </div>}
+                  <p className="text-xs leading-5 text-slate-500">The operating market controls compliance rules, tax regime, currency, units, address formats and regional integrations. Market reassignment is audited and available only to Platform Admin.</p>
+                </>
+              )}
+            </div>
+          )}
+
           {/* ── ORGANIZATION ─────────────────────────────────────────────── */}
           {section === "organization" && (
             <div className="iam-card space-y-4 p-6">
@@ -391,10 +441,8 @@ export function SettingsPage() {
                       <input aria-label="State / Region" className="field mt-1 w-full" value={companyForm.state} onChange={(e) => setCompanyForm((f) => ({ ...f, state: e.target.value }))} disabled={!canUpdateSettings} />
                     </div>
                     <div className="min-w-0">
-                      <label className="text-xs text-slate-500">Country</label>
-                      <select aria-label="Country" className="field mt-1 w-full" value={companyForm.country} onChange={(e) => setCompanyForm((f) => ({ ...f, country: e.target.value }))} disabled={!canUpdateSettings}>
-                        {["US","CA","SA","AE","PK","GB"].map((c) => <option key={c}>{c}</option>)}
-                      </select>
+                      <label className="text-xs text-slate-500">Operating Country</label>
+                      <div className="field mt-1 flex w-full items-center justify-between text-sm text-slate-700" aria-label="Operating Country"><span>{String(market?.countryName ?? companyForm.country)}</span><Lock className="h-3.5 w-3.5 text-slate-400" /></div>
                     </div>
                   </div>
                 </div>
@@ -415,7 +463,12 @@ export function SettingsPage() {
                 <SectionHeader icon={Languages} title={t("language")} description="Interface language and text direction" />
                 <p className="text-xs text-slate-500 -mt-2">{t("language_rtl_note")}</p>
                 <div className="grid grid-cols-2 gap-2">
-                  {(Object.entries(LOCALES) as [LocaleCode, typeof LOCALES[LocaleCode]][]).map(([code, meta]) => (
+                  {(Object.entries(LOCALES) as [LocaleCode, typeof LOCALES[LocaleCode]][]).filter(([code]) => {
+                    const country = String(market?.countryCode ?? "");
+                    if (country === "SA") return code === "ar-SA" || code === "en-US";
+                    if (country === "CA") return code === "en-CA" || code === "fr-CA" || code === "en-US";
+                    return code === "en-US";
+                  }).map(([code, meta]) => (
                     <button
                       type="button"
                       key={code}
@@ -439,14 +492,14 @@ export function SettingsPage() {
               <div className="iam-card space-y-4 p-6">
                 <SectionHeader icon={Globe} title={t("tenant_settings")} description="Timezone, date format, units and currency" />
                 <div className="space-y-3">
-                  <SelectField disabled={!canUpdateSettings} label={t("default_country")} value={localeForm.defaultCountry} onChange={(v) => setLocaleForm((f) => ({ ...f, defaultCountry: v }))} options={["US","CA","SA","AE","PK"]} />
-                  <SelectField disabled={!canUpdateSettings} label={t("timezone")}        value={localeForm.timezone}        onChange={(v) => setLocaleForm((f) => ({ ...f, timezone: v }))}        options={TIMEZONES} />
+                  <TextField disabled label={t("default_country")} value={String(market?.countryName ?? localeForm.defaultCountry)} onChange={() => {}} />
+                  <TextField disabled label={t("timezone")} value={localeForm.timezone} onChange={() => {}} />
                   <SelectField disabled={!canUpdateSettings} label={t("date_format")}     value={localeForm.dateFormat}      onChange={(v) => setLocaleForm((f) => ({ ...f, dateFormat: v }))}      options={DATE_FORMATS} />
-                  <SelectField disabled={!canUpdateSettings} label={t("currency")}        value={localeForm.currency}        onChange={(v) => setLocaleForm((f) => ({ ...f, currency: v }))}        options={CURRENCIES} />
-                  <SelectField disabled={!canUpdateSettings} label={t("distance_unit")}   value={localeForm.distanceUnit}    onChange={(v) => setLocaleForm((f) => ({ ...f, distanceUnit: v }))}    options={DISTANCE_UNITS} />
-                  <SelectField disabled={!canUpdateSettings} label={t("volume_unit")}     value={localeForm.volumeUnit}      onChange={(v) => setLocaleForm((f) => ({ ...f, volumeUnit: v }))}      options={VOLUME_UNITS} />
+                  <TextField disabled label={t("currency")} value={localeForm.currency} onChange={() => {}} />
+                  <TextField disabled label={t("distance_unit")} value={localeForm.distanceUnit} onChange={() => {}} />
+                  <TextField disabled label={t("volume_unit")} value={localeForm.volumeUnit} onChange={() => {}} />
                 </div>
-                <SaveRow onSave={saveLocale} isPending={updateSettingsMut.isPending} saved={localeSaved} canSave={canUpdateSettings} />
+                <SaveRow onSave={saveLocale} isPending={updateSettingsMut.isPending} saved={localeSaved} canSave={canUpdateSettings && Boolean(market)} />
               </div>
             </div>
           )}
@@ -672,7 +725,11 @@ export function SettingsPage() {
                           type="button"
                           key={evt}
                           onClick={() => canUpdateSettings && toggleWebhookEvent(evt)}
-                          className={`rounded-full border px-2.5 py-1 text-xs font-medium transition max-w-full truncate ${webhookEvents.includes(evt) ? "border-teal-300 bg-teal-50 text-teal-700 shadow-[inset_2px_2px_5px_rgba(13,148,136,.10)]" : "border-slate-200 bg-white text-slate-500 hover:text-slate-700 shadow-[-2px_-2px_5px_rgba(255,255,255,.9),3px_4px_8px_rgba(141,157,184,.16)]"}`}
+                          className={`rounded-full border px-2.5 py-1 text-xs font-medium transition max-w-full truncate ${
+                            webhookEvents.includes(evt)
+                              ? "border-teal-300 bg-teal-50 text-teal-800 shadow-[inset_2px_2px_5px_rgba(13,148,136,.10)]"
+                              : "border-slate-200 bg-white text-slate-500 hover:text-slate-700 shadow-[-2px_-2px_5px_rgba(255,255,255,.9),3px_4px_8px_rgba(141,157,184,.16)]"
+                          }`}
                         >
                           {evt}
                         </button>

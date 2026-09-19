@@ -57,9 +57,10 @@ export const test = base.extend({
       if (response.status() >= 500) signals.serverErrors.push({ status: response.status(), url: response.url() });
     });
 
-    // The anonymous local job intentionally has no API process. Fulfil only the
-    // global locale bootstrap so every route can be exercised with a strict
-    // zero-console-error gate; staging and production always hit their real API.
+    // The anonymous local job intentionally has no API process. Fulfil the
+    // read-only bootstraps needed to prove both tenant and Platform login
+    // boundaries with a strict zero-console-error gate; staging and production
+    // always hit their real API.
     if (activeTarget.environment === "local" && role === "anonymous") {
       await page.context().route("**/api/localization/user-preferences", async (route) => {
         if (route.request().method() !== "GET") return route.continue();
@@ -67,6 +68,14 @@ export const test = base.extend({
           status: 200,
           contentType: "application/json",
           body: JSON.stringify({ success: true, data: [] }),
+        });
+      });
+      await page.context().route("**/api/platform/auth/me", async (route) => {
+        if (route.request().method() !== "GET") return route.continue();
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ success: true, data: null }),
         });
       });
     }

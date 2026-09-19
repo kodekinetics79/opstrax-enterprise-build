@@ -37,6 +37,8 @@
     "test:j1939-signal-visibility": "node scripts/test-j1939-signal-visibility-contract.mjs",
     "test:login-autofill": "node scripts/test-login-autofill-contract.mjs",
     "test:auth-strict-mode": "node scripts/test-auth-strict-mode-revalidation.mjs",
+    "test:platform-session-security": "node scripts/test-platform-session-security.mjs",
+    "test:page-decomposition": "node scripts/test-page-decomposition-contract.mjs",
     "test:module-load-recovery": "node scripts/test-module-load-recovery-contract.mjs",
     "test:commercial-module-payload": "node --experimental-strip-types scripts/test-commercial-module-payload-contract.mjs",
     "test:document-form-errors": "node scripts/test-document-form-error-contract.mjs",

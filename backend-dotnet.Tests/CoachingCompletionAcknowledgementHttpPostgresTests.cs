@@ -533,10 +533,10 @@ public sealed class CoachingCompletionAcknowledgementHttpPostgresTests
         {
             async Task<long> Company(string suffix)
             {
-                var id = await Scalar("INSERT INTO companies(company_code,name,industry,entitlement_policy_mode) VALUES(@code,'Synthetic coaching completion','Transportation','package_allowlist') RETURNING id", ("code", Prefix + suffix));
+                var id = await Scalar("INSERT INTO companies(company_code,name,industry,entitlement_policy_mode,country) VALUES(@code,'Synthetic coaching completion','Transportation','package_allowlist','US') RETURNING id", ("code", Prefix + suffix));
                 companies.Add(id); return id;
             }
-            async Task<long> Branch(long cid, string suffix) => await Scalar("INSERT INTO branches(company_id,branch_code,name,status) VALUES(@cid,@code,'Synthetic branch','Active') RETURNING id", ("cid", cid), ("code", Prefix + suffix));
+            async Task<long> Branch(long cid, string suffix) => await Scalar("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES(@cid,@code,'Synthetic branch','Active','US') RETURNING id", ("cid", cid), ("code", Prefix + suffix));
             async Task<long> Task(long cid, long bid, string suffix, bool deleted = false)
             {
                 var driver = await Scalar("INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status) VALUES(@cid,@branch,@code,'Synthetic driver','Available') RETURNING id", ("cid", cid), ("branch", bid), ("code", Prefix + suffix));

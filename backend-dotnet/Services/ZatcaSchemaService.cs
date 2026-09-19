@@ -5,13 +5,14 @@ namespace Opstrax.Api.Services;
 // ─────────────────────────────────────────────────────────────────────────────
 // ZATCA (Saudi e-invoicing, "Fatoora") Phase-2 — FOUNDATION schema.
 //
-// Records, per issued_invoice, the compliant e-invoice artifacts we CAN produce
+// Records, per issued_invoice, the preparation artifacts we can produce
 // without ZATCA-portal onboarding:
 //   - UBL 2.1 invoice XML
 //   - the SHA-256 invoice hash (base64) and the PIH (Previous Invoice Hash) that
 //     chains each invoice to the prior one per seller/tenant (Phase-2 requirement)
 //   - the TLV/base64 QR payload
-//   - clearance/reporting status fields, left in 'pending_onboarding' until the
+// These records are not proof of compliance or successful submission. Clearance/reporting
+// status fields remain 'pending_onboarding' until the
 //     cryptographic stamp (CSID) + ZATCA clearance API are wired during onboarding.
 //
 // This is additive + tenant-scoped (company_id, RLS-consistent). It does NOT itself

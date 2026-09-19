@@ -108,7 +108,7 @@ public static class SettlementEndpoints
     private static async Task<IResult> ApproveStatement(HttpContext http, long id, SettlementService svc, CancellationToken ct)
     {
         if (EndpointMappings.RequirePermission(http, "settlement.approve") is { } denied) return denied;
-        var userId = Convert.ToInt64(http.Items[EndpointMappings.AuthUserIdItemKey] ?? 0L);
+        var userId = EndpointMappings.GetUserId(http);
         var outcome = await svc.ApproveStatementAsync(EndpointMappings.GetCompanyId(http), id, userId, ct);
         if (!outcome.Ok)
             return outcome.Reason == "not_found"
@@ -120,7 +120,7 @@ public static class SettlementEndpoints
     private static async Task<IResult> RecordPayment(HttpContext http, long id, Dictionary<string, object?> body, SettlementService svc, CancellationToken ct)
     {
         if (EndpointMappings.RequirePermission(http, "settlement.pay") is { } denied) return denied;
-        var userId = Convert.ToInt64(http.Items[EndpointMappings.AuthUserIdItemKey] ?? 0L);
+        var userId = EndpointMappings.GetUserId(http);
         if (Dec(body, "amount") is not { } amount)
             return Results.BadRequest(ApiResponse<object>.Fail("amount is required"));
 

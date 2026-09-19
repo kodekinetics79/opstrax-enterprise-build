@@ -379,51 +379,61 @@ public sealed class SettlementService(Database db, IDomainEventPublisher? events
         string? idempotencyKey, long userId, CancellationToken ct = default)
     {
         if (amount <= 0) return new SettlementPaymentOutcome(false, null, "invalid", 0, "invalid_amount");
-
-        var stmt = await db.QuerySingleAsync(
-            "SELECT status, total, amount_paid, currency FROM settlement_statements WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", statementId); }, ct);
-        if (stmt is null) return new SettlementPaymentOutcome(false, null, "missing", 0, "not_found");
-        var status = stmt.GetValueOrDefault("status")?.ToString() ?? "draft";
-        if (status is not ("approved" or "paid"))
-            return new SettlementPaymentOutcome(false, null, status, 0, "not_approved");
-
-        if (idempotencyKey is not null)
+        return await db.RunInTenantTransactionAsync(companyId, async () =>
         {
-            var dup = await db.QuerySingleAsync(
-                "SELECT id FROM settlement_payments WHERE company_id=@cid AND idempotency_key=@k",
-                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@k", idempotencyKey); }, ct);
-            if (dup is not null)
+            // Lock the statement before checking its paid balance. This makes the outstanding cap
+            // safe under concurrent payments instead of allowing two requests to spend the same
+            // remaining balance.
+            var stmt = await db.QuerySingleAsync(
+                "SELECT status, total, amount_paid, currency FROM settlement_statements WHERE company_id=@cid AND id=@id FOR UPDATE",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", statementId); }, ct);
+            if (stmt is null) return new SettlementPaymentOutcome(false, null, "missing", 0, "not_found");
+            var status = stmt.GetValueOrDefault("status")?.ToString() ?? "draft";
+            var amountPaidBefore = Money(stmt.GetValueOrDefault("amountPaid"));
+
+            if (!string.IsNullOrWhiteSpace(idempotencyKey))
             {
-                var paidNow = await db.ScalarDecimalAsync(
-                    "SELECT amount_paid FROM settlement_statements WHERE company_id=@cid AND id=@id",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", statementId); }, ct) ?? 0m;
-                return new SettlementPaymentOutcome(true, Convert.ToInt64(dup["id"], CultureInfo.InvariantCulture), "approved", paidNow, "duplicate");
+                var duplicate = await db.QuerySingleAsync(
+                    "SELECT id FROM settlement_payments WHERE company_id=@cid AND statement_id=@sid AND idempotency_key=@key",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@sid", statementId);
+                        c.Parameters.AddWithValue("@key", idempotencyKey);
+                    }, ct);
+                if (duplicate is not null)
+                    return new SettlementPaymentOutcome(true,
+                        Convert.ToInt64(duplicate["id"], CultureInfo.InvariantCulture), status, amountPaidBefore, "duplicate");
             }
-        }
 
-        var currency = stmt.GetValueOrDefault("currency")?.ToString() ?? "USD";
-        var (paymentId, amountPaid, newStatus) = await db.WithTransactionAsync(async (conn, tx) =>
-        {
-            long pid;
-            await using (var ins = new NpgsqlCommand(
+            if (status is not "approved")
+                return new SettlementPaymentOutcome(false, null, status, amountPaidBefore, "not_approved");
+
+            var total = Money(stmt.GetValueOrDefault("total"));
+            var outstanding = Math.Max(0m, total - amountPaidBefore);
+            if (outstanding <= 0)
+                return new SettlementPaymentOutcome(false, null, status, amountPaidBefore, "no_outstanding_balance");
+            if (amount > outstanding)
+                return new SettlementPaymentOutcome(false, null, status, amountPaidBefore, "exceeds_outstanding_balance");
+
+            var currency = stmt.GetValueOrDefault("currency")?.ToString() ?? "USD";
+            var paymentId = await db.InsertAsync(
                 @"INSERT INTO settlement_payments
                     (company_id, statement_id, amount, currency, method, reference, idempotency_key, created_by_user_id, paid_at, created_at)
                   VALUES (@cid, @sid, @amt, @cur, @method, @ref, @idem, @uid, NOW(), NOW())
-                  RETURNING id", conn, tx))
-            {
-                ins.Parameters.AddWithValue("@cid", companyId); ins.Parameters.AddWithValue("@sid", statementId);
-                ins.Parameters.AddWithValue("@amt", amount); ins.Parameters.AddWithValue("@cur", currency);
-                ins.Parameters.AddWithValue("@method", (object?)method ?? DBNull.Value);
-                ins.Parameters.AddWithValue("@ref", (object?)reference ?? DBNull.Value);
-                ins.Parameters.AddWithValue("@idem", (object?)idempotencyKey ?? DBNull.Value);
-                ins.Parameters.AddWithValue("@uid", userId);
-                pid = Convert.ToInt64((await ins.ExecuteScalarAsync(ct))!, CultureInfo.InvariantCulture);
-            }
+                  RETURNING id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@sid", statementId);
+                    c.Parameters.AddWithValue("@amt", amount); c.Parameters.AddWithValue("@cur", currency);
+                    c.Parameters.AddWithValue("@method", (object?)method ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@ref", (object?)reference ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@idem", (object?)idempotencyKey ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@uid", userId);
+                }, ct);
 
             // Recompute amount_paid from the ledger (source of truth) and mark paid when it covers total.
-            decimal paid; string status2;
-            await using (var upd = new NpgsqlCommand(
+            var updated = await db.QuerySingleAsync(
                 @"UPDATE settlement_statements s
                   SET amount_paid = COALESCE((SELECT SUM(amount) FROM settlement_payments p
                                               WHERE p.company_id=s.company_id AND p.statement_id=s.id), 0),
@@ -432,27 +442,24 @@ public sealed class SettlementService(Database db, IDomainEventPublisher? events
                                     THEN 'paid' ELSE s.status END,
                       updated_at = NOW()
                   WHERE s.company_id=@cid AND s.id=@id
-                  RETURNING amount_paid, status", conn, tx))
-            {
-                upd.Parameters.AddWithValue("@cid", companyId); upd.Parameters.AddWithValue("@id", statementId);
-                await using var rdr = await upd.ExecuteReaderAsync(ct);
-                await rdr.ReadAsync(ct);
-                paid = rdr.GetDecimal(0); status2 = rdr.GetString(1);
-            }
-            return (pid, paid, status2);
+                  RETURNING amount_paid, status",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", statementId); }, ct)
+                ?? throw new InvalidOperationException("Settlement payment was recorded but the statement could not be updated.");
+            var amountPaid = Money(updated.GetValueOrDefault("amountPaid"));
+            var newStatus = updated.GetValueOrDefault("status")?.ToString() ?? status;
+
+            // Durable event for the NEW payment only (the duplicate-idempotency-key path returned earlier,
+            // so a retried payment never re-publishes). Drives the derive-beside GL cash-out handler.
+            _ = events?.Publish(
+                companyId.ToString(CultureInfo.InvariantCulture),
+                "settlement.paid",
+                "settlement_payment",
+                paymentId.ToString(CultureInfo.InvariantCulture),
+                JsonSerializer.Serialize(new { statementId, paymentId, amount, newStatus }),
+                idempotencyKey: $"settlement-paid-{paymentId}");
+
+            return new SettlementPaymentOutcome(true, paymentId, newStatus, amountPaid);
         }, ct);
-
-        // Durable event for the NEW payment only (the duplicate-idempotency-key path returned earlier,
-        // so a retried payment never re-publishes). Drives the derive-beside GL cash-out handler.
-        _ = events?.Publish(
-            companyId.ToString(CultureInfo.InvariantCulture),
-            "settlement.paid",
-            "settlement_payment",
-            paymentId.ToString(CultureInfo.InvariantCulture),
-            JsonSerializer.Serialize(new { statementId, paymentId, amount, newStatus }),
-            idempotencyKey: $"settlement-paid-{paymentId}");
-
-        return new SettlementPaymentOutcome(true, paymentId, newStatus, amountPaid);
     }
 
     // AP summary: what's owed and paid across the payee book, mirroring the AR summary.

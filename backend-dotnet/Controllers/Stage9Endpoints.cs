@@ -90,7 +90,7 @@ public static partial class EndpointMappings
             if (validation.Count > 0)
                 return Results.BadRequest(ApiResponse<object>.Fail("Recommended resources are not dispatch eligible", validation.ToArray()));
         }
-        body["createdBy"] = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        body["createdBy"] = GetUserId(http);
         var result = await svc.RecommendSmartAssignmentAsync(
             GetCompanyId(http),
             jobId,
@@ -209,7 +209,7 @@ public static partial class EndpointMappings
         var requirementId = Long(body, "siteAccessRequirementId");
         if (requirementId.HasValue && !await ParentInJobScope("site_access_requirements", requirementId.Value, GetCompanyId(http), jobId, db, ct))
             return Results.BadRequest(ApiResponse<object>.Fail("Site access requirement does not belong to this job and tenant"));
-        body["capturedByUserId"] = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        body["capturedByUserId"] = GetUserId(http);
         var idempotencyKey = Str(body, "idempotencyKey")
             ?? (http.Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyHeader) ? idempotencyHeader.FirstOrDefault() : null);
         var result = await svc.CreateAccessDocumentAsync(GetCompanyId(http), jobId, tripId, body, idempotencyKey, ct);
@@ -259,7 +259,7 @@ public static partial class EndpointMappings
         var tripId = Long(body, "tripId");
         if (tripId.HasValue && !await TripInJobScope(GetCompanyId(http), jobId, tripId.Value, db, ct))
             return Results.BadRequest(ApiResponse<object>.Fail("Trip does not belong to this job and tenant"));
-        body["capturedByUserId"] = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        body["capturedByUserId"] = GetUserId(http);
         var idempotencyKey = Str(body, "idempotencyKey")
             ?? (http.Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyHeader) ? idempotencyHeader.FirstOrDefault() : null);
         var result = await svc.CreatePickupAuthorizationAsync(GetCompanyId(http), jobId, tripId, body, idempotencyKey, ct);
@@ -300,7 +300,7 @@ public static partial class EndpointMappings
         var tripId = Long(body, "tripId");
         if (tripId.HasValue && !await TripInJobScope(GetCompanyId(http), jobId, tripId.Value, db, ct))
             return Results.BadRequest(ApiResponse<object>.Fail("Trip does not belong to this job and tenant"));
-        body["capturedByUserId"] = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        body["capturedByUserId"] = GetUserId(http);
         var idempotencyKey = Str(body, "idempotencyKey")
             ?? (http.Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyHeader) ? idempotencyHeader.FirstOrDefault() : null);
         var result = await svc.CreateWarehouseHandoverAsync(GetCompanyId(http), jobId, tripId, body, idempotencyKey, ct);
@@ -341,7 +341,7 @@ public static partial class EndpointMappings
         var tripId = Long(body, "tripId");
         if (tripId.HasValue && !await TripInJobScope(GetCompanyId(http), jobId, tripId.Value, db, ct))
             return Results.BadRequest(ApiResponse<object>.Fail("Trip does not belong to this job and tenant"));
-        body["capturedByUserId"] = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        body["capturedByUserId"] = GetUserId(http);
         body.Remove("completedByUserId");
         body.Remove("status");
         body.Remove("validationStatus");
@@ -393,7 +393,7 @@ public static partial class EndpointMappings
         if (denied is not null) return denied;
         if (!await EntityJobInAuthorizedScope(http, "proof_packages", id, db, ct))
             return Results.NotFound(ApiResponse<object>.Fail("Proof package not found"));
-        body["completedByUserId"] = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        body["completedByUserId"] = GetUserId(http);
         var outcome = await svc.ValidateProofPackageAsync(GetCompanyId(http), id, body, ct);
         if (!outcome.Success) return Results.Conflict(ApiResponse<object>.Fail(outcome.Message));
         await audit.LogAsync(http, "stage9.proof_package.validated", "proof_packages", id, ct: ct);
@@ -433,7 +433,7 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("fileId is required for evidence integrity"));
         if (!await ManagedDocumentInTenantScope(GetCompanyId(http), Long(body, "fileId")!.Value, db, ct))
             return Results.BadRequest(ApiResponse<object>.Fail("fileId must reference an active uploaded document owned by this tenant"));
-        body["capturedByUserId"] = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        body["capturedByUserId"] = GetUserId(http);
         var idempotencyKey = Str(body, "idempotencyKey")
             ?? (http.Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyHeader) ? idempotencyHeader.FirstOrDefault() : null);
         var result = await svc.CreateProofArtifactAsync(GetCompanyId(http), proofPackageId, body, idempotencyKey, ct);

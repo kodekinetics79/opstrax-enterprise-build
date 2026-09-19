@@ -248,10 +248,10 @@ public sealed class Module1DocumentBranchCollisionPostgresTests
             }
             async Task<long> Company(string suffix)
             {
-                var id = await Insert("INSERT INTO companies(company_code,name,industry) VALUES (@code,'Synthetic document scope fixture','Transportation')", ("code", _prefix + suffix));
+                var id = await Insert("INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Synthetic document scope fixture','Transportation','US')", ("code", _prefix + suffix));
                 _companies.Add(id); return id;
             }
-            async Task<long> Branch(long company, string code) => await Insert("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,@code,'Active')", ("c", company), ("code", code));
+            async Task<long> Branch(long company, string code) => await Insert("INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,@code,@code,'Active','US')", ("c", company), ("code", code));
             async Task<long> Vehicle(long company, long? branch, string code, long? explicitId = null, bool deleted = false)
                 => await Insert($"INSERT INTO vehicles({(explicitId.HasValue ? "id," : "")}company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,deleted_at) {(explicitId.HasValue ? "OVERRIDING SYSTEM VALUE" : "")} VALUES ({(explicitId.HasValue ? "@id," : "")}@c,@b,@code,'Truck','legacy-fleet-identifier',@identity,'Available',CASE WHEN @deleted THEN NOW() ELSE NULL END)",
                     ("id", explicitId), ("c", company), ("b", branch), ("code", code), ("identity", _prefix + "-" + code), ("deleted", deleted));

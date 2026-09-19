@@ -19,11 +19,11 @@ public sealed class AssetImportCustodyInvariantPostgresTests
         await new FleetTmsColdChainSchemaService(db, NullLogger<FleetTmsColdChainSchemaService>.Instance).EnsureAsync();
         await new FleetTmsColdChainFoundationSchemaService(db).EnsureAsync();
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Asset import custody test','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Asset import custody test','Transportation','US')",
             command => command.Parameters.AddWithValue("@code", $"AIC-{Guid.NewGuid():N}"));
         var branchCode = $"AIC-{Guid.NewGuid():N}"[..20];
         var branchId = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@company,@code,'Custody Branch','Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@company,@code,'Custody Branch','Active','US')",
             command =>
             {
                 command.Parameters.AddWithValue("@company", companyId);

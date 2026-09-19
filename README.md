@@ -16,8 +16,8 @@
 | Environment | Local / Demo |
 | Frontend port | **10000** |
 | API port | **8088** |
-| Node Events port | **8090** |
-| Database | MySQL 8.4 (internal only — not exposed) |
+| Event transport | ASP.NET Core API workers and provider-specific connectors |
+| Database | PostgreSQL (managed through versioned migrations) |
 
 ---
 
@@ -26,11 +26,15 @@
 | Layer | Technology |
 |---|---|
 | Frontend | React 19.2 · TypeScript · Vite · Tailwind CSS v4 · TanStack Query v5 · React Router v6 |
-| Backend API | ASP.NET Core 8 Minimal API · C# 12 · MySqlConnector |
-| Node Events | Node.js 20 · Express · ws (WebSocket) |
-| Database | MySQL 8.4 |
+| Backend API | ASP.NET Core 8 Minimal API · C# 12 · Npgsql |
+| Database | PostgreSQL |
 | Container | Docker Compose |
 | Reverse Proxy | Nginx (production build) |
+
+`backend-dotnet/` is the only API service. The retired Node.js API prototype was
+removed after deployment, container, application, and CI reference checks confirmed
+that it was not part of the supported runtime. `services/node-events/` remains a
+separate, narrowly scoped event service.
 
 ---
 
@@ -84,8 +88,6 @@ http://localhost:10000
 # API
 http://localhost:8088
 
-# Node Events (WebSocket)
-http://localhost:8090
 ```
 
 ---
@@ -136,16 +138,11 @@ OpsTrax includes localization and compliance framework support for:
 │  - JWT-style session tokens             │
 │  - RBAC role enforcement                │
 └────────────┬────────────────────────────┘
-             │ MySQL
+             │ PostgreSQL
 ┌────────────▼────────────────────────────┐
-│  MySQL 8.4               (internal)     │
-│  - Auto-migrating schema                │
-│  - Pre-seeded demo data                 │
-└─────────────────────────────────────────┘
-┌─────────────────────────────────────────┐
-│  Node Events (WebSocket)  :8090         │
-│  - Real-time fleet events               │
-│  - Broadcast to connected clients       │
+│  PostgreSQL              (internal)     │
+│  - Versioned migration-owned schema     │
+│  - Tenant-scoped operational records    │
 └─────────────────────────────────────────┘
 ```
 

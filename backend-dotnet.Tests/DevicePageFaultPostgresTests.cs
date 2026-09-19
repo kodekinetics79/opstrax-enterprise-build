@@ -16,7 +16,7 @@ public sealed class DevicePageFaultPostgresTests
         var db = Db();
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'DeviceOps scale queue test','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'DeviceOps scale queue test','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"DOS-{suffix}"));
         try
         {
@@ -53,7 +53,7 @@ public sealed class DevicePageFaultPostgresTests
     {
         var db = Db();
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'DeviceOps readiness test','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'DeviceOps readiness test','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"DOR-{Guid.NewGuid():N}"));
         try
         {
@@ -91,12 +91,12 @@ public sealed class DevicePageFaultPostgresTests
         var db = Db();
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Diagnostic timeline truth','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Diagnostic timeline truth','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"DTL-{suffix}"));
         try
         {
             var branchId = await db.InsertAsync(
-                "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')",
+                "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'MAIN','Main','Active','US')",
                 c => c.Parameters.AddWithValue("@c", companyId));
             var recentGpsVehicle = await Vehicle(db, companyId, branchId, $"GPS-{suffix}");
             var recentFaultVehicle = await Vehicle(db, companyId, branchId, $"FLT-{suffix}");
@@ -150,12 +150,12 @@ public sealed class DevicePageFaultPostgresTests
         var db = Db();
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Mixed telemetry attribution','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Mixed telemetry attribution','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"MIX-{suffix}"));
         try
         {
             var branchId = await db.InsertAsync(
-                "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')",
+                "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'MAIN','Main','Active','US')",
                 c => c.Parameters.AddWithValue("@c", companyId));
             var vehicleId = await db.InsertAsync(
                 @"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status)
@@ -269,7 +269,7 @@ public sealed class DevicePageFaultPostgresTests
     {
         var db = Db();
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Device fault page test','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Device fault page test','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"DFP-{Guid.NewGuid():N}"));
         try
         {
@@ -325,7 +325,7 @@ public sealed class DevicePageFaultPostgresTests
         var db = Db();
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Control Tower truth','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Control Tower truth','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"CTT-{suffix}"));
         try
         {
@@ -410,7 +410,7 @@ public sealed class DevicePageFaultPostgresTests
         var db = Db();
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Stable telemetry paging','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Stable telemetry paging','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"STP-{suffix}"));
         try
         {

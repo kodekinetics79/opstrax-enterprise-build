@@ -413,13 +413,13 @@ public sealed class TripLifecyclePostgresTests
     {
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var company = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Trip lifecycle test','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Trip lifecycle test','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"TRIP-{suffix}"));
         var branch = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'MAIN','Main','Active','US')",
             c => c.Parameters.AddWithValue("@c", company));
         var otherBranch = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'OTHER','Other','Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,'OTHER','Other','Active','US')",
             c => c.Parameters.AddWithValue("@c", company));
         var driver = await db.InsertAsync(
             "INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status) VALUES (@c,@b,@code,'Trip Test Driver','Available')",

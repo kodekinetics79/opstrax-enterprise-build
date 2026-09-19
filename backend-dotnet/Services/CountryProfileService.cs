@@ -15,12 +15,10 @@ namespace Opstrax.Api.Services;
 //   2. write companies.country / companies.currency / companies.timezone from the
 //      profile defaults
 //   3. mirror the profile default currency onto tenant_subscriptions.billing_currency
-//   4. for every key in auto_enabled_features, upsert a tenant_entitlements row as
-//      source='country' — WITHOUT clobbering any pre-existing 'override' row.
-//
-// Defaults-not-locks: everything written here is a default. The existing
-// PUT /entitlements override path (source='override') can later toggle any of these
-// off, or turn a non-default feature on, and that override always wins.
+//   4. reconcile country-derived entitlements and the compatible market pack
+//   5. write the locked regulatory fields to tenant_locale_settings.
+// User language and date-display preferences remain selectable. Regulatory
+// country, currency, timezone, measurement units and market pack do not.
 // ─────────────────────────────────────────────────────────────────────────────
 
 public sealed class CountryProfileService(Database db)
@@ -51,6 +49,7 @@ public sealed class CountryProfileService(Database db)
     {
         ["SA"] = "Asia/Riyadh",
         ["CA"] = "America/Toronto",
+        ["US"] = "America/New_York",
     };
 
     private const string SelectColumns =
@@ -129,6 +128,10 @@ public sealed class CountryProfileService(Database db)
     // resolved cascade so the caller can audit exactly what was applied, or null if
     // the country_code has no profile.
     public async Task<CascadeResult?> ApplyToTenantAsync(long companyId, string countryCode, string actor, CancellationToken ct = default)
+        => await db.RunInSystemTransactionAsync(
+            () => ApplyToTenantCoreAsync(companyId, countryCode, actor, ct), ct);
+
+    private async Task<CascadeResult?> ApplyToTenantCoreAsync(long companyId, string countryCode, string actor, CancellationToken ct)
     {
         var profile = await GetAsync(countryCode, ct);
         if (profile is null) return null;
@@ -150,6 +153,20 @@ public sealed class CountryProfileService(Database db)
                 c.Parameters.AddWithValue("@currency", profile.DefaultCurrency);
                 c.Parameters.AddWithValue("@tz", (object?)timezone ?? DBNull.Value);
                 c.Parameters.AddWithValue("@cid", companyId);
+            }, ct);
+
+        // Remove stale country-derived features from a previous operating market.
+        // Explicit, unrelated commercial overrides remain untouched.
+        await db.ExecuteAsync(
+            @"UPDATE tenant_entitlements
+                 SET enabled=false, source='country', updated_by=@by, updated_at=NOW()
+               WHERE company_id=@cid AND source='country'
+                 AND NOT (module_key = ANY(@features))",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@by", actor);
+                c.Parameters.AddWithValue("@features", profile.AutoEnabledFeatures.ToArray());
             }, ct);
 
         // Mirror the currency onto the subscription's billing currency (only if the
@@ -183,8 +200,83 @@ public sealed class CountryProfileService(Database db)
                 }, ct);
         }
 
+        var (lockedTimezone, distanceUnit, volumeUnit) = TenantMarketPolicyService.DefaultsFor(normalized);
+        var localeTable = await db.QuerySingleAsync("SELECT to_regclass('public.tenant_locale_settings')::text table_name", ct: ct);
+        if (localeTable?.GetValueOrDefault("tableName") is not null)
+        {
+            await db.ExecuteAsync(
+                @"INSERT INTO tenant_locale_settings
+                    (tenant_id,default_language,default_country,timezone,date_format,currency,distance_unit,volume_unit)
+                  VALUES (@cid,@lang,@country,@tz,@date,@currency,@distance,@volume)
+                  ON CONFLICT (tenant_id) DO UPDATE SET
+                    default_country=EXCLUDED.default_country, timezone=EXCLUDED.timezone,
+                    currency=EXCLUDED.currency, distance_unit=EXCLUDED.distance_unit,
+                    volume_unit=EXCLUDED.volume_unit, updated_at=NOW()",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@lang", profile.DefaultLocale);
+                    c.Parameters.AddWithValue("@country", normalized);
+                    c.Parameters.AddWithValue("@tz", lockedTimezone);
+                    c.Parameters.AddWithValue("@date", normalized == "US" ? "MM/DD/YYYY" : "DD/MM/YYYY");
+                    c.Parameters.AddWithValue("@currency", profile.DefaultCurrency);
+                    c.Parameters.AddWithValue("@distance", distanceUnit);
+                    c.Parameters.AddWithValue("@volume", volumeUnit);
+                }, ct);
+        }
+
+        // Existing country-bearing operational records move with the tenant in
+        // the same transaction, so no stale regional label survives reassignment.
+        await db.ExecuteAsync(
+            "UPDATE branches SET country_code=@country, timezone=@tz, updated_at=NOW() WHERE company_id=@cid AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@country", normalized); c.Parameters.AddWithValue("@tz", lockedTimezone); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        await db.ExecuteAsync(
+            "UPDATE dvir_templates SET country_code=@country WHERE company_id=@cid",
+            c => { c.Parameters.AddWithValue("@country", normalized); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        await db.ExecuteAsync(
+            "UPDATE dvir_reports SET country_code=@country WHERE company_id=@cid",
+            c => { c.Parameters.AddWithValue("@country", normalized); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+
+        var packCode = TenantMarketPolicyService.PackForCountry(normalized);
+        var packTable = await db.QuerySingleAsync("SELECT to_regclass('public.tenant_market_packs')::text table_name", ct: ct);
+        if (packTable?.GetValueOrDefault("tableName") is not null)
+        {
+            await db.ExecuteAsync(
+                @"UPDATE tenant_market_packs
+                     SET status='disabled', updated_at=NOW(), enabled_by=@by
+                   WHERE company_id=@cid AND status='active'
+                     AND (@pack::text IS NULL OR pack_code<>@pack)",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@pack", (object?)packCode ?? DBNull.Value); c.Parameters.AddWithValue("@by", actor); }, ct);
+            if (packCode is not null)
+            {
+                await db.ExecuteAsync(
+                    @"INSERT INTO tenant_market_packs (company_id,pack_code,status,enabled_by,enabled_at,updated_at)
+                      VALUES (@cid,@pack,'active',@by,NOW(),NOW())
+                      ON CONFLICT (company_id,pack_code) DO UPDATE SET
+                        status='active', enabled_by=EXCLUDED.enabled_by, updated_at=NOW()",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@pack", packCode); c.Parameters.AddWithValue("@by", actor); }, ct);
+            }
+
+            foreach (var knownPack in new[] { MarketPackSchemaService.Packs.CanadaNa, MarketPackSchemaService.Packs.SaudiGcc })
+            {
+                var moduleKey = MarketPackSchemaService.ModuleKeyForPack(knownPack);
+                await db.ExecuteAsync(
+                    @"INSERT INTO tenant_entitlements (company_id,module_key,enabled,source,updated_by,updated_at)
+                      VALUES (@cid,@module,@enabled,'country_market',@by,NOW())
+                      ON CONFLICT (company_id,module_key) DO UPDATE SET
+                        enabled=EXCLUDED.enabled, source='country_market', updated_by=EXCLUDED.updated_by, updated_at=NOW()",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@module", moduleKey);
+                        c.Parameters.AddWithValue("@enabled", knownPack == packCode);
+                        c.Parameters.AddWithValue("@by", actor);
+                    }, ct);
+            }
+        }
+
         return new CascadeResult(normalized, profile.DefaultCurrency,
-            timezone ?? "", profile.AutoEnabledFeatures);
+            lockedTimezone, profile.AutoEnabledFeatures);
     }
 
     private static string Normalize(string countryCode) =>

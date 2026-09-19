@@ -24,7 +24,7 @@ into this session and act on them.
   still completes the TCP/TLS handshake but never answers, so callers hang until they
   time out instead of failing fast. Verify with `/health/live` before assuming a host
   is live. Most endpoints are mapped in `backend-dotnet/Controllers/EndpointMappings.cs`.
-- **Side service**: Node backend (`backend/`, `:8090`) — auth/integrations/telemetry only.
+- **Event side service**: `services/node-events/`; the retired general Node API has been removed.
 - **DB**: Neon Postgres (connection in `.env` / `backend-dotnet/appsettings.json`).
 - **Multi-tenant**: 4 real companies; reads must be scoped by `company_id`.
 

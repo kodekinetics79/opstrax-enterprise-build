@@ -15,6 +15,8 @@ export type IssueInvoiceResult = AnyRecord & {
 };
 
 export const financeOrderToCashApi = {
+  saudiFinanceReadiness: () =>
+    unwrap<AnyRecord>(apiClient.get("/api/finance/saudi-readiness")),
   jobCharges: (jobId: string) =>
     unwrap<AnyRecord[]>(apiClient.get("/api/job-charges", { params: { jobId } })),
 

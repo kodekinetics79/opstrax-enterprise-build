@@ -12,8 +12,13 @@ public sealed class EndpointMappingsSecurityHardeningTests
     {
         var login = MethodSource("Login(", "private static IResult InvalidCredentials");
 
-        AssertOrdered(login, "CheckLockoutAsync", "VerifyPasswordHash");
-        AssertOrdered(login, "userStatus", "VerifyPasswordHash");
+        // The unknown-account and locked-account paths intentionally execute the
+        // fixed dummy hash to close the account-enumeration timing oracle. Target
+        // the real credential verification when checking the lockout/lifecycle
+        // ordering so those protective dummy calls do not create a false failure.
+        Assert.Contains("VerifyPasswordHash(request.Password, DummyPasswordHash)", login, StringComparison.Ordinal);
+        AssertOrdered(login, "CheckLockoutAsync", "var passwordOk = VerifyPasswordHash");
+        AssertOrdered(login, "userStatus", "var passwordOk = VerifyPasswordHash");
         AssertOrdered(login, "RecordFailedLoginAsync", "RecordSuccessfulLoginAsync");
         AssertOrdered(login, "RecordSuccessfulLoginAsync", "var token =");
         Assert.Contains("return InvalidCredentials();", login, StringComparison.Ordinal);

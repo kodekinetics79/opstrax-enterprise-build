@@ -16,6 +16,30 @@ public static class DetentionService
     private const int DefaultMaxDwellHours = 24;
     private const int GpsGapMinutes = 60;
 
+    internal const string SettledPricingBatchSql =
+        @"SELECT d.id, d.company_id, d.customer_id, d.status, d.billed_from_at, d.billed_to_at, d.clock_start_at,
+                 d.appointment_at, d.appointment_source, d.entered_at,
+                 rc.id rule_card_id,rc.version rule_card_version,rc.free_minutes,
+                 rc.rate_per_hour,rc.currency,rc.billing_increment_minutes,
+                 rc.max_charge_amount,rc.claim_window_days,rc.grace_minutes
+          FROM detention_dwells d
+          LEFT JOIN LATERAL (
+              SELECT candidate.id,candidate.version,candidate.free_minutes,candidate.rate_per_hour,
+                     candidate.currency,candidate.billing_increment_minutes,candidate.max_charge_amount,
+                     candidate.claim_window_days,candidate.grace_minutes
+              FROM detention_rule_cards candidate
+              WHERE candidate.company_id=d.company_id AND candidate.active
+                AND candidate.effective_date<=d.entered_at::date
+                AND ((candidate.scope_type='customer' AND candidate.scope_id=d.customer_id)
+                     OR candidate.scope_type='tenant')
+              ORDER BY CASE WHEN candidate.scope_type='customer' THEN 0 ELSE 1 END,
+                       candidate.effective_date DESC,candidate.version DESC
+              LIMIT 1
+          ) rc ON TRUE
+          WHERE d.status IN ('closed','unpriced_no_terms','needs_appointment')
+            AND d.exited_at IS NOT NULL AND NOW() > d.exited_at + make_interval(mins => @gap)
+          ORDER BY d.id";
+
     internal static async Task DetectAsync(Database db, CancellationToken ct = default)
     {
         // Boot health gate: in restricted-role prod the schema chain is skipped; never half-run.
@@ -178,32 +202,18 @@ public static class DetentionService
         // Also re-selects the fail-closed rest states so a later rule card or resolved appointment
         // recovers the revenue (consultant major: dead ends must be re-priceable, not dismiss-only).
         var settled = await db.QueryAsync(
-            @"SELECT d.id, d.company_id, d.customer_id, d.status, d.billed_from_at, d.billed_to_at, d.clock_start_at,
-                     d.appointment_at, d.appointment_source, d.entered_at
-              FROM detention_dwells d
-              WHERE d.status IN ('closed','unpriced_no_terms','needs_appointment')
-                AND d.exited_at IS NOT NULL AND NOW() > d.exited_at + make_interval(mins => @gap)
-              ORDER BY d.id",
+            SettledPricingBatchSql,
             c => c.Parameters.AddWithValue("@gap", DefaultMergeGapMinutes), ct);
 
         foreach (var d in settled)
         {
             var cid = Convert.ToInt64(d["companyId"]);
             var dwellId = Convert.ToInt64(d["id"]);
-            var custId = d["customerId"] is null or DBNull ? 0L : Convert.ToInt64(d["customerId"]);
             var prior = d["status"]?.ToString() ?? "closed";
-
-            // Rule card as-of entered_at (spec: 'saving never retro-bills' beyond the card's effective date).
-            var card = await db.QuerySingleAsync(
-                @"SELECT id, version, free_minutes, rate_per_hour, currency, billing_increment_minutes,
-                         max_charge_amount, claim_window_days, grace_minutes
-                  FROM detention_rule_cards rc
-                  WHERE rc.company_id=@c AND rc.active AND rc.effective_date <= @entered::date
-                    AND ((rc.scope_type='customer' AND rc.scope_id=@cust) OR rc.scope_type='tenant')
-                  ORDER BY CASE WHEN rc.scope_type='customer' THEN 0 ELSE 1 END, rc.effective_date DESC, rc.version DESC
-                  LIMIT 1",
-                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@cust", custId); c.Parameters.AddWithValue("@entered", Convert.ToDateTime(d["enteredAt"])); }, ct);
-            if (card is null)
+            // Rule cards for the entire settled batch are selected in the query above.
+            // This preserves tenant/customer precedence without one database round trip
+            // per dwell at fleet scale.
+            if (d["ruleCardId"] is null or DBNull)
             {
                 if (prior == "closed") await SetStatusAsync(db, cid, dwellId, prior, "unpriced_no_terms", ct);
                 continue;
@@ -217,12 +227,12 @@ public static class DetentionService
 
             var clockStart = Convert.ToDateTime(d["clockStartAt"]);
             var billedTo = Convert.ToDateTime(d["billedToAt"]);
-            var freeMin = Convert.ToInt32(card["freeMinutes"]);
-            var increment = Math.Max(1, Convert.ToInt32(card["billingIncrementMinutes"]));
-            var rate = Convert.ToDecimal(card["ratePerHour"]);
-            var cap = card["maxChargeAmount"] is null or DBNull ? (decimal?)null : Convert.ToDecimal(card["maxChargeAmount"]);
-            var claimDays = Convert.ToInt32(card["claimWindowDays"]);
-            var graceMin = Convert.ToInt32(card["graceMinutes"]);
+            var freeMin = Convert.ToInt32(d["freeMinutes"]);
+            var increment = Math.Max(1, Convert.ToInt32(d["billingIncrementMinutes"]));
+            var rate = Convert.ToDecimal(d["ratePerHour"]);
+            var cap = d["maxChargeAmount"] is null or DBNull ? (decimal?)null : Convert.ToDecimal(d["maxChargeAmount"]);
+            var claimDays = Convert.ToInt32(d["claimWindowDays"]);
+            var graceMin = Convert.ToInt32(d["graceMinutes"]);
 
             var dwellMinutes = (int)Math.Max(0, (billedTo - clockStart).TotalMinutes);
             var billable = Math.Max(0, dwellMinutes - freeMin);
@@ -239,7 +249,7 @@ public static class DetentionService
                         c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@id", dwellId);
                         c.Parameters.AddWithValue("@prior", prior);
                         c.Parameters.AddWithValue("@dm", dwellMinutes); c.Parameters.AddWithValue("@fm", freeMin);
-                        c.Parameters.AddWithValue("@rc", Convert.ToInt64(card["id"])); c.Parameters.AddWithValue("@ver", Convert.ToInt32(card["version"]));
+                        c.Parameters.AddWithValue("@rc", Convert.ToInt64(d["ruleCardId"])); c.Parameters.AddWithValue("@ver", Convert.ToInt32(d["ruleCardVersion"]));
                     }, ct);
                 continue;
             }
@@ -268,9 +278,9 @@ public static class DetentionService
                     c.Parameters.AddWithValue("@prior", prior); c.Parameters.AddWithValue("@target", target);
                     c.Parameters.AddWithValue("@dm", dwellMinutes); c.Parameters.AddWithValue("@fm", freeMin);
                     c.Parameters.AddWithValue("@bm", billable);
-                    c.Parameters.AddWithValue("@rc", Convert.ToInt64(card["id"])); c.Parameters.AddWithValue("@ver", Convert.ToInt32(card["version"]));
+                    c.Parameters.AddWithValue("@rc", Convert.ToInt64(d["ruleCardId"])); c.Parameters.AddWithValue("@ver", Convert.ToInt32(d["ruleCardVersion"]));
                     c.Parameters.AddWithValue("@qty", qtyHours); c.Parameters.AddWithValue("@rate", rate);
-                    c.Parameters.AddWithValue("@amt", amount); c.Parameters.AddWithValue("@cur", card["currency"]?.ToString() ?? "USD");
+                    c.Parameters.AddWithValue("@amt", amount); c.Parameters.AddWithValue("@cur", d["currency"]?.ToString() ?? "USD");
                     c.Parameters.AddWithValue("@cw", claimDays);
                 }, ct);
 

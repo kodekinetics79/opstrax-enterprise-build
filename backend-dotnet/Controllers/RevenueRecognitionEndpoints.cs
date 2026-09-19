@@ -40,7 +40,7 @@ public static class RevenueRecognitionEndpoints
     private static async Task<IResult> Reverse(HttpContext http, Guid id, Dictionary<string, object?>? body, RevenueRecognitionService svc, CancellationToken ct)
     {
         if (EndpointMappings.RequirePermission(http, "revrec.manage") is { } d) return d;
-        var userId = Convert.ToInt64(http.Items[EndpointMappings.AuthUserIdItemKey] ?? 0L);
+        var userId = EndpointMappings.GetUserId(http);
         var memo = body is not null && body.TryGetValue("memo", out var mm) ? mm?.ToString() ?? "" : "";
         var o = await svc.ReverseInvoiceRecognitionAsync(EndpointMappings.GetCompanyId(http), id, memo, userId, ct);
         return o.Recognized ? Results.Ok(ApiResponse<object>.Ok(new { o.Status }, "Recognition reversed"))
@@ -67,7 +67,7 @@ public static class RevenueRecognitionEndpoints
     private static async Task<IResult> ClosePeriod(HttpContext http, string code, RevenueRecognitionService svc, CancellationToken ct)
     {
         if (EndpointMappings.RequirePermission(http, "revrec.period.close") is { } d) return d;
-        var userId = Convert.ToInt64(http.Items[EndpointMappings.AuthUserIdItemKey] ?? 0L);
+        var userId = EndpointMappings.GetUserId(http);
         var o = await svc.CloseFiscalPeriodAsync(EndpointMappings.GetCompanyId(http), code, userId, ct);
         return o.Ok ? Results.Ok(ApiResponse<object>.Ok(new { code, o.Status }, "Fiscal period closed"))
                     : Results.BadRequest(ApiResponse<object>.Fail($"Cannot close: {o.Reason}"));
@@ -85,7 +85,7 @@ public static class RevenueRecognitionEndpoints
     private static async Task<IResult> Backfill(HttpContext http, RevenueRecognitionService svc, CancellationToken ct)
     {
         if (EndpointMappings.RequirePermission(http, "revrec.manage") is { } d) return d;
-        var userId = Convert.ToInt64(http.Items[EndpointMappings.AuthUserIdItemKey] ?? 0L);
+        var userId = EndpointMappings.GetUserId(http);
         var o = await svc.BackfillIssuedInvoicesAsync(EndpointMappings.GetCompanyId(http), userId, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { o.Reason }, "Backfill complete"));
     }

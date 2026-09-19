@@ -63,9 +63,12 @@ public sealed class Batch6SchemaService(Database db, IConfiguration? configurati
         new("compliance_profiles", "max_driving_hours","INT NULL"),
         new("compliance_profiles", "max_duty_hours",   "INT NULL"),
         new("compliance_profiles", "rest_requirement_hours", "INT NULL"),
+        new("compliance_profiles", "is_active",        "BOOLEAN NOT NULL DEFAULT true"),
+        new("compliance_profiles", "updated_at",       "TIMESTAMPTZ NULL"),
         new("compliance_rules",    "severity",         "VARCHAR(50) NOT NULL DEFAULT 'High'"),
         new("compliance_rules",    "threshold_value",  "DECIMAL(12,2) NULL"),
         new("compliance_rules",    "threshold_unit",   "VARCHAR(40) NULL"),
+        new("compliance_rules",    "is_active",        "BOOLEAN NOT NULL DEFAULT true"),
         new("hos_clocks",               "hos_warning",           "TEXT NULL"),
         new("hos_clocks",               "break_needed_at",       "TIMESTAMPTZ NULL"),
         new("hos_clocks",               "reset_at",              "TIMESTAMPTZ NULL"),
@@ -514,6 +517,7 @@ public sealed class Batch6SchemaService(Database db, IConfiguration? configurati
 
     private static readonly string[] Indexes =
     [
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_locale_settings_tenant ON tenant_locale_settings(tenant_id)",
         "CREATE INDEX IF NOT EXISTS idx_compliance_violations_driver ON compliance_violations(driver_id)",
         "CREATE INDEX IF NOT EXISTS idx_compliance_violations_vehicle ON compliance_violations(vehicle_id)",
         "CREATE INDEX IF NOT EXISTS idx_compliance_violations_country ON compliance_violations(country_code)",
@@ -539,11 +543,13 @@ public sealed class Batch6SchemaService(Database db, IConfiguration? configurati
     [
         @"INSERT INTO countries (code,name,currency,distance_unit,volume_unit,hos_ruleset,rtl) VALUES
           ('US','United States','USD','Miles','Gallons','FMCSA 395.3',false),
-          ('CA','Canada','CAD','Kilometers','Liters','TC NSC',false),
-          ('SA','Saudi Arabia','SAR','Kilometers','Liters','SASO HOS',true),
+          ('CA','Canada','CAD','Kilometers','Liters','CVHOSR SOR/2005-313',false),
+          ('SA','Saudi Arabia','SAR','Kilometers','Liters','TGA Goods Transport HOS',true),
           ('AE','United Arab Emirates','AED','Kilometers','Liters','UAE RTA',true),
           ('PK','Pakistan','PKR','Kilometers','Liters','NHA Regulations',false)
-          ON CONFLICT DO NOTHING",
+          ON CONFLICT (code) DO UPDATE SET
+            name=EXCLUDED.name,currency=EXCLUDED.currency,distance_unit=EXCLUDED.distance_unit,
+            volume_unit=EXCLUDED.volume_unit,hos_ruleset=EXCLUDED.hos_ruleset,rtl=EXCLUDED.rtl",
 
         @"INSERT INTO languages (code,name,native_name,country_code,rtl) VALUES
           ('en-US','English (US)','English (US)','US',false),
@@ -554,27 +560,66 @@ public sealed class Batch6SchemaService(Database db, IConfiguration? configurati
           ('ur-PK','Urdu (Pakistan)','اردو (پاکستان)','PK',true)
           ON CONFLICT DO NOTHING",
 
-        @"INSERT INTO compliance_profiles (id,country_code,profile_name,authority,hos_ruleset,eld_required,max_driving_hours,max_duty_hours,rest_requirement_hours) OVERRIDING SYSTEM VALUE VALUES
-          (1,'US','FMCSA Property Carrier','FMCSA','395.3 Property',true,11,14,10),
-          (2,'US','FMCSA Passenger Carrier','FMCSA','395.3 Passenger',true,10,15,8),
-          (3,'CA','Transport Canada NSC','Transport Canada','NSC',true,13,14,8),
-          (4,'SA','Saudi Arabia HOS','SASO','SASO HOS',false,10,14,8),
-          (5,'AE','UAE RTA Compliance','UAE RTA','UAE HOS',false,10,12,8),
-          (6,'PK','NHA Pakistan Compliance','NHA Pakistan','NHA',false,10,12,8)
-          ON CONFLICT DO NOTHING",
+        @"UPDATE compliance_profiles SET is_active=false,updated_at=NOW()
+          WHERE (country_code='CA' AND profile_name='Transport Canada NSC')
+             OR (country_code='SA' AND (profile_name='Saudi Arabia HOS' OR authority ILIKE '%SASO%'))",
 
-        @"INSERT INTO compliance_rules (id,profile_id,rule_code,rule_name,category,description,severity,threshold_value,threshold_unit) OVERRIDING SYSTEM VALUE VALUES
-          (1,1,'FMCSA-HOS-11H','11-Hour Driving Limit','HOS','Driver cannot drive more than 11 hours after 10 consecutive hours off duty','Critical',11,'Hours'),
-          (2,1,'FMCSA-HOS-14H','14-Hour Window','HOS','Driver cannot drive after the 14th hour following 10 hours off duty','Critical',14,'Hours'),
-          (3,1,'FMCSA-HOS-70H','70-Hour / 8-Day Limit','HOS','Driver may not drive after 70 hours on duty in 8 consecutive days','High',70,'Hours'),
-          (4,1,'FMCSA-ELD-CERT','ELD Certification','ELD','Vehicle must have an FMCSA registered ELD device installed','High',NULL,NULL),
-          (5,1,'FMCSA-DOC-CDL','CDL Requirement','Documents','Commercial Driver License must be valid and current','Critical',NULL,NULL),
-          (6,3,'TC-HOS-13H','13-Hour Driving Limit','HOS','Canadian NSC: Maximum 13 hours driving in a day','Critical',13,'Hours'),
-          (7,3,'TC-NSC-CARRIER','NSC Carrier Certification','Documents','Transport Canada NSC carrier registration required','High',NULL,NULL),
-          (8,4,'SA-HOS-10H','Saudi Arabia 10-Hour Limit','HOS','Maximum 10 hours driving per day under SASO regulations','High',10,'Hours'),
-          (9,5,'AE-HOS-10H','UAE 10-Hour Driving Limit','HOS','UAE RTA: Maximum 10 hours driving per day','High',10,'Hours'),
-          (10,6,'PK-NHA-10H','Pakistan 10-Hour Limit','HOS','NHA: Maximum 10 hours driving per day','Medium',10,'Hours')
-          ON CONFLICT DO NOTHING"
+        @"UPDATE compliance_rules SET is_active=false
+          WHERE rule_code IN ('TC-HOS-13H','TC-NSC-CARRIER','SA-HOS-10H')",
+
+        @"WITH seed(country_code,profile_name,authority,hos_ruleset,eld_required,max_driving_hours,max_duty_hours,rest_requirement_hours) AS (VALUES
+            ('US','FMCSA Property Carrier','FMCSA','395.3 Property',true,11,14,10),
+            ('US','FMCSA Passenger Carrier','FMCSA','395.3 Passenger',true,10,15,8),
+            ('CA','Canada Federal HOS - South of 60N','Transport Canada / Provincial-Territorial Enforcement','SOR/2005-313 ss.11-29',true,13,14,10),
+            ('SA','Saudi TGA Goods Transport HOS','Transport General Authority (TGA)','TGA Goods Transport HOS',false,9,NULL,11),
+            ('AE','UAE RTA Compliance','UAE RTA','UAE HOS',false,10,12,8),
+            ('PK','NHA Pakistan Compliance','NHA Pakistan','NHA',false,10,12,8)
+          ), updated AS (
+            UPDATE compliance_profiles p SET
+              authority=s.authority,hos_ruleset=s.hos_ruleset,eld_required=s.eld_required,
+              max_driving_hours=s.max_driving_hours,max_duty_hours=s.max_duty_hours,
+              rest_requirement_hours=s.rest_requirement_hours,is_active=true,updated_at=NOW()
+            FROM seed s
+            WHERE p.country_code=s.country_code AND p.profile_name=s.profile_name
+            RETURNING p.id
+          )
+          INSERT INTO compliance_profiles
+            (country_code,profile_name,authority,hos_ruleset,eld_required,max_driving_hours,max_duty_hours,rest_requirement_hours)
+          SELECT s.* FROM seed s
+          WHERE NOT EXISTS (
+            SELECT 1 FROM compliance_profiles p
+            WHERE p.country_code=s.country_code AND p.profile_name=s.profile_name)",
+
+        @"WITH seed(country_code,profile_name,rule_code,rule_name,category,description,severity,threshold_value,threshold_unit) AS (VALUES
+            ('US','FMCSA Property Carrier','FMCSA-HOS-11H','11-Hour Driving Limit','HOS','Driver cannot drive more than 11 hours after 10 consecutive hours off duty','Critical',11::decimal,'Hours'),
+            ('US','FMCSA Property Carrier','FMCSA-HOS-14H','14-Hour Window','HOS','Driver cannot drive after the 14th hour following 10 hours off duty','Critical',14::decimal,'Hours'),
+            ('US','FMCSA Property Carrier','FMCSA-HOS-70H','70-Hour / 8-Day Limit','HOS','Driver may not drive after 70 hours on duty in 8 consecutive days','High',70::decimal,'Hours'),
+            ('US','FMCSA Property Carrier','FMCSA-ELD-CERT','ELD Certification','ELD','Vehicle must have an FMCSA registered ELD device installed','High',NULL::decimal,NULL::text),
+            ('US','FMCSA Property Carrier','FMCSA-DOC-CDL','CDL Requirement','Documents','Commercial Driver License must be valid and current','Critical',NULL::decimal,NULL::text),
+            ('CA','Canada Federal HOS - South of 60N','CA-S60-HOS-13H-DRIVE','13-Hour Daily Driving Limit','HOS','South of 60N: driver shall not drive after accumulating 13 hours of driving time in a day.','Critical',13::decimal,'Hours'),
+            ('CA','Canada Federal HOS - South of 60N','CA-CARRIER-SAFETY-FITNESS','Provincial/Territorial Carrier Safety-Fitness Requirement','Documents','National Safety Code standards are administered through applicable provincial/territorial carrier safety-fitness and credential regimes; there is not one generic Transport Canada NSC carrier registration.','High',NULL::decimal,NULL::text),
+            ('SA','Saudi TGA Goods Transport HOS','SA-TGA-HOS-9H-DRIVE','9-Hour Daily Driving Limit','HOS','TGA goods-transport baseline: maximum 9 driving hours in 24 hours; may extend to 10 hours only twice per week.','Critical',9::decimal,'Hours'),
+            ('AE','UAE RTA Compliance','AE-HOS-10H','UAE 10-Hour Driving Limit','HOS','UAE RTA: Maximum 10 hours driving per day','High',10::decimal,'Hours'),
+            ('PK','NHA Pakistan Compliance','PK-NHA-10H','Pakistan 10-Hour Limit','HOS','NHA: Maximum 10 hours driving per day','Medium',10::decimal,'Hours')
+          ), resolved AS (
+            SELECT p.id AS profile_id,s.rule_code,s.rule_name,s.category,s.description,s.severity,s.threshold_value,s.threshold_unit
+            FROM seed s
+            CROSS JOIN LATERAL (
+              SELECT id FROM compliance_profiles
+              WHERE country_code=s.country_code AND profile_name=s.profile_name
+              ORDER BY is_active DESC,id LIMIT 1
+            ) p
+          ), updated AS (
+            UPDATE compliance_rules r SET
+              profile_id=s.profile_id,rule_name=s.rule_name,category=s.category,description=s.description,
+              severity=s.severity,threshold_value=s.threshold_value,threshold_unit=s.threshold_unit,is_active=true
+            FROM resolved s WHERE r.rule_code=s.rule_code
+            RETURNING r.id
+          )
+          INSERT INTO compliance_rules
+            (profile_id,rule_code,rule_name,category,description,severity,threshold_value,threshold_unit)
+          SELECT s.profile_id,s.rule_code,s.rule_name,s.category,s.description,s.severity,s.threshold_value,s.threshold_unit
+          FROM resolved s WHERE NOT EXISTS (SELECT 1 FROM compliance_rules r WHERE r.rule_code=s.rule_code)"
     ];
 
     private static readonly string[] DemoSeeds =

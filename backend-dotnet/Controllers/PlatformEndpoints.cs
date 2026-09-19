@@ -23,6 +23,9 @@ namespace Opstrax.Api.Controllers;
 
 public static class PlatformEndpoints
 {
+    internal const string PlatformSessionCookieName = "opstrax_platform_session_v1";
+    private static readonly TimeSpan PlatformSessionLifetime = TimeSpan.FromHours(8);
+
     public sealed record PlatformPrincipal(long AdminId, string Email, string RoleKey, string RoleName, string[] Permissions);
 
     // Canonical commercial catalog. Keep this aligned with the Platform tenant and
@@ -151,7 +154,7 @@ public static class PlatformEndpoints
 
     private static async Task<PlatformPrincipal?> AuthenticateAsync(HttpContext http, Database db, CancellationToken ct)
     {
-        var token = BearerToken(http);
+        var token = SessionToken(http);
         if (string.IsNullOrWhiteSpace(token)) return null;
 
         var row = await db.QuerySingleAsync(
@@ -245,29 +248,73 @@ public static class PlatformEndpoints
             : string.Empty;
     }
 
+    // Browser platform sessions use an HttpOnly cookie so privileged credentials
+    // are never exposed to JavaScript. Bearer remains as a fallback for deliberate
+    // non-browser API clients and existing operator tooling.
+    internal static string SessionToken(HttpContext http)
+    {
+        var cookie = http.Request.Cookies[PlatformSessionCookieName];
+        return !string.IsNullOrWhiteSpace(cookie) ? cookie : BearerToken(http);
+    }
+
+    private static CookieOptions PlatformSessionCookieOptions(HttpContext http, TimeSpan? maxAge = null)
+    {
+        var isHttps = http.Request.IsHttps;
+        return new CookieOptions
+        {
+            Path = "/api/platform",
+            HttpOnly = true,
+            Secure = isHttps,
+            SameSite = isHttps ? SameSiteMode.None : SameSiteMode.Lax,
+            MaxAge = maxAge,
+            IsEssential = true,
+        };
+    }
+
+    private static void IssuePlatformSessionCookie(HttpContext http, string token)
+        => http.Response.Cookies.Append(
+            PlatformSessionCookieName,
+            token,
+            PlatformSessionCookieOptions(http, PlatformSessionLifetime));
+
+    private static void ClearPlatformSessionCookie(HttpContext http)
+        => http.Response.Cookies.Delete(
+            PlatformSessionCookieName,
+            PlatformSessionCookieOptions(http));
+
     // ════════════════════════════════════════════════════════════════════════════
     // AUTH HANDLERS
     // ════════════════════════════════════════════════════════════════════════════
 
     internal sealed record PlatformLoginRequest(string Email, string Password, string? MfaCode = null);
 
-    // Failed-login lockout: 5 failures per email+IP within 15 minutes → 429.
+    // Failed-login lockout: 5 failures for either an email account or a source
+    // IP within 15 minutes → 429. Keeping both dimensions prevents a botnet from
+    // bypassing account protection by rotating IPs and prevents one IP from
+    // spraying unlimited account names.
     // DB-backed: the platform_audit_log rows ARE the counter, so the lockout
     // survives process restarts and applies across instances.
     internal const int MaxFailedLogins = 5;
 
-    // Failures within the window, scoped to email+IP, counted only since the
-    // account's most recent successful login (a success resets the ledger,
-    // matching the previous in-memory semantics).
+    // Returns the stricter of the email and IP counters. A successful login
+    // resets only that email's counter; it must not erase the IP spray counter.
     internal static Task<long> CountRecentAuthFailuresAsync(
         Database db, string email, string ip, string failedAction, string? successAction, CancellationToken ct)
         => db.ScalarLongAsync(
-            @"SELECT COUNT(*) FROM platform_audit_log
-              WHERE LOWER(actor_email)=@e AND ip_address=@ip AND action=@fail
-                AND created_at > NOW() - INTERVAL '15 minutes'
-                AND (@success IS NULL OR created_at > COALESCE(
-                    (SELECT MAX(created_at) FROM platform_audit_log
-                      WHERE LOWER(actor_email)=@e AND action=@success), '-infinity'::timestamptz))",
+            @"WITH success_bound AS (
+                  SELECT COALESCE(MAX(created_at), '-infinity'::timestamptz) AS at
+                    FROM platform_audit_log
+                   WHERE LOWER(actor_email)=@e AND action=@success
+              )
+              SELECT GREATEST(
+                  COUNT(*) FILTER (
+                      WHERE LOWER(actor_email)=@e
+                        AND (@success IS NULL OR created_at > (SELECT at FROM success_bound))),
+                  COUNT(*) FILTER (WHERE ip_address=@ip))
+                FROM platform_audit_log
+               WHERE action=@fail
+                 AND created_at > NOW() - INTERVAL '15 minutes'
+                 AND (LOWER(actor_email)=@e OR ip_address=@ip)",
             c =>
             {
                 c.Parameters.AddWithValue("@e", email.ToLowerInvariant());
@@ -319,7 +366,11 @@ public static class PlatformEndpoints
               FROM platform_admins a LEFT JOIN platform_roles r ON r.id = a.role_id
               WHERE LOWER(a.email)=LOWER(@e) AND a.status='Active' LIMIT 1",
             c => c.Parameters.AddWithValue("@e", email), ct);
-        if (admin is null) return await FailAsync("unknown_or_inactive_account");
+        if (admin is null)
+        {
+            _ = VerifyPassword(request.Password ?? "", DummyPasswordHash);
+            return await FailAsync("unknown_or_inactive_account");
+        }
 
         if (!VerifyPassword(request.Password ?? "", admin["passwordHash"]?.ToString()))
             return await FailAsync("invalid_password");
@@ -365,10 +416,10 @@ public static class PlatformEndpoints
 
         var principal = new PlatformPrincipal(adminId, admin["email"]?.ToString() ?? "", admin["roleKey"]?.ToString() ?? "", admin["roleName"]?.ToString() ?? "", perms!);
         await AuditAsync(db, principal, http, "platform.login", "PlatformAdmin", adminId, null, null, ct);
+        IssuePlatformSessionCookie(http, token);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            token,
             admin = new { id = adminId, email = admin["email"], name = admin["fullName"] },
             role = new { key = admin["roleKey"], name = admin["roleName"] },
             permissions = perms,
@@ -399,10 +450,11 @@ public static class PlatformEndpoints
 
     private static async Task<IResult> PlatformLogout(HttpContext http, Database db, CancellationToken ct)
     {
-        var token = BearerToken(http);
+        var token = SessionToken(http);
         if (!string.IsNullOrWhiteSpace(token))
             await db.ExecuteAsync("DELETE FROM platform_sessions WHERE session_token=@t",
                 c => c.Parameters.AddWithValue("@t", token), ct);
+        ClearPlatformSessionCookie(http);
         return Results.Ok(ApiResponse<object>.Ok(new { loggedOut = true }, "Logged out"));
     }
 
@@ -2929,7 +2981,7 @@ public static class PlatformEndpoints
                 r["createdAt"]?.ToString(), r["actorEmail"]?.ToString(), r["actorRole"]?.ToString(),
                 r["action"]?.ToString(), r["entityType"]?.ToString(), r["entityId"]?.ToString(),
                 r["tenantName"]?.ToString(), r["ipAddress"]?.ToString(), r["detailsJson"]?.ToString(),
-            }.Select(CsvCell)));
+            }.Select(value => SpreadsheetSafeCsv.Cell(value, quoteAlways: true))));
 
         await AuditAsync(db, principal!, http, "audit.exported", "AuditLog", null, null,
             new { rows = rows.Count, filter = q.ToDictionary(k => k.Key, v => v.Value.ToString()) }, ct);
@@ -2938,11 +2990,6 @@ public static class PlatformEndpoints
         return Results.File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()),
             "text/csv", $"opstrax-platform-audit-{stamp}.csv");
     }
-
-    // RFC 4180: quote every field, double any embedded quote. details_json is raw
-    // JSON full of commas and quotes — unquoted it would shred the column layout.
-    private static string CsvCell(string? value) =>
-        "\"" + (value ?? "").Replace("\"", "\"\"") + "\"";
 
     private static (string Sql, Action<NpgsqlCommand> Bind) BuildAuditQuery(IQueryCollection q, int limit)
     {
@@ -3261,6 +3308,8 @@ public static class PlatformEndpoints
         }
         catch { return false; }
     }
+
+    internal const string DummyPasswordHash = "PBKDF2$100000$H04tPFtqeYiHlqW0w9Lh8A==$JdQf5tuSYUg/bQit2eRbO9AjaFkMccqJm/xuSOuLnS0=";
 
     // ── Dictionary body accessors (JSON numbers arrive as JsonElement) ──────────
     private static string? Str(Dictionary<string, object?> body, string key)

@@ -4,6 +4,7 @@ import { Pencil, Plus, Search, X } from "lucide-react";
 import { PageHeader, EmptyState, ErrorState, LoadingState, StatusBadge } from "@/components/ui";
 import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import { branchesApi } from "@/services/branchesApi";
+import { settingsApi } from "@/services/settingsApi";
 import type { AnyRecord } from "@/types";
 
 type BranchForm = {
@@ -19,10 +20,10 @@ type BranchForm = {
   status: string;
 };
 
-const emptyForm: BranchForm = {
+const emptyForm = (countryCode: string, timezone: string): BranchForm => ({
   branchCode: "", name: "", branchType: "branch", region: "", city: "", state: "",
-  countryCode: "US", timezone: "America/New_York", status: "Active",
-};
+  countryCode, timezone, status: "Active",
+});
 
 function apiError(error: unknown) {
   const data = (error as { response?: { data?: { message?: string; errors?: string[] } } })?.response?.data;
@@ -37,6 +38,9 @@ export function BranchesPage() {
   const [form, setForm] = useState<BranchForm | null>(null);
   const [error, setError] = useState<string | null>(null);
   const branchesQ = useQuery({ queryKey: ["branches"], queryFn: branchesApi.list });
+  const marketQ = useQuery({ queryKey: ["settings-market-context"], queryFn: settingsApi.marketContextGet });
+  const marketCountry = String(marketQ.data?.countryCode ?? "");
+  const marketTimezone = String(marketQ.data?.timezone ?? "");
   const save = useMutation({
     mutationFn: (value: BranchForm) => value.id
       ? branchesApi.update(value.id, value)
@@ -53,8 +57,8 @@ export function BranchesPage() {
       [row.branchCode, row.name, row.branchType, row.city, row.region].some((value) => String(value ?? "").toLowerCase().includes(needle)));
   }, [branchesQ.data, search]);
 
-  if (branchesQ.isLoading) return <LoadingState />;
-  if (branchesQ.isError) return <ErrorState message="Unable to load branch ownership." />;
+  if (branchesQ.isLoading || marketQ.isLoading) return <LoadingState />;
+  if (branchesQ.isError || marketQ.isError || !marketCountry || !marketTimezone) return <ErrorState message="Unable to load branch ownership and operating-market policy." />;
 
   return (
     <div className="space-y-4">
@@ -62,7 +66,7 @@ export function BranchesPage() {
         eyebrow="Fleet identity"
         title="Branches"
         description="Create and maintain the branch, depot, and yard ownership scopes used by fleet records and role accounts."
-        actions={canManage ? <button className="btn-primary" onClick={() => { setError(null); setForm({ ...emptyForm }); }}><Plus className="h-4 w-4" /> Add Branch</button> : null}
+        actions={canManage ? <button className="btn-primary" onClick={() => { setError(null); setForm(emptyForm(marketCountry, marketTimezone)); }}><Plus className="h-4 w-4" /> Add Branch</button> : null}
       />
       <div className="panel p-4">
         <label className="relative block max-w-lg">
@@ -88,8 +92,8 @@ export function BranchesPage() {
                 <td className="px-4 py-3">{canManage ? <button className="icon-btn" aria-label={`Edit ${String(row.name)}`} onClick={() => { setError(null); setForm({
                   id: Number(row.id), branchCode: String(row.branchCode ?? ""), name: String(row.name ?? ""),
                   branchType: (String(row.branchType ?? "branch") as BranchForm['branchType']), region: String(row.region ?? ""),
-                  city: String(row.city ?? ""), state: String(row.state ?? ""), countryCode: String(row.countryCode ?? "US"),
-                  timezone: String(row.timezone ?? "America/New_York"), status: String(row.status ?? "Active"),
+                  city: String(row.city ?? ""), state: String(row.state ?? ""), countryCode: marketCountry,
+                  timezone: marketTimezone, status: String(row.status ?? "Active"),
                 }); }}><Pencil className="h-4 w-4" /></button> : null}</td>
               </tr>
             ))}</tbody>
@@ -107,8 +111,8 @@ export function BranchesPage() {
               <div><label className="label">Region</label><input className="field w-full" value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} /></div>
               <div><label className="label">City</label><input className="field w-full" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
               <div><label className="label">State / Province</label><input className="field w-full" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} /></div>
-              <div><label className="label">Country code</label><input className="field w-full" maxLength={2} value={form.countryCode} onChange={(e) => setForm({ ...form, countryCode: e.target.value.toUpperCase() })} /></div>
-              <div><label className="label">Timezone</label><input className="field w-full" value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} /></div>
+              <div><label className="label">Country code · market locked</label><input className="field w-full" disabled value={form.countryCode} /></div>
+              <div><label className="label">Timezone · market locked</label><input className="field w-full" disabled value={form.timezone} /></div>
               {form.id && <div><label className="label">Status</label><select className="field w-full" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Inactive</option></select></div>}
             </div>
             {error && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}

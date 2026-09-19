@@ -279,7 +279,6 @@ public sealed class MigrationRunnerEnrollmentParityTests
     // full wrapper sequence and each migration reference.
     private static readonly string[] AppliedByPurposeBuiltPredeployWrapper =
     [
-        "2026_09_03_stage101_canada_ksa_compliance_baseline",
         "2026_09_03_stage102_hos_policy_shadow_engine",
         "2026_09_03_stage103_hos_shadow_retention_control",
     ];

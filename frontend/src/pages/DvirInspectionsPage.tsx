@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, ClipboardCheck, Plus, Search, ShieldAlert,
 import { dvirApi } from "@/services/dvirApi";
 import { driversApi } from "@/services/driversApi";
 import { vehiclesApi } from "@/services/vehiclesApi";
+import { settingsApi } from "@/services/settingsApi";
 import { useHasDirectPermission } from "@/hooks/usePermission";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { useSingleFlight } from "@/hooks/useSingleFlight";
@@ -50,6 +51,7 @@ export function DvirInspectionsPage() {
 
   const listQ = useQuery({ queryKey: ["dvir", "reports"], queryFn: dvirApi.list, staleTime: 15_000 });
   const summaryQ = useQuery({ queryKey: ["dvir", "summary"], queryFn: dvirApi.summary, staleTime: 15_000 });
+  const marketQ = useQuery({ queryKey: ["settings-market-context"], queryFn: settingsApi.marketContextGet, staleTime: 60_000 });
   const detailQ = useQuery({
     queryKey: ["dvir", "detail", selectedId],
     queryFn: () => dvirApi.detail(selectedId!),
@@ -93,13 +95,16 @@ export function DvirInspectionsPage() {
     });
   }, [listQ.data, search, statusFilter]);
 
-  if (listQ.isLoading || summaryQ.isLoading) return <LoadingState />;
-  if (listQ.isError || summaryQ.isError) {
-    const error = (listQ.error ?? summaryQ.error) as Error | null;
-    return <ErrorState message={error?.message} onRetry={() => { void listQ.refetch(); void summaryQ.refetch(); }} />;
+  if (listQ.isLoading || summaryQ.isLoading || marketQ.isLoading) return <LoadingState />;
+  if (listQ.isError || summaryQ.isError || marketQ.isError || !marketQ.data) {
+    const error = (listQ.error ?? summaryQ.error ?? marketQ.error) as Error | null;
+    return <ErrorState message={error?.message ?? "The operating market must be assigned before DVIR records can be managed."} onRetry={() => { void listQ.refetch(); void summaryQ.refetch(); void marketQ.refetch(); }} />;
   }
 
   const summary = (summaryQ.data ?? {}) as AnyRecord;
+  const market = marketQ.data as AnyRecord;
+  const marketCountry = String(market.countryCode ?? "");
+  const marketName = String(market.countryName ?? marketCountry);
   return (
     <div className="fleet-console page-stack min-w-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -183,8 +188,8 @@ export function DvirInspectionsPage() {
         </div>
       )}
 
-      {showCreate && <CreateDvirDialog drivers={(driversQ.data as AnyRecord[] | undefined) ?? []} vehicles={(vehiclesQ.data as AnyRecord[] | undefined) ?? []} loading={driversQ.isLoading || vehiclesQ.isLoading} onClose={() => setShowCreate(false)} onCreated={async () => { setShowCreate(false); setNotice({ kind: "success", text: "DVIR report created." }); await refresh(); }} />}
-      {showTemplateCreate && <CreateDvirTemplateDialog onClose={() => setShowTemplateCreate(false)} onCreated={async () => {
+      {showCreate && <CreateDvirDialog marketCountry={marketCountry} marketName={marketName} drivers={(driversQ.data as AnyRecord[] | undefined) ?? []} vehicles={(vehiclesQ.data as AnyRecord[] | undefined) ?? []} loading={driversQ.isLoading || vehiclesQ.isLoading} onClose={() => setShowCreate(false)} onCreated={async () => { setShowCreate(false); setNotice({ kind: "success", text: "DVIR report created." }); await refresh(); }} />}
+      {showTemplateCreate && <CreateDvirTemplateDialog marketCountry={marketCountry} marketName={marketName} onClose={() => setShowTemplateCreate(false)} onCreated={async () => {
         setShowTemplateCreate(false);
         setNotice({ kind: "success", text: "DVIR checklist template created and available to drivers." });
         await Promise.all([
@@ -198,10 +203,10 @@ export function DvirInspectionsPage() {
 
 type ChecklistDraft = { category: string; itemName: string; required: boolean };
 
-function CreateDvirTemplateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
+function CreateDvirTemplateDialog({ marketCountry, marketName, onClose, onCreated }: { marketCountry: string; marketName: string; onClose: () => void; onCreated: () => Promise<void> }) {
   const dialogRef = useDialogFocus<HTMLDivElement>(true, onClose);
   const singleFlight = useSingleFlight();
-  const [form, setForm] = useState({ templateName: "", inspectionType: "Pre-Trip", countryCode: "US", vehicleType: "" });
+  const [form, setForm] = useState({ templateName: "", inspectionType: "Pre-Trip", countryCode: marketCountry, vehicleType: "" });
   const [items, setItems] = useState<ChecklistDraft[]>([{ category: "Vehicle", itemName: "", required: true }]);
   const mutation = useMutation({
     mutationFn: () => dvirApi.createTemplate({
@@ -218,9 +223,9 @@ function CreateDvirTemplateDialog({ onClose, onCreated }: { onClose: () => void;
     <form className="panel max-h-[90vh] w-full max-w-2xl overflow-y-auto p-5" onSubmit={(event) => { event.preventDefault(); if (valid) void singleFlight(() => mutation.mutateAsync()); }}>
       <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-black text-slate-900">New checklist template</h2><p className="mt-1 text-xs text-slate-500">Create the persisted inspection checklist drivers must complete before departure.</p></div><button type="button" className="icon-btn" aria-label="Close" onClick={onClose}><X className="h-4 w-4" /></button></div>
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
-        <label className="sm:col-span-2"><span className="field-label">Template name</span><input className="field mt-1" required maxLength={160} value={form.templateName} onChange={(event) => setForm({ ...form, templateName: event.target.value })} placeholder="US pre-trip inspection" /></label>
+        <label className="sm:col-span-2"><span className="field-label">Template name</span><input className="field mt-1" required maxLength={160} value={form.templateName} onChange={(event) => setForm({ ...form, templateName: event.target.value })} placeholder={`${marketName} pre-trip inspection`} /></label>
         <label><span className="field-label">Inspection type</span><select className="field mt-1" value={form.inspectionType} onChange={(event) => setForm({ ...form, inspectionType: event.target.value })}><option>Pre-Trip</option><option>Post-Trip</option><option>En Route</option></select></label>
-        <label><span className="field-label">Country</span><input className="field mt-1" required maxLength={12} value={form.countryCode} onChange={(event) => setForm({ ...form, countryCode: event.target.value.toUpperCase() })} /></label>
+        <label><span className="field-label">Country · operating market locked</span><input className="field mt-1" required readOnly aria-readonly="true" maxLength={12} value={form.countryCode} /></label>
         <label className="sm:col-span-2"><span className="field-label">Vehicle type (optional)</span><input className="field mt-1" maxLength={80} value={form.vehicleType} onChange={(event) => setForm({ ...form, vehicleType: event.target.value })} placeholder="Truck, van, trailer…" /></label>
       </div>
       <section className="mt-5" aria-labelledby="checklist-items-heading"><div className="flex items-center justify-between gap-3"><h3 id="checklist-items-heading" className="text-sm font-black text-slate-900">Checklist items ({items.length}/50)</h3><button type="button" className="btn-secondary h-9" disabled={items.length >= 50} onClick={() => setItems((current) => [...current, { category: "Vehicle", itemName: "", required: true }])}><Plus className="h-4 w-4" /> Add item</button></div>
@@ -273,9 +278,9 @@ function DvirDetail({ detail, canReview, canClose, busy, timeline, resolveNotes,
   </div>;
 }
 
-function CreateDvirDialog({ drivers, vehicles, loading, onClose, onCreated }: { drivers: AnyRecord[]; vehicles: AnyRecord[]; loading: boolean; onClose: () => void; onCreated: () => Promise<void> }) {
+function CreateDvirDialog({ marketCountry, marketName, drivers, vehicles, loading, onClose, onCreated }: { marketCountry: string; marketName: string; drivers: AnyRecord[]; vehicles: AnyRecord[]; loading: boolean; onClose: () => void; onCreated: () => Promise<void> }) {
   const createDialogRef = useDialogFocus<HTMLDivElement>(true, onClose);
-  const [form, setForm] = useState({ driverId: "", vehicleId: "", inspectionType: "Pre-Trip", countryCode: "US", notes: "" });
+  const [form, setForm] = useState({ driverId: "", vehicleId: "", inspectionType: "Pre-Trip", countryCode: marketCountry, notes: "" });
   const idempotencyKey = useRef(crypto.randomUUID());
   const reportNumber = useRef(`DVIR-${Date.now()}`);
   const createSingleFlight = useSingleFlight();
@@ -285,7 +290,7 @@ function CreateDvirDialog({ drivers, vehicles, loading, onClose, onCreated }: { 
     {loading ? <div className="mt-5"><LoadingState /></div> : <div className="mt-5 grid gap-4">
       <label><span className="field-label">Driver</span><select className="field mt-1" required value={form.driverId} onChange={(event) => setForm({ ...form, driverId: event.target.value })}><option value="">Select driver…</option>{drivers.map((driver) => <option key={String(driver.id)} value={String(driver.id)}>{String(value(driver, "fullName", "full_name") ?? value(driver, "driverName", "driver_name") ?? driver.id)}</option>)}</select></label>
       <label><span className="field-label">Vehicle</span><select className="field mt-1" required value={form.vehicleId} onChange={(event) => setForm({ ...form, vehicleId: event.target.value })}><option value="">Select vehicle…</option>{vehicles.map((vehicle) => <option key={String(vehicle.id)} value={String(vehicle.id)}>{String(value(vehicle, "vehicleCode", "vehicle_code") ?? vehicle.id)}</option>)}</select></label>
-      <div className="grid grid-cols-2 gap-3"><label><span className="field-label">Inspection type</span><select className="field mt-1" value={form.inspectionType} onChange={(event) => setForm({ ...form, inspectionType: event.target.value })}><option>Pre-Trip</option><option>Post-Trip</option><option>En Route</option></select></label><label><span className="field-label">Country</span><input className="field mt-1" maxLength={12} value={form.countryCode} onChange={(event) => setForm({ ...form, countryCode: event.target.value.toUpperCase() })} /></label></div>
+      <div className="grid grid-cols-2 gap-3"><label><span className="field-label">Inspection type</span><select className="field mt-1" value={form.inspectionType} onChange={(event) => setForm({ ...form, inspectionType: event.target.value })}><option>Pre-Trip</option><option>Post-Trip</option><option>En Route</option></select></label><label><span className="field-label">Country · operating market locked</span><input className="field mt-1" readOnly aria-readonly="true" maxLength={12} value={form.countryCode} title={`${marketName} operating market`} /></label></div>
       <label><span className="field-label">Notes</span><textarea className="field mt-1 min-h-24" maxLength={4000} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
       {mutation.isError && <p className="text-sm text-red-700" role="alert">{(mutation.error as Error)?.message}</p>}
       <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" onClick={onClose}>Cancel</button><button type="submit" className="btn-primary" disabled={mutation.isPending || !form.driverId || !form.vehicleId}>{mutation.isPending ? "Creating…" : "Create report"}</button></div>

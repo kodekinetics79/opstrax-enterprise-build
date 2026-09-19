@@ -10,7 +10,6 @@ write_ledger() {
   cat > "$fixture" <<'EOF'
 gate	result
 frontend-build	success
-node-backend-build	success
 demo-node-events-check	success
 mobile-build-test	success
 launch-tooling-tests	success

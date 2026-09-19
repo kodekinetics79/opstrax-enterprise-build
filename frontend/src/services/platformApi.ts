@@ -1,88 +1,38 @@
-import axios from "axios";
-import type { ApiEnvelope, AnyRecord } from "@/types";
-import { API_BASE_URL } from "@/services/apiClient";
+import type { AnyRecord } from "@/types";
+import { createApiClient, unwrap } from "@/services/apiClient";
 
-// Platform Admin uses a SEPARATE session store and axios instance from the tenant
-// app, so platform staff identity never mixes with tenant user sessions.
-export const PLATFORM_STORAGE_KEY = "opstrax.platform.session.v1";
+// Retired in September 2026. Remove any browser-readable privileged credential
+// left by an older release; the active session now lives only in an HttpOnly cookie.
+export const RETIRED_PLATFORM_STORAGE_KEY = "opstrax.platform.session.v1";
 
 export type PlatformSession = {
-  token: string;
   admin: { id: number; email: string; name: string };
   role: { key: string; name: string };
   permissions: string[];
   productPilotAvailable?: boolean;
 };
 
-export type PlatformSessionProfile = Omit<PlatformSession, "token">;
+export type PlatformSessionProfile = PlatformSession;
 
-export function loadPlatformSession(): PlatformSession | null {
-  try {
-    const raw = localStorage.getItem(PLATFORM_STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as PlatformSession;
-  } catch {
-    localStorage.removeItem(PLATFORM_STORAGE_KEY);
-    return null;
-  }
+export function clearRetiredPlatformSession() {
+  localStorage.removeItem(RETIRED_PLATFORM_STORAGE_KEY);
 }
 
-export function storePlatformSession(session: PlatformSession | null) {
-  if (session) localStorage.setItem(PLATFORM_STORAGE_KEY, JSON.stringify(session));
-  else localStorage.removeItem(PLATFORM_STORAGE_KEY);
-}
-
-export const platformClient = axios.create({
-  baseURL: API_BASE_URL,
-  headers: { Accept: "application/json" },
-  timeout: 30000,
-  withCredentials: true,
-});
-
-// The API protects state-changing requests with a double-submit CSRF token: a
-// __CSRF_Token__ cookie (sent automatically via withCredentials) that must match
-// an X-CSRF-Token header. The server echoes the current token on every response,
-// so we capture it and replay it on the next mutation.
-let platformCsrfToken = "";
-
-platformClient.interceptors.request.use((config) => {
-  const session = loadPlatformSession();
-  if (session?.token) config.headers.Authorization = `Bearer ${session.token}`;
-  if (platformCsrfToken && ["post", "put", "delete", "patch"].includes((config.method ?? "").toLowerCase())) {
-    config.headers["X-CSRF-Token"] = platformCsrfToken;
-  }
-  return config;
-});
-
-platformClient.interceptors.response.use(
-  (response) => {
-    const token = response.headers["x-csrf-token"];
-    if (token) platformCsrfToken = token;
-    return response;
-  },
-  (error) => {
-    const token = error?.response?.headers?.["x-csrf-token"];
-    if (token) platformCsrfToken = token;
-    if (error?.response?.status === 401) {
+// Dedicated instance, shared pipeline: platform requests receive the same timeout,
+// credentials, CSRF, tracing, and error behavior as tenant requests without ever
+// attaching the tenant bearer token to the platform trust boundary.
+export const platformClient = createApiClient({
+  onUnauthorized: () => {
       // accept-invite is pre-session: a wrong/expired token 401s and the page
       // itself must show the error rather than bouncing to login.
       const isPreSessionPage =
         window.location.pathname.startsWith("/platform/login") ||
         window.location.pathname.startsWith("/platform/accept-invite");
-      storePlatformSession(null);
       if (!isPreSessionPage) {
         window.location.href = "/platform/login";
       }
-    }
-    return Promise.reject(error);
   },
-);
-
-async function unwrap<T>(request: Promise<{ data: ApiEnvelope<T> }>): Promise<T> {
-  const response = await request;
-  if (!response.data.success) throw new Error(response.data.message || "Request failed");
-  return response.data.data;
-}
+});
 
 export function hasPlatformPermission(perms: string[], required: string): boolean {
   return perms.some((p) => {
@@ -134,10 +84,9 @@ export const platformApi = {
   // Auth
   login: (email: string, password: string, mfaCode?: string) =>
     unwrap<PlatformSession>(platformClient.post("/api/platform/auth/login", { email, password, mfaCode })),
-  // Revalidation intentionally does not echo the bearer credential in a response
-  // body. The auth provider preserves the locally held token after this succeeds.
+  // The HttpOnly session cookie is sent by the shared client and never exposed to JS.
   me: () => unwrap<PlatformSessionProfile>(platformClient.get("/api/platform/auth/me")),
-  logout: () => platformClient.post("/api/platform/auth/logout").catch(() => undefined),
+  logout: () => unwrap<{ loggedOut: boolean }>(platformClient.post("/api/platform/auth/logout")),
 
   // Self-service account management (any platform admin, own record only)
   changeOwnPassword: (currentPassword: string, newPassword: string) =>

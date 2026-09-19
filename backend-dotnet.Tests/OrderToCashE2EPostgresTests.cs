@@ -91,7 +91,7 @@ public class OrderToCashE2EPostgresTests
     private static class Seed
     {
         public static async Task<long> CompanyAsync(Database db) =>
-            await db.InsertAsync("INSERT INTO companies (company_code, name, industry) VALUES (@c,'E2E Co','logistics') RETURNING id",
+            await db.InsertAsync("INSERT INTO companies (company_code, name, industry, country) VALUES (@c,'E2E Co','logistics','CA') RETURNING id",
                 c => c.Parameters.AddWithValue("@c", $"E2E-{Guid.NewGuid():N}".Substring(0, 16)));
         public static async Task<long> CustomerAsync(Database db, long cid) =>
             await db.InsertAsync("INSERT INTO customers (company_id, customer_code, name) VALUES (@c,@code,'Buyer') RETURNING id",
@@ -115,10 +115,10 @@ public class OrderToCashE2EPostgresTests
         public static async Task PublishedVatAsync(Database db, long cid, decimal rate)
         {
             var p = await db.InsertAsync(@"INSERT INTO tax_profiles (company_id, profile_code, profile_name, regime, price_inclusive, currency, effective_date, status, author_user_id, published_by_user_id, published_at)
-                VALUES (@c,'E2E-TAX','P','vat',FALSE,NULL,DATE '2025-01-01','published',1,2,NOW()) RETURNING id", c => c.Parameters.AddWithValue("@c", cid));
+                VALUES (@c,'E2E-TAX','P','gst',FALSE,NULL,DATE '2025-01-01','published',1,2,NOW()) RETURNING id", c => c.Parameters.AddWithValue("@c", cid));
             await db.ExecuteAsync("INSERT INTO tax_rules (company_id, tax_profile_id, tax_code, tax_category, rate, taxable, priority) VALUES (@c,@p,'STANDARD','S',@r,TRUE,0)",
                 c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@p", p); c.Parameters.AddWithValue("@r", rate); });
-            await db.ExecuteAsync("INSERT INTO seller_tax_registration (company_id, jurisdiction, regime, tax_registration_no, effective_date) VALUES (@c,'XX','vat','TRN', DATE '2025-01-01')",
+            await db.ExecuteAsync("INSERT INTO seller_tax_registration (company_id, jurisdiction, regime, tax_registration_no, effective_date) VALUES (@c,'CA','gst','TRN', DATE '2025-01-01')",
                 c => c.Parameters.AddWithValue("@c", cid));
         }
         public static async Task RevrecDefaultAsync(Database db, long cid) =>

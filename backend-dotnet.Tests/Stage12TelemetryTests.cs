@@ -230,10 +230,10 @@ public class Stage12TelemetryTests
     {
         var suffix = $"{label}-{Guid.NewGuid():N}"[..Math.Min(label.Length + 11, label.Length + 33)];
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Telemetry integration','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Telemetry integration','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"TEL-{suffix}"));
         var branchId = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,@code,'Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,@code,@code,'Active','US')",
             c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"BR-{suffix}"); });
         var vehicleId = await db.InsertAsync(
             @"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service)

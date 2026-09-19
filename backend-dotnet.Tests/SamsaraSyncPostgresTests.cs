@@ -20,7 +20,7 @@ public sealed class SamsaraSyncPostgresTests
         var db = CreateDatabase();
         var suffix = Guid.NewGuid().ToString("N");
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Synthetic response bound test','Transportation') RETURNING id",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,'Synthetic response bound test','Transportation','US') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SRB-{suffix[..10]}"));
         try
         {
@@ -88,7 +88,7 @@ public sealed class SamsaraSyncPostgresTests
         var dbDisconnect = CreateDatabase();
         var suffix = Guid.NewGuid().ToString("N");
         var companyId = await dbConfigure.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Connector configuration lock test','Transportation') RETURNING id",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,'Connector configuration lock test','Transportation','US') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SCL-{suffix[..10]}"));
         var integrationId = await dbConfigure.InsertAsync(
             @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
@@ -181,7 +181,7 @@ public sealed class SamsaraSyncPostgresTests
         var dbDisconnect = CreateDatabase();
         var suffix = Guid.NewGuid().ToString("N");
         var companyId = await dbSync.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Samsara sync lock order test','Transportation') RETURNING id",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,'Samsara sync lock order test','Transportation','US') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SLO-{suffix[..10]}"));
         var integrationId = await dbSync.InsertAsync(
             @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
@@ -261,7 +261,7 @@ public sealed class SamsaraSyncPostgresTests
         var dbSecond = CreateDatabase();
         var suffix = Guid.NewGuid().ToString("N");
         var companyId = await dbFirst.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Samsara discovery race test','Transportation') RETURNING id",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,'Samsara discovery race test','Transportation','US') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SDR-{suffix[..10]}"));
         var providerVehicleId = $"race-{suffix}";
         const string accountReference = "samsara-org:discovery-race-test";
@@ -328,7 +328,7 @@ public sealed class SamsaraSyncPostgresTests
             for (var index = 0; index < 3; index++)
             {
                 var companyId = await db.InsertAsync(
-                    "INSERT INTO companies(company_code,name,industry) VALUES(@code,@name,'Transportation') RETURNING id",
+                    "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,@name,'Transportation','US') RETURNING id",
                     c =>
                     {
                         c.Parameters.AddWithValue("@code", $"SCF-{suffix[..8]}-{index}");
@@ -380,7 +380,7 @@ public sealed class SamsaraSyncPostgresTests
         var db = CreateDatabase();
         var suffix = Guid.NewGuid().ToString("N");
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Samsara lease barrier test','Transportation') RETURNING id",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,'Samsara lease barrier test','Transportation','US') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SLB-{suffix[..10]}"));
         var integrationId = await db.InsertAsync(
             @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
@@ -452,7 +452,7 @@ public sealed class SamsaraSyncPostgresTests
         var db = CreateDatabase();
         var suffix = Guid.NewGuid().ToString("N");
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Connector health clocks','Transportation') RETURNING id",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,'Connector health clocks','Transportation','US') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SHC-{suffix[..10]}"));
         var integrationId = await db.InsertAsync(
             @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
@@ -528,7 +528,7 @@ public sealed class SamsaraSyncPostgresTests
         var db = CreateDatabase();
         var suffix = Guid.NewGuid().ToString("N");
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Provider freshness clock','Transportation') RETURNING id",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,'Provider freshness clock','Transportation','US') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"PFC-{suffix[..10]}"));
         var integrationId = await db.InsertAsync(
             @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
@@ -580,7 +580,7 @@ public sealed class SamsaraSyncPostgresTests
         var db = CreateDatabase();
         var suffix = Guid.NewGuid().ToString("N");
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Samsara replay test','Transportation') RETURNING id",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES(@code,'Samsara replay test','Transportation','US') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SAM-{suffix[..10]}"));
         var integrationId = await db.InsertAsync(
             @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
@@ -590,7 +590,7 @@ public sealed class SamsaraSyncPostgresTests
             db, companyId, integrationId, ["Connected"], TimeSpan.FromSeconds(180), CancellationToken.None);
         Assert.NotNull(operation);
         var branchId = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES(@cid,@code,'Samsara test branch','Active') RETURNING id",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES(@cid,@code,'Samsara test branch','Active','US') RETURNING id",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);

@@ -28,9 +28,11 @@ import { telemetryApi } from "@/services/telemetryApi";
 import { LiveMap } from "@/components/LiveMap";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
+import { useTenantCountry } from "@/hooks/useTenantRegion";
 import { AiInsightCard, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 import { readSpeedMph, telemetryMotion } from "@/utils/telemetryMeasurements";
+import { milesToTenantDistance, tenantDistanceUnit } from "@/utils/tenantMeasurements";
 import {
   classifySource,
   sourceLabel,
@@ -131,9 +133,11 @@ function routeTrailMiles(points: Array<[number, number]>): number {
   return points.slice(1).reduce((sum, point, index) => sum + haversineMiles(points[index], point), 0);
 }
 
-function formatDistance(miles: number): string {
-  if (!Number.isFinite(miles) || miles <= 0) return "0 mi";
-  return miles < 10 ? `${miles.toFixed(1)} mi` : `${Math.round(miles)} mi`;
+function formatDistance(miles: number, country: string | null): string {
+  const distance = milesToTenantDistance(miles, country) ?? 0;
+  const unit = tenantDistanceUnit(country);
+  if (!Number.isFinite(distance) || distance <= 0) return `0 ${unit}`;
+  return distance < 10 ? `${distance.toFixed(1)} ${unit}` : `${Math.round(distance)} ${unit}`;
 }
 
 /** Classify a vehicle into a single live-status bucket — the heart of the status board. */
@@ -183,6 +187,7 @@ function matchesSearch(entity: AnyRecord, q: string): boolean {
 }
 
 export function LiveMapPage() {
+  const tenantCountry = useTenantCountry();
   const [searchParams] = useSearchParams();
   const requestedVehicle = searchParams.get("vehicleId");
   const requestedVehicleId = mapVehicleId(requestedVehicle);
@@ -442,9 +447,9 @@ export function LiveMapPage() {
       label: String(selectedRoute?.routeCode ?? selectedRoute?.routeName ?? selectedRoute?.name ?? "Selected route"),
       points,
       color: "#0ea5e9",
-      summary: `${points.length} geo stops · ${formatDistance(routeTrailMiles(points))} span`,
+      summary: `${points.length} geo stops · ${formatDistance(routeTrailMiles(points), tenantCountry)} span`,
     }];
-  }, [routeStops, selectedRoute, selectedRouteId]);
+  }, [routeStops, selectedRoute, selectedRouteId, tenantCountry]);
 
   const assetStates = (liveStatesQ.data as AnyRecord[]) ?? [];
   const assetHealth = useMemo(() => {
@@ -719,7 +724,7 @@ export function LiveMapPage() {
           <div className="border-b border-slate-100 px-4 pb-3 pt-4">
             <div className="flex items-center justify-between">
               <h2 className="section-title">Geospatial Health</h2>
-              <span className="text-xs font-semibold text-slate-400">{formatDistance(routeTrailMiles(routeTrail[0]?.points ?? []))}</span>
+              <span className="text-xs font-semibold text-slate-400">{formatDistance(routeTrailMiles(routeTrail[0]?.points ?? []), tenantCountry)}</span>
             </div>
             <div className="mt-3 space-y-2">
               {assetHealthRows.length === 0 ? (

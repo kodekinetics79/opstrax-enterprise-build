@@ -30,12 +30,16 @@ public class Stage17P0StabilityRegressionTests
     }
 
     [Fact]
-    public void ApiClient_Only_Clears_Session_On_Auth_Bootstrap_Failures()
+    public void ApiClient_ClearsAnAuthenticatedSessionOnAnyUnauthorizedResponse()
     {
         var apiClient = ReadSource("frontend", "src", "services", "apiClient.ts");
 
-        Assert.Contains("url.includes(\"/api/auth/me\")", apiClient);
-        Assert.Contains("url.includes(\"/api/auth/refresh\")", apiClient);
+        Assert.Contains("hadAuthenticatedSession", apiClient);
+        Assert.Contains("isPreSessionAuthRequest", apiClient);
+        Assert.Contains("shouldClearSession = hadAuthenticatedSession && !isPreSessionAuthRequest", apiClient);
+        Assert.Contains("clearAllSessionKeys()", apiClient);
+        Assert.DoesNotContain("url.includes(\"/api/auth/me\")", apiClient);
+        Assert.DoesNotContain("url.includes(\"/api/auth/refresh\")", apiClient);
         Assert.DoesNotContain("url.includes(\"/api/fleet-health/\")", apiClient);
         Assert.DoesNotContain("url.includes(\"/api/telemetry/\")", apiClient);
     }

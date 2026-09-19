@@ -143,7 +143,7 @@ public static partial class EndpointMappings
 
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var actorId = GetUserId(http);
         return await db.RunInTenantTransactionAsync(companyId, async () =>
         {
             await LockInstallationIdentityAsync(db, companyId, id, null, ct);
@@ -217,7 +217,7 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("Installation effective time cannot be in the future"));
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var actorId = GetUserId(http);
 
         try
         {
@@ -319,7 +319,7 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("Failed commissioning requires a failure reference of 8 to 500 characters"));
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var actorId = GetUserId(http);
         // Commissioning proof spans location_events and the system-owned canonical
         // telemetry ledger. The runtime app role is intentionally denied direct
         // access to canonical_telemetry_events, so use the system transaction just
@@ -429,7 +429,7 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("Removal effective time cannot be in the future"));
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var actorId = GetUserId(http);
         return await db.RunInTenantTransactionAsync(companyId, async () =>
         {
             await LockInstallationIdentityAsync(db, companyId, id, null, ct);
@@ -518,7 +518,7 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("currentInstallationId and expectedRowVersion are required for transfer"));
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var actorId = GetUserId(http);
         var effectiveAt = body.EffectiveAt?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
         if (effectiveAt > DateTimeOffset.UtcNow)
             return Results.BadRequest(ApiResponse<object>.Fail("Transfer effective time cannot be in the future"));
@@ -768,7 +768,7 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("Corrected IMEI must contain exactly 15 digits"));
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        var actorId = GetUserId(http);
 
         try
         {

@@ -47,8 +47,8 @@ public class FleetWorkspaceRegressionTests
         Assert.DoesNotContain("fleetReadinessApi.documents()", saudiSection);
         Assert.DoesNotContain("fleetReadinessApi.createDocument", saudiSection);
         var endpoints = ReadSource("backend-dotnet", "Controllers", "FleetTmsColdChainEndpoints.cs");
-        Assert.Contains("SaudiLedgerRetired()", endpoints);
-        Assert.Contains("Status410Gone", endpoints);
+        Assert.DoesNotContain("/api/fleet-tms/compliance/documents", endpoints);
+        Assert.DoesNotContain("/api/fleet-tms/compliance/expiries", endpoints);
     }
 
     [Fact]

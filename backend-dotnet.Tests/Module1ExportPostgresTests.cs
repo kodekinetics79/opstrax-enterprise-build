@@ -79,10 +79,10 @@ public sealed class Module1ExportPostgresTests
     {
         var db = Db();
         var companyId = await db.InsertAsync(
-            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Module 1 export test','Transportation')",
+            "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,'Module 1 export test','Transportation','US')",
             c => c.Parameters.AddWithValue("@code", $"M1E-{Guid.NewGuid():N}"));
         var branchId = await db.InsertAsync(
-            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@cid,@code,'Export Branch','Active')",
+            "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@cid,@code,'Export Branch','Active','US')",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);
@@ -140,11 +140,11 @@ public sealed class Module1ExportPostgresTests
     }
 
     private static Task<long> Company(Database db, string suffix) => db.InsertAsync(
-        "INSERT INTO companies(company_code,name,industry) VALUES (@code,@name,'Transportation')",
+        "INSERT INTO companies(company_code,name,industry,country) VALUES (@code,@name,'Transportation','US')",
         c => { c.Parameters.AddWithValue("@code", $"M1X-{suffix}-{Guid.NewGuid():N}"); c.Parameters.AddWithValue("@name", $"Module 1 {suffix}"); });
 
     private static Task<long> Branch(Database db, long companyId, string code) => db.InsertAsync(
-        "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,@name,'Active')",
+        "INSERT INTO branches(company_id,branch_code,name,status,country_code) VALUES (@c,@code,@name,'Active','US')",
         c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@name", $"Branch {code}"); });
 
     private static Task<long> Vehicle(Database db, long companyId, long branchId, string code, string make,

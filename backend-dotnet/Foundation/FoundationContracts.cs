@@ -391,7 +391,7 @@ public interface IOutboxMessageHandlerRegistry
 
 public interface IEventProcessingLogService
 {
-    EventProcessingLogRecord Record(
+    Task<EventProcessingLogRecord> RecordAsync(
         string tenantId,
         string eventType,
         string processor,
@@ -399,7 +399,8 @@ public interface IEventProcessingLogService
         string? message = null,
         string? correlationId = null,
         string? causationId = null,
-        int retryCount = 0);
+        int retryCount = 0,
+        CancellationToken ct = default);
 }
 
 public interface IOutboxDispatcher
