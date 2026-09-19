@@ -87,6 +87,7 @@ const plugins: NonNullable<ExpoConfig["plugins"]> = [
     },
   ],
   "./plugins/with-no-inbound-linking.cjs",
+  "./plugins/with-ios-scene-lifecycle.cjs",
 ];
 
 if (isProductionBuild) {
