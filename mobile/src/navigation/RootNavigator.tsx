@@ -5,6 +5,7 @@ import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { LoginScreen } from "@/screens/LoginScreen";
+import { DriverCommandLoginScreen } from "@/screens/DriverCommandLoginScreen";
 import { DashboardScreen } from "@/screens/DashboardScreen";
 import { WorkflowScreen } from "@/screens/WorkflowScreen";
 import { ProofScreen } from "@/screens/ProofScreen";
@@ -190,7 +191,7 @@ export function RootNavigator() {
   return (
     <NavigationContainer theme={darkTheme}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {!session ? <Stack.Screen name="Login" component={LoginScreen} /> : (
+        {!session ? <Stack.Screen name="Login" component={APP_VARIANT === "driver" ? DriverCommandLoginScreen : LoginScreen} /> : (
           <Stack.Screen name="Main" component={MainComponent} />
         )}
       </Stack.Navigator>
