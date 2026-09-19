@@ -102,7 +102,11 @@
     }
   },
   "submit": {
-    "production-driver": {},
+    "production-driver": {
+      "ios": {
+        "ascAppId": "6810449101"
+      }
+    },
     "production-fleet": {},
     "production-customer": {}
   }
