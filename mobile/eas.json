@@ -87,6 +87,18 @@
       "android": {
         "buildType": "app-bundle"
       }
+    },
+    "testflight-driver": {
+      "node": "20.19.4",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_STAGE": "preview",
+        "EXPO_PUBLIC_APP_VARIANT": "driver",
+        "EXPO_PUBLIC_IOS_BUNDLE_ID": "com.kodekinetics.opstrax.driver",
+        "EXPO_PUBLIC_API_BASE_URL": "https://osptrax-fleet-management.onrender.com",
+        "EXPO_PUBLIC_EAS_PROJECT_ID": "7debd06f-db2d-4c79-848b-d44e84d373a1"
+      },
+      "autoIncrement": true
     }
   },
   "submit": {

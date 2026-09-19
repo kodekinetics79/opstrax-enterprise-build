@@ -86,7 +86,7 @@ const plugins: NonNullable<ExpoConfig["plugins"]> = [
       microphonePermission: false,
     },
   ],
-  "./plugins/with-no-inbound-linking",
+  "./plugins/with-no-inbound-linking.cjs",
 ];
 
 if (isProductionBuild) {
