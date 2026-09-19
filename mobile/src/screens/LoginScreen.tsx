@@ -14,82 +14,71 @@ import {
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { ErrorState, Input, Screen } from "@/components/ui";
+import { EnterpriseMark, TelemetryRail } from "@/components/DriverExperience";
 import { APP_VARIANT, STAGE_LABEL } from "@/config";
 import { useSession } from "@/auth/SessionProvider";
 
 const CAPABILITIES = [
-  { icon: "▣", label: "Assignments", detail: "YOUR ROUTES" },
-  { icon: "◆", label: "DVIR", detail: "STAY COMPLIANT" },
-  { icon: "◉", label: "POD", detail: "CAPTURE & SUBMIT" },
-  { icon: "➤", label: "Dispatch", detail: "ALWAYS CONNECTED" },
+  { icon: "▣", label: "Assignments", detail: "LIVE LOADS" },
+  { icon: "◆", label: "DVIR", detail: "VEHICLE READY" },
+  { icon: "◉", label: "POD", detail: "PHOTO • SIGNATURE" },
+  { icon: "➤", label: "Dispatch", detail: "CONTROL TOWER" },
 ];
 
 const BENEFITS = [
-  { icon: "◇", top: "SAFER", bottom: "DRIVERS" },
-  { icon: "▥", top: "HIGHER", bottom: "EFFICIENCY" },
-  { icon: "◒", top: "LOWER", bottom: "EMISSIONS" },
-  { icon: "●●", top: "STRONGER", bottom: "BUSINESSES" },
+  { icon: "◇", top: "ROUTE", bottom: "CONTROL" },
+  { icon: "▥", top: "VEHICLE", bottom: "SAFETY" },
+  { icon: "◒", top: "DELIVERY", bottom: "PROOF" },
+  { icon: "●●", top: "DISPATCH", bottom: "SYNC" },
 ];
 
 function OpsTraxMark({ pulse }: { pulse: Animated.Value }) {
-  const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.055] });
-  const halo = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.2, 0.56] });
+  const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] });
   return (
-    <Animated.View style={[styles.markStage, { transform: [{ scale }] }]}>
-      <Animated.View style={[styles.markHalo, { opacity: halo }]} />
-      <LinearGradient colors={["#64f5ec", "#18cdd0"]} style={[styles.markFace, styles.markTop]} />
-      <LinearGradient colors={["#0f8d96", "#063c56"]} style={[styles.markFace, styles.markLeft]} />
-      <LinearGradient colors={["#4c86ff", "#123c8f"]} style={[styles.markFace, styles.markRight]} />
-      <View style={styles.markStem} />
-      <View style={[styles.markArm, styles.markArmLeft]} />
-      <View style={[styles.markArm, styles.markArmRight]} />
-      <View style={[styles.markDot, styles.markDotTop]} />
-      <View style={[styles.markDot, styles.markDotLeft]} />
-      <View style={[styles.markDot, styles.markDotRight]} />
+    <Animated.View style={{ transform: [{ perspective: 900 }, { scale }] }}>
+      <EnterpriseMark />
     </Animated.View>
   );
 }
 
 function CinematicScene({ drift }: { drift: Animated.Value }) {
-  const roadShift = drift.interpolate({ inputRange: [0, 1], outputRange: [-8, 10] });
-  const headlight = drift.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.75] });
+  const routeShift = drift.interpolate({ inputRange: [0, 1], outputRange: [-10, 16] });
+  const beacon = drift.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.92] });
   return (
     <View pointerEvents="none" style={styles.scene}>
       <LinearGradient
-        colors={["#071a2e", "#14334a", "#1f4d63", "#092038"]}
-        locations={[0, 0.4, 0.68, 1]}
+        colors={["#07182a", "#0b253b", "#07131f", "#020812"]}
+        locations={[0, 0.42, 0.72, 1]}
         style={StyleSheet.absoluteFill}
       />
-      <View style={styles.cloudOne} />
-      <View style={styles.cloudTwo} />
-      <View style={styles.sunGlow} />
-      <View style={[styles.mountain, styles.mountainBackOne]} />
-      <View style={[styles.mountain, styles.mountainBackTwo]} />
-      <View style={[styles.mountain, styles.mountainFrontOne]} />
-      <View style={[styles.mountain, styles.mountainFrontTwo]} />
-      <View style={styles.cityLine}>
-        {[18, 30, 46, 24, 60, 36, 50, 22, 42, 68, 28, 54, 34].map((height, index) => (
-          <View key={`${height}-${index}`} style={[styles.cityBuilding, { height, opacity: 0.46 + (index % 3) * 0.12 }]} />
-        ))}
+      <View style={styles.mapGrid}>
+        {[0, 1, 2, 3, 4, 5].map((row) => <View key={`h-${row}`} style={[styles.mapLineH, { top: 34 + row * 52 }]} />)}
+        {[0, 1, 2, 3, 4, 5].map((col) => <View key={`v-${col}`} style={[styles.mapLineV, { left: `${8 + col * 18}%` }]} />)}
       </View>
-      <Animated.View style={[styles.road, { transform: [{ perspective: 700 }, { rotateX: "63deg" }, { translateX: roadShift }] }]}>
-        <LinearGradient colors={["rgba(255,255,255,0.02)", "rgba(31,115,174,0.2)", "rgba(255,255,255,0.02)"]} style={StyleSheet.absoluteFill} />
-        <View style={[styles.lane, { left: "31%" }]} />
-        <View style={[styles.lane, { left: "49%" }]} />
-        <View style={[styles.lane, { left: "67%" }]} />
-      </Animated.View>
-      <View style={styles.guardRail} />
+      <View style={[styles.routePath, styles.routePathOne]} />
+      <View style={[styles.routePath, styles.routePathTwo]} />
+      <View style={[styles.routePath, styles.routePathThree]} />
+      <View style={[styles.routeNode, { left: "10%", top: "62%" }]} />
+      <View style={[styles.routeNode, { left: "31%", top: "39%" }]} />
+      <View style={[styles.routeNode, { left: "56%", top: "55%" }]} />
+      <View style={[styles.routeNode, { right: "12%", top: "28%" }]} />
+      <Animated.View style={[styles.routePulse, { opacity: beacon, transform: [{ translateX: routeShift }] }]} />
       <View style={styles.truck}>
-        <LinearGradient colors={["#173d53", "#06121e"]} style={styles.trailer} />
-        <LinearGradient colors={["#1a536a", "#071724"]} style={styles.cab} />
+        <LinearGradient colors={["#1d6d84", "#092132"]} style={styles.trailer} />
+        <LinearGradient colors={["#1a5a70", "#081725"]} style={styles.cab} />
         <View style={styles.windshield} />
         <View style={styles.grille} />
         <View style={[styles.wheel, styles.wheelFront]} />
         <View style={[styles.wheel, styles.wheelRearOne]} />
         <View style={[styles.wheel, styles.wheelRearTwo]} />
-        <Animated.View style={[styles.headlight, styles.headlightLeft, { opacity: headlight }]} />
-        <Animated.View style={[styles.headlight, styles.headlightRight, { opacity: headlight }]} />
+        <Animated.View style={[styles.headlight, styles.headlightLeft, { opacity: beacon }]} />
+        <Animated.View style={[styles.headlight, styles.headlightRight, { opacity: beacon }]} />
       </View>
+      <BlurView intensity={30} tint="dark" style={styles.controlTowerGlass}>
+        <Text style={styles.controlTowerKicker}>TMS CONTROL TOWER</Text>
+        <Text style={styles.controlTowerTitle}>Dispatch · Telematics · Safety</Text>
+        <Text style={styles.controlTowerBody}>Assignments, vehicle readiness, route execution and proof stay connected in one driver command flow.</Text>
+      </BlurView>
     </View>
   );
 }
@@ -222,21 +211,22 @@ export function LoginScreen() {
                 <OpsTraxMark pulse={pulse} />
                 <View style={{ marginTop: -8 }}>
                   <Text style={styles.brandName}>OpsTrax</Text>
-                  <Text style={styles.brandProduct}>{isDriver ? "DRIVER" : "MOBILE"}</Text>
+                  <Text style={styles.brandProduct}>{isDriver ? "DRIVER COMMAND" : "MOBILE OPERATIONS"}</Text>
                 </View>
-                <Text style={styles.tagline}>Connected Fleets.{"\n"}Stronger Businesses.</Text>
+                <Text style={styles.tagline}>Move freight.{"\n"}See everything.</Text>
               </View>
 
               <View style={styles.promiseBlock}>
-                <Text style={styles.promiseKicker}>DRIVE{"\n"}DELIVER</Text>
-                <Text style={styles.promiseTitle}>A SMARTER TOMORROW</Text>
+                <Text style={styles.promiseKicker}>CONTROL{"\n"}TOWER</Text>
+                <Text style={styles.promiseTitle}>CONNECTED TMS</Text>
                 <BlurView intensity={28} tint="dark" style={styles.promiseGlass}>
-                  <Text style={styles.promiseSmall}>REAL-TIME{"\n"}VISIBILITY</Text>
-                  <Text style={styles.promiseStrong}>SAFER ROADS{"\n"}GREATER OPPORTUNITIES</Text>
+                  <Text style={styles.promiseSmall}>DISPATCH •{"\n"}TELEMATICS</Text>
+                  <Text style={styles.promiseStrong}>SAFETY • ROUTES{"\n"}DELIVERY PROOF</Text>
                 </BlurView>
               </View>
             </View>
           </View>
+          <View style={styles.heroRail}><TelemetryRail tone="teal" /></View>
 
           <View style={styles.tilesWrap}><CapabilityTiles /></View>
 
@@ -347,8 +337,8 @@ function SignInPanel(props: SignInPanelProps) {
     <View style={styles.loginInner}>
       <View style={styles.loginHeaderRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.loginTitle}>Welcome <Text style={styles.loginAccent}>Back</Text></Text>
-          <Text style={styles.loginSubtitle}>Sign in to your OpsTrax Driver account</Text>
+          <Text style={styles.loginTitle}>Enter <Text style={styles.loginAccent}>Driver Command</Text></Text>
+          <Text style={styles.loginSubtitle}>Secure access to your live OpsTrax TMS workspace</Text>
         </View>
         <View style={styles.companyPill}>
           <Text style={styles.companyPillLabel}>FLEET</Text>
@@ -424,6 +414,19 @@ const styles = StyleSheet.create({
   hero: { minHeight: 520, overflow: "hidden", position: "relative" },
   heroCompact: { minHeight: 490 },
   scene: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, overflow: "hidden" },
+  mapGrid: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, opacity: 0.15 },
+  mapLineH: { position: "absolute", left: 0, right: 0, height: 1, backgroundColor: "#68bfff" },
+  mapLineV: { position: "absolute", top: 0, bottom: 0, width: 1, backgroundColor: "#42dfcf" },
+  routePath: { position: "absolute", height: 3, borderRadius: 4, backgroundColor: "rgba(75,226,218,0.56)", shadowColor: "#42dfcf", shadowOpacity: 0.55, shadowRadius: 10 },
+  routePathOne: { width: "34%", left: "12%", top: "52%", transform: [{ rotate: "-27deg" }] },
+  routePathTwo: { width: "31%", left: "37%", top: "46%", transform: [{ rotate: "22deg" }] },
+  routePathThree: { width: "29%", left: "60%", top: "40%", transform: [{ rotate: "-31deg" }] },
+  routeNode: { position: "absolute", width: 12, height: 12, borderRadius: 12, backgroundColor: "#f0ffff", borderWidth: 3, borderColor: "#42dfcf", shadowColor: "#42dfcf", shadowOpacity: 0.95, shadowRadius: 11 },
+  routePulse: { position: "absolute", left: "42%", top: "48%", width: 70, height: 3, borderRadius: 6, backgroundColor: "#79f7ec", shadowColor: "#42dfcf", shadowOpacity: 0.9, shadowRadius: 16 },
+  controlTowerGlass: { position: "absolute", left: 24, right: 24, bottom: 24, minHeight: 100, borderRadius: 20, borderWidth: 1, borderColor: "rgba(120,208,255,0.30)", backgroundColor: "rgba(7,23,39,0.58)", padding: 14, overflow: "hidden" },
+  controlTowerKicker: { color: "#42dfcf", fontSize: 8.5, fontWeight: "900", letterSpacing: 1.9 },
+  controlTowerTitle: { color: "#f6fbff", fontSize: 16, fontWeight: "900", marginTop: 4, letterSpacing: -0.3 },
+  controlTowerBody: { color: "#9fb5c8", fontSize: 10.5, lineHeight: 15, marginTop: 5, maxWidth: 440 },
   heroShade: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "rgba(0,12,24,0.22)" },
   cloudOne: { position: "absolute", width: 390, height: 100, borderRadius: 80, backgroundColor: "rgba(36,59,77,0.42)", left: -40, top: 24, transform: [{ rotate: "-5deg" }] },
   cloudTwo: { position: "absolute", width: 280, height: 78, borderRadius: 70, backgroundColor: "rgba(46,65,82,0.34)", right: -30, top: 84, transform: [{ rotate: "7deg" }] },
@@ -453,8 +456,8 @@ const styles = StyleSheet.create({
   heroTopCopy: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, paddingHorizontal: 30, paddingTop: 28, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   brandBlock: { width: "55%" },
   brandName: { color: "#f6fbff", fontSize: 49, lineHeight: 52, fontWeight: "900", letterSpacing: -2.1, textShadowColor: "rgba(0,0,0,0.45)", textShadowRadius: 8 },
-  brandProduct: { color: "#e6f5ff", fontSize: 18, fontWeight: "900", letterSpacing: 8.5, marginLeft: 45, marginTop: -2 },
-  tagline: { color: "#d7e7f5", fontSize: 18, lineHeight: 24, fontWeight: "500", marginTop: 16 },
+  brandProduct: { color: "#42dfcf", fontSize: 11, fontWeight: "900", letterSpacing: 3.4, marginTop: 1 },
+  tagline: { color: "#edf8ff", fontSize: 21, lineHeight: 26, fontWeight: "800", letterSpacing: -0.4, marginTop: 16 },
   promiseBlock: { width: "39%", alignItems: "flex-end", gap: 8 },
   promiseKicker: { color: "#d2e5f5", textAlign: "right", fontSize: 10, lineHeight: 16, letterSpacing: 2.8, fontWeight: "700" },
   promiseTitle: { color: "#d6ecff", textAlign: "right", fontSize: 11, letterSpacing: 2.4 },
@@ -475,6 +478,7 @@ const styles = StyleSheet.create({
   markDotTop: { top: 27, left: 62 },
   markDotLeft: { top: 64, left: 22 },
   markDotRight: { top: 64, right: 22 },
+  heroRail: { paddingHorizontal: 28, marginTop: -42, marginBottom: 12, zIndex: 3 },
   tilesWrap: { paddingHorizontal: 22, marginTop: -6 },
   capabilityRow: { flexDirection: "row", gap: 10 },
   capabilityCard: { flex: 1, minHeight: 122, borderRadius: 20, borderWidth: 1, borderColor: "rgba(100,196,245,0.34)", alignItems: "center", justifyContent: "center", overflow: "hidden" },
