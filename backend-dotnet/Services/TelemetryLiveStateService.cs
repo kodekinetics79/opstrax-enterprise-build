@@ -83,77 +83,14 @@ public sealed class TelemetryLiveStateService(Database db)
             driverName = row.TryGetValue("driverName", out var driverNameRaw) ? driverNameRaw?.ToString() : null,
         });
 
-        await db.ExecuteAsync(
-            @"INSERT INTO telemetry_live_asset_states
-                (company_id, vehicle_id, device_id, driver_id, vehicle_code, device_serial, driver_name,
-                 lat, lng, speed_mph, heading, engine_status, telemetry_status, risk_level,
-                 alert_count, open_alert_count, stale_seconds, last_event_time, received_at,
-                 source_event_id, correlation_id, causation_id, source_channel, next_action,
-                 summary_json, updated_at)
-              VALUES
-                (@companyId, @vehicleId, @deviceId, @driverId, @vehicleCode, @deviceSerial, @driverName,
-                 @lat, @lng, @speedMph, @heading, @engineStatus, @telemetryStatus, @riskLevel,
-                 @alertCount, @openAlertCount, @staleSeconds, @lastEventTime, @receivedAt,
-                 @sourceEventId, @correlationId, @causationId, @sourceChannel, @nextAction,
-                 COALESCE(@summary::jsonb, '{}'::jsonb), NOW())
-              ON CONFLICT (company_id, vehicle_id) DO UPDATE SET
-                device_id=EXCLUDED.device_id,
-                driver_id=EXCLUDED.driver_id,
-                vehicle_code=EXCLUDED.vehicle_code,
-                device_serial=EXCLUDED.device_serial,
-                driver_name=EXCLUDED.driver_name,
-                lat=EXCLUDED.lat,
-                lng=EXCLUDED.lng,
-                speed_mph=EXCLUDED.speed_mph,
-                heading=EXCLUDED.heading,
-                engine_status=EXCLUDED.engine_status,
-                telemetry_status=EXCLUDED.telemetry_status,
-                risk_level=EXCLUDED.risk_level,
-                alert_count=EXCLUDED.alert_count,
-                open_alert_count=EXCLUDED.open_alert_count,
-                stale_seconds=EXCLUDED.stale_seconds,
-                last_event_time=EXCLUDED.last_event_time,
-                received_at=EXCLUDED.received_at,
-                source_event_id=EXCLUDED.source_event_id,
-                correlation_id=EXCLUDED.correlation_id,
-                causation_id=EXCLUDED.causation_id,
-                source_channel=EXCLUDED.source_channel,
-                next_action=EXCLUDED.next_action,
-                summary_json=EXCLUDED.summary_json,
-                updated_at=NOW()",
-            c =>
-            {
-                c.Parameters.AddWithValue("@companyId", companyId);
-                c.Parameters.AddWithValue("@vehicleId", vehicleId);
-                c.Parameters.AddWithValue("@deviceId", Value(row, "deviceId", "device_id") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@driverId", Value(row, "driverId", "driver_id") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@vehicleCode", Value(row, "vehicleCode", "vehicle_code") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@deviceSerial", Value(row, "deviceSerial", "device_serial") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@driverName", Value(row, "driverName", "driver_name") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@lat", Value(row, "lat") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@lng", Value(row, "lng") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@speedMph", Value(row, "speedMph", "speed_mph") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@heading", Value(row, "heading") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@engineStatus", Value(row, "engineStatus", "engine_status") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@telemetryStatus", telemetryStatus);
-                c.Parameters.AddWithValue("@riskLevel", riskLevel);
-                c.Parameters.AddWithValue("@alertCount", alertCount);
-                c.Parameters.AddWithValue("@openAlertCount", openAlerts);
-                c.Parameters.AddWithValue("@staleSeconds", staleSeconds);
-                c.Parameters.AddWithValue("@lastEventTime", Value(row, "eventTime", "event_time") ?? DateTimeOffset.UtcNow);
-                c.Parameters.AddWithValue("@receivedAt", Value(row, "receivedAt", "received_at") ?? DateTimeOffset.UtcNow);
-                c.Parameters.AddWithValue("@sourceEventId", Value(row, "sourceEventId", "source_event_id") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@correlationId", Value(row, "correlationId", "correlation_id") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@causationId", Value(row, "causationId", "causation_id") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@sourceChannel", Value(row, "sourceChannel", "source_channel") ?? "device");
-                c.Parameters.AddWithValue("@nextAction", nextAction);
-                c.Parameters.AddWithValue("@summary", summary);
-            }, ct);
+        // DB V2: latest_vehicle_positions is the single live-state projection.
+        // Do not dual-write the legacy duplicate projection; older ingest paths may
+        // continue populating it temporarily for rollback until their cutover completes.
 
         // Keep the position projection's operator-facing alert fields in sync with the
         // authoritative telemetry_alerts ledger. Native ingest advances the position before
         // it creates or resolves alerts, so the zero-valued placeholders written with the fix
-        // otherwise survive even though telemetry_live_asset_states has already been refreshed.
+        // otherwise survive unless the canonical projection is refreshed after alert evaluation.
         // GPS Tracking reads latest_vehicle_positions directly; mirroring the derived fields
         // here prevents it from reporting "Clear" beside a real open alert.
         await db.ExecuteAsync(
@@ -201,15 +138,21 @@ public sealed class TelemetryLiveStateService(Database db)
     public async Task<List<Dictionary<string, object?>>> ListLiveStatesAsync(long companyId, long? branchId, CancellationToken ct = default)
     {
         var rows = await db.QueryAsync(
-                @"SELECT lsa.*,
-                     EXTRACT(EPOCH FROM (NOW() - lsa.received_at))::BIGINT seconds_since_ping
-              FROM telemetry_live_asset_states lsa
-              JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
-              WHERE lsa.company_id=@cid AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
-              ORDER BY CASE lsa.risk_level WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
-                       lsa.open_alert_count DESC,
-                       lsa.updated_at DESC",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+            @"SELECT lvp.*,
+                     lvp.event_time AS last_event_time,
+                     v.vehicle_code, d.full_name driver_name, e.device_serial,
+                     v.status vehicle_status, v.device_status, v.camera_status,
+                     v.readiness_score, v.data_quality_score,
+                     EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_since_ping
+              FROM latest_vehicle_positions lvp
+              JOIN vehicles v ON v.id=lvp.vehicle_id AND v.company_id=lvp.company_id
+              LEFT JOIN drivers d ON d.id=lvp.driver_id AND d.company_id=lvp.company_id
+              LEFT JOIN eld_devices e ON e.id=lvp.device_id AND e.company_id=lvp.company_id
+              WHERE lvp.company_id=@cid AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
+              ORDER BY CASE lvp.risk_level WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
+                       lvp.open_alert_count DESC,
+                       lvp.updated_at DESC NULLS LAST",
+            cmd => { cmd.Parameters.AddWithValue("@cid", companyId); cmd.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         return rows.ToList();
     }
 
@@ -218,21 +161,26 @@ public sealed class TelemetryLiveStateService(Database db)
 
     public async Task<Dictionary<string, object?>?> GetLiveStateAsync(long companyId, long vehicleId, long? branchId, CancellationToken ct = default)
     {
-        var row = await db.QuerySingleAsync(
-            @"SELECT lsa.*,
-                     EXTRACT(EPOCH FROM (NOW() - lsa.received_at))::BIGINT seconds_since_ping
-              FROM telemetry_live_asset_states lsa
-              JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
-              WHERE lsa.company_id=@cid AND lsa.vehicle_id=@vid
+        return await db.QuerySingleAsync(
+            @"SELECT lvp.*,
+                     lvp.event_time AS last_event_time,
+                     v.vehicle_code, d.full_name driver_name, e.device_serial,
+                     v.status vehicle_status, v.device_status, v.camera_status,
+                     v.readiness_score, v.data_quality_score,
+                     EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_since_ping
+              FROM latest_vehicle_positions lvp
+              JOIN vehicles v ON v.id=lvp.vehicle_id AND v.company_id=lvp.company_id
+              LEFT JOIN drivers d ON d.id=lvp.driver_id AND d.company_id=lvp.company_id
+              LEFT JOIN eld_devices e ON e.id=lvp.device_id AND e.company_id=lvp.company_id
+              WHERE lvp.company_id=@cid AND lvp.vehicle_id=@vid
                 AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
               LIMIT 1",
-            c =>
+            cmd =>
             {
-                c.Parameters.AddWithValue("@cid", companyId);
-                c.Parameters.AddWithValue("@vid", vehicleId);
-                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@cid", companyId);
+                cmd.Parameters.AddWithValue("@vid", vehicleId);
+                cmd.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
             }, ct);
-        return row;
     }
 
     public async Task<List<Dictionary<string, object?>>> ListDevicesAsync(long companyId, CancellationToken ct = default)
@@ -247,46 +195,49 @@ public sealed class TelemetryLiveStateService(Database db)
                      v.vehicle_code, d.full_name driver_name,
                      v.status vehicle_status, v.device_status, v.camera_status,
                      v.readiness_score, v.data_quality_score, v.risk_score,
-                     lsa.telemetry_status, lsa.risk_level, lsa.open_alert_count,
-                     lsa.alert_count, lsa.stale_seconds, lsa.next_action, lsa.updated_at live_state_updated_at,
+                     lvp.telemetry_status, lvp.risk_level, lvp.open_alert_count,
+                     lvp.alert_count,
+                     EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT stale_seconds,
+                     lvp.next_action, lvp.updated_at live_state_updated_at,
                      EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping
               FROM eld_devices e
               LEFT JOIN vehicles v ON v.id=e.vehicle_id
               LEFT JOIN drivers d ON d.id=e.driver_id
-              LEFT JOIN telemetry_live_asset_states lsa
-                ON lsa.company_id=e.company_id AND lsa.vehicle_id=e.vehicle_id
+              LEFT JOIN latest_vehicle_positions lvp
+                ON lvp.company_id=e.company_id AND lvp.vehicle_id=e.vehicle_id
               WHERE e.company_id=@cid AND e.deleted_at IS NULL
                 AND (@branchId::BIGINT IS NULL OR e.branch_id=@branchId)
               ORDER BY e.device_serial",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+            cmd => { cmd.Parameters.AddWithValue("@cid", companyId); cmd.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         return rows.ToList();
     }
 
     public async Task<Dictionary<string, object?>?> GetDeviceAsync(long companyId, long id, CancellationToken ct = default)
     {
-        var row = await db.QuerySingleAsync(
+        return await db.QuerySingleAsync(
             @"SELECT e.id, e.device_serial, e.device_model, e.provider, e.status,
                      e.vehicle_id, e.driver_id, e.firmware_version,
                      e.last_seen_at, e.revoked_at, e.created_at,
                      v.vehicle_code, d.full_name driver_name,
                      v.status vehicle_status, v.device_status, v.camera_status,
                      v.readiness_score, v.data_quality_score, v.risk_score,
-                     lsa.telemetry_status, lsa.risk_level, lsa.open_alert_count,
-                     lsa.alert_count, lsa.stale_seconds, lsa.next_action, lsa.updated_at live_state_updated_at,
+                     lvp.telemetry_status, lvp.risk_level, lvp.open_alert_count,
+                     lvp.alert_count,
+                     EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT stale_seconds,
+                     lvp.next_action, lvp.updated_at live_state_updated_at,
                      EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping
               FROM eld_devices e
               LEFT JOIN vehicles v ON v.id=e.vehicle_id
               LEFT JOIN drivers d ON d.id=e.driver_id
-              LEFT JOIN telemetry_live_asset_states lsa
-                ON lsa.company_id=e.company_id AND lsa.vehicle_id=e.vehicle_id
+              LEFT JOIN latest_vehicle_positions lvp
+                ON lvp.company_id=e.company_id AND lvp.vehicle_id=e.vehicle_id
               WHERE e.company_id=@cid AND e.id=@id AND e.deleted_at IS NULL
               LIMIT 1",
-            c =>
+            cmd =>
             {
-                c.Parameters.AddWithValue("@cid", companyId);
-                c.Parameters.AddWithValue("@id", id);
+                cmd.Parameters.AddWithValue("@cid", companyId);
+                cmd.Parameters.AddWithValue("@id", id);
             }, ct);
-        return row;
     }
 
     public async Task<Dictionary<string, object?>> BuildSummaryAsync(long companyId, CancellationToken ct = default)
