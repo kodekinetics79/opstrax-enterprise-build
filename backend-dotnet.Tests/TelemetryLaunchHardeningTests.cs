@@ -436,6 +436,19 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.Contains("every row for devices without a durable", replayMigration, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void LiveStateServiceUsesSingleCanonicalLatestVehicleProjection()
+    {
+        var service = Read("backend-dotnet", "Services", "TelemetryLiveStateService.cs");
+
+        Assert.DoesNotContain("telemetry_live_asset_states", service, StringComparison.Ordinal);
+        Assert.Contains("FROM latest_vehicle_positions lvp", service, StringComparison.Ordinal);
+        Assert.Contains("LEFT JOIN latest_vehicle_positions lvp", service, StringComparison.Ordinal);
+        Assert.Contains("UPDATE latest_vehicle_positions", service, StringComparison.Ordinal);
+        Assert.Contains("lvp.event_time AS last_event_time", service, StringComparison.Ordinal);
+        Assert.Contains("EXTRACT(EPOCH FROM (NOW() - lvp.received_at))", service, StringComparison.Ordinal);
+    }
+
     private static int Count(string source, string marker) =>
         source.Split(marker, StringSplitOptions.None).Length - 1;
 
